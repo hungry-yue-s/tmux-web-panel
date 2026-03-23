@@ -5,6 +5,7 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import { httpAuth, wsAuth } from './auth.js';
 import * as tmux from './tmux.js';
+import { TerminalManager } from './terminal.js';
 import sessionsRouter from './api/sessions.js';
 import windowsRouter from './api/windows.js';
 import { nestedPanesRouter, flatPanesRouter } from './api/panes.js';
@@ -87,7 +88,13 @@ const server = createServer(app);
 
 const wss = new WebSocketServer({ noServer: true });
 
+const terminalManager = new TerminalManager({
+  maxConnectionsPerPane: config.maxConnections,
+});
+
 server.on('upgrade', (req, socket, head) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+
   // Enforce auth on WebSocket upgrade if configured
   if (config.auth) {
     const [user, pass] = config.auth.split(':');
@@ -98,6 +105,21 @@ server.on('upgrade', (req, socket, head) => {
     }
   }
 
+  if (url.pathname.startsWith('/ws/terminal/')) {
+    // Extract paneId (URL decode %250 → %0)
+    const paneId = decodeURIComponent(url.pathname.split('/ws/terminal/')[1]);
+
+    // Parse optional cols/rows from query string
+    const cols = Number(url.searchParams.get('cols')) || 80;
+    const rows = Number(url.searchParams.get('rows')) || 24;
+
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      terminalManager.create(ws, paneId, cols, rows);
+    });
+    return;
+  }
+
+  // Default: emit generic connection event (for /ws/status in Task 5, etc.)
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit('connection', ws, req);
   });
@@ -107,6 +129,9 @@ server.on('upgrade', (req, socket, head) => {
 
 function shutdown(signal) {
   console.log(`\n${signal} received — shutting down...`);
+
+  // Destroy all terminal PTY connections
+  terminalManager.destroyAll();
 
   // Close all WebSocket connections
   for (const client of wss.clients) {
@@ -144,4 +169,4 @@ server.listen(config.port, config.host, () => {
 });
 
 // Export for testing
-export { app, server, wss, config };
+export { app, server, wss, config, terminalManager };
