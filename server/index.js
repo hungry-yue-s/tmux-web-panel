@@ -4,6 +4,10 @@ import { dirname, join } from 'node:path';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import { httpAuth, wsAuth } from './auth.js';
+import * as tmux from './tmux.js';
+import sessionsRouter from './api/sessions.js';
+import windowsRouter from './api/windows.js';
+import { nestedPanesRouter, flatPanesRouter } from './api/panes.js';
 
 // --- CLI Argument Parsing ---
 
@@ -46,13 +50,36 @@ if (config.auth) {
   app.use(httpAuth(user, pass));
 }
 
+// Parse JSON request bodies
+app.use(express.json());
+
 // Serve static files from public/
 app.use(express.static(join(__dirname, '..', 'public')));
 
-// Placeholder API route
-app.get('/api/status', (_req, res) => {
-  res.json({ success: true, data: { status: 'ok' } });
+// API status route
+app.get('/api/status', async (_req, res) => {
+  try {
+    const sessions = await tmux.listSessions();
+    const totalWindows = sessions.reduce((sum, s) => sum + s.windows, 0);
+    res.json({
+      success: true,
+      data: { sessions: sessions.length, windows: totalWindows },
+      error: null,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      data: null,
+      error: err.message,
+    });
+  }
 });
+
+// Mount API routes
+app.use('/api/sessions', sessionsRouter);
+app.use('/api/sessions/:name/windows', windowsRouter);
+app.use('/api/sessions/:name/windows/:index/panes', nestedPanesRouter);
+app.use('/api/panes', flatPanesRouter);
 
 // --- HTTP + WebSocket Server ---
 
