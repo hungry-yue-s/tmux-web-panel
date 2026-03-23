@@ -1,0 +1,22 @@
+{
+  "name": "tmux-web-panel",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "vitest run",
+    "dev": "node server/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "express": "^5.2.1",
+    "node-pty": "^1.1.0",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.0"
+  }
+}
