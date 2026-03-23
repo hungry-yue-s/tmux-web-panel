@@ -686,6 +686,136 @@ body {
   color: var(--bg-primary);
 }
 
+/* === Terminal View === */
+
+.terminal-view {
+  display: flex;
+  flex-direction: column;
+  /* Fill the #content area minus its padding */
+  height: calc(100vh - 48px - 32px);
+  max-height: calc(100vh - 48px - 32px);
+  overflow: hidden;
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.terminal-header-title {
+  flex: 1;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.terminal-header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.terminal-header-actions .btn {
+  padding: 4px 10px;
+  min-height: 32px;
+  font-size: 1rem;
+}
+
+.terminal-pane-switcher {
+  flex-shrink: 0;
+  margin-bottom: 8px;
+}
+
+.terminal-container {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #1a1b26;
+}
+
+.terminal-container .xterm {
+  height: 100%;
+  padding: 4px;
+}
+
+.terminal-send-bar {
+  display: flex;
+  gap: 8px;
+  padding-top: 8px;
+  flex-shrink: 0;
+}
+
+.terminal-send-input {
+  flex: 1;
+}
+
+.terminal-send-btn {
+  flex-shrink: 0;
+}
+
+.terminal-exit-fullscreen-btn {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 10001;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  padding: 4px 12px;
+  min-height: 32px;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.terminal-exit-fullscreen-btn:hover {
+  opacity: 1;
+}
+
+/* Fullscreen mode */
+body.terminal-fullscreen #topbar,
+body.terminal-fullscreen #tab-bar,
+body.terminal-fullscreen #sidebar {
+  display: none !important;
+}
+
+body.terminal-fullscreen #main-layout {
+  height: 100vh !important;
+}
+
+body.terminal-fullscreen #content {
+  padding: 0;
+}
+
+body.terminal-fullscreen .terminal-header,
+body.terminal-fullscreen .terminal-pane-switcher,
+body.terminal-fullscreen .terminal-send-bar {
+  display: none;
+}
+
+body.terminal-fullscreen .terminal-view {
+  height: 100vh;
+}
+
+body.terminal-fullscreen .terminal-container {
+  border: none;
+  border-radius: 0;
+}
+
+body.terminal-fullscreen .terminal-exit-fullscreen-btn {
+  display: block !important;
+}
+
 /* === Responsive === */
 
 @media (max-width: 767px) {
@@ -708,6 +838,16 @@ body {
   .btn {
     min-height: 44px;
     padding: 8px 16px;
+  }
+
+  .terminal-view {
+    /* topbar 48px + tab-bar 56px + content padding 24px */
+    height: calc(100vh - 48px - 56px - 24px);
+    max-height: calc(100vh - 48px - 56px - 24px);
+  }
+
+  .terminal-header-actions .btn {
+    min-height: 36px;
   }
 }
 

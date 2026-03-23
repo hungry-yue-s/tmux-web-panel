@@ -62,6 +62,14 @@ var state = {
 
 function navigate(tab, params) {
   var newParams = params || {};
+
+  // Cleanup terminal when navigating away from terminal tab
+  if (state.currentTab === 'terminal' && tab !== 'terminal') {
+    if (typeof cleanupTerminal === 'function') {
+      cleanupTerminal();
+    }
+  }
+
   state.currentTab = tab;
   Object.assign(state, newParams);
   render();
@@ -109,13 +117,7 @@ function render() {
 // renderSessions is defined in sessions.js
 // renderWindows is defined in windows.js
 
-function renderTerminal(container) {
-  container.innerHTML =
-    '<div style="padding: 24px; text-align: center; color: var(--text-muted);">' +
-    '<p style="font-size: 1.2rem; margin-bottom: 8px;">Terminal</p>' +
-    '<p>Coming soon</p>' +
-    '</div>';
-}
+// renderTerminal is defined in terminal.js
 
 function renderMore(container) {
   container.innerHTML =
