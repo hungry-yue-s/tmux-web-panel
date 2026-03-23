@@ -120,11 +120,93 @@ function render() {
 // renderTerminal is defined in terminal.js
 
 function renderMore(container) {
-  container.innerHTML =
-    '<div style="padding: 24px; text-align: center; color: var(--text-muted);">' +
-    '<p style="font-size: 1.2rem; margin-bottom: 8px;">More</p>' +
-    '<p>Coming soon</p>' +
-    '</div>';
+  var isConnected = statusSocket.connected;
+  var lastStatus = statusSocket.getLastStatus();
+  var sessionCount = lastStatus ? lastStatus.sessionCount : 0;
+  var windowCount = lastStatus ? lastStatus.windowCount : 0;
+  var hasSession = state.currentSession !== null;
+
+  var html = '<div class="more-view">';
+
+  // Quick Actions
+  html += '<div class="more-section">';
+  html += '<div class="more-section-title">Quick Actions</div>';
+  html += '<div class="more-actions">';
+  html += '<button class="btn btn-primary more-action-btn" id="more-new-session">';
+  html += '&#x2795; New Session</button>';
+  html += '<button class="btn more-action-btn' + (hasSession ? '' : ' more-btn-disabled') + '" id="more-new-window"';
+  html += hasSession ? '' : ' disabled';
+  html += '>&#x2795; New Window</button>';
+  html += '</div>';
+  html += '</div>';
+
+  // Server Status
+  html += '<div class="more-section">';
+  html += '<div class="more-section-title">Server Status</div>';
+  html += '<div class="card more-status-card">';
+  html += '<div class="more-status-row">';
+  html += '<span class="more-status-dot ' + (isConnected ? 'more-dot-green' : 'more-dot-red') + '"></span>';
+  html += '<span>' + (isConnected ? 'Connected' : 'Disconnected') + '</span>';
+  html += '</div>';
+  html += '<div class="more-status-row">';
+  html += '<span class="more-status-label">Sessions</span>';
+  html += '<span class="more-status-value">' + sessionCount + '</span>';
+  html += '</div>';
+  html += '<div class="more-status-row">';
+  html += '<span class="more-status-label">Windows</span>';
+  html += '<span class="more-status-value">' + windowCount + '</span>';
+  html += '</div>';
+  html += '<div class="more-status-row">';
+  html += '<span class="more-status-label">Host</span>';
+  html += '<span class="more-status-value">' + escapeHtml(location.host) + '</span>';
+  html += '</div>';
+  html += '</div>';
+  html += '</div>';
+
+  // About
+  html += '<div class="more-section">';
+  html += '<div class="more-section-title">About</div>';
+  html += '<div class="card more-about-card">';
+  html += '<div class="more-about-name">Tmux Web Panel v1.0.0</div>';
+  html += '<div class="more-about-desc">A mobile-friendly web UI for tmux session management.</div>';
+  html += '<a class="more-about-link" href="https://github.com" target="_blank" rel="noopener">GitHub &rarr;</a>';
+  html += '</div>';
+  html += '</div>';
+
+  html += '</div>';
+  container.innerHTML = html;
+
+  // Attach event handlers
+  var newSessionBtn = document.getElementById('more-new-session');
+  if (newSessionBtn) {
+    newSessionBtn.addEventListener('click', function () {
+      var name = prompt('Session name (leave empty for default):');
+      if (name === null) return;
+      var body = {};
+      if (name.trim()) {
+        body.name = name.trim();
+      }
+      api.post('/api/sessions', body)
+        .then(function () { navigate('sessions'); })
+        .catch(function (err) { alert('Failed to create session: ' + err.message); });
+    });
+  }
+
+  var newWindowBtn = document.getElementById('more-new-window');
+  if (newWindowBtn && hasSession) {
+    newWindowBtn.addEventListener('click', function () {
+      api.post('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows', {})
+        .then(function () { navigate('windows', { currentSession: state.currentSession }); })
+        .catch(function (err) { alert('Failed to create window: ' + err.message); });
+    });
+  }
+
+  // Update More page when status changes
+  statusSocket.onStatusChange = function () {
+    if (state.currentTab === 'more') {
+      renderMore(container);
+    }
+  };
 }
 
 // === Sidebar ===
@@ -187,6 +269,9 @@ class StatusSocket {
     this._reconnectDelay = 1000;
     this._maxReconnectDelay = 30000;
     this._currentDelay = this._reconnectDelay;
+    this.connected = false;
+    this.onStatusChange = null;
+    this._lastStatus = null;
   }
 
   connect() {
@@ -198,10 +283,14 @@ class StatusSocket {
 
     this._ws.onopen = function () {
       self._currentDelay = self._reconnectDelay;
+      self.connected = true;
       var statusEl = document.getElementById('status-info');
       if (statusEl) {
         statusEl.textContent = 'Connected';
         statusEl.style.color = 'var(--accent-green)';
+      }
+      if (typeof self.onStatusChange === 'function') {
+        self.onStatusChange();
       }
     };
 
@@ -215,10 +304,14 @@ class StatusSocket {
     };
 
     this._ws.onclose = function () {
+      self.connected = false;
       var statusEl = document.getElementById('status-info');
       if (statusEl) {
         statusEl.textContent = 'Disconnected — reconnecting...';
         statusEl.style.color = 'var(--accent-yellow)';
+      }
+      if (typeof self.onStatusChange === 'function') {
+        self.onStatusChange();
       }
       self._scheduleReconnect();
     };
@@ -237,15 +330,29 @@ class StatusSocket {
       state.sessions = data.sessions;
       updateSidebar();
 
+      var sessionCount = Array.isArray(data.sessions) ? data.sessions.length : 0;
+      var windowCount = Array.isArray(data.sessions)
+        ? data.sessions.reduce(function (sum, s) { return sum + (s.windows || 0); }, 0)
+        : 0;
+
+      this._lastStatus = {
+        sessionCount: sessionCount,
+        windowCount: windowCount,
+      };
+
       if (statusEl) {
-        var sessionCount = Array.isArray(data.sessions) ? data.sessions.length : 0;
-        var windowCount = Array.isArray(data.sessions)
-          ? data.sessions.reduce(function (sum, s) { return sum + (s.windows || 0); }, 0)
-          : 0;
         statusEl.textContent = sessionCount + ' sessions, ' + windowCount + ' windows';
         statusEl.style.color = 'var(--accent-green)';
       }
+
+      if (typeof this.onStatusChange === 'function') {
+        this.onStatusChange();
+      }
     }
+  }
+
+  getLastStatus() {
+    return this._lastStatus;
   }
 
   _scheduleReconnect() {

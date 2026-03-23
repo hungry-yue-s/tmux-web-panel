@@ -816,6 +816,127 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   display: block !important;
 }
 
+/* === More View === */
+
+.more-view {
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.more-section {
+  margin-bottom: 24px;
+}
+
+.more-section-title {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.more-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.more-action-btn {
+  flex: 1;
+  min-width: 140px;
+  min-height: 44px;
+  font-size: 0.9rem;
+}
+
+.more-btn-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.more-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.more-status-card:hover {
+  background: var(--bg-card);
+  border-color: var(--border);
+}
+
+.more-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.more-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.more-dot-green {
+  background: var(--accent-green);
+  box-shadow: 0 0 6px var(--accent-green);
+}
+
+.more-dot-red {
+  background: var(--accent-red);
+  box-shadow: 0 0 6px var(--accent-red);
+}
+
+.more-status-label {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.more-status-value {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+  text-align: right;
+}
+
+.more-about-card {
+  text-align: center;
+}
+
+.more-about-card:hover {
+  background: var(--bg-card);
+  border-color: var(--border);
+}
+
+.more-about-name {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--accent-blue);
+  margin-bottom: 6px;
+}
+
+.more-about-desc {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.more-about-link {
+  color: var(--accent-blue);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.more-about-link:hover {
+  text-decoration: underline;
+}
+
 /* === Responsive === */
 
 @media (max-width: 767px) {
@@ -833,13 +954,40 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 
   #content {
     padding: 12px;
+    -webkit-overflow-scrolling: touch;
   }
 
+  /* Touch targets: ensure all interactive elements >= 44px */
   .btn {
     min-height: 44px;
     padding: 8px 16px;
   }
 
+  .sidebar-item {
+    min-height: 44px;
+  }
+
+  .context-menu-item {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+
+  .pane-pill {
+    min-height: 44px;
+    padding: 8px 14px;
+  }
+
+  /* Tab bar: readable text on small screens */
+  #tab-bar .tab {
+    font-size: 1.3rem;
+  }
+
+  #tab-bar .tab span {
+    font-size: 0.6rem;
+  }
+
+  /* Terminal: fill available height between header and bars */
   .terminal-view {
     /* topbar 48px + tab-bar 56px + content padding 24px */
     height: calc(100vh - 48px - 56px - 24px);
@@ -848,6 +996,42 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 
   .terminal-header-actions .btn {
     min-height: 36px;
+  }
+
+  /* Cards: prevent text overflow on narrow screens */
+  .session-card-name,
+  .window-card-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  .card {
+    overflow: hidden;
+  }
+
+  /* Search input: full width with proper padding */
+  .search-input,
+  .input {
+    width: 100%;
+    padding: 10px 12px;
+    /* 16px minimum prevents iOS zoom on focus */
+    font-size: 16px;
+  }
+
+  /* Terminal send bar input */
+  .terminal-send-input {
+    font-size: 16px;
+  }
+
+  /* More view adjustments */
+  .more-actions {
+    flex-direction: column;
+  }
+
+  .more-action-btn {
+    width: 100%;
   }
 }
 
@@ -859,4 +1043,10 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   #tab-bar {
     display: none;
   }
+}
+
+/* Sidebar scrolling for long lists (all breakpoints) */
+#sidebar {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
