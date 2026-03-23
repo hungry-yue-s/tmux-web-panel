@@ -1,0 +1,371 @@
+/* === Tokyo Night Dark Theme === */
+
+:root {
+  --bg-primary: #1a1b26;
+  --bg-deep: #16161e;
+  --bg-card: #24283b;
+  --bg-hover: #292e42;
+  --border: #3b4261;
+  --text-primary: #c0caf5;
+  --text-secondary: #a9b1d6;
+  --text-muted: #565f89;
+  --accent-blue: #7aa2f7;
+  --accent-green: #9ece6a;
+  --accent-red: #f7768e;
+  --accent-yellow: #e0af68;
+  --accent-purple: #bb9af7;
+}
+
+/* === Base Reset === */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+    Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  overflow: hidden;
+  line-height: 1.5;
+}
+
+/* === Layout === */
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 48px;
+  min-height: 48px;
+  padding: 0 16px;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border);
+  z-index: 10;
+}
+
+#topbar .logo {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--accent-blue);
+  white-space: nowrap;
+}
+
+#status-info {
+  flex: 1;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#main-layout {
+  display: flex;
+  flex: 1;
+  height: calc(100vh - 48px);
+  overflow: hidden;
+}
+
+#sidebar {
+  width: 260px;
+  min-width: 260px;
+  background: var(--bg-deep);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 12px 0;
+}
+
+#content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+/* === Tab Bar === */
+
+#tab-bar {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  background: var(--bg-deep);
+  border-top: 1px solid var(--border);
+  z-index: 20;
+}
+
+#tab-bar .tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 44px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.2rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.15s;
+}
+
+#tab-bar .tab span {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+#tab-bar .tab.active {
+  color: var(--accent-blue);
+}
+
+#tab-bar .tab:hover {
+  color: var(--text-primary);
+}
+
+/* === Buttons === */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  min-height: 36px;
+  -webkit-tap-highlight-color: transparent;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
+}
+
+.btn-primary {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: var(--bg-deep);
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  background: #6b93e0;
+  border-color: #6b93e0;
+}
+
+.btn-danger {
+  background: var(--accent-red);
+  border-color: var(--accent-red);
+  color: var(--bg-deep);
+  font-weight: 600;
+}
+
+.btn-danger:hover {
+  background: #e0657a;
+  border-color: #e0657a;
+}
+
+/* === Card === */
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.card:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
+}
+
+/* === Badge === */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.badge-green {
+  background: rgba(158, 206, 106, 0.15);
+  color: var(--accent-green);
+}
+
+.badge-yellow {
+  background: rgba(224, 175, 104, 0.15);
+  color: var(--accent-yellow);
+}
+
+.badge-blue {
+  background: rgba(122, 162, 247, 0.15);
+  color: var(--accent-blue);
+}
+
+.badge-red {
+  background: rgba(247, 118, 142, 0.15);
+  color: var(--accent-red);
+}
+
+.badge-purple {
+  background: rgba(187, 154, 247, 0.15);
+  color: var(--accent-purple);
+}
+
+/* === Tag === */
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+/* === Input === */
+
+.input {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.15s;
+  width: 100%;
+}
+
+.input:focus {
+  border-color: var(--accent-blue);
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+}
+
+/* === Sidebar Tree === */
+
+.sidebar-section {
+  padding: 8px 16px;
+}
+
+.sidebar-section-title {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.1s;
+}
+
+.sidebar-item:hover {
+  background: var(--bg-hover);
+}
+
+.sidebar-item.active {
+  background: var(--bg-card);
+  color: var(--accent-blue);
+}
+
+/* === Scrollbar === */
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* === Responsive === */
+
+@media (max-width: 767px) {
+  #sidebar {
+    display: none;
+  }
+
+  #tab-bar {
+    display: flex;
+  }
+
+  #main-layout {
+    height: calc(100vh - 48px - 56px);
+  }
+
+  #content {
+    padding: 12px;
+  }
+
+  .btn {
+    min-height: 44px;
+    padding: 8px 16px;
+  }
+}
+
+@media (min-width: 768px) {
+  #sidebar {
+    display: block;
+  }
+
+  #tab-bar {
+    display: none;
+  }
+}
