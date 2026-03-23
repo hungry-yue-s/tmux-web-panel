@@ -1058,8 +1058,51 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
     max-height: calc(100vh - 48px - 56px - 24px);
   }
 
+  .terminal-header {
+    padding-bottom: 4px;
+    margin-bottom: 2px;
+    gap: 4px;
+  }
+
+  .terminal-header-title {
+    font-size: 0.8rem;
+  }
+
   .terminal-header-actions .btn {
-    min-height: 36px;
+    min-height: 28px;
+    padding: 2px 6px;
+    font-size: 0.85rem;
+  }
+
+  .terminal-pane-switcher {
+    margin-bottom: 2px;
+  }
+
+  .pane-nav-bar {
+    gap: 4px;
+    padding: 2px 0;
+  }
+
+  .pane-nav-arrow {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    font-size: 1.1rem;
+  }
+
+  .pane-nav-indicator {
+    display: none;
+  }
+
+  .pane-pill {
+    min-height: 32px;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+  }
+
+  .terminal-send-bar {
+    padding-top: 4px;
+    gap: 4px;
   }
 
   /* Cards: prevent text overflow on narrow screens */

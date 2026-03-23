@@ -48,10 +48,15 @@ export class TerminalManager {
 
     const connectionId = randomUUID();
 
-    // Spawn PTY: attach to the session containing this pane,
-    // switch to the window/pane, then select it.
-    // We use a shell wrapper to: select-pane first, then attach.
-    const shellCmd = `tmux select-pane -t '${paneId}' 2>/dev/null; exec tmux attach-session -t '${paneId}'`;
+    // Spawn PTY: zoom the target pane so only it is visible, then attach.
+    // On disconnect (attach exits), restore zoom state if we changed it.
+    const shellCmd = [
+      `tmux select-pane -t '${paneId}' 2>/dev/null`,
+      `_WZ=$(tmux display-message -p -t '${paneId}' '#{window_zoomed_flag}' 2>/dev/null)`,
+      `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
+      `tmux attach-session -t '${paneId}'`,
+      `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
+    ].join('; ');
     const term = pty.spawn('sh', ['-c', shellCmd], {
       name: 'xterm-256color',
       cols: cols || 80,

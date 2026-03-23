@@ -71,34 +71,14 @@ document.addEventListener('keydown', function (e) {
 // === Pane Switching ===
 
 function switchPane(newPaneId) {
-  var oldPane = state.currentPane;
+  if (newPaneId === state.currentPane) return;
   state.currentPane = newPaneId;
 
-  if (oldPane && terminalState.ws && terminalState.ws.readyState === WebSocket.OPEN) {
-    // Send select-pane command via API to switch focus within the same tmux window
-    api.post('/api/panes/' + encodeURIComponent(newPaneId) + '/send', { command: '' })
-      .catch(function () {});
-    // Use tmux select-pane to switch focus
-    fetch('/api/panes/' + encodeURIComponent(newPaneId) + '/select', { method: 'POST' })
-      .catch(function () {});
-
-    // Update pills/layout UI without reconnecting terminal
-    var paneSwitcher = document.querySelector('.terminal-pane-switcher');
-    if (paneSwitcher && state.panes) {
-      var isMobile = window.innerWidth < 768;
-      if (isMobile) {
-        renderPaneNavBar(paneSwitcher, state.panes, newPaneId, switchPane);
-      } else {
-        renderPaneLayout(paneSwitcher, state.panes, newPaneId, switchPane);
-      }
-    }
-  } else {
-    // No active terminal, do full reconnect
-    var content = document.getElementById('content');
-    if (content) {
-      cleanupTerminal();
-      renderTerminal(content);
-    }
+  // Always do full reconnect so the new pane gets zoomed
+  var content = document.getElementById('content');
+  if (content) {
+    cleanupTerminal();
+    renderTerminal(content);
   }
 }
 
