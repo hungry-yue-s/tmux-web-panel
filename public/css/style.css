@@ -602,6 +602,90 @@ body {
   border: 1px solid var(--bg-primary);
 }
 
+/* === Pane Layout === */
+
+.pane-layout {
+  position: relative;
+  background: var(--bg-deep);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  min-height: 80px;
+  max-height: 200px;
+}
+
+.pane-box {
+  position: absolute;
+  background: var(--bg-card);
+  border: 2px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.2s, background 0.2s;
+  overflow: hidden;
+  gap: 2px;
+}
+
+.pane-box.active {
+  border-color: var(--accent-blue);
+}
+
+.pane-box:hover {
+  background: var(--bg-hover);
+}
+
+.pane-box-index {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.pane-box-cmd {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-pills {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 0;
+}
+
+.pane-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pane-pill:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
+}
+
+.pane-pill.active {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: var(--bg-primary);
+}
+
 /* === Responsive === */
 
 @media (max-width: 767px) {
