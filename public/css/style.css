@@ -476,6 +476,132 @@ body {
   color: var(--accent-red);
 }
 
+/* === Windows View === */
+
+.windows-view {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.windows-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.windows-back-btn {
+  font-weight: 600;
+}
+
+.windows-search {
+  margin-bottom: 12px;
+}
+
+.search-input {
+  width: 100%;
+}
+
+.windows-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 48px 24px;
+  color: var(--text-muted);
+  gap: 12px;
+}
+
+.windows-empty {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--text-secondary);
+}
+
+.windows-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Window card */
+.window-card {
+  position: relative;
+  z-index: 1;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.window-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.window-card-name {
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.window-card-meta {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+/* Command badge */
+.command-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: lowercase;
+  letter-spacing: 0.3px;
+}
+
+.command-badge-green {
+  background: rgba(158, 206, 106, 0.15);
+  color: var(--accent-green);
+}
+
+.command-badge-yellow {
+  background: rgba(224, 175, 104, 0.15);
+  color: var(--accent-yellow);
+}
+
+.command-badge-blue {
+  background: rgba(122, 162, 247, 0.15);
+  color: var(--accent-blue);
+}
+
+.command-badge-gray {
+  background: rgba(86, 95, 137, 0.15);
+  color: var(--text-muted);
+}
+
+/* Pane thumbnail */
+.pane-thumbnail {
+  position: relative;
+  height: 60px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+}
+
+.pane-thumb-cell {
+  position: absolute;
+  border-radius: 3px;
+  opacity: 0.25;
+  /* 1px gap between cells */
+  box-sizing: border-box;
+  border: 1px solid var(--bg-primary);
+}
+
 /* === Responsive === */
 
 @media (max-width: 767px) {
