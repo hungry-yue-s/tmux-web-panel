@@ -58,6 +58,30 @@ var state = {
   panes: [],
 };
 
+// Restore navigation state from sessionStorage
+(function restoreState() {
+  try {
+    var saved = sessionStorage.getItem('tmux_nav_state');
+    if (!saved) return;
+    var s = JSON.parse(saved);
+    if (s.currentTab) state.currentTab = s.currentTab;
+    if (s.currentSession) state.currentSession = s.currentSession;
+    if (s.currentWindow != null) state.currentWindow = s.currentWindow;
+    if (s.currentPane) state.currentPane = s.currentPane;
+  } catch (_e) { /* ignore */ }
+})();
+
+function saveNavState() {
+  try {
+    sessionStorage.setItem('tmux_nav_state', JSON.stringify({
+      currentTab: state.currentTab,
+      currentSession: state.currentSession,
+      currentWindow: state.currentWindow,
+      currentPane: state.currentPane,
+    }));
+  } catch (_e) { /* ignore */ }
+}
+
 // === Router (hash-based) ===
 
 function navigate(tab, params) {
@@ -72,6 +96,7 @@ function navigate(tab, params) {
 
   state.currentTab = tab;
   Object.assign(state, newParams);
+  saveNavState();
   render();
   updateTabBar();
   updateSidebar();
@@ -416,6 +441,7 @@ function init() {
   initNewSessionButton();
   statusSocket.connect();
   render();
+  updateTabBar();
   updateSidebar();
 }
 

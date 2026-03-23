@@ -13,7 +13,13 @@ var terminalState = {
 // === Cleanup ===
 
 function cleanupTerminal() {
+  document.body.classList.remove('terminal-active');
   terminalState.termContainer = null;
+  if (terminalState._vpHandler && window.visualViewport) {
+    window.visualViewport.removeEventListener('resize', terminalState._vpHandler);
+    window.visualViewport.removeEventListener('scroll', terminalState._vpHandler);
+    terminalState._vpHandler = null;
+  }
   if (terminalState.resizeObserver) {
     terminalState.resizeObserver.disconnect();
     terminalState.resizeObserver = null;
@@ -232,11 +238,15 @@ function renderTerminal(container) {
     return;
   }
 
+  // Mark body for mobile terminal layout
+  document.body.classList.add('terminal-active');
+
   // Build the terminal view structure
   container.innerHTML =
     '<div class="terminal-view">' +
     '<div class="terminal-header">' +
-    '<button class="btn terminal-back-btn">&larr; Back</button>' +
+    '<button class="btn terminal-back-btn">&larr;</button>' +
+    '<div class="terminal-header-pills"></div>' +
     '<span class="terminal-header-title"></span>' +
     '<div class="terminal-header-actions">' +
     '<button class="btn terminal-split-btn" title="Split pane">&#8862;</button>' +
@@ -246,10 +256,6 @@ function renderTerminal(container) {
     '</div>' +
     '<div class="terminal-pane-switcher"></div>' +
     '<div class="terminal-container"></div>' +
-    '<div class="terminal-send-bar">' +
-    '<input class="input terminal-send-input" type="text" placeholder="Send command...">' +
-    '<button class="btn btn-primary terminal-send-btn">Send</button>' +
-    '</div>' +
     '<button class="btn terminal-exit-fullscreen-btn" title="Exit fullscreen" style="display:none;">&times; Exit</button>' +
     '</div>';
 
@@ -257,8 +263,6 @@ function renderTerminal(container) {
   var titleEl = view.querySelector('.terminal-header-title');
   var paneSwitcher = view.querySelector('.terminal-pane-switcher');
   var termContainer = view.querySelector('.terminal-container');
-  var sendInput = view.querySelector('.terminal-send-input');
-  var sendBtn = view.querySelector('.terminal-send-btn');
   var exitFsBtn = view.querySelector('.terminal-exit-fullscreen-btn');
 
   // Set title
@@ -270,28 +274,54 @@ function renderTerminal(container) {
     navigate('windows', { currentSession: state.currentSession });
   });
 
-  // Split button
-  view.querySelector('.terminal-split-btn').addEventListener('click', function () {
-    var direction = prompt('Split direction (horizontal / vertical):');
-    if (!direction) return;
-    direction = direction.trim().toLowerCase();
-    if (direction !== 'horizontal' && direction !== 'vertical') {
-      alert('Please enter "horizontal" or "vertical".');
-      return;
+  // Split button — show popup with horizontal/vertical options
+  view.querySelector('.terminal-split-btn').addEventListener('click', function (e) {
+    // Remove existing popup if any
+    var existing = view.querySelector('.split-popup');
+    if (existing) { existing.remove(); return; }
+
+    var popup = document.createElement('div');
+    popup.className = 'split-popup';
+    popup.innerHTML =
+      '<button class="btn split-popup-btn" data-dir="horizontal">&#x2194; 水平分割</button>' +
+      '<button class="btn split-popup-btn" data-dir="vertical">&#x2195; 垂直分割</button>';
+
+    // Position below the split button
+    var btn = e.currentTarget;
+    btn.parentElement.appendChild(popup);
+
+    function doSplit(direction) {
+      popup.remove();
+      api
+        .post(
+          '/api/sessions/' + encodeURIComponent(state.currentSession) +
+          '/windows/' + encodeURIComponent(state.currentWindow) + '/panes',
+          { paneId: state.currentPane, direction: direction }
+        )
+        .then(function () {
+          renderTerminal(container);
+        })
+        .catch(function (err) {
+          alert('Failed to split pane: ' + err.message);
+        });
     }
-    api
-      .post(
-        '/api/sessions/' + encodeURIComponent(state.currentSession) +
-        '/windows/' + encodeURIComponent(state.currentWindow) + '/panes',
-        { direction: direction }
-      )
-      .then(function () {
-        // Reload panes and re-render
-        renderTerminal(container);
-      })
-      .catch(function (err) {
-        alert('Failed to split pane: ' + err.message);
+
+    popup.querySelectorAll('.split-popup-btn').forEach(function (b) {
+      b.addEventListener('click', function () {
+        doSplit(b.getAttribute('data-dir'));
       });
+    });
+
+    // Close popup on outside click
+    function closePopup(ev) {
+      if (!popup.contains(ev.target) && ev.target !== btn) {
+        popup.remove();
+        document.removeEventListener('click', closePopup, true);
+      }
+    }
+    setTimeout(function () {
+      document.addEventListener('click', closePopup, true);
+    }, 0);
   });
 
   // Pop-out button
@@ -322,29 +352,6 @@ function renderTerminal(container) {
     }
   });
 
-  // Send command bar
-  function sendCommand() {
-    var command = sendInput.value;
-    if (!command || !state.currentPane) return;
-
-    api
-      .post('/api/panes/' + encodeURIComponent(state.currentPane) + '/send', { command: command })
-      .then(function () {
-        sendInput.value = '';
-      })
-      .catch(function (err) {
-        alert('Failed to send command: ' + err.message);
-      });
-  }
-
-  sendBtn.addEventListener('click', sendCommand);
-  sendInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      sendCommand();
-    }
-  });
-
   // Fetch panes and set up terminal
   api
     .get(
@@ -363,7 +370,11 @@ function renderTerminal(container) {
       // Render pane switcher
       var isMobile = window.innerWidth < 768;
       if (isMobile) {
-        renderPaneNavBar(paneSwitcher, panes, state.currentPane, switchPane);
+        // Mobile: render pills inline in header row
+        var headerPills = view.querySelector('.terminal-header-pills');
+        if (panes.length > 1) {
+          renderPanePills(headerPills, panes, state.currentPane, switchPane);
+        }
       } else {
         renderPaneLayout(paneSwitcher, panes, state.currentPane, switchPane);
       }
@@ -472,9 +483,35 @@ function _mountTerminal(termContainer) {
   });
   resizeObserver.observe(termContainer);
 
+  // Handle mobile virtual keyboard: CSS 100vh doesn't shrink when keyboard
+  // opens, so use visualViewport API to dynamically resize terminal-view.
+  var vpHandler = null;
+  if (window.visualViewport && window.innerWidth < 768) {
+    vpHandler = function () {
+      var view = termContainer.closest('.terminal-view');
+      if (!view) return;
+      var vvHeight = window.visualViewport.height;
+      var viewTop = view.getBoundingClientRect().top;
+      var available = vvHeight - viewTop;
+      if (available > 0) {
+        view.style.height = available + 'px';
+        view.style.maxHeight = available + 'px';
+      }
+      fitAddon.fit();
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
+    };
+    window.visualViewport.addEventListener('resize', vpHandler);
+    window.visualViewport.addEventListener('scroll', vpHandler);
+    // Run once on mount to fix 100vh inaccuracy on mobile browsers
+    setTimeout(vpHandler, 100);
+  }
+
   // Store references for cleanup
   terminalState.term = term;
   terminalState.ws = ws;
   terminalState.fitAddon = fitAddon;
   terminalState.resizeObserver = resizeObserver;
+  terminalState._vpHandler = vpHandler;
 }

@@ -1,4 +1,4 @@
-/* global escapeHtml */
+/* global escapeHtml, api, state, renderTerminal */
 
 // === Pane Layout Visualization ===
 
@@ -70,6 +70,9 @@ function renderPaneLayout(container, panes, activePaneId, onPaneClick) {
       }
     });
 
+    // Long-press to close pane
+    _bindLongPressClose(box, p.id, panes.length);
+
     layout.appendChild(box);
   });
 
@@ -99,8 +102,67 @@ function renderPanePills(container, panes, activePaneId, onPaneClick) {
       }
     });
 
+    // Long-press to close pane
+    _bindLongPressClose(pill, p.id, panes.length);
+
     row.appendChild(pill);
   });
 
   container.appendChild(row);
+}
+
+// Long-press (500ms) on a pane element to close it.
+// Only works when there are 2+ panes (can't close the last one).
+function _bindLongPressClose(el, paneId, paneCount) {
+  if (paneCount <= 1) return; // don't allow closing the only pane
+
+  var timer = null;
+  var fired = false;
+
+  function start(e) {
+    fired = false;
+    timer = setTimeout(function () {
+      fired = true;
+      _confirmClosePane(paneId);
+    }, 500);
+  }
+
+  function cancel() {
+    if (timer) { clearTimeout(timer); timer = null; }
+  }
+
+  function preventClick(e) {
+    if (fired) { e.stopImmediatePropagation(); e.preventDefault(); }
+  }
+
+  el.addEventListener('mousedown', start);
+  el.addEventListener('mouseup', cancel);
+  el.addEventListener('mouseleave', cancel);
+  el.addEventListener('touchstart', start, { passive: true });
+  el.addEventListener('touchend', cancel);
+  el.addEventListener('touchmove', cancel);
+  // Prevent the normal click from firing after long-press
+  el.addEventListener('click', preventClick, true);
+}
+
+function _confirmClosePane(paneId) {
+  if (!confirm('关闭此窗格？')) return;
+
+  api
+    .delete(
+      '/api/sessions/' + encodeURIComponent(state.currentSession) +
+      '/windows/' + encodeURIComponent(state.currentWindow) +
+      '/panes/' + encodeURIComponent(paneId)
+    )
+    .then(function () {
+      // Re-render terminal view
+      var content = document.getElementById('content');
+      if (content && typeof renderTerminal === 'function') {
+        state.currentPane = null; // will pick first pane
+        renderTerminal(content);
+      }
+    })
+    .catch(function (err) {
+      alert('关闭窗格失败: ' + err.message);
+    });
 }
