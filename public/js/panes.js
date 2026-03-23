@@ -18,8 +18,10 @@ function renderPaneLayout(container, panes, activePaneId, onPaneClick) {
   var totalWidth = 0;
   var totalHeight = 0;
   panes.forEach(function (p) {
-    var right = (p.left || 0) + (p.width || 1);
-    var bottom = (p.top || 0) + (p.height || 1);
+    var pLeft = p.left != null ? p.left : (p.x || 0);
+    var pTop = p.top != null ? p.top : (p.y || 0);
+    var right = pLeft + (p.width || 1);
+    var bottom = pTop + (p.height || 1);
     if (right > totalWidth) totalWidth = right;
     if (bottom > totalHeight) totalHeight = bottom;
   });
@@ -33,8 +35,10 @@ function renderPaneLayout(container, panes, activePaneId, onPaneClick) {
 
   // 3. For each pane, create an absolute-positioned div
   panes.forEach(function (p) {
-    var leftPct = ((p.left || 0) / totalWidth * 100).toFixed(2);
-    var topPct = ((p.top || 0) / totalHeight * 100).toFixed(2);
+    var pLeft = p.left != null ? p.left : (p.x || 0);
+    var pTop = p.top != null ? p.top : (p.y || 0);
+    var leftPct = (pLeft / totalWidth * 100).toFixed(2);
+    var topPct = (pTop / totalHeight * 100).toFixed(2);
     var widthPct = ((p.width || 1) / totalWidth * 100).toFixed(2);
     var heightPct = ((p.height || 1) / totalHeight * 100).toFixed(2);
 

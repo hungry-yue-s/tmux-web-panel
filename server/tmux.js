@@ -208,6 +208,11 @@ export async function killPane(paneId) {
   await tmuxExec(['kill-pane', '-t', paneId]);
 }
 
+export async function selectPane(paneId) {
+  requireValidPaneId(paneId);
+  await tmuxExec(['select-pane', '-t', paneId]);
+}
+
 export async function sendKeys(paneId, command) {
   requireValidPaneId(paneId);
   if (typeof command !== 'string') {

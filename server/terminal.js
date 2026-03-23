@@ -48,8 +48,11 @@ export class TerminalManager {
 
     const connectionId = randomUUID();
 
-    // Spawn PTY attached to the tmux pane
-    const term = pty.spawn('tmux', ['attach-session', '-t', paneId], {
+    // Spawn PTY: attach to the session containing this pane,
+    // switch to the window/pane, then select it.
+    // We use a shell wrapper to: select-pane first, then attach.
+    const shellCmd = `tmux select-pane -t '${paneId}' 2>/dev/null; exec tmux attach-session -t '${paneId}'`;
+    const term = pty.spawn('sh', ['-c', shellCmd], {
       name: 'xterm-256color',
       cols: cols || 80,
       rows: rows || 24,

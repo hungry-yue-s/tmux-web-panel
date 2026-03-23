@@ -13,6 +13,7 @@ var terminalState = {
 // === Cleanup ===
 
 function cleanupTerminal() {
+  terminalState.termContainer = null;
   if (terminalState.resizeObserver) {
     terminalState.resizeObserver.disconnect();
     terminalState.resizeObserver = null;
@@ -70,12 +71,92 @@ document.addEventListener('keydown', function (e) {
 // === Pane Switching ===
 
 function switchPane(newPaneId) {
+  var oldPane = state.currentPane;
   state.currentPane = newPaneId;
-  var content = document.getElementById('content');
-  if (content) {
-    cleanupTerminal();
-    renderTerminal(content);
+
+  if (oldPane && terminalState.ws && terminalState.ws.readyState === WebSocket.OPEN) {
+    // Send select-pane command via API to switch focus within the same tmux window
+    api.post('/api/panes/' + encodeURIComponent(newPaneId) + '/send', { command: '' })
+      .catch(function () {});
+    // Use tmux select-pane to switch focus
+    fetch('/api/panes/' + encodeURIComponent(newPaneId) + '/select', { method: 'POST' })
+      .catch(function () {});
+
+    // Update pills/layout UI without reconnecting terminal
+    var paneSwitcher = document.querySelector('.terminal-pane-switcher');
+    if (paneSwitcher && state.panes) {
+      var isMobile = window.innerWidth < 768;
+      if (isMobile) {
+        renderPaneNavBar(paneSwitcher, state.panes, newPaneId, switchPane);
+      } else {
+        renderPaneLayout(paneSwitcher, state.panes, newPaneId, switchPane);
+      }
+    }
+  } else {
+    // No active terminal, do full reconnect
+    var content = document.getElementById('content');
+    if (content) {
+      cleanupTerminal();
+      renderTerminal(content);
+    }
   }
+}
+
+// Switch to adjacent pane by direction (-1 = prev, +1 = next)
+function switchPaneByDirection(direction) {
+  if (!state.panes || state.panes.length <= 1) return;
+  var currentIndex = -1;
+  for (var i = 0; i < state.panes.length; i++) {
+    if (state.panes[i].id === state.currentPane) { currentIndex = i; break; }
+  }
+  if (currentIndex < 0) return;
+  var newIndex = currentIndex + direction;
+  if (newIndex < 0) newIndex = state.panes.length - 1;
+  if (newIndex >= state.panes.length) newIndex = 0;
+  switchPane(state.panes[newIndex].id);
+}
+
+// === Pane Navigation Bar (with arrows) ===
+
+function renderPaneNavBar(container, panes, activePaneId, onSwitch) {
+  container.innerHTML = '';
+  if (!panes || panes.length <= 1) {
+    // Still render pills for single pane (no arrows needed)
+    renderPanePills(container, panes, activePaneId, onSwitch);
+    return;
+  }
+
+  var nav = document.createElement('div');
+  nav.className = 'pane-nav-bar';
+
+  var prevBtn = document.createElement('button');
+  prevBtn.className = 'btn pane-nav-arrow';
+  prevBtn.textContent = '‹';
+  prevBtn.addEventListener('click', function () { switchPaneByDirection(-1); });
+
+  var pillsWrap = document.createElement('div');
+  pillsWrap.className = 'pane-nav-pills';
+  renderPanePills(pillsWrap, panes, activePaneId, onSwitch);
+
+  var nextBtn = document.createElement('button');
+  nextBtn.className = 'btn pane-nav-arrow';
+  nextBtn.textContent = '›';
+  nextBtn.addEventListener('click', function () { switchPaneByDirection(1); });
+
+  // Current pane indicator
+  var currentIdx = 0;
+  for (var i = 0; i < panes.length; i++) {
+    if (panes[i].id === activePaneId) { currentIdx = i; break; }
+  }
+  var indicator = document.createElement('div');
+  indicator.className = 'pane-nav-indicator';
+  indicator.textContent = (currentIdx + 1) + ' / ' + panes.length;
+
+  nav.appendChild(prevBtn);
+  nav.appendChild(pillsWrap);
+  nav.appendChild(nextBtn);
+  container.appendChild(nav);
+  container.appendChild(indicator);
 }
 
 // === Create xterm Terminal ===
@@ -108,6 +189,8 @@ function createTerminalInstance() {
     fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
     fontSize: 14,
     cursorBlink: true,
+    scrollback: 5000,
+    overviewRulerWidth: 0,
   });
 }
 
@@ -300,7 +383,7 @@ function renderTerminal(container) {
       // Render pane switcher
       var isMobile = window.innerWidth < 768;
       if (isMobile) {
-        renderPanePills(paneSwitcher, panes, state.currentPane, switchPane);
+        renderPaneNavBar(paneSwitcher, panes, state.currentPane, switchPane);
       } else {
         renderPaneLayout(paneSwitcher, panes, state.currentPane, switchPane);
       }
@@ -340,6 +423,65 @@ function _mountTerminal(termContainer) {
 
   // Connect WebSocket
   var ws = connectTerminalWs(state.currentPane, term);
+
+  // Enable touch scrolling on mobile.
+  // xterm.js preventDefault()s all touch events on its canvas, and tmux uses
+  // the alternate screen buffer so xterm's local scrollback is empty.
+  // Solution: overlay intercepts touch gestures and sends mouse wheel escape
+  // sequences through the WebSocket so tmux handles the scrolling directly.
+  var overlay = document.createElement('div');
+  overlay.className = 'terminal-touch-overlay';
+  termContainer.appendChild(overlay);
+
+  var ts = { startY: 0, lastY: 0, moved: false, scrollAccum: 0 };
+
+  overlay.addEventListener('touchstart', function (e) {
+    if (e.touches.length === 1) {
+      ts.startY = e.touches[0].clientY;
+      ts.lastY = e.touches[0].clientY;
+      ts.moved = false;
+      ts.scrollAccum = 0;
+    }
+  });
+
+  overlay.addEventListener('touchmove', function (e) {
+    if (e.touches.length !== 1) return;
+    var y = e.touches[0].clientY;
+    var dy = ts.lastY - y;
+    ts.lastY = y;
+    ts.scrollAccum += dy;
+    ts.moved = true;
+
+    // Every 16px = 1 line scroll via mouse wheel escape sequences to tmux
+    var lines = Math.trunc(ts.scrollAccum / 16);
+    if (lines !== 0 && ws.readyState === WebSocket.OPEN) {
+      // SGR mouse wheel: button 64 = wheel up (older), 65 = wheel down (newer)
+      // Swipe up (lines > 0) = see newer content = wheel down
+      var seq = lines > 0 ? '\x1b[<65;1;1M' : '\x1b[<64;1;1M';
+      var count = Math.abs(lines);
+      var batch = '';
+      for (var j = 0; j < count; j++) { batch += seq; }
+      ws.send(JSON.stringify({ type: 'input', data: batch }));
+      ts.scrollAccum -= lines * 16;
+    }
+    e.preventDefault();
+  });
+
+  overlay.addEventListener('touchend', function (e) {
+    if (!ts.moved) {
+      // It was a tap, not a scroll — briefly hide overlay so tap reaches terminal
+      overlay.style.pointerEvents = 'none';
+      var touch = e.changedTouches[0];
+      var el = document.elementFromPoint(touch.clientX, touch.clientY);
+      if (el) {
+        el.focus();
+        el.click();
+      }
+      setTimeout(function () {
+        overlay.style.pointerEvents = '';
+      }, 300);
+    }
+  });
 
   // ResizeObserver for auto-fit
   var resizeObserver = new ResizeObserver(function () {

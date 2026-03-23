@@ -161,8 +161,10 @@ function _fetchPaneThumbnails(view, windows) {
         var maxRight = 0;
         var maxBottom = 0;
         panes.forEach(function (p) {
-          var right = (p.left || 0) + (p.width || 1);
-          var bottom = (p.top || 0) + (p.height || 1);
+          var pL = p.left != null ? p.left : (p.x || 0);
+          var pT = p.top != null ? p.top : (p.y || 0);
+          var right = pL + (p.width || 1);
+          var bottom = pT + (p.height || 1);
           if (right > maxRight) maxRight = right;
           if (bottom > maxBottom) maxBottom = bottom;
         });
@@ -172,8 +174,10 @@ function _fetchPaneThumbnails(view, windows) {
         var html = '';
         var colors = ['var(--accent-blue)', 'var(--accent-green)', 'var(--accent-purple)', 'var(--accent-yellow)', 'var(--accent-red)'];
         panes.forEach(function (p, i) {
-          var leftPct = ((p.left || 0) / maxRight * 100).toFixed(1);
-          var topPct = ((p.top || 0) / maxBottom * 100).toFixed(1);
+          var pL = p.left != null ? p.left : (p.x || 0);
+          var pT = p.top != null ? p.top : (p.y || 0);
+          var leftPct = (pL / maxRight * 100).toFixed(1);
+          var topPct = (pT / maxBottom * 100).toFixed(1);
           var widthPct = ((p.width || 1) / maxRight * 100).toFixed(1);
           var heightPct = ((p.height || 1) / maxBottom * 100).toFixed(1);
           var color = colors[i % colors.length];

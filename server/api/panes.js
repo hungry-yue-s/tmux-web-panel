@@ -108,6 +108,25 @@ flatPanesRouter.post('/:paneId/send', async (req, res) => {
   }
 });
 
+// POST /api/panes/:paneId/select — switch tmux focus to this pane
+flatPanesRouter.post('/:paneId/select', async (req, res) => {
+  try {
+    const { paneId } = req.params;
+    await tmux.selectPane(paneId);
+    res.json({
+      success: true,
+      data: { paneId },
+      error: null,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      data: null,
+      error: err.message,
+    });
+  }
+});
+
 // GET /api/panes/:paneId/capture
 flatPanesRouter.get('/:paneId/capture', async (req, res) => {
   try {

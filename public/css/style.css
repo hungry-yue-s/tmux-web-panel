@@ -686,6 +686,50 @@ body {
   color: var(--bg-primary);
 }
 
+/* === Pane Navigation Bar === */
+
+.pane-nav-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.pane-nav-arrow {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  font-weight: bold;
+  color: var(--accent-blue);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pane-nav-arrow:active {
+  background: var(--accent-blue);
+  color: var(--bg-primary);
+}
+
+.pane-nav-pills {
+  flex: 1;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.pane-nav-indicator {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  padding: 2px 0;
+}
+
 /* === Terminal View === */
 
 .terminal-view {
@@ -735,6 +779,7 @@ body {
 }
 
 .terminal-container {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -746,6 +791,25 @@ body {
 .terminal-container .xterm {
   height: 100%;
   padding: 4px;
+}
+
+.terminal-touch-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Hide overlay on desktop — mouse scroll works natively */
+@media (min-width: 768px) {
+  .terminal-touch-overlay {
+    display: none;
+  }
 }
 
 .terminal-send-bar {
