@@ -335,6 +335,147 @@ body {
   background: var(--text-muted);
 }
 
+/* === Sessions View === */
+
+.sessions-view {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.sessions-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 48px 24px;
+  color: var(--text-muted);
+  gap: 12px;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent-blue);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.sessions-empty {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--text-secondary);
+}
+
+.sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Swipe container */
+.swipe-container {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+.swipe-actions {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 8px;
+  z-index: 0;
+}
+
+.swipe-actions .btn {
+  height: 36px;
+  font-size: 0.8rem;
+}
+
+/* Session card */
+.session-card {
+  position: relative;
+  z-index: 1;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.session-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.session-card-name {
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.session-card-meta {
+  margin-bottom: 8px;
+}
+
+/* Window pills */
+.window-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.pill-more {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Context menu */
+.context-menu {
+  position: absolute;
+  z-index: 1000;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 0;
+  min-width: 140px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.context-menu-item {
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.context-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+.context-menu-item-danger {
+  color: var(--accent-red);
+}
+
 /* === Responsive === */
 
 @media (max-width: 767px) {

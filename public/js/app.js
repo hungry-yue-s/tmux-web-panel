@@ -106,13 +106,7 @@ function render() {
 
 // === Placeholder Views ===
 
-function renderSessions(container) {
-  container.innerHTML =
-    '<div style="padding: 24px; text-align: center; color: var(--text-muted);">' +
-    '<p style="font-size: 1.2rem; margin-bottom: 8px;">Sessions</p>' +
-    '<p>Loading...</p>' +
-    '</div>';
-}
+// renderSessions is defined in sessions.js
 
 function renderWindows(container) {
   container.innerHTML =
