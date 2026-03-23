@@ -6,6 +6,7 @@ import { WebSocketServer } from 'ws';
 import { httpAuth, wsAuth } from './auth.js';
 import * as tmux from './tmux.js';
 import { TerminalManager } from './terminal.js';
+import { StatusMonitor } from './monitor.js';
 import sessionsRouter from './api/sessions.js';
 import windowsRouter from './api/windows.js';
 import { nestedPanesRouter, flatPanesRouter } from './api/panes.js';
@@ -92,6 +93,8 @@ const terminalManager = new TerminalManager({
   maxConnectionsPerPane: config.maxConnections,
 });
 
+const statusMonitor = new StatusMonitor();
+
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -119,16 +122,26 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
 
-  // Default: emit generic connection event (for /ws/status in Task 5, etc.)
-  wss.handleUpgrade(req, socket, head, (ws) => {
-    wss.emit('connection', ws, req);
-  });
+  if (url.pathname === '/ws/status') {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      statusMonitor.subscribe(ws);
+      ws.on('close', () => statusMonitor.unsubscribe(ws));
+    });
+    return;
+  }
+
+  // Unknown WebSocket path — reject
+  socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+  socket.destroy();
 });
 
 // --- Graceful Shutdown ---
 
 function shutdown(signal) {
   console.log(`\n${signal} received — shutting down...`);
+
+  // Stop status monitor polling
+  statusMonitor.stop();
 
   // Destroy all terminal PTY connections
   terminalManager.destroyAll();
@@ -157,6 +170,8 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 
 // --- Start ---
 
+statusMonitor.start(config.pollInterval);
+
 server.listen(config.port, config.host, () => {
   console.log(`tmux-web-panel listening on http://${config.host}:${config.port}`);
   if (config.auth) {
@@ -169,4 +184,4 @@ server.listen(config.port, config.host, () => {
 });
 
 // Export for testing
-export { app, server, wss, config, terminalManager };
+export { app, server, wss, config, terminalManager, statusMonitor };
