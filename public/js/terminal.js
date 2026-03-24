@@ -45,11 +45,22 @@ function cleanupTerminal() {
 function enterFullscreen() {
   terminalState.isFullscreen = true;
   document.body.classList.add('terminal-fullscreen');
+  // Request browser fullscreen
+  var el = document.documentElement;
+  var rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+  if (rfs) {
+    rfs.call(el).catch(function () {});
+  }
 }
 
 function exitFullscreen() {
   terminalState.isFullscreen = false;
   document.body.classList.remove('terminal-fullscreen');
+  // Exit browser fullscreen
+  var efsDoc = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+  if (efsDoc && document.fullscreenElement) {
+    efsDoc.call(document).catch(function () {});
+  }
 }
 
 function toggleFullscreen() {
@@ -64,10 +75,13 @@ function toggleFullscreen() {
   }
 }
 
-// Escape key exits fullscreen
-document.addEventListener('keydown', function (e) {
-  if (e.key === 'Escape' && terminalState.isFullscreen) {
-    exitFullscreen();
+// Sync state when user exits browser fullscreen via Escape or browser UI
+document.addEventListener('fullscreenchange', function () {
+  if (!document.fullscreenElement && terminalState.isFullscreen) {
+    terminalState.isFullscreen = false;
+    document.body.classList.remove('terminal-fullscreen');
+    var btn = document.querySelector('.terminal-exit-fullscreen-btn');
+    if (btn) btn.style.display = 'none';
     if (terminalState.fitAddon) {
       setTimeout(function () { terminalState.fitAddon.fit(); }, 100);
     }
