@@ -435,17 +435,80 @@ function renderMore(container) {
 // Track sidebar state to avoid unnecessary rebuilds
 var _sidebarSessionKey = '';
 var _sidebarWindowsLoaded = {};
+var _windowNotifications = {};
+
+function _handleCompletedWindows(completedWindows) {
+  if (!Array.isArray(completedWindows) || completedWindows.length === 0) return;
+
+  var changed = false;
+  completedWindows.forEach(function (cw) {
+    // Skip current terminal window
+    if (
+      state.currentTab === 'terminal' &&
+      state.currentSession === cw.session &&
+      String(state.currentWindow) === String(cw.windowIndex)
+    ) {
+      return;
+    }
+
+    var key = cw.session + ':' + cw.windowIndex;
+    var existing = _windowNotifications[key];
+
+    // If already blinking, don't reset
+    if (existing && existing.phase === 'blink') return;
+
+    // Clear old timer if exists
+    if (existing && existing.timerId) {
+      clearTimeout(existing.timerId);
+    }
+
+    var timerId = setTimeout(function () {
+      var n = _windowNotifications[key];
+      if (n && n.phase === 'blink') {
+        n.phase = 'badge';
+        _updateSidebarNotifications();
+      }
+    }, 5000);
+
+    _windowNotifications[key] = { phase: 'blink', timestamp: Date.now(), timerId: timerId };
+    changed = true;
+  });
+
+  if (changed) {
+    _updateSidebarNotifications();
+  }
+}
+
+function _clearWindowNotification(session, windowIndex) {
+  var key = session + ':' + windowIndex;
+  var existing = _windowNotifications[key];
+  if (existing) {
+    if (existing.timerId) clearTimeout(existing.timerId);
+    delete _windowNotifications[key];
+  }
+}
 
 function updateSidebar() {
   var sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
 
   if (state.sessions.length === 0) {
-    sidebar.innerHTML =
-      '<div class="sidebar-section">' +
+    // Preserve sidebar header for desktop
+    var emptyHtml = '<div class="sidebar-header">';
+    emptyHtml += '<div class="sidebar-header-row">';
+    emptyHtml += '<span id="sidebar-dot" class="topbar-dot"></span>';
+    emptyHtml += '<span id="sidebar-status-info" class="sidebar-status-info"></span>';
+    emptyHtml += '<button id="sidebar-btn-add-window" class="sidebar-action-btn" title="New Window">&#43;</button>';
+    emptyHtml += '<button id="sidebar-btn-more" class="sidebar-action-btn" title="More">&#9881;</button>';
+    emptyHtml += '</div>';
+    emptyHtml += '</div>';
+    emptyHtml += '<div class="sidebar-section">' +
       '<div class="sidebar-section-title">Sessions</div>' +
       '<div style="color: var(--text-muted); font-size: 0.85rem; padding: 8px 12px;">No sessions</div>' +
       '</div>';
+    sidebar.innerHTML = emptyHtml;
+    _bindSidebarHeaderButtons(sidebar);
+    _syncSidebarHeader();
     _sidebarSessionKey = '';
     _sidebarWindowsLoaded = {};
     return;
@@ -468,7 +531,17 @@ function updateSidebar() {
 function _rebuildSidebar(sidebar) {
   _sidebarWindowsLoaded = {};
 
-  var html = '<div class="sidebar-section">';
+  // Sidebar header (visible on desktop only, replaces topbar)
+  var html = '<div class="sidebar-header">';
+  html += '<div class="sidebar-header-row">';
+  html += '<span id="sidebar-dot" class="topbar-dot"></span>';
+  html += '<span id="sidebar-status-info" class="sidebar-status-info"></span>';
+  html += '<button id="sidebar-btn-add-window" class="sidebar-action-btn" title="New Window">&#43;</button>';
+  html += '<button id="sidebar-btn-more" class="sidebar-action-btn" title="More">&#9881;</button>';
+  html += '</div>';
+  html += '</div>';
+
+  html += '<div class="sidebar-section">';
   html += '<div class="sidebar-section-title">Sessions</div>';
   state.sessions.forEach(function (session) {
     var isActive = state.currentSession === session.name;
@@ -521,9 +594,68 @@ function _rebuildSidebar(sidebar) {
 
 
 
+  // Sidebar header button handlers + sync
+  _bindSidebarHeaderButtons(sidebar);
+  _syncSidebarHeader();
+
   // Load windows for active session
   if (state.currentSession) {
     _loadSidebarWindows(state.currentSession);
+  }
+}
+
+function _bindSidebarHeaderButtons(sidebar) {
+  var sidebarAddBtn = sidebar.querySelector('#sidebar-btn-add-window');
+  if (sidebarAddBtn) {
+    sidebarAddBtn.addEventListener('click', function () {
+      if (!state.currentSession) {
+        showAlert({ title: '请先选择一个会话' });
+        return;
+      }
+      showPrompt({ title: '新建窗口', placeholder: '窗口名称（可留空）' })
+        .then(function (windowName) {
+          if (windowName === null) return;
+          var body = windowName ? { name: windowName } : {};
+          return api.post('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows', body);
+        })
+        .then(function (result) {
+          if (!result) return;
+          var idx = result.data && result.data.index;
+          if (idx) {
+            navigate('terminal', { currentWindow: idx, currentPane: null });
+          } else {
+            navigate('windows');
+          }
+        })
+        .catch(function (err) { showAlert({ title: '创建窗口失败', message: err.message }); });
+    });
+  }
+
+  var sidebarMoreBtn = sidebar.querySelector('#sidebar-btn-more');
+  if (sidebarMoreBtn) {
+    sidebarMoreBtn.addEventListener('click', function () {
+      if (state.currentTab === 'more') {
+        navigate('windows');
+      } else {
+        navigate('more');
+      }
+    });
+  }
+}
+
+function _syncSidebarHeader() {
+  // Sync dot
+  var topbarDot = document.getElementById('status-dot');
+  var sidebarDot = document.getElementById('sidebar-dot');
+  if (topbarDot && sidebarDot) {
+    sidebarDot.className = topbarDot.className;
+  }
+  // Sync status info
+  var topbarInfo = document.getElementById('status-info');
+  var sidebarInfo = document.getElementById('sidebar-status-info');
+  if (topbarInfo && sidebarInfo) {
+    sidebarInfo.textContent = topbarInfo.textContent;
+    sidebarInfo.style.color = topbarInfo.style.color;
   }
 }
 
@@ -542,6 +674,40 @@ function _updateSidebarHighlights(sidebar) {
       state.currentSession === sess &&
       String(state.currentWindow) === String(winIdx);
     el.classList.toggle('active', isActive);
+  });
+  _updateSidebarNotifications();
+}
+
+function _updateSidebarNotifications() {
+  var sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+
+  sidebar.querySelectorAll('.sidebar-window-item').forEach(function (el) {
+    var sess = el.getAttribute('data-session');
+    var winIdx = el.getAttribute('data-window-index');
+    var key = sess + ':' + winIdx;
+    var notif = _windowNotifications[key];
+
+    // Update classes
+    el.classList.remove('notification-blink', 'notification-badge');
+    if (notif) {
+      el.classList.add(notif.phase === 'blink' ? 'notification-blink' : 'notification-badge');
+    }
+
+    // Update dot element
+    var dot = el.querySelector('.notification-dot');
+    if (notif && !dot) {
+      dot = document.createElement('span');
+      dot.className = 'notification-dot';
+      var nameEl = el.querySelector('.sidebar-window-name');
+      if (nameEl && nameEl.nextSibling) {
+        el.insertBefore(dot, nameEl.nextSibling);
+      } else {
+        el.appendChild(dot);
+      }
+    } else if (!notif && dot) {
+      dot.remove();
+    }
   });
 }
 
@@ -577,13 +743,18 @@ function _loadSidebarWindows(sessionName) {
         var isCurrentWindow = state.currentTab === 'terminal' &&
           state.currentSession === sessionName &&
           String(state.currentWindow) === String(w.index);
+        var notifKey = sessionName + ':' + w.index;
+        var notif = _windowNotifications[notifKey];
+        var notifClass = notif ? (notif.phase === 'blink' ? ' notification-blink' : ' notification-badge') : '';
         html +=
           '<div class="sidebar-item sidebar-window-item' +
           (isCurrentWindow ? ' active' : '') +
+          notifClass +
           '" data-session="' + escapeHtml(sessionName) +
           '" data-window-index="' + w.index + '">' +
           '<span class="sidebar-window-index">' + w.index + '</span>' +
           '<span class="sidebar-window-name">' + escapeHtml(w.name || 'window') + '</span>' +
+          (notif ? '<span class="notification-dot"></span>' : '') +
           '<span class="sidebar-window-cmd">' + escapeHtml(w.command || '') + '</span>' +
           '</div>';
       });
@@ -595,6 +766,7 @@ function _loadSidebarWindows(sessionName) {
           e.stopPropagation();
           var winIdx = el.getAttribute('data-window-index');
           var sess = el.getAttribute('data-session');
+          _clearWindowNotification(sess, winIdx);
           // Fetch first pane, then navigate to terminal
           api.get('/api/sessions/' + encodeURIComponent(sess) + '/windows/' + encodeURIComponent(winIdx) + '/panes')
             .then(function (result) {
@@ -809,6 +981,11 @@ class StatusSocket {
         statusEl.textContent = 'Reconnecting...';
         statusEl.style.color = 'var(--accent-yellow)';
       }
+      var sidebarInfo = document.getElementById('sidebar-status-info');
+      if (sidebarInfo) {
+        sidebarInfo.textContent = 'Reconnecting...';
+        sidebarInfo.style.color = 'var(--accent-yellow)';
+      }
       if (typeof self.onStatusChange === 'function') {
         self.onStatusChange();
       }
@@ -840,9 +1017,15 @@ class StatusSocket {
         windowCount: windowCount,
       };
 
+      var statusText = sessionCount + 's · ' + windowCount + 'w';
       if (statusEl) {
-        statusEl.textContent = sessionCount + 's · ' + windowCount + 'w';
+        statusEl.textContent = statusText;
         statusEl.style.color = '';
+      }
+      var sidebarInfo = document.getElementById('sidebar-status-info');
+      if (sidebarInfo) {
+        sidebarInfo.textContent = statusText;
+        sidebarInfo.style.color = '';
       }
 
       // Auto-select session if none selected
@@ -851,6 +1034,11 @@ class StatusSocket {
       }
       updateTopbarSession();
       updateSidebar();
+
+      // Handle completion notifications
+      if (data.completedWindows) {
+        _handleCompletedWindows(data.completedWindows);
+      }
 
       if (typeof this.onStatusChange === 'function') {
         this.onStatusChange();
@@ -885,9 +1073,11 @@ function updateTopbarSession() {
 }
 
 function updateTopbarDot(connected) {
+  var cls = 'topbar-dot ' + (connected ? 'connected' : 'disconnected');
   var dot = document.getElementById('status-dot');
-  if (!dot) return;
-  dot.className = 'topbar-dot ' + (connected ? 'connected' : 'disconnected');
+  if (dot) dot.className = cls;
+  var sidebarDot = document.getElementById('sidebar-dot');
+  if (sidebarDot) sidebarDot.className = cls;
 }
 
 function toggleSessionDropdown() {
