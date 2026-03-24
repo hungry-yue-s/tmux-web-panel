@@ -470,6 +470,18 @@ body {
   opacity: 0.7;
 }
 
+.sidebar-session-badge {
+  background: var(--accent-yellow);
+  color: var(--bg-primary);
+  border-radius: 8px;
+  padding: 0 5px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  margin-left: 4px;
+  min-width: 14px;
+  text-align: center;
+}
+
 .sidebar-windows {
   padding: 1px 0 2px 0;
 }

@@ -592,6 +592,10 @@ function _rebuildSidebar(sidebar) {
   state.sessions.forEach(function (session) {
     var isActive = state.currentSession === session.name;
     html += '<div class="sidebar-session-group' + (isActive ? ' expanded' : '') + '" data-session="' + escapeHtml(session.name) + '">';
+    var unreadCount = _getSessionUnreadCount(session.name);
+    var badgeHtml = unreadCount > 0
+      ? '<span class="sidebar-session-badge">' + unreadCount + '</span>'
+      : '';
     html +=
       '<div class="sidebar-item sidebar-session-header' +
       (isActive ? ' active' : '') +
@@ -601,6 +605,7 @@ function _rebuildSidebar(sidebar) {
       '<span class="badge badge-green">&#x25cf;</span>' +
       '<span class="sidebar-session-name">' + escapeHtml(session.name) + '</span>' +
       '<span class="tag" style="margin-left: auto;">' + session.windows + 'w</span>' +
+      badgeHtml +
       '</div>';
     html += '<div class="sidebar-windows" style="' + (isActive ? '' : 'display:none;') + '"></div>';
     html += '</div>';
