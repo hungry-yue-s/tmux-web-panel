@@ -1,4 +1,4 @@
-/* global Terminal, FitAddon, WebLinksAddon, api, state, navigate, escapeHtml, renderPaneLayout, renderPanePills */
+/* global Terminal, FitAddon, WebLinksAddon, WebglAddon, api, state, navigate, escapeHtml, renderPaneLayout, renderPanePills */
 
 // === Terminal State ===
 
@@ -226,6 +226,7 @@ function createTerminalInstance(paneCols, paneRows) {
     cursorBlink: true,
     scrollback: 5000,
     overviewRulerWidth: 0,
+    rescaleOverlappingGlyphs: true,
   });
 }
 
@@ -503,6 +504,15 @@ function _mountTerminal(termContainer, nozoom) {
   term.loadAddon(webLinksAddon);
 
   term.open(termContainer);
+
+  // Use WebGL renderer for crisp box-drawing characters (tmux split borders)
+  if (typeof WebglAddon !== 'undefined') {
+    try {
+      term.loadAddon(new WebglAddon.WebglAddon());
+    } catch (_e) {
+      // WebGL not available — fall back to default canvas renderer
+    }
+  }
 
   // Auto-copy selection to clipboard
   term.onSelectionChange(function () {
