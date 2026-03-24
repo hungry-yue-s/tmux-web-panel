@@ -33,6 +33,10 @@ var terminalState = {
 
 function _cleanupTerminalResources() {
   terminalState.termContainer = null;
+  if (terminalState._resizeHandler) {
+    window.removeEventListener('resize', terminalState._resizeHandler);
+    terminalState._resizeHandler = null;
+  }
   if (terminalState._vpHandler && window.visualViewport) {
     window.visualViewport.removeEventListener('resize', terminalState._vpHandler);
     window.visualViewport.removeEventListener('scroll', terminalState._vpHandler);
@@ -326,7 +330,10 @@ function connectTerminalWs(paneId, term, nozoom) {
   };
 
   ws.onclose = function () {
-    // Could show reconnect UI here
+    // Auto-reconnect if terminal is still active
+    if (terminalState.term === term && state.currentTab === 'terminal') {
+      _showReconnectOverlay(term, paneId, nozoom);
+    }
   };
 
   ws.onerror = function () {
@@ -409,6 +416,7 @@ function renderTerminal(container) {
   var titleEl = view.querySelector('.terminal-header-title');
   var paneSwitcher = view.querySelector('.terminal-pane-switcher');
   var termContainer = view.querySelector('.terminal-container');
+  terminalState.termContainer = termContainer;
   var exitFsBtn = view.querySelector('.terminal-exit-fullscreen-btn');
 
   // Set title
@@ -826,6 +834,83 @@ function _mountTerminal(termContainer, nozoom) {
   terminalState.fitAddon = fitAddon;
   terminalState.resizeObserver = resizeObserver;
   terminalState._vpHandler = vpHandler;
+
+  // Track viewport width to re-render when crossing mobile/desktop threshold
+  var _lastIsDesktop = window.innerWidth >= 768;
+  var _resizeHandler = function () {
+    var isDesktop = window.innerWidth >= 768;
+    if (isDesktop !== _lastIsDesktop) {
+      _lastIsDesktop = isDesktop;
+      // Viewport crossed 768px threshold — re-render to switch tab/split layout
+      if (state.currentTab === 'terminal' && terminalState.term === term) {
+        var content = document.getElementById('content');
+        if (content) renderTerminal(content);
+      }
+    }
+  };
+  window.addEventListener('resize', _resizeHandler);
+  // Store for cleanup
+  terminalState._resizeHandler = _resizeHandler;
+}
+
+// === Reconnect Overlay ===
+
+function _showReconnectOverlay(term, paneId, nozoom) {
+  var termContainer = terminalState.termContainer;
+  if (!termContainer) return;
+
+  // Create overlay
+  var overlay = document.createElement('div');
+  overlay.className = 'terminal-reconnect-overlay';
+  overlay.innerHTML =
+    '<div class="terminal-reconnect-box">' +
+    '<div class="terminal-reconnect-spinner"></div>' +
+    '<div class="terminal-reconnect-text">连接已断开，正在重连...</div>' +
+    '</div>';
+  termContainer.appendChild(overlay);
+
+  var attempt = 0;
+  var maxAttempts = 10;
+  var baseDelay = 1000;
+  var textEl = overlay.querySelector('.terminal-reconnect-text');
+
+  function tryReconnect() {
+    attempt++;
+    if (attempt > maxAttempts || state.currentTab !== 'terminal' || terminalState.term !== term) {
+      if (textEl) textEl.textContent = '重连失败，请返回重新进入';
+      var spinner = overlay.querySelector('.terminal-reconnect-spinner');
+      if (spinner) spinner.style.display = 'none';
+      return;
+    }
+
+    if (textEl) textEl.textContent = '正在重连... (' + attempt + '/' + maxAttempts + ')';
+
+    var ws = connectTerminalWs(paneId, term, nozoom);
+
+    ws.onopen = function () {
+      // Reconnected — remove overlay, update state
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      terminalState.ws = ws;
+      // Re-send resize
+      if (term.cols && term.rows) {
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
+    };
+
+    ws.onclose = function () {
+      // Retry with exponential backoff
+      if (state.currentTab === 'terminal' && terminalState.term === term) {
+        var delay = Math.min(baseDelay * Math.pow(1.5, attempt - 1), 10000);
+        setTimeout(tryReconnect, delay);
+      }
+    };
+
+    ws.onerror = function () {
+      // onclose will fire
+    };
+  }
+
+  setTimeout(tryReconnect, baseDelay);
 }
 
 // === Navigate back to windows and scroll to current window ===
