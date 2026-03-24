@@ -287,7 +287,7 @@ function _calcTerminalFontSize(paneCols, paneRows, containerEl) {
 function createTerminalInstance(paneCols, paneRows) {
   return new Terminal({
     theme: Theme.getTerminalTheme(),
-    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace",
     fontSize: _calcTerminalFontSize(paneCols, paneRows),
     cursorBlink: true,
     scrollback: 5000,

@@ -1,3 +1,12 @@
+/* === Nerd Font Symbols (icon fallback for terminal) === */
+@font-face {
+  font-family: 'Symbols Nerd Font Mono';
+  src: url('/fonts/SymbolsNerdFontMono-Regular.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* === Theme colors are applied dynamically by theme.js === */
 /* === Fallback values match Tokyo Night (default theme) === */
 
