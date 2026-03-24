@@ -17,6 +17,7 @@ import { StatusMonitor } from './monitor.js';
 import sessionsRouter from './api/sessions.js';
 import windowsRouter from './api/windows.js';
 import { nestedPanesRouter, flatPanesRouter } from './api/panes.js';
+import { createUploadRouter } from './api/upload.js';
 
 // --- CLI Argument Parsing ---
 
@@ -137,6 +138,9 @@ app.use('/api/sessions', sessionsRouter);
 app.use('/api/sessions/:name/windows', windowsRouter);
 app.use('/api/sessions/:name/windows/:index/panes', nestedPanesRouter);
 app.use('/api/panes', flatPanesRouter);
+
+// File upload (uses /tmp — cleaned by OS on reboot)
+app.use('/api/upload', createUploadRouter('/tmp/tmux-web-panel-uploads'));
 
 // --- HTTP + WebSocket Server ---
 
