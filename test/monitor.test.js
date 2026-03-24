@@ -119,8 +119,8 @@ describe('StatusMonitor', () => {
       const windowDetails = message.data.sessions[0].windowDetails;
       expect(windowDetails).toHaveLength(1);
       expect(windowDetails[0].panes).toEqual([
-        { id: '%1', command: 'vim', path: '/home/user/project' },
-        { id: '%2', command: 'bash', path: '/home/user' },
+        { id: '%1', command: 'vim', path: '/home/user/project', ports: [] },
+        { id: '%2', command: 'bash', path: '/home/user', ports: [] },
       ]);
     });
 

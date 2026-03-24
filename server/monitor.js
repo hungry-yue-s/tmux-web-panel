@@ -1,6 +1,8 @@
 import * as tmux from './tmux.js';
+import { scanPorts } from './ports.js';
 
 const SHELL_COMMANDS = new Set(['zsh', 'bash', 'fish', 'sh', 'dash', 'ksh', 'csh', 'tcsh']);
+const PORT_CACHE_TTL_MS = 10_000;
 
 export class StatusMonitor {
   constructor() {
@@ -9,6 +11,7 @@ export class StatusMonitor {
     this.interval = null;
     this._previousCommands = new Map();
     this._previousBellFlags = new Map();
+    this._portCache = new Map(); // paneId → { pid, ports, timestamp }
   }
 
   start(intervalMs) {
@@ -49,10 +52,43 @@ export class StatusMonitor {
           } catch {
             // Ignore — pane command fetch failure should not abort status
           }
+
+          // Build panePids map for port scanning, with cache support
+          const panePids = new Map();
+          const now = Date.now();
+          for (const pc of paneCommands) {
+            const cached = this._portCache.get(pc.paneId);
+            const isStale = !cached ||
+              cached.pid !== pc.pid ||
+              (now - cached.timestamp) >= PORT_CACHE_TTL_MS;
+            if (isStale && pc.pid > 0) {
+              panePids.set(pc.paneId, pc.pid);
+            }
+          }
+
+          // Scan ports for panes that need refreshing
+          let newPortMap = new Map();
+          if (panePids.size > 0) {
+            try {
+              newPortMap = await scanPorts(panePids);
+            } catch {
+              // Port scan failure should not abort status
+            }
+            // Update cache with newly scanned results
+            for (const [paneId, ports] of newPortMap) {
+              const pid = panePids.get(paneId);
+              this._portCache.set(paneId, { pid, ports, timestamp: now });
+            }
+          }
+
           const windowsWithPanes = windows.map((w) => {
             const panes = paneCommands
               .filter((pc) => pc.windowIndex === w.index)
-              .map((pc) => ({ id: pc.paneId, command: pc.command, path: pc.path }));
+              .map((pc) => {
+                const cached = this._portCache.get(pc.paneId);
+                const ports = cached ? cached.ports : [];
+                return { id: pc.paneId, command: pc.command, path: pc.path, ports };
+              });
             return { ...w, panes };
           });
           return { ...session, windowDetails: windowsWithPanes, _paneCommands: paneCommands };
