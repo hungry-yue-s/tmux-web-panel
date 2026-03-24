@@ -536,6 +536,61 @@ body {
   font-style: italic;
 }
 
+/* === Sidebar pane tree items === */
+
+.sidebar-pane-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 12px 1px 48px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  min-height: 20px;
+}
+.sidebar-pane-item:hover {
+  background: var(--bg-hover);
+}
+.sidebar-pane-completed .sidebar-pane-arrow,
+.sidebar-pane-completed .sidebar-pane-cmd {
+  color: var(--accent-yellow);
+}
+.sidebar-pane-arrow {
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  flex-shrink: 0;
+}
+.sidebar-pane-cmd {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-pane-port {
+  color: var(--accent-green);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 0.65rem;
+}
+.sidebar-pane-port:hover {
+  text-decoration: underline;
+}
+.sidebar-pane-path {
+  color: var(--text-muted);
+  opacity: 0.6;
+  font-size: 0.6rem;
+  margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 80px;
+}
+.sidebar-pane-ratio {
+  color: var(--accent-yellow);
+  font-size: 0.65rem;
+  margin-left: 4px;
+}
+
 /* === Scrollbar === */
 
 ::-webkit-scrollbar {

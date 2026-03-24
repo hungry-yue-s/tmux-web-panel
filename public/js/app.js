@@ -437,6 +437,51 @@ var _sidebarSessionKey = '';
 var _sidebarWindowsLoaded = {};
 var _windowNotifications = {};
 
+// Pane-level completion tracking
+var _paneCompletions = {}; // key: 'session:windowIndex:paneId' → true
+
+function _handleCompletedPanes(completedPanes) {
+  if (!Array.isArray(completedPanes) || completedPanes.length === 0) return;
+  completedPanes.forEach(function (cp) {
+    var key = cp.session + ':' + cp.windowIndex + ':' + cp.paneId;
+    _paneCompletions[key] = true;
+  });
+}
+
+function _clearPaneCompletions(session, windowIndex) {
+  var prefix = session + ':' + windowIndex + ':';
+  Object.keys(_paneCompletions).forEach(function (key) {
+    if (key.indexOf(prefix) === 0) delete _paneCompletions[key];
+  });
+}
+
+function _getPaneCompletionInfo(session, windowIndex) {
+  var sessionData = state.sessions.find(function (s) { return s.name === session; });
+  var wd = sessionData && sessionData.windowDetails
+    ? sessionData.windowDetails.find(function (w) { return w.index === windowIndex; })
+    : null;
+  var total = wd && wd.panes ? wd.panes.length : 0;
+  var completed = 0;
+  if (wd && wd.panes) {
+    wd.panes.forEach(function (p) {
+      if (_paneCompletions[session + ':' + windowIndex + ':' + p.id]) completed++;
+    });
+  }
+  return { total: total, completed: completed };
+}
+
+function _isPaneCompleted(session, windowIndex, paneId) {
+  return !!_paneCompletions[session + ':' + windowIndex + ':' + paneId];
+}
+
+function _getSessionUnreadCount(sessionName) {
+  var count = 0;
+  Object.keys(_windowNotifications).forEach(function (key) {
+    if (key.indexOf(sessionName + ':') === 0) count++;
+  });
+  return count;
+}
+
 function _handleCompletedWindows(completedWindows) {
   if (!Array.isArray(completedWindows) || completedWindows.length === 0) return;
 
@@ -486,6 +531,7 @@ function _clearWindowNotification(session, windowIndex) {
     if (existing.timerId) clearTimeout(existing.timerId);
     delete _windowNotifications[key];
   }
+  _clearPaneCompletions(session, windowIndex);
 }
 
 function updateSidebar() {
@@ -738,6 +784,10 @@ function _loadSidebarWindows(sessionName) {
         windowsEl.innerHTML = '<div style="color: var(--text-muted); font-size: 0.75rem; padding: 4px 12px 4px 36px;">No windows</div>';
         return;
       }
+
+      // Get pane data from state.sessions for this session
+      var sessionData = state.sessions.find(function (s) { return s.name === sessionName; });
+
       var html = '';
       windows.forEach(function (w) {
         var isCurrentWindow = state.currentTab === 'terminal' &&
@@ -746,6 +796,20 @@ function _loadSidebarWindows(sessionName) {
         var notifKey = sessionName + ':' + w.index;
         var notif = _windowNotifications[notifKey];
         var notifClass = notif ? (notif.phase === 'blink' ? ' notification-blink' : ' notification-badge') : '';
+
+        // Get pane data from windowDetails
+        var windowDetail = sessionData && sessionData.windowDetails
+          ? sessionData.windowDetails.find(function (wd) { return String(wd.index) === String(w.index); })
+          : null;
+        var panes = windowDetail && windowDetail.panes ? windowDetail.panes : [];
+
+        // Compute pane completion ratio
+        var completionInfo = _getPaneCompletionInfo(sessionName, w.index);
+        var ratioHtml = '';
+        if (completionInfo.total > 0 && completionInfo.completed > 0) {
+          ratioHtml = '<span class="sidebar-pane-ratio">' + completionInfo.completed + '/' + completionInfo.total + '</span>';
+        }
+
         html +=
           '<div class="sidebar-item sidebar-window-item' +
           (isCurrentWindow ? ' active' : '') +
@@ -756,7 +820,37 @@ function _loadSidebarWindows(sessionName) {
           '<span class="sidebar-window-name">' + escapeHtml(w.name || 'window') + '</span>' +
           (notif ? '<span class="notification-dot"></span>' : '') +
           '<span class="sidebar-window-cmd">' + escapeHtml(w.command || '') + '</span>' +
+          ratioHtml +
           '</div>';
+
+        // Pane sub-items
+        panes.forEach(function (p) {
+          var isCompleted = _isPaneCompleted(sessionName, w.index, p.id);
+          var completedClass = isCompleted ? ' sidebar-pane-completed' : '';
+
+          // Shorten path: replace /home/username with ~
+          var shortPath = p.currentPath || '';
+          shortPath = shortPath.replace(/^\/home\/[^/]+/, '~');
+
+          // Build port spans
+          var portsHtml = '';
+          if (p.ports && p.ports.length > 0) {
+            p.ports.forEach(function (port) {
+              portsHtml += '<span class="sidebar-pane-port" data-port="' + port + '">:' + port + '</span>';
+            });
+          }
+
+          html +=
+            '<div class="sidebar-pane-item' + completedClass + '"' +
+            ' data-session="' + escapeHtml(sessionName) +
+            '" data-window-index="' + w.index +
+            '" data-pane-id="' + escapeHtml(String(p.id)) + '">' +
+            '<span class="sidebar-pane-arrow">▸</span>' +
+            '<span class="sidebar-pane-cmd">' + (isCompleted ? '✓ ' : '') + escapeHtml(p.command || '') + '</span>' +
+            portsHtml +
+            (shortPath ? '<span class="sidebar-pane-path">' + escapeHtml(shortPath) + '</span>' : '') +
+            '</div>';
+        });
       });
       windowsEl.innerHTML = html;
 
@@ -780,6 +874,28 @@ function _loadSidebarWindows(sessionName) {
         });
       });
 
+      // Attach pane item click handlers
+      windowsEl.querySelectorAll('.sidebar-pane-item').forEach(function (el) {
+        el.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var winIdx = el.getAttribute('data-window-index');
+          var sess = el.getAttribute('data-session');
+          var paneId = el.getAttribute('data-pane-id');
+          _clearWindowNotification(sess, winIdx);
+          navigate('terminal', { currentSession: sess, currentWindow: winIdx, currentPane: paneId });
+        });
+      });
+
+      // Attach port click handlers
+      windowsEl.querySelectorAll('.sidebar-pane-port').forEach(function (el) {
+        el.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var port = el.getAttribute('data-port');
+          if (typeof _showPortMenu === 'function') {
+            _showPortMenu(e, port);
+          }
+        });
+      });
 
     })
     .catch(function () {
@@ -1038,6 +1154,9 @@ class StatusSocket {
       // Handle completion notifications
       if (data.completedWindows) {
         _handleCompletedWindows(data.completedWindows);
+      }
+      if (data.completedPanes) {
+        _handleCompletedPanes(data.completedPanes);
       }
 
       if (typeof this.onStatusChange === 'function') {
