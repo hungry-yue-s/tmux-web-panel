@@ -185,8 +185,13 @@ export async function createSession(name) {
 
 export async function createWindow(session, name) {
   requireValidSessionName(session);
-  requireValidSessionName(name);
-  await tmuxExec(['new-window', '-t', session, '-n', name]);
+  const args = ['new-window', '-t', session + ':', '-P', '-F', '#{window_index}'];
+  if (name) {
+    requireValidSessionName(name);
+    args.push('-n', name);
+  }
+  const stdout = await tmuxExec(args);
+  return stdout.trim();
 }
 
 export async function splitPane(paneId, direction) {

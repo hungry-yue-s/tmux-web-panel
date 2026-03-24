@@ -1117,6 +1117,96 @@ body {
   background: var(--bg-hover);
 }
 
+/* Modal dialog */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: modal-fade-in 0.15s ease;
+}
+
+@keyframes modal-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.modal-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  min-width: 280px;
+  max-width: 90vw;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.modal-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 14px;
+}
+
+.modal-input {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+
+.modal-input:focus {
+  border-color: var(--accent-blue);
+}
+
+.modal-input::placeholder {
+  color: var(--text-muted);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.modal-btn {
+  padding: 6px 16px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.modal-btn:hover {
+  background: var(--border);
+}
+
+.modal-btn-primary {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: #1a1b26;
+  font-weight: 600;
+}
+
+.modal-btn-primary:hover {
+  opacity: 0.85;
+}
+
 /* Swipe-back indicator */
 .swipe-back-indicator {
   position: fixed;

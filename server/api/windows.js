@@ -28,17 +28,10 @@ router.post('/', async (req, res) => {
   try {
     const { name: session } = req.params;
     const { name } = req.body ?? {};
-    if (!name || typeof name !== 'string') {
-      return res.status(400).json({
-        success: false,
-        data: null,
-        error: 'Missing or invalid "name" in request body',
-      });
-    }
-    await tmux.createWindow(session, name);
+    const windowIndex = await tmux.createWindow(session, name || undefined);
     res.status(201).json({
       success: true,
-      data: { session, name },
+      data: { session, name, index: windowIndex },
       error: null,
     });
   } catch (err) {

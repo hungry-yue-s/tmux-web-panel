@@ -1,5 +1,58 @@
 /* global Terminal, FitAddon, WebLinksAddon, Auth, Theme */
 
+// === Modal Dialog ===
+
+/**
+ * Show a styled prompt dialog.
+ * @param {object} opts
+ * @param {string} opts.title - Dialog title
+ * @param {string} [opts.placeholder] - Input placeholder
+ * @param {string} [opts.value] - Initial input value
+ * @param {string} [opts.confirmText] - Confirm button text (default '确定')
+ * @param {string} [opts.cancelText] - Cancel button text (default '取消')
+ * @returns {Promise<string|null>} Resolved with input value, or null if cancelled
+ */
+function showPrompt(opts) {
+  return new Promise(function (resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML =
+      '<div class="modal-box">' +
+        '<div class="modal-title">' + (opts.title || '') + '</div>' +
+        '<input class="modal-input" type="text" placeholder="' + (opts.placeholder || '') + '" value="' + (opts.value || '') + '">' +
+        '<div class="modal-actions">' +
+          '<button class="modal-btn modal-cancel">' + (opts.cancelText || '取消') + '</button>' +
+          '<button class="modal-btn modal-btn-primary modal-confirm">' + (opts.confirmText || '确定') + '</button>' +
+        '</div>' +
+      '</div>';
+
+    var input = overlay.querySelector('.modal-input');
+    var confirmBtn = overlay.querySelector('.modal-confirm');
+    var cancelBtn = overlay.querySelector('.modal-cancel');
+
+    function close(val) {
+      overlay.remove();
+      resolve(val);
+    }
+
+    confirmBtn.addEventListener('click', function () { close(input.value); });
+    cancelBtn.addEventListener('click', function () { close(null); });
+
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) close(null);
+    });
+
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') close(input.value);
+      if (e.key === 'Escape') close(null);
+    });
+
+    document.body.appendChild(overlay);
+    input.focus();
+    input.select();
+  });
+}
+
 // === API Client ===
 
 class ApiClient {
@@ -713,8 +766,21 @@ function initTopbar() {
         alert('Please select a session first.');
         return;
       }
-      api.post('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows', {})
-        .then(function () { navigate('windows'); })
+      showPrompt({ title: '新建窗口', placeholder: '窗口名称（可留空）' })
+        .then(function (windowName) {
+          if (windowName === null) return;
+          var body = windowName ? { name: windowName } : {};
+          return api.post('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows', body);
+        })
+        .then(function (result) {
+          if (!result) return;
+          var idx = result.data && result.data.index;
+          if (idx) {
+            navigate('terminal', { currentWindow: idx, currentPane: null });
+          } else {
+            navigate('windows');
+          }
+        })
         .catch(function (err) { alert('Failed to create window: ' + err.message); });
     });
   }
