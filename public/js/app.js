@@ -386,7 +386,7 @@ function renderMore(container) {
   html += '<div class="card more-about-card">';
   html += '<div class="more-about-name">Tmux Web Panel v1.0.0</div>';
   html += '<div class="more-about-desc">A mobile-friendly web UI for tmux session management.</div>';
-  html += '<a class="more-about-link" href="https://github.com" target="_blank" rel="noopener">GitHub &rarr;</a>';
+  html += '<a class="more-about-link" href="http://192.168.230.230/yuebiao/tmux-web-panel" target="_blank" rel="noopener">GitLab &rarr;</a>';
   html += '</div>';
   html += '</div>';
 

@@ -5,6 +5,7 @@ import { StatusMonitor } from '../server/monitor.js';
 vi.mock('../server/tmux.js', () => ({
   listSessions: vi.fn(),
   listWindows: vi.fn(),
+  listPaneCommands: vi.fn(),
 }));
 
 // Import mocked module
@@ -25,6 +26,7 @@ describe('StatusMonitor', () => {
     monitor = new StatusMonitor();
     tmux.listSessions.mockReset();
     tmux.listWindows.mockReset();
+    tmux.listPaneCommands.mockReset();
   });
 
   afterEach(() => {
@@ -77,6 +79,7 @@ describe('StatusMonitor', () => {
         { index: 0, name: 'bash', active: true, width: 80, height: 24 },
         { index: 1, name: 'vim', active: false, width: 80, height: 24 },
       ]);
+      tmux.listPaneCommands.mockResolvedValue([]);
 
       const ws = createMockWs();
       monitor.subscribe(ws);
@@ -102,6 +105,7 @@ describe('StatusMonitor', () => {
       tmux.listWindows.mockResolvedValue([
         { index: 0, name: 'bash', active: true, width: 80, height: 24 },
       ]);
+      tmux.listPaneCommands.mockResolvedValue([]);
 
       const ws = createMockWs();
       monitor.subscribe(ws);
@@ -130,6 +134,7 @@ describe('StatusMonitor', () => {
     it('skips sending to closed WebSocket clients', async () => {
       tmux.listSessions.mockResolvedValue([]);
       tmux.listWindows.mockResolvedValue([]);
+      tmux.listPaneCommands.mockResolvedValue([]);
 
       const openWs = createMockWs(1);
       const closedWs = createMockWs(3);
