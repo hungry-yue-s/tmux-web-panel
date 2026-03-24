@@ -146,28 +146,28 @@ function _bindLongPressClose(el, paneId, paneCount) {
 }
 
 function _confirmClosePane(paneId) {
-  if (!confirm('关闭此窗格？')) return;
-
-  api
-    .delete(
-      '/api/sessions/' + encodeURIComponent(state.currentSession) +
-      '/windows/' + encodeURIComponent(state.currentWindow) +
-      '/panes/' + encodeURIComponent(paneId)
-    )
-    .then(function () {
-      // Clean up font offset for the closed pane
+  showConfirm({ title: '关闭窗格', message: '确定关闭此窗格？', confirmText: '关闭', danger: true })
+    .then(function (confirmed) {
+      if (!confirmed) return;
+      return api.delete(
+        '/api/sessions/' + encodeURIComponent(state.currentSession) +
+        '/windows/' + encodeURIComponent(state.currentWindow) +
+        '/panes/' + encodeURIComponent(paneId)
+      );
+    })
+    .then(function (result) {
+      if (!result) return;
       if (typeof _fontOffsets !== 'undefined') {
         delete _fontOffsets[paneId];
         _saveFontOffsets();
       }
-      // Re-render terminal view
       var content = document.getElementById('content');
       if (content && typeof renderTerminal === 'function') {
-        state.currentPane = null; // will pick first pane
+        state.currentPane = null;
         renderTerminal(content);
       }
     })
     .catch(function (err) {
-      alert('关闭窗格失败: ' + err.message);
+      showAlert({ title: '关闭窗格失败', message: err.message });
     });
 }

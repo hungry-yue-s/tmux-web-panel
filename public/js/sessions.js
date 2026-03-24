@@ -312,32 +312,33 @@ function _initContextMenu(view) {
 // === Session Actions ===
 
 function _renameSession(sessionName) {
-  var newName = prompt('New name for session "' + sessionName + '":');
-  if (!newName || !newName.trim()) return;
-
-  api
-    .put('/api/sessions/' + encodeURIComponent(sessionName), { name: newName.trim() })
-    .then(function () {
-      navigate('sessions');
+  showPrompt({ title: '重命名会话', placeholder: '新名称', value: sessionName })
+    .then(function (newName) {
+      if (!newName || !newName.trim()) return;
+      return api.put('/api/sessions/' + encodeURIComponent(sessionName), { name: newName.trim() });
+    })
+    .then(function (result) {
+      if (result) navigate('sessions');
     })
     .catch(function (err) {
-      alert('Failed to rename session: ' + err.message);
+      showAlert({ title: '重命名失败', message: err.message });
     });
 }
 
 function _deleteSession(sessionName) {
-  var confirmed = confirm('Delete session "' + sessionName + '"? This cannot be undone.');
-  if (!confirmed) return;
-
-  api
-    .delete('/api/sessions/' + encodeURIComponent(sessionName))
-    .then(function () {
+  showConfirm({ title: '删除会话', message: '确定删除会话 "' + sessionName + '"？此操作不可撤销。', confirmText: '删除', danger: true })
+    .then(function (confirmed) {
+      if (!confirmed) return;
+      return api.delete('/api/sessions/' + encodeURIComponent(sessionName));
+    })
+    .then(function (result) {
+      if (!result) return;
       if (state.currentSession === sessionName) {
         state.currentSession = null;
       }
       navigate('sessions');
     })
     .catch(function (err) {
-      alert('Failed to delete session: ' + err.message);
+      showAlert({ title: '删除失败', message: err.message });
     });
 }

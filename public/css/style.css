@@ -1207,6 +1207,24 @@ body {
   opacity: 0.85;
 }
 
+.modal-btn-danger {
+  background: var(--accent-red);
+  border-color: var(--accent-red);
+  color: #1a1b26;
+  font-weight: 600;
+}
+
+.modal-btn-danger:hover {
+  opacity: 0.85;
+}
+
+.modal-message {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin-bottom: 4px;
+  line-height: 1.5;
+}
+
 /* Swipe-back indicator */
 .swipe-back-indicator {
   position: fixed;

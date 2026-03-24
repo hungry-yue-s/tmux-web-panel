@@ -430,7 +430,7 @@ function renderTerminal(container) {
         renderTerminal(container);
       })
       .catch(function (err) {
-        alert('Failed to split pane: ' + err.message);
+        showAlert({ title: '分割窗格失败', message: err.message });
       });
   }
 

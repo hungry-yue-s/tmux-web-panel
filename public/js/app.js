@@ -53,6 +53,94 @@ function showPrompt(opts) {
   });
 }
 
+/**
+ * Show a styled confirm dialog.
+ * @param {object} opts
+ * @param {string} opts.title - Dialog title
+ * @param {string} [opts.message] - Dialog message
+ * @param {string} [opts.confirmText] - Confirm button text (default '确定')
+ * @param {string} [opts.cancelText] - Cancel button text (default '取消')
+ * @param {boolean} [opts.danger] - Use danger style for confirm button
+ * @returns {Promise<boolean>}
+ */
+function showConfirm(opts) {
+  return new Promise(function (resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    var dangerClass = opts.danger ? ' modal-btn-danger' : ' modal-btn-primary';
+    overlay.innerHTML =
+      '<div class="modal-box">' +
+        '<div class="modal-title">' + (opts.title || '') + '</div>' +
+        (opts.message ? '<div class="modal-message">' + opts.message + '</div>' : '') +
+        '<div class="modal-actions">' +
+          '<button class="modal-btn modal-cancel">' + (opts.cancelText || '取消') + '</button>' +
+          '<button class="modal-btn' + dangerClass + ' modal-confirm">' + (opts.confirmText || '确定') + '</button>' +
+        '</div>' +
+      '</div>';
+
+    var confirmBtn = overlay.querySelector('.modal-confirm');
+    var cancelBtn = overlay.querySelector('.modal-cancel');
+
+    function close(val) {
+      overlay.remove();
+      resolve(val);
+    }
+
+    confirmBtn.addEventListener('click', function () { close(true); });
+    cancelBtn.addEventListener('click', function () { close(false); });
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) close(false);
+    });
+    document.addEventListener('keydown', function handler(e) {
+      if (e.key === 'Enter') { document.removeEventListener('keydown', handler); close(true); }
+      if (e.key === 'Escape') { document.removeEventListener('keydown', handler); close(false); }
+    });
+
+    document.body.appendChild(overlay);
+    confirmBtn.focus();
+  });
+}
+
+/**
+ * Show a styled alert dialog.
+ * @param {object} opts
+ * @param {string} opts.title - Dialog title
+ * @param {string} [opts.message] - Dialog message
+ * @returns {Promise<void>}
+ */
+function showAlert(opts) {
+  return new Promise(function (resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML =
+      '<div class="modal-box">' +
+        '<div class="modal-title">' + (opts.title || '') + '</div>' +
+        (opts.message ? '<div class="modal-message">' + opts.message + '</div>' : '') +
+        '<div class="modal-actions">' +
+          '<button class="modal-btn modal-btn-primary modal-confirm">确定</button>' +
+        '</div>' +
+      '</div>';
+
+    var confirmBtn = overlay.querySelector('.modal-confirm');
+
+    function close() {
+      overlay.remove();
+      resolve();
+    }
+
+    confirmBtn.addEventListener('click', close);
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) close();
+    });
+    document.addEventListener('keydown', function handler(e) {
+      if (e.key === 'Enter' || e.key === 'Escape') { document.removeEventListener('keydown', handler); close(); }
+    });
+
+    document.body.appendChild(overlay);
+    confirmBtn.focus();
+  });
+}
+
 // === API Client ===
 
 class ApiClient {
@@ -724,32 +812,43 @@ function _closeDropdown() {
 
 function _handleSessionAction(action) {
   if (action === 'new') {
-    var name = prompt('Session name (leave empty for default):');
-    if (name === null) return;
-    var body = {};
-    if (name.trim()) body.name = name.trim();
-    api.post('/api/sessions', body)
-      .then(function () { navigate('windows'); })
-      .catch(function (err) { alert('Failed to create session: ' + err.message); });
+    showPrompt({ title: '新建会话', placeholder: '会话名称（可留空）' })
+      .then(function (name) {
+        if (name === null) return;
+        var body = {};
+        if (name.trim()) body.name = name.trim();
+        return api.post('/api/sessions', body);
+      })
+      .then(function (result) {
+        if (result) navigate('windows');
+      })
+      .catch(function (err) { showAlert({ title: '创建会话失败', message: err.message }); });
   } else if (action === 'rename' && state.currentSession) {
-    var newName = prompt('New name for "' + state.currentSession + '":');
-    if (!newName || !newName.trim()) return;
-    api.put('/api/sessions/' + encodeURIComponent(state.currentSession), { name: newName.trim() })
-      .then(function () {
-        state.currentSession = newName.trim();
+    showPrompt({ title: '重命名会话', placeholder: '新名称', value: state.currentSession })
+      .then(function (newName) {
+        if (!newName || !newName.trim()) return;
+        return api.put('/api/sessions/' + encodeURIComponent(state.currentSession), { name: newName.trim() });
+      })
+      .then(function (result) {
+        if (!result) return;
+        state.currentSession = result.data && result.data.name || state.currentSession;
         updateTopbarSession();
         render();
       })
-      .catch(function (err) { alert('Failed to rename: ' + err.message); });
+      .catch(function (err) { showAlert({ title: '重命名失败', message: err.message }); });
   } else if (action === 'delete' && state.currentSession) {
-    if (!confirm('Delete session "' + state.currentSession + '"?')) return;
-    api.delete('/api/sessions/' + encodeURIComponent(state.currentSession))
-      .then(function () {
+    showConfirm({ title: '删除会话', message: '确定删除会话 "' + state.currentSession + '"？', confirmText: '删除', danger: true })
+      .then(function (confirmed) {
+        if (!confirmed) return;
+        return api.delete('/api/sessions/' + encodeURIComponent(state.currentSession));
+      })
+      .then(function (result) {
+        if (!result) return;
         state.currentSession = null;
         updateTopbarSession();
         navigate('windows');
       })
-      .catch(function (err) { alert('Failed to delete: ' + err.message); });
+      .catch(function (err) { showAlert({ title: '删除失败', message: err.message }); });
   }
 }
 
@@ -763,7 +862,7 @@ function initTopbar() {
   if (addWindowBtn) {
     addWindowBtn.addEventListener('click', function () {
       if (!state.currentSession) {
-        alert('Please select a session first.');
+        showAlert({ title: '请先选择一个会话' });
         return;
       }
       showPrompt({ title: '新建窗口', placeholder: '窗口名称（可留空）' })
@@ -781,7 +880,7 @@ function initTopbar() {
             navigate('windows');
           }
         })
-        .catch(function (err) { alert('Failed to create window: ' + err.message); });
+        .catch(function (err) { showAlert({ title: '创建窗口失败', message: err.message }); });
     });
   }
 

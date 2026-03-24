@@ -341,6 +341,7 @@ function _initWindowContextMenu(view, container) {
     if (!swipeContainer) return;
 
     e.preventDefault();
+    e.stopPropagation();
     targetIndex = swipeContainer.getAttribute('data-window-index');
 
     menu.style.display = 'block';
@@ -384,30 +385,34 @@ function _initWindowContextMenu(view, container) {
 // === Window Actions ===
 
 function _renameWindow(windowIndex, container) {
-  var newName = prompt('New name for window ' + windowIndex + ':');
-  if (!newName || !newName.trim()) return;
+  var currentName = '';
+  var sc = document.querySelector('.swipe-container[data-window-index="' + windowIndex + '"]');
+  if (sc) currentName = sc.getAttribute('data-window-name') || '';
 
-  api
-    .put(
-      '/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/' + encodeURIComponent(windowIndex),
-      { newName: newName.trim() }
-    )
-    .then(function () {
-      renderWindows(container);
+  showPrompt({ title: '重命名窗口 ' + windowIndex, placeholder: '新名称', value: currentName })
+    .then(function (newName) {
+      if (!newName || !newName.trim()) return;
+      return api.put(
+        '/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/' + encodeURIComponent(windowIndex),
+        { newName: newName.trim() }
+      );
+    })
+    .then(function (result) {
+      if (result) renderWindows(container);
     })
     .catch(function (err) {
-      alert('Failed to rename window: ' + err.message);
+      showAlert({ title: '重命名失败', message: err.message });
     });
 }
 
 function _deleteWindow(windowIndex, container) {
-  var confirmed = confirm('Delete window ' + windowIndex + '? This cannot be undone.');
-  if (!confirmed) return;
-
-  api
-    .delete('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/' + encodeURIComponent(windowIndex))
-    .then(function () {
-      // Clean up split-mode font offset for this window
+  showConfirm({ title: '删除窗口', message: '确定删除窗口 ' + windowIndex + '？此操作不可撤销。', confirmText: '删除', danger: true })
+    .then(function (confirmed) {
+      if (!confirmed) return;
+      return api.delete('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/' + encodeURIComponent(windowIndex));
+    })
+    .then(function (result) {
+      if (!result) return;
       if (typeof _fontOffsets !== 'undefined' && typeof _saveFontOffsets === 'function') {
         var wKey = (state.currentSession || '') + ':' + windowIndex;
         delete _fontOffsets[wKey];
@@ -416,6 +421,6 @@ function _deleteWindow(windowIndex, container) {
       renderWindows(container);
     })
     .catch(function (err) {
-      alert('Failed to delete window: ' + err.message);
+      showAlert({ title: '删除失败', message: err.message });
     });
 }
