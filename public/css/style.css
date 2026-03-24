@@ -2138,3 +2138,11 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   color: var(--text-muted);
   font-size: 0.85rem;
 }
+
+/* === Mobile Window Card Pane Rows === */
+.window-card-panes { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+.window-card-pane { background: var(--bg-primary); border-radius: 4px; padding: 4px 8px; font-size: 0.75rem; display: flex; justify-content: space-between; align-items: center; }
+.window-card-pane-cmd { color: var(--text-secondary); }
+.window-card-pane-port { background: rgba(158, 206, 106, 0.15); color: var(--accent-green); border-radius: 3px; padding: 1px 6px; font-size: 0.65rem; cursor: pointer; }
+.window-card-notified { border-left: 3px solid var(--accent-yellow); }
+.window-card-completion { color: var(--accent-yellow); font-size: 0.7rem; }
