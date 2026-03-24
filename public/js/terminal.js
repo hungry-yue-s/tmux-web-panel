@@ -461,10 +461,10 @@ function renderTerminal(container) {
 
       var useSplit = _terminalMode === 'split' && panes.length > 1 && window.innerWidth >= 768;
 
-      // Render pane pills (tab mode: switch pane, split mode: select-pane via tmux)
-      if (panes.length > 1) {
+      // Render pane pills only in tab mode — split mode shows all panes natively
+      if (panes.length > 1 && !useSplit) {
         var headerPills = view.querySelector('.terminal-header-pills');
-        renderPanePills(headerPills, panes, state.currentPane, useSplit ? _selectSplitPane : switchPane);
+        renderPanePills(headerPills, panes, state.currentPane, switchPane);
       }
 
       // Hide mode toggle when only 1 pane
@@ -743,19 +743,6 @@ function _mountTerminal(termContainer, nozoom) {
   terminalState.fitAddon = fitAddon;
   terminalState.resizeObserver = resizeObserver;
   terminalState._vpHandler = vpHandler;
-}
-
-// === Split Mode: select pane via tmux (native split rendering) ===
-
-function _selectSplitPane(paneId) {
-  if (paneId === state.currentPane) return;
-  state.currentPane = paneId;
-  // Tell tmux to focus this pane — the terminal already shows all panes
-  api.post('/api/panes/' + encodeURIComponent(paneId) + '/select').catch(function () {});
-  // Update pill highlights
-  document.querySelectorAll('.terminal-header-pills .pane-pill').forEach(function (el) {
-    el.classList.toggle('active', el.getAttribute('data-pane-id') === paneId);
-  });
 }
 
 // === Navigate back to windows and scroll to current window ===
