@@ -98,14 +98,14 @@ describe('parseSessions', () => {
 describe('parseWindows', () => {
   it('parses tmux window list output', () => {
     const output = [
-      '0|bash|1|80|24',
-      '1|vim|0|120|40',
+      '0|bash|1|80|24|0',
+      '1|vim|0|120|40|1',
     ].join('\n');
 
     const result = parseWindows(output);
     expect(result).toEqual([
-      { index: 0, name: 'bash', active: true, width: 80, height: 24 },
-      { index: 1, name: 'vim', active: false, width: 120, height: 40 },
+      { index: 0, name: 'bash', active: true, width: 80, height: 24, bell: false },
+      { index: 1, name: 'vim', active: false, width: 120, height: 40, bell: true },
     ]);
   });
 

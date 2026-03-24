@@ -59,18 +59,19 @@ export function parseSessions(output) {
 }
 
 /**
- * Parses `tmux list-windows -F '#{window_index}|#{window_name}|#{window_active}|#{window_width}|#{window_height}'`
+ * Parses `tmux list-windows -F '#{window_index}|#{window_name}|#{window_active}|#{window_width}|#{window_height}|#{window_bell_flag}'`
  */
 export function parseWindows(output) {
   if (!output || output.trim().length === 0) return [];
   return output.trim().split('\n').map((line) => {
-    const [index, name, active, width, height] = line.split('|');
+    const [index, name, active, width, height, bell] = line.split('|');
     return {
       index: Number(index),
       name,
       active: active === '1',
       width: Number(width),
       height: Number(height),
+      bell: bell === '1',
     };
   });
 }
@@ -156,7 +157,7 @@ export async function listWindows(session) {
     'list-windows',
     '-t', session,
     '-F',
-    '#{window_index}|#{window_name}|#{window_active}|#{window_width}|#{window_height}',
+    '#{window_index}|#{window_name}|#{window_active}|#{window_width}|#{window_height}|#{window_bell_flag}',
   ]);
   return parseWindows(stdout);
 }
