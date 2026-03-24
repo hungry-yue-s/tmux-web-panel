@@ -6,6 +6,7 @@ import {
   parseSessions,
   parseWindows,
   parsePanes,
+  parsePaneCommands,
 } from '../server/tmux.js';
 
 describe('validateSessionName', () => {
@@ -129,5 +130,21 @@ describe('parsePanes', () => {
 
   it('returns empty array for empty input', () => {
     expect(parsePanes('')).toEqual([]);
+  });
+});
+
+describe('parsePaneCommands', () => {
+  it('parses tmux pane command list output', () => {
+    const output = '0|%0|zsh\n0|%1|node\n1|%2|python';
+    const result = parsePaneCommands(output);
+    expect(result).toEqual([
+      { windowIndex: 0, paneId: '%0', command: 'zsh' },
+      { windowIndex: 0, paneId: '%1', command: 'node' },
+      { windowIndex: 1, paneId: '%2', command: 'python' },
+    ]);
+  });
+
+  it('returns empty array for empty input', () => {
+    expect(parsePaneCommands('')).toEqual([]);
   });
 });
