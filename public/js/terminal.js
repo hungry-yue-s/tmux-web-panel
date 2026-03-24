@@ -28,7 +28,7 @@ function _cleanupTerminalResources() {
     terminalState.ws = null;
   }
   if (terminalState.term) {
-    terminalState.term.dispose();
+    try { terminalState.term.dispose(); } catch (_e) {}
     terminalState.term = null;
   }
   terminalState.fitAddon = null;
@@ -413,7 +413,6 @@ function renderTerminal(container) {
       _terminalMode = mode;
       try { localStorage.setItem('tmux_terminal_mode', mode); } catch (_e) {}
       // Re-render terminal view
-      _cleanupTerminalResources();
       renderTerminal(container);
     });
   });
@@ -508,7 +507,11 @@ function _mountTerminal(termContainer, nozoom) {
   // Use WebGL renderer for crisp box-drawing characters (tmux split borders)
   if (typeof WebglAddon !== 'undefined') {
     try {
-      term.loadAddon(new WebglAddon.WebglAddon());
+      var webglAddon = new WebglAddon.WebglAddon();
+      webglAddon.onContextLoss(function () {
+        webglAddon.dispose();
+      });
+      term.loadAddon(webglAddon);
     } catch (_e) {
       // WebGL not available — fall back to default canvas renderer
     }
