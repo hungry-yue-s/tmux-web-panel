@@ -66,23 +66,24 @@ export class StatusMonitor {
       );
 
       // Detect completions (using already-fetched paneCommands)
-      const completedWindows = await this._detectCompletions(sessionsWithWindows);
+      const { completedWindows, completedPanes } = await this._detectCompletions(sessionsWithWindows);
 
       // Strip internal _paneCommands before broadcasting
       const sessionsForPayload = sessionsWithWindows.map(({ _paneCommands: _, ...rest }) => rest);
 
-      // Build status message WITHOUT completedWindows for dedup
+      // Build status message WITHOUT completedWindows/completedPanes for dedup
       const statusMessage = {
         type: 'status',
         data: { sessions: sessionsForPayload, totalSessions, totalWindows },
       };
       const serialized = JSON.stringify(statusMessage);
-      const hasCompletions = completedWindows.length > 0;
+      const hasCompletions = completedWindows.length > 0 || completedPanes.length > 0;
 
       if (serialized !== this.previousState || hasCompletions) {
         this.previousState = serialized;
         if (hasCompletions) {
           statusMessage.data.completedWindows = completedWindows;
+          statusMessage.data.completedPanes = completedPanes;
         }
         this._broadcast(JSON.stringify(statusMessage));
       }
@@ -97,6 +98,7 @@ export class StatusMonitor {
 
   async _detectCompletions(sessionsWithWindows) {
     const completedWindows = [];
+    const completedPanes = [];
     const newCommands = new Map();
     const newBellFlags = new Map();
 
@@ -113,16 +115,26 @@ export class StatusMonitor {
         if (
           prev !== undefined &&
           !SHELL_COMMANDS.has(prev) &&
-          SHELL_COMMANDS.has(pc.command) &&
-          !completedInSession.has(pc.windowIndex)
+          SHELL_COMMANDS.has(pc.command)
         ) {
-          completedInSession.add(pc.windowIndex);
-          completedWindows.push({
+          // Per-pane entry (no dedup)
+          completedPanes.push({
             session: session.name,
             windowIndex: pc.windowIndex,
+            paneId: pc.paneId,
             prevCommand: prev,
-            source: 'command',
           });
+
+          // Per-window entry (dedup by window)
+          if (!completedInSession.has(pc.windowIndex)) {
+            completedInSession.add(pc.windowIndex);
+            completedWindows.push({
+              session: session.name,
+              windowIndex: pc.windowIndex,
+              prevCommand: prev,
+              source: 'command',
+            });
+          }
         }
       }
 
@@ -152,7 +164,7 @@ export class StatusMonitor {
 
     this._previousCommands = newCommands;
     this._previousBellFlags = newBellFlags;
-    return completedWindows;
+    return { completedWindows, completedPanes };
   }
 
   _send(ws, serialized) {
