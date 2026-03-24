@@ -3,6 +3,12 @@
 // === Windows View ===
 
 function renderWindows(container) {
+  // Ensure terminal classes are removed so topbar stays visible
+  document.body.classList.remove('terminal-active', 'terminal-fullscreen');
+  // Reset any page-level scroll that may have pushed topbar out of view
+  window.scrollTo(0, 0);
+  document.documentElement.scrollTop = 0;
+
   container.innerHTML =
     '<div class="windows-view">' +
     '<div class="windows-body">' +

@@ -57,6 +57,7 @@ function cleanupTerminal() {
   _cleanupTerminalResources();
   document.body.classList.remove('terminal-active');
   exitFullscreen();
+
 }
 
 // === Fullscreen ===
@@ -847,7 +848,15 @@ function _scrollToWindowCard(windowIndex) {
     var card = document.querySelector('.swipe-container[data-window-index="' + windowIndex + '"]');
     if (card) {
       clearInterval(timer);
-      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Scroll only #content container, not the entire page
+      // (scrollIntoView scrolls all ancestors including body, pushing topbar out of view)
+      var contentEl = document.getElementById('content');
+      if (contentEl) {
+        var cardRect = card.getBoundingClientRect();
+        var contentRect = contentEl.getBoundingClientRect();
+        var targetTop = contentEl.scrollTop + (cardRect.top - contentRect.top) - (contentEl.clientHeight - card.offsetHeight) / 2;
+        contentEl.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
+      }
       // Brief highlight
       card.style.outline = '2px solid var(--accent-blue)';
       card.style.outlineOffset = '2px';

@@ -262,6 +262,11 @@ function render() {
   var content = document.getElementById('content');
   if (!content) return;
 
+  // Ensure terminal classes are removed for non-terminal tabs so topbar stays visible
+  if (state.currentTab !== 'terminal') {
+    document.body.classList.remove('terminal-active', 'terminal-fullscreen');
+  }
+
   switch (state.currentTab) {
     case 'sessions':
     case 'windows':
