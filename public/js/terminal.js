@@ -504,6 +504,14 @@ function _mountTerminal(termContainer, nozoom) {
 
   term.open(termContainer);
 
+  // Auto-copy selection to clipboard
+  term.onSelectionChange(function () {
+    var sel = term.getSelection();
+    if (sel && navigator.clipboard) {
+      navigator.clipboard.writeText(sel).catch(function () {});
+    }
+  });
+
   // Small delay to ensure DOM is ready for fitting
   setTimeout(function () {
     fitAddon.fit();
