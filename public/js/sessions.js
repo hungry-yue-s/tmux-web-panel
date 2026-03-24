@@ -96,7 +96,7 @@ function _attachSessionHandlers(view) {
   _initSwipe(view);
 
   // Context menu (PC)
-  _initContextMenu(view);
+  // Context menu is auto-initialized via IIFE
 }
 
 // === Window Pills ===
@@ -244,70 +244,51 @@ function _attachSwipeActionHandlers(container) {
   }
 }
 
-// === Context Menu (PC) ===
+// === Context Menu (PC) — singleton, capture phase, auto-init ===
 
-function _initContextMenu(view) {
-  // Remove any existing context menu
-  var existing = document.getElementById('session-context-menu');
-  if (existing) existing.remove();
+var _sessCtxMenu = null;
+
+(function _initContextMenu() {
 
   var menu = document.createElement('div');
   menu.id = 'session-context-menu';
   menu.className = 'context-menu';
   menu.style.display = 'none';
-  menu.innerHTML =
-    '<div class="context-menu-item" data-action="rename">Rename</div>' +
-    '<div class="context-menu-item context-menu-item-danger" data-action="delete">Delete</div>';
   document.body.appendChild(menu);
+  _sessCtxMenu = menu;
 
-  var targetSession = null;
+  document.addEventListener('click', function () { menu.style.display = 'none'; });
 
-  view.addEventListener('contextmenu', function (e) {
-    var container = e.target.closest('.swipe-container');
-    if (!container) return;
+  document.addEventListener('contextmenu', function (e) {
+    var container = e.target.closest('.swipe-container[data-session]');
+    // Only handle session cards in sessions view (not window swipe-containers)
+    if (!container || container.closest('.windows-list')) return;
 
     e.preventDefault();
-    targetSession = container.getAttribute('data-session');
+    e.stopImmediatePropagation();
 
+    var sess = container.getAttribute('data-session');
+    menu.innerHTML =
+      '<div class="context-menu-item" data-action="rename">重命名</div>' +
+      '<div class="context-menu-item context-menu-item-danger" data-action="delete">删除</div>';
     menu.style.display = 'block';
     menu.style.left = e.pageX + 'px';
     menu.style.top = e.pageY + 'px';
 
-    // Ensure menu stays within viewport
     var rect = menu.getBoundingClientRect();
-    if (rect.right > window.innerWidth) {
-      menu.style.left = (e.pageX - rect.width) + 'px';
-    }
-    if (rect.bottom > window.innerHeight) {
-      menu.style.top = (e.pageY - rect.height) + 'px';
-    }
-  });
+    if (rect.right > window.innerWidth) menu.style.left = (e.pageX - rect.width) + 'px';
+    if (rect.bottom > window.innerHeight) menu.style.top = (e.pageY - rect.height) + 'px';
 
-  menu.addEventListener('click', function (e) {
-    var item = e.target.closest('.context-menu-item');
-    if (!item || !targetSession) return;
-
-    var action = item.getAttribute('data-action');
-    menu.style.display = 'none';
-
-    if (action === 'rename') {
-      _renameSession(targetSession);
-    } else if (action === 'delete') {
-      _deleteSession(targetSession);
-    }
-  });
-
-  // Close menu on click elsewhere
-  document.addEventListener('click', function () {
-    menu.style.display = 'none';
-  });
-
-  document.addEventListener('contextmenu', function (e) {
-    if (!view.contains(e.target)) {
+    menu.onclick = function (ev) {
+      var item = ev.target.closest('.context-menu-item');
+      if (!item) return;
       menu.style.display = 'none';
-    }
-  });
-}
+      var action = item.getAttribute('data-action');
+      if (action === 'rename') _renameSession(sess);
+      else if (action === 'delete') _deleteSession(sess);
+    };
+  }, true);
+})();
 
 // === Session Actions ===
 

@@ -588,6 +588,39 @@ function _mountTerminal(termContainer, nozoom) {
   }
 
 
+  // Suppress mousemove after right-click so tmux popup menus stay open.
+  // tmux's display-menu closes when it receives mouse-move events outside
+  // the popup area. In a native terminal, mouse movement isn't reported
+  // unless a button is held, but xterm.js always reports it.
+  (function () {
+    var suppress = false;
+    var el = term.element;
+    if (!el) return;
+    el.addEventListener('mousedown', function (e) {
+      if (e.button === 2) { // right-click
+        suppress = true;
+      }
+    }, true);
+    el.addEventListener('mousemove', function (e) {
+      if (suppress) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }, true);
+    el.addEventListener('mouseup', function (e) {
+      if (e.button === 2 && suppress) {
+        // Keep suppressing moves briefly after right-click release
+        setTimeout(function () { suppress = false; }, 100);
+      }
+    }, true);
+    // Any left-click dismisses the tmux menu, stop suppressing
+    el.addEventListener('mousedown', function (e) {
+      if (e.button === 0) {
+        suppress = false;
+      }
+    });
+  })();
+
   // Small delay to ensure DOM is ready for fitting
   setTimeout(function () {
     fitAddon.fit();

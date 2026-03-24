@@ -514,6 +514,8 @@ function _rebuildSidebar(sidebar) {
     });
   });
 
+
+
   // Load windows for active session
   if (state.currentSession) {
     _loadSidebarWindows(state.currentSession);
@@ -600,11 +602,153 @@ function _loadSidebarWindows(sessionName) {
             });
         });
       });
+
+
     })
     .catch(function () {
       windowsEl.innerHTML = '<div style="color: var(--accent-red); font-size: 0.75rem; padding: 4px 12px 4px 36px;">Failed</div>';
     });
 }
+
+// === Sidebar Context Menu (unified) ===
+//
+// Single document-level capture handler for all sidebar right-clicks.
+// No per-rebuild listeners — avoids duplicate handler accumulation.
+
+(function () {
+  var menu = null;
+
+  function _ensureMenu() {
+    if (menu) return menu;
+    menu = document.createElement('div');
+    menu.id = 'sidebar-context-menu';
+    menu.className = 'context-menu';
+    menu.style.display = 'none';
+    document.body.appendChild(menu);
+    document.addEventListener('click', function () { menu.style.display = 'none'; });
+    return menu;
+  }
+
+  function _showMenu(e, items, onclick) {
+    var m = _ensureMenu();
+    m.innerHTML = items;
+    m.style.display = 'block';
+    m.style.left = e.pageX + 'px';
+    m.style.top = e.pageY + 'px';
+    var rect = m.getBoundingClientRect();
+    if (rect.right > window.innerWidth) m.style.left = (e.pageX - rect.width) + 'px';
+    if (rect.bottom > window.innerHeight) m.style.top = (e.pageY - rect.height) + 'px';
+    m.onclick = function (ev) {
+      var item = ev.target.closest('.context-menu-item');
+      if (!item) return;
+      m.style.display = 'none';
+      onclick(item.getAttribute('data-action'));
+    };
+  }
+
+  document.addEventListener('contextmenu', function (e) {
+    var sidebar = document.getElementById('sidebar');
+    if (!sidebar || !sidebar.contains(e.target)) return;
+
+    // Always block browser menu inside sidebar
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    // Session header right-click
+    var sessionHeader = e.target.closest('.sidebar-session-header');
+    if (sessionHeader) {
+      var sess = sessionHeader.getAttribute('data-session');
+      _showMenu(e,
+        '<div class="context-menu-item" data-action="rename">重命名</div>' +
+        '<div class="context-menu-item context-menu-item-danger" data-action="delete">删除</div>',
+        function (action) {
+          if (action === 'rename') {
+            showPrompt({ title: '重命名会话', placeholder: '新名称', value: sess })
+              .then(function (newName) {
+                if (!newName || !newName.trim()) return;
+                return api.put('/api/sessions/' + encodeURIComponent(sess), { name: newName.trim() });
+              })
+              .then(function (result) {
+                if (!result) return;
+                if (state.currentSession === sess) {
+                  state.currentSession = result.data && result.data.name || state.currentSession;
+                  updateTopbarSession();
+                }
+                _sidebarSessionKey = '';
+                updateSidebar();
+              })
+              .catch(function (err) { showAlert({ title: '重命名失败', message: err.message }); });
+          } else if (action === 'delete') {
+            showConfirm({ title: '删除会话', message: '确定删除会话 "' + sess + '"？', confirmText: '删除', danger: true })
+              .then(function (confirmed) {
+                if (!confirmed) return;
+                return api.delete('/api/sessions/' + encodeURIComponent(sess));
+              })
+              .then(function (result) {
+                if (!result) return;
+                if (state.currentSession === sess) {
+                  state.currentSession = null;
+                  updateTopbarSession();
+                }
+                _sidebarSessionKey = '';
+                updateSidebar();
+                render();
+              })
+              .catch(function (err) { showAlert({ title: '删除失败', message: err.message }); });
+          }
+        }
+      );
+      return;
+    }
+
+    // Window item right-click
+    var windowItem = e.target.closest('.sidebar-window-item');
+    if (windowItem) {
+      var winIdx = windowItem.getAttribute('data-window-index');
+      var winSess = windowItem.getAttribute('data-session');
+      _showMenu(e,
+        '<div class="context-menu-item" data-action="rename">重命名</div>' +
+        '<div class="context-menu-item context-menu-item-danger" data-action="delete">删除</div>',
+        function (action) {
+          if (action === 'rename') {
+            showPrompt({ title: '重命名窗口 ' + winIdx, placeholder: '新名称' })
+              .then(function (newName) {
+                if (!newName || !newName.trim()) return;
+                return api.put(
+                  '/api/sessions/' + encodeURIComponent(winSess) + '/windows/' + encodeURIComponent(winIdx),
+                  { newName: newName.trim() }
+                );
+              })
+              .then(function (result) {
+                if (result) { _sidebarSessionKey = ''; updateSidebar(); }
+              })
+              .catch(function (err) { showAlert({ title: '重命名失败', message: err.message }); });
+          } else if (action === 'delete') {
+            showConfirm({ title: '删除窗口', message: '确定删除窗口 ' + winIdx + '？', confirmText: '删除', danger: true })
+              .then(function (confirmed) {
+                if (!confirmed) return;
+                return api.delete('/api/sessions/' + encodeURIComponent(winSess) + '/windows/' + encodeURIComponent(winIdx));
+              })
+              .then(function (result) {
+                if (!result) return;
+                if (typeof _fontOffsets !== 'undefined' && typeof _saveFontOffsets === 'function') {
+                  delete _fontOffsets[winSess + ':' + winIdx];
+                  _saveFontOffsets();
+                }
+                _sidebarSessionKey = '';
+                updateSidebar();
+                if (String(state.currentWindow) === String(winIdx)) navigate('windows');
+              })
+              .catch(function (err) { showAlert({ title: '删除失败', message: err.message }); });
+          }
+        }
+      );
+      return;
+    }
+
+    // Right-clicked on empty sidebar area — just block browser menu, no custom menu
+  }, true);
+})();
 
 function escapeHtml(str) {
   var div = document.createElement('div');

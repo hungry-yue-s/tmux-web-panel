@@ -105,7 +105,7 @@ if (config.auth) {
 }
 
 // Serve static files from public/ (publicly accessible — client JS handles auth redirect)
-app.use(express.static(join(__dirname, '..', 'public')));
+app.use(express.static(join(__dirname, '..', 'public'), { etag: false, maxAge: 0 }));
 
 // --- Token auth middleware (protects API routes below) ---
 

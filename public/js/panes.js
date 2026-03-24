@@ -1,5 +1,10 @@
 /* global escapeHtml, api, state, renderTerminal */
 
+// === Global: block browser context menu everywhere ===
+document.addEventListener('contextmenu', function (e) {
+  e.preventDefault();
+}, true);
+
 // === Pane Layout Visualization ===
 
 // Renders pane layout as positioned boxes within a container.

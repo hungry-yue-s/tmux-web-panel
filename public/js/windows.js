@@ -321,9 +321,16 @@ function _attachWindowSwipeActionHandlers(swipeContainer, parentContainer) {
 
 // === Context Menu (PC) ===
 
+// Singleton context menu state — auto-initialized via IIFE
+var _ctxMenu = null;
+var _ctxContainer = null;
+var _ctxTargetIndex = null;
+
 function _initWindowContextMenu(view, container) {
-  var existing = document.getElementById('window-context-menu');
-  if (existing) existing.remove();
+  _ctxContainer = container;
+}
+
+(function () {
 
   var menu = document.createElement('div');
   menu.id = 'window-context-menu';
@@ -333,16 +340,19 @@ function _initWindowContextMenu(view, container) {
     '<div class="context-menu-item" data-action="rename">Rename</div>' +
     '<div class="context-menu-item context-menu-item-danger" data-action="delete">Delete</div>';
   document.body.appendChild(menu);
+  _ctxMenu = menu;
 
-  var targetIndex = null;
-
-  view.addEventListener('contextmenu', function (e) {
-    var swipeContainer = e.target.closest('.swipe-container');
-    if (!swipeContainer) return;
+  // Capture phase — fires before browser can show native menu
+  document.addEventListener('contextmenu', function (e) {
+    var swipeContainer = e.target.closest('.swipe-container[data-window-index]');
+    if (!swipeContainer) {
+      menu.style.display = 'none';
+      return;
+    }
 
     e.preventDefault();
-    e.stopPropagation();
-    targetIndex = swipeContainer.getAttribute('data-window-index');
+    e.stopImmediatePropagation();
+    _ctxTargetIndex = swipeContainer.getAttribute('data-window-index');
 
     menu.style.display = 'block';
     menu.style.left = e.pageX + 'px';
@@ -355,32 +365,26 @@ function _initWindowContextMenu(view, container) {
     if (rect.bottom > window.innerHeight) {
       menu.style.top = (e.pageY - rect.height) + 'px';
     }
-  });
+  }, true); // capture phase
 
   menu.addEventListener('click', function (e) {
     var item = e.target.closest('.context-menu-item');
-    if (!item || !targetIndex) return;
+    if (!item || !_ctxTargetIndex) return;
 
     var action = item.getAttribute('data-action');
     menu.style.display = 'none';
 
     if (action === 'rename') {
-      _renameWindow(targetIndex, container);
+      _renameWindow(_ctxTargetIndex, _ctxContainer);
     } else if (action === 'delete') {
-      _deleteWindow(targetIndex, container);
+      _deleteWindow(_ctxTargetIndex, _ctxContainer);
     }
   });
 
   document.addEventListener('click', function () {
     menu.style.display = 'none';
   });
-
-  document.addEventListener('contextmenu', function (e) {
-    if (!view.contains(e.target)) {
-      menu.style.display = 'none';
-    }
-  });
-}
+})();
 
 // === Window Actions ===
 
