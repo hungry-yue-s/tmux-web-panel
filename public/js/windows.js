@@ -1,103 +1,92 @@
-/* global api, state, navigate, escapeHtml */
+/* global api, state, navigate, escapeHtml, updateSidebar, updateTopbarSession */
 
 // === Windows View ===
 
 function renderWindows(container) {
-  if (!state.currentSession) {
-    navigate('sessions');
-    return;
-  }
-
   container.innerHTML =
     '<div class="windows-view">' +
-    '<div class="windows-header">' +
-    '<button class="btn windows-back-btn">&larr; ' + escapeHtml(state.currentSession) + '</button>' +
-    '<button class="btn btn-primary windows-add-btn">+ Window</button>' +
-    '</div>' +
-    '<div class="windows-search">' +
-    '<input class="input search-input" type="text" placeholder="Search windows...">' +
-    '</div>' +
-    '<div class="windows-loading">' +
+    '<div class="windows-body">' +
     '<div class="spinner"></div>' +
-    '<p>Loading windows...</p>' +
+    '<p>Loading...</p>' +
     '</div>' +
     '</div>';
 
-  var view = container.querySelector('.windows-view');
+  var bodyEl = container.querySelector('.windows-body');
 
-  // Back button
-  view.querySelector('.windows-back-btn').addEventListener('click', function () {
-    navigate('sessions');
-  });
+  // Fetch sessions to validate current session, then load windows
+  api
+    .get('/api/sessions')
+    .then(function (result) {
+      var sessions = result.data || [];
+      state.sessions = sessions;
+      if (typeof updateSidebar === 'function') updateSidebar();
 
-  // Add window button
-  view.querySelector('.windows-add-btn').addEventListener('click', function () {
-    var name = prompt('Window name (leave empty for default):');
-    if (name === null) return;
+      if (sessions.length === 0) {
+        state.currentSession = null;
+        updateTopbarSession();
+        bodyEl.innerHTML =
+          '<div class="windows-empty">' +
+          '<p style="font-size: 1.1rem; margin-bottom: 8px;">No sessions</p>' +
+          '<p style="color: var(--text-muted);">Tap + in the top bar to create one.</p>' +
+          '</div>';
+        return;
+      }
 
-    var body = {};
-    if (name.trim()) {
-      body.name = name.trim();
-    }
+      // Auto-select first session if none selected or selection invalid
+      var validSession = sessions.some(function (s) { return s.name === state.currentSession; });
+      if (!state.currentSession || !validSession) {
+        state.currentSession = sessions[0].name;
+      }
+      updateTopbarSession();
 
-    api
-      .post('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows', body)
-      .then(function () {
-        renderWindows(container);
-      })
-      .catch(function (err) {
-        alert('Failed to create window: ' + err.message);
-      });
-  });
+      _loadWindows(bodyEl, container);
+    })
+    .catch(function (err) {
+      bodyEl.innerHTML =
+        '<div class="windows-empty">' +
+        '<p style="color: var(--accent-red);">Failed to load sessions</p>' +
+        '<p style="color: var(--text-muted);">' + escapeHtml(err.message) + '</p>' +
+        '</div>';
+    });
+}
 
-  // Search handler
-  var searchInput = view.querySelector('.search-input');
-  searchInput.addEventListener('input', function () {
-    _filterWindows(view, searchInput.value.trim().toLowerCase());
-  });
+// === Load Windows for current session ===
 
-  // Fetch windows
+function _loadWindows(bodyEl, parentContainer) {
+  bodyEl.innerHTML =
+    '<div class="spinner"></div><p style="text-align:center;color:var(--text-muted);">Loading windows...</p>';
+
   api
     .get('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows')
     .then(function (result) {
       var windows = result.data || [];
       state.windows = windows;
 
-      var loadingEl = view.querySelector('.windows-loading');
-      if (loadingEl) loadingEl.remove();
-
       if (windows.length === 0) {
-        var emptyEl = document.createElement('div');
-        emptyEl.className = 'windows-empty';
-        emptyEl.innerHTML =
+        bodyEl.innerHTML =
+          '<div class="windows-empty">' +
           '<p style="font-size: 1.1rem; margin-bottom: 8px;">No windows</p>' +
-          '<p style="color: var(--text-muted);">Create a new window to get started.</p>';
-        view.appendChild(emptyEl);
+          '<p style="color: var(--text-muted);">Create a new window to get started.</p>' +
+          '</div>';
         return;
       }
 
-      var listEl = document.createElement('div');
-      listEl.className = 'windows-list';
-      var html = '';
+      var html = '<div class="windows-list">';
       windows.forEach(function (w) {
         html += _buildWindowCard(w);
       });
-      listEl.innerHTML = html;
-      view.appendChild(listEl);
+      html += '</div>';
+      bodyEl.innerHTML = html;
 
-      _attachWindowHandlers(view, container);
-      _fetchPaneThumbnails(view, windows);
+      _attachWindowHandlers(bodyEl, parentContainer);
+      _fetchPaneThumbnails(bodyEl, windows);
     })
     .catch(function (err) {
-      var loadingEl = view.querySelector('.windows-loading');
-      if (loadingEl) loadingEl.remove();
-
-      var errEl = document.createElement('div');
-      errEl.className = 'windows-empty';
-      errEl.innerHTML =
+      bodyEl.innerHTML =
+        '<div class="windows-empty">' +
         '<p style="color: var(--accent-red);">Failed to load windows</p>' +
-        '<p style="color: var(--text-muted);">' + escapeHtml(err.message) + '</p>';
-      view.appendChild(errEl);
+        '<p style="color: var(--text-muted);">' + escapeHtml(err.message) + '</p>' +
+        '</div>';
     });
 }
 
@@ -112,7 +101,6 @@ function _buildWindowCard(w) {
     '<div class="swipe-container" data-window-index="' + w.index + '" data-window-name="' + escapeHtml(w.name || '') + '">' +
     '<div class="swipe-actions">' +
     '<button class="btn swipe-action-rename" data-window-index="' + w.index + '">Rename</button>' +
-    '<button class="btn btn-primary swipe-action-split" data-window-index="' + w.index + '">Split</button>' +
     '<button class="btn btn-danger swipe-action-delete" data-window-index="' + w.index + '">Delete</button>' +
     '</div>' +
     '<div class="window-card card" data-window-index="' + w.index + '">' +
@@ -157,7 +145,6 @@ function _fetchPaneThumbnails(view, windows) {
 
         if (panes.length === 0) return;
 
-        // Calculate bounding box
         var maxRight = 0;
         var maxBottom = 0;
         panes.forEach(function (p) {
@@ -198,32 +185,15 @@ function _fetchPaneThumbnails(view, windows) {
   });
 }
 
-// === Filter Windows ===
-
-function _filterWindows(view, query) {
-  var containers = view.querySelectorAll('.swipe-container[data-window-index]');
-  containers.forEach(function (el) {
-    var name = (el.getAttribute('data-window-name') || '').toLowerCase();
-    var index = el.getAttribute('data-window-index') || '';
-    if (!query || name.indexOf(query) !== -1 || index.indexOf(query) !== -1) {
-      el.style.display = '';
-    } else {
-      el.style.display = 'none';
-    }
-  });
-}
-
 // === Event Handlers ===
 
 function _attachWindowHandlers(view, container) {
-  // Click to navigate to terminal
   view.querySelectorAll('.window-card').forEach(function (card) {
     card.addEventListener('click', function (e) {
       if (e.defaultPrevented) return;
       var windowIndex = card.getAttribute('data-window-index');
       if (!windowIndex) return;
 
-      // Fetch panes and navigate to terminal with first pane
       api
         .get('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/' + encodeURIComponent(windowIndex) + '/panes')
         .then(function (result) {
@@ -237,10 +207,7 @@ function _attachWindowHandlers(view, container) {
     });
   });
 
-  // Swipe handling (mobile)
   _initWindowSwipe(view, container);
-
-  // Context menu (PC)
   _initWindowContextMenu(view, container);
 }
 
@@ -283,7 +250,7 @@ function _initWindowSwipe(view, container) {
     }
 
     swiping = true;
-    currentX = Math.min(0, Math.max(-200, dx));
+    currentX = Math.min(0, Math.max(-160, dx));
 
     var card = activeSwipe.querySelector('.window-card');
     if (card) {
@@ -304,7 +271,7 @@ function _initWindowSwipe(view, container) {
     card.style.transition = 'transform 0.2s ease';
 
     if (currentX < -THRESHOLD) {
-      card.style.transform = 'translateX(-190px)';
+      card.style.transform = 'translateX(-140px)';
       _attachWindowSwipeActionHandlers(activeSwipe, container);
     } else {
       card.style.transform = 'translateX(0)';
@@ -333,7 +300,6 @@ function _attachWindowSwipeActionHandlers(swipeContainer, parentContainer) {
   var windowIndex = swipeContainer.getAttribute('data-window-index');
 
   var renameBtn = swipeContainer.querySelector('.swipe-action-rename');
-  var splitBtn = swipeContainer.querySelector('.swipe-action-split');
   var deleteBtn = swipeContainer.querySelector('.swipe-action-delete');
 
   if (renameBtn) {
@@ -341,14 +307,6 @@ function _attachWindowSwipeActionHandlers(swipeContainer, parentContainer) {
       e.preventDefault();
       e.stopPropagation();
       _renameWindow(windowIndex, parentContainer);
-    };
-  }
-
-  if (splitBtn) {
-    splitBtn.onclick = function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      _splitWindow(windowIndex, parentContainer);
     };
   }
 
@@ -373,8 +331,6 @@ function _initWindowContextMenu(view, container) {
   menu.style.display = 'none';
   menu.innerHTML =
     '<div class="context-menu-item" data-action="rename">Rename</div>' +
-    '<div class="context-menu-item" data-action="split-h">Split Horizontal</div>' +
-    '<div class="context-menu-item" data-action="split-v">Split Vertical</div>' +
     '<div class="context-menu-item context-menu-item-danger" data-action="delete">Delete</div>';
   document.body.appendChild(menu);
 
@@ -409,10 +365,6 @@ function _initWindowContextMenu(view, container) {
 
     if (action === 'rename') {
       _renameWindow(targetIndex, container);
-    } else if (action === 'split-h') {
-      _splitWindowDirection(targetIndex, 'horizontal', container);
-    } else if (action === 'split-v') {
-      _splitWindowDirection(targetIndex, 'vertical', container);
     } else if (action === 'delete') {
       _deleteWindow(targetIndex, container);
     }
@@ -445,31 +397,6 @@ function _renameWindow(windowIndex, container) {
     })
     .catch(function (err) {
       alert('Failed to rename window: ' + err.message);
-    });
-}
-
-function _splitWindow(windowIndex, container) {
-  var direction = prompt('Split direction (horizontal / vertical):');
-  if (!direction) return;
-  direction = direction.trim().toLowerCase();
-  if (direction !== 'horizontal' && direction !== 'vertical') {
-    alert('Please enter "horizontal" or "vertical".');
-    return;
-  }
-  _splitWindowDirection(windowIndex, direction, container);
-}
-
-function _splitWindowDirection(windowIndex, direction, container) {
-  api
-    .post(
-      '/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/' + encodeURIComponent(windowIndex) + '/panes',
-      { direction: direction }
-    )
-    .then(function () {
-      renderWindows(container);
-    })
-    .catch(function (err) {
-      alert('Failed to split window: ' + err.message);
     });
 }
 

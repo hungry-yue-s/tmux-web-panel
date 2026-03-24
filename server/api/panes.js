@@ -5,10 +5,15 @@ import * as tmux from '../tmux.js';
 
 const nestedPanesRouter = Router({ mergeParams: true });
 
-// GET /api/sessions/:name/windows/:index/panes
+// GET /api/sessions/:name/windows/:index/panes[?unzoom=1]
 nestedPanesRouter.get('/', async (req, res) => {
   try {
     const { name: session, index } = req.params;
+    // In split mode the frontend passes ?unzoom=1 so we get the real
+    // (non-zoomed) pane geometry instead of the zoomed pane covering 100%.
+    if (req.query.unzoom === '1') {
+      await tmux.unzoomWindow(session, index);
+    }
     const panes = await tmux.listPanes(session, index);
     res.json({
       success: true,

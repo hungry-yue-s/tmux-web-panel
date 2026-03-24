@@ -12,8 +12,7 @@ var terminalState = {
 
 // === Cleanup ===
 
-function cleanupTerminal() {
-  document.body.classList.remove('terminal-active');
+function _cleanupTerminalResources() {
   terminalState.termContainer = null;
   if (terminalState._vpHandler && window.visualViewport) {
     window.visualViewport.removeEventListener('resize', terminalState._vpHandler);
@@ -33,6 +32,19 @@ function cleanupTerminal() {
     terminalState.term = null;
   }
   terminalState.fitAddon = null;
+
+  // Clean up split mode terminals
+  _splitTerminals.forEach(function (st) {
+    if (st.resizeObserver) st.resizeObserver.disconnect();
+    if (st.ws) st.ws.close();
+    if (st.term) st.term.dispose();
+  });
+  _splitTerminals = [];
+}
+
+function cleanupTerminal() {
+  _cleanupTerminalResources();
+  document.body.classList.remove('terminal-active');
   exitFullscreen();
 }
 
@@ -55,22 +67,20 @@ function toggleFullscreen() {
     enterFullscreen();
   }
   // Re-fit after layout change
-  if (terminalState.fitAddon) {
-    setTimeout(function () {
-      terminalState.fitAddon.fit();
-    }, 100);
-  }
+  setTimeout(function () {
+    if (terminalState.fitAddon) terminalState.fitAddon.fit();
+    _splitTerminals.forEach(function (st) { st.fitAddon.fit(); });
+  }, 100);
 }
 
 // Escape key exits fullscreen
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape' && terminalState.isFullscreen) {
     exitFullscreen();
-    if (terminalState.fitAddon) {
-      setTimeout(function () {
-        terminalState.fitAddon.fit();
-      }, 100);
-    }
+    setTimeout(function () {
+      if (terminalState.fitAddon) terminalState.fitAddon.fit();
+      _splitTerminals.forEach(function (st) { st.fitAddon.fit(); });
+    }, 100);
   }
 });
 
@@ -145,9 +155,83 @@ function renderPaneNavBar(container, panes, activePaneId, onSwitch) {
   container.appendChild(indicator);
 }
 
+// === Terminal Font Size ===
+
+function _adjustFontSize(dir) {
+  var updated = false;
+
+  // Single terminal mode
+  if (terminalState.term && terminalState.fitAddon) {
+    var current = terminalState.term.options.fontSize || 14;
+    var next = Math.max(8, Math.min(22, current + dir));
+    if (next !== current) {
+      terminalState.term.options.fontSize = next;
+      terminalState.fitAddon.fit();
+      if (terminalState.ws && terminalState.ws.readyState === WebSocket.OPEN) {
+        terminalState.ws.send(JSON.stringify({
+          type: 'resize',
+          cols: terminalState.term.cols,
+          rows: terminalState.term.rows,
+        }));
+      }
+      updated = true;
+    }
+  }
+
+  // Split mode terminals
+  _splitTerminals.forEach(function (st) {
+    var cur = st.term.options.fontSize || 14;
+    var nxt = Math.max(8, Math.min(22, cur + dir));
+    if (nxt !== cur) {
+      st.term.options.fontSize = nxt;
+      st.fitAddon.fit();
+      if (st.ws && st.ws.readyState === WebSocket.OPEN) {
+        st.ws.send(JSON.stringify({ type: 'resize', cols: st.term.cols, rows: st.term.rows }));
+      }
+      updated = true;
+    }
+  });
+
+  if (updated) {
+    _fontOffset += dir;
+    try { localStorage.setItem('tmux_font_offset', String(_fontOffset)); } catch (_e) {}
+  }
+}
+
+var _fontOffset = (function () {
+  try { return parseInt(localStorage.getItem('tmux_font_offset'), 10) || 0; } catch (_e) { return 0; }
+})();
+
+// === Terminal View Mode (tab / split) ===
+
+var _terminalMode = (function () {
+  try { return localStorage.getItem('tmux_terminal_mode') || 'tab'; } catch (_e) { return 'tab'; }
+})();
+
+var _splitTerminals = []; // Array of { paneId, term, ws, fitAddon, resizeObserver }
+
+function _calcTerminalFontSize(paneCols, paneRows, containerEl) {
+  var container = containerEl || document.querySelector('.terminal-container');
+  var w = container ? container.clientWidth : window.innerWidth;
+  var h = container ? container.clientHeight : window.innerHeight;
+
+  // Use tmux pane's actual cols/rows as target
+  var cols = paneCols || 80;
+  var rows = paneRows || 24;
+
+  // Monospace char width ≈ 0.6 * fontSize, line height ≈ 1.2 * fontSize
+  // Subtract small padding (8px total)
+  var fromWidth = (w - 8) / (cols * 0.6);
+  var fromHeight = (h - 8) / (rows * 1.2);
+  var size = Math.min(fromWidth, fromHeight);
+  var base = Math.max(10, Math.min(16, Math.round(size)));
+  // Apply user's manual offset (from A+/A- buttons), clamped to [8, 22]
+  return Math.max(8, Math.min(22, base + _fontOffset));
+}
+
 // === Create xterm Terminal ===
 
-function createTerminalInstance() {
+function createTerminalInstance(paneCols, paneRows) {
   return new Terminal({
     theme: {
       background: '#1a1b26',
@@ -173,7 +257,7 @@ function createTerminalInstance() {
       brightWhite: '#c0caf5',
     },
     fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-    fontSize: 14,
+    fontSize: _calcTerminalFontSize(paneCols, paneRows),
     cursorBlink: true,
     scrollback: 5000,
     overviewRulerWidth: 0,
@@ -226,8 +310,12 @@ function connectTerminalWs(paneId, term) {
 // === Render Terminal View ===
 
 function renderTerminal(container) {
-  // Cleanup previous terminal
-  cleanupTerminal();
+  // Cleanup previous terminal resources without removing body class
+  _cleanupTerminalResources();
+
+  // Reset scroll position — if #content was scrolled (e.g. long window list),
+  // the terminal header would be pushed above the visible area.
+  container.scrollTop = 0;
 
   if (!state.currentSession || !state.currentWindow) {
     container.innerHTML =
@@ -238,7 +326,9 @@ function renderTerminal(container) {
     return;
   }
 
-  // Mark body for mobile terminal layout
+  // Reset page-level scroll (windows list may have scrolled <body>)
+  // and lock body for mobile terminal layout
+  window.scrollTo(0, 0);
   document.body.classList.add('terminal-active');
 
   // Build the terminal view structure
@@ -249,7 +339,13 @@ function renderTerminal(container) {
     '<div class="terminal-header-pills"></div>' +
     '<span class="terminal-header-title"></span>' +
     '<div class="terminal-header-actions">' +
-    '<button class="btn terminal-split-btn" title="Split pane">&#8862;</button>' +
+    '<div class="terminal-mode-toggle">' +
+    '<button class="btn terminal-mode-opt' + (_terminalMode === 'tab' ? ' active' : '') + '" data-mode="tab" title="标签页模式">&#9723;</button>' +
+    '<button class="btn terminal-mode-opt' + (_terminalMode === 'split' ? ' active' : '') + '" data-mode="split" title="分屏模式">&#8862;</button>' +
+    '</div>' +
+    '<button class="btn terminal-font-btn" data-dir="-1" title="Smaller font">A&#8722;</button>' +
+    '<button class="btn terminal-font-btn" data-dir="1" title="Larger font">A&#43;</button>' +
+    '<button class="btn terminal-split-btn" title="Split pane">&#10010;</button>' +
     '<button class="btn terminal-popout-btn" title="Pop out">&#8599;</button>' +
     '<button class="btn terminal-fullscreen-btn" title="Fullscreen">&#9634;</button>' +
     '</div>' +
@@ -270,13 +366,48 @@ function renderTerminal(container) {
 
   // Back button
   view.querySelector('.terminal-back-btn').addEventListener('click', function () {
-    cleanupTerminal();
-    navigate('windows', { currentSession: state.currentSession });
+    _backToWindows();
   });
 
-  // Split button — show popup with horizontal/vertical options
+  // Font size buttons
+  view.querySelectorAll('.terminal-font-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var dir = parseInt(btn.getAttribute('data-dir'), 10);
+      _adjustFontSize(dir);
+    });
+  });
+
+  // Swipe-back visual indicator (rendered once, driven by overlay touch handler)
+  if (window.innerWidth < 768) {
+    var ind = document.createElement('div');
+    ind.className = 'swipe-back-indicator';
+    view.appendChild(ind);
+  }
+
+  // Split button
+  function doSplit(direction) {
+    api
+      .post(
+        '/api/sessions/' + encodeURIComponent(state.currentSession) +
+        '/windows/' + encodeURIComponent(state.currentWindow) + '/panes',
+        { paneId: state.currentPane, direction: direction }
+      )
+      .then(function () {
+        renderTerminal(container);
+      })
+      .catch(function (err) {
+        alert('Failed to split pane: ' + err.message);
+      });
+  }
+
   view.querySelector('.terminal-split-btn').addEventListener('click', function (e) {
-    // Remove existing popup if any
+    // Mobile: split directly (direction doesn't matter, each pane gets its own screen)
+    if (window.innerWidth < 768) {
+      doSplit('vertical');
+      return;
+    }
+
+    // Desktop: show popup to choose direction
     var existing = view.querySelector('.split-popup');
     if (existing) { existing.remove(); return; }
 
@@ -286,33 +417,16 @@ function renderTerminal(container) {
       '<button class="btn split-popup-btn" data-dir="horizontal">&#x2194; 水平分割</button>' +
       '<button class="btn split-popup-btn" data-dir="vertical">&#x2195; 垂直分割</button>';
 
-    // Position below the split button
     var btn = e.currentTarget;
     btn.parentElement.appendChild(popup);
 
-    function doSplit(direction) {
-      popup.remove();
-      api
-        .post(
-          '/api/sessions/' + encodeURIComponent(state.currentSession) +
-          '/windows/' + encodeURIComponent(state.currentWindow) + '/panes',
-          { paneId: state.currentPane, direction: direction }
-        )
-        .then(function () {
-          renderTerminal(container);
-        })
-        .catch(function (err) {
-          alert('Failed to split pane: ' + err.message);
-        });
-    }
-
     popup.querySelectorAll('.split-popup-btn').forEach(function (b) {
       b.addEventListener('click', function () {
+        popup.remove();
         doSplit(b.getAttribute('data-dir'));
       });
     });
 
-    // Close popup on outside click
     function closePopup(ev) {
       if (!popup.contains(ev.target) && ev.target !== btn) {
         popup.remove();
@@ -322,6 +436,19 @@ function renderTerminal(container) {
     setTimeout(function () {
       document.addEventListener('click', closePopup, true);
     }, 0);
+  });
+
+  // Mode toggle (tab / split)
+  view.querySelectorAll('.terminal-mode-opt').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var mode = btn.getAttribute('data-mode');
+      if (mode === _terminalMode) return;
+      _terminalMode = mode;
+      try { localStorage.setItem('tmux_terminal_mode', mode); } catch (_e) {}
+      // Re-render terminal view
+      _cleanupTerminalResources();
+      renderTerminal(container);
+    });
   });
 
   // Pop-out button
@@ -345,19 +472,25 @@ function renderTerminal(container) {
   exitFsBtn.addEventListener('click', function () {
     exitFullscreen();
     exitFsBtn.style.display = 'none';
-    if (terminalState.fitAddon) {
-      setTimeout(function () {
+    setTimeout(function () {
+      if (terminalState.fitAddon) {
         terminalState.fitAddon.fit();
-      }, 100);
-    }
+      }
+      _splitTerminals.forEach(function (st) { st.fitAddon.fit(); });
+    }, 100);
   });
 
   // Fetch panes and set up terminal
+  // In split mode, pass ?unzoom=1 so the server returns real (non-zoomed)
+  // pane geometry. Without this, the zoomed pane covers 100% of the layout.
+  var _panesUrl = '/api/sessions/' + encodeURIComponent(state.currentSession) +
+    '/windows/' + encodeURIComponent(state.currentWindow) + '/panes';
+  if (_terminalMode === 'split' && window.innerWidth >= 768) {
+    _panesUrl += '?unzoom=1';
+  }
+
   api
-    .get(
-      '/api/sessions/' + encodeURIComponent(state.currentSession) +
-      '/windows/' + encodeURIComponent(state.currentWindow) + '/panes'
-    )
+    .get(_panesUrl)
     .then(function (result) {
       var panes = result.data || [];
       state.panes = panes;
@@ -367,20 +500,26 @@ function renderTerminal(container) {
         state.currentPane = panes.length > 0 ? panes[0].id : null;
       }
 
-      // Render pane switcher
-      var isMobile = window.innerWidth < 768;
-      if (isMobile) {
-        // Mobile: render pills inline in header row
+      // Determine if split mode is active (desktop only, 2+ panes)
+      var useSplit = _terminalMode === 'split' && panes.length > 1 && window.innerWidth >= 768;
+
+      // Render pane pills
+      if (panes.length > 1) {
         var headerPills = view.querySelector('.terminal-header-pills');
-        if (panes.length > 1) {
-          renderPanePills(headerPills, panes, state.currentPane, switchPane);
-        }
-      } else {
-        renderPaneLayout(paneSwitcher, panes, state.currentPane, switchPane);
+        var pillHandler = useSplit ? _activateSplitPane : switchPane;
+        renderPanePills(headerPills, panes, state.currentPane, pillHandler);
       }
 
-      // Create and mount terminal
-      if (state.currentPane) {
+      // Hide mode toggle when only 1 pane
+      if (panes.length <= 1) {
+        var toggle = view.querySelector('.terminal-mode-toggle');
+        if (toggle) toggle.style.display = 'none';
+      }
+
+      // Create and mount terminal(s)
+      if (useSplit) {
+        _renderSplitMode(termContainer, panes);
+      } else if (state.currentPane) {
         _mountTerminal(termContainer);
       } else {
         termContainer.innerHTML =
@@ -398,7 +537,11 @@ function renderTerminal(container) {
 // === Mount Terminal Instance ===
 
 function _mountTerminal(termContainer) {
-  var term = createTerminalInstance();
+  // Get current pane's tmux dimensions
+  var currentPane = state.panes ? state.panes.find(function (p) { return p.id === state.currentPane; }) : null;
+  var paneCols = currentPane ? currentPane.width : null;
+  var paneRows = currentPane ? currentPane.height : null;
+  var term = createTerminalInstance(paneCols, paneRows);
   var fitAddon = new FitAddon.FitAddon();
   var webLinksAddon = new WebLinksAddon.WebLinksAddon();
 
@@ -410,7 +553,15 @@ function _mountTerminal(termContainer) {
   // Small delay to ensure DOM is ready for fitting
   setTimeout(function () {
     fitAddon.fit();
+    // On mobile, don't auto-focus to avoid browser scroll-to-focus pushing header away
+    if (window.innerWidth >= 768) {
+      term.focus();
+    }
+    // Reset #content scroll after mount — focus or xterm layout may have caused scroll
+    var contentEl = document.getElementById('content');
+    if (contentEl) contentEl.scrollTop = 0;
   }, 50);
+
 
   // Connect WebSocket
   var ws = connectTerminalWs(state.currentPane, term);
@@ -424,53 +575,151 @@ function _mountTerminal(termContainer) {
   overlay.className = 'terminal-touch-overlay';
   termContainer.appendChild(overlay);
 
-  var ts = { startY: 0, lastY: 0, moved: false, scrollAccum: 0 };
+  // Unified touch handler: vertical = tmux scroll, horizontal = swipe back
+  var ts = {
+    startX: 0, startY: 0, lastY: 0,
+    moved: false, scrollAccum: 0,
+    direction: null,  // null | 'vertical' | 'horizontal'
+    startTime: 0, currentDx: 0,
+  };
+  var LOCK_DISTANCE = 12;         // px before direction locks
+  var swipeIndicator = termContainer.closest('.terminal-view')
+    ? termContainer.closest('.terminal-view').querySelector('.swipe-back-indicator')
+    : null;
+  var sw = window.innerWidth;
+  var SWIPE_THRESHOLD = sw * 0.22;
+  var VELOCITY_TRIGGER = 0.35;    // px/ms
+
+  // Pinch-to-zoom state
+  var pinch = { active: false, startDist: 0, startFontSize: 0 };
+
+  function _pinchDist(e) {
+    var t0 = e.touches[0], t1 = e.touches[1];
+    var dx = t1.clientX - t0.clientX, dy = t1.clientY - t0.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
 
   overlay.addEventListener('touchstart', function (e) {
+    if (e.touches.length === 2) {
+      // Start pinch-to-zoom
+      pinch.active = true;
+      pinch.startDist = _pinchDist(e);
+      pinch.startFontSize = term.options.fontSize || 14;
+      ts.direction = null;
+      e.preventDefault();
+      return;
+    }
     if (e.touches.length === 1) {
-      ts.startY = e.touches[0].clientY;
-      ts.lastY = e.touches[0].clientY;
+      pinch.active = false;
+      var t = e.touches[0];
+      ts.startX = t.clientX;
+      ts.startY = t.clientY;
+      ts.lastY = t.clientY;
       ts.moved = false;
       ts.scrollAccum = 0;
+      ts.direction = null;
+      ts.startTime = Date.now();
+      ts.currentDx = 0;
+      if (swipeIndicator) {
+        swipeIndicator.style.transition = 'none';
+        swipeIndicator.style.opacity = '0';
+      }
     }
   });
 
   overlay.addEventListener('touchmove', function (e) {
-    if (e.touches.length !== 1) return;
-    var y = e.touches[0].clientY;
-    var dy = ts.lastY - y;
-    ts.lastY = y;
-    ts.scrollAccum += dy;
+    // Pinch-to-zoom: adjust font size
+    if (e.touches.length === 2 && pinch.active) {
+      var dist = _pinchDist(e);
+      var scale = dist / pinch.startDist;
+      var newSize = Math.round(pinch.startFontSize * scale);
+      newSize = Math.max(8, Math.min(22, newSize));
+      if (newSize !== term.options.fontSize) {
+        _fontOffset += newSize - term.options.fontSize;
+        term.options.fontSize = newSize;
+        fitAddon.fit();
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+        }
+        try { localStorage.setItem('tmux_font_offset', String(_fontOffset)); } catch (_e) {}
+      }
+      e.preventDefault();
+      return;
+    }
+    if (e.touches.length !== 1 || pinch.active) return;
+    var t = e.touches[0];
+    var dx = t.clientX - ts.startX;
+    var dy = t.clientY - ts.startY;
     ts.moved = true;
 
-    // Every 16px = 1 line scroll via mouse wheel escape sequences to tmux
-    var lines = Math.trunc(ts.scrollAccum / 16);
-    if (lines !== 0 && ws.readyState === WebSocket.OPEN) {
-      // SGR mouse wheel: button 64 = wheel up (older), 65 = wheel down (newer)
-      // Swipe up (lines > 0) = see newer content = wheel down
-      var seq = lines > 0 ? '\x1b[<65;1;1M' : '\x1b[<64;1;1M';
-      var count = Math.abs(lines);
-      var batch = '';
-      for (var j = 0; j < count; j++) { batch += seq; }
-      ws.send(JSON.stringify({ type: 'input', data: batch }));
-      ts.scrollAccum -= lines * 16;
+    // Lock direction after initial movement
+    if (!ts.direction) {
+      if (Math.abs(dx) >= LOCK_DISTANCE || Math.abs(dy) >= LOCK_DISTANCE) {
+        ts.direction = Math.abs(dx) > Math.abs(dy) ? 'horizontal' : 'vertical';
+      } else {
+        return; // Not enough movement yet
+      }
     }
-    e.preventDefault();
+
+    if (ts.direction === 'horizontal') {
+      ts.currentDx = Math.max(0, dx);
+      // Visual feedback
+      if (swipeIndicator) {
+        var progress = Math.min(ts.currentDx / SWIPE_THRESHOLD, 1);
+        swipeIndicator.style.opacity = String(progress * 0.9);
+        swipeIndicator.style.transform = 'scaleX(' + (0.3 + progress * 0.7) + ')';
+      }
+      e.preventDefault();
+    } else {
+      // Vertical: tmux scroll
+      var scrollDy = ts.lastY - t.clientY;
+      ts.lastY = t.clientY;
+      ts.scrollAccum += scrollDy;
+
+      var lines = Math.trunc(ts.scrollAccum / 16);
+      if (lines !== 0 && ws.readyState === WebSocket.OPEN) {
+        var seq = lines > 0 ? '\x1b[<65;1;1M' : '\x1b[<64;1;1M';
+        var count = Math.abs(lines);
+        var batch = '';
+        for (var j = 0; j < count; j++) { batch += seq; }
+        ws.send(JSON.stringify({ type: 'input', data: batch }));
+        ts.scrollAccum -= lines * 16;
+      }
+      e.preventDefault();
+    }
   });
 
   overlay.addEventListener('touchend', function (e) {
+    if (pinch.active) {
+      pinch.active = false;
+      return;
+    }
     if (!ts.moved) {
-      // It was a tap, not a scroll — briefly hide overlay so tap reaches terminal
+      // Tap: pass through to terminal
       overlay.style.pointerEvents = 'none';
       var touch = e.changedTouches[0];
       var el = document.elementFromPoint(touch.clientX, touch.clientY);
-      if (el) {
-        el.focus();
-        el.click();
+      if (el) { el.focus(); el.click(); }
+      setTimeout(function () { overlay.style.pointerEvents = ''; }, 300);
+      return;
+    }
+
+    if (ts.direction === 'horizontal') {
+      var endX = e.changedTouches[0].clientX;
+      var totalDx = endX - ts.startX;
+      var dt = Date.now() - ts.startTime;
+      var velocity = dt > 0 ? totalDx / dt : 0;
+
+      // Fade out indicator
+      if (swipeIndicator) {
+        swipeIndicator.style.transition = 'opacity 0.25s, transform 0.25s';
+        swipeIndicator.style.opacity = '0';
+        swipeIndicator.style.transform = 'scaleX(0.3)';
       }
-      setTimeout(function () {
-        overlay.style.pointerEvents = '';
-      }, 300);
+
+      if (totalDx >= SWIPE_THRESHOLD || velocity >= VELOCITY_TRIGGER) {
+        _backToWindows();
+      }
     }
   });
 
@@ -483,19 +732,29 @@ function _mountTerminal(termContainer) {
   });
   resizeObserver.observe(termContainer);
 
-  // Handle mobile virtual keyboard: CSS 100vh doesn't shrink when keyboard
-  // opens, so use visualViewport API to dynamically resize terminal-view.
+  // Handle mobile virtual keyboard: when keyboard opens, visualViewport
+  // shrinks but CSS vh doesn't. Resize terminal-container (not the whole view)
+  // to keep the header visible.
   var vpHandler = null;
   if (window.visualViewport && window.innerWidth < 768) {
+    var initialVpHeight = window.visualViewport.height;
     vpHandler = function () {
-      var view = termContainer.closest('.terminal-view');
-      if (!view) return;
       var vvHeight = window.visualViewport.height;
-      var viewTop = view.getBoundingClientRect().top;
-      var available = vvHeight - viewTop;
-      if (available > 0) {
-        view.style.height = available + 'px';
-        view.style.maxHeight = available + 'px';
+      // Only intervene when keyboard is likely open (viewport shrunk > 100px)
+      if (initialVpHeight - vvHeight > 100) {
+        var header = termContainer.closest('.terminal-view')
+          ? termContainer.closest('.terminal-view').querySelector('.terminal-header')
+          : null;
+        var headerH = header ? header.offsetHeight : 36;
+        var contentPad = 24; // #content padding top+bottom
+        var available = vvHeight - headerH - contentPad;
+        if (available > 0) {
+          termContainer.style.height = available + 'px';
+          termContainer.style.maxHeight = available + 'px';
+        }
+      } else {
+        termContainer.style.height = '';
+        termContainer.style.maxHeight = '';
       }
       fitAddon.fit();
       if (ws.readyState === WebSocket.OPEN) {
@@ -504,8 +763,6 @@ function _mountTerminal(termContainer) {
     };
     window.visualViewport.addEventListener('resize', vpHandler);
     window.visualViewport.addEventListener('scroll', vpHandler);
-    // Run once on mount to fix 100vh inaccuracy on mobile browsers
-    setTimeout(vpHandler, 100);
   }
 
   // Store references for cleanup
@@ -515,3 +772,178 @@ function _mountTerminal(termContainer) {
   terminalState.resizeObserver = resizeObserver;
   terminalState._vpHandler = vpHandler;
 }
+
+// === Split Mode ===
+
+function _renderSplitMode(container, panes) {
+  container.innerHTML = '';
+  container.classList.add('split-layout-active');
+
+  // Calculate total dimensions from pane geometry
+  var totalWidth = 0, totalHeight = 0;
+  panes.forEach(function (p) {
+    var pLeft = Number(p.left != null ? p.left : (p.x || 0));
+    var pTop = Number(p.top != null ? p.top : (p.y || 0));
+    var right = pLeft + (Number(p.width) || 1);
+    var bottom = pTop + (Number(p.height) || 1);
+    if (right > totalWidth) totalWidth = right;
+    if (bottom > totalHeight) totalHeight = bottom;
+  });
+
+  if (totalWidth === 0 || totalHeight === 0) return;
+
+  panes.forEach(function (p) {
+    var pLeft = Number(p.left != null ? p.left : (p.x || 0));
+    var pTop = Number(p.top != null ? p.top : (p.y || 0));
+    var pWidth = Number(p.width) || 1;
+    var pHeight = Number(p.height) || 1;
+    var isActive = p.id === state.currentPane;
+
+    var paneEl = document.createElement('div');
+    paneEl.className = 'split-pane-cell' + (isActive ? ' active' : '');
+    paneEl.style.position = 'absolute';
+    paneEl.style.left = (pLeft / totalWidth * 100).toFixed(2) + '%';
+    paneEl.style.top = (pTop / totalHeight * 100).toFixed(2) + '%';
+    paneEl.style.width = (pWidth / totalWidth * 100).toFixed(2) + '%';
+    paneEl.style.height = (pHeight / totalHeight * 100).toFixed(2) + '%';
+    paneEl.setAttribute('data-pane-id', p.id);
+
+    container.appendChild(paneEl);
+    _mountSplitTerminal(paneEl, p, isActive);
+  });
+}
+
+function _mountSplitTerminal(containerEl, pane, isActive) {
+  var term = createTerminalInstance(pane.width, pane.height);
+  var fitAddon = new FitAddon.FitAddon();
+  var webLinksAddon = new WebLinksAddon.WebLinksAddon();
+
+  term.loadAddon(fitAddon);
+  term.loadAddon(webLinksAddon);
+  term.open(containerEl);
+
+  // Mutable entry — ResizeObserver and activation callbacks reference this
+  var entry = {
+    paneId: pane.id,
+    term: term,
+    ws: null,
+    fitAddon: fitAddon,
+    resizeObserver: null,
+  };
+
+  setTimeout(function () {
+    // Recalculate font size using actual container dimensions
+    var newSize = _calcTerminalFontSize(pane.width, pane.height, containerEl);
+    if (newSize !== term.options.fontSize) {
+      term.options.fontSize = newSize;
+    }
+    fitAddon.fit();
+    if (isActive) {
+      term.focus();
+    }
+  }, 80);
+
+  // Only connect WebSocket for the active pane.
+  // Server zooms the pane on connect — simultaneous connections would conflict.
+  if (isActive) {
+    entry.ws = connectTerminalWs(pane.id, term);
+  }
+
+  var resizeObserver = new ResizeObserver(function () {
+    fitAddon.fit();
+    if (entry.ws && entry.ws.readyState === WebSocket.OPEN) {
+      entry.ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    }
+  });
+  resizeObserver.observe(containerEl);
+  entry.resizeObserver = resizeObserver;
+
+  // Click to activate this pane (capture phase to intercept before xterm)
+  containerEl.addEventListener('mousedown', function (e) {
+    if (pane.id !== state.currentPane) {
+      e.preventDefault();
+      e.stopPropagation();
+      _activateSplitPane(pane.id);
+    }
+  }, true);
+
+  _splitTerminals.push(entry);
+}
+
+function _activateSplitPane(paneId) {
+  if (paneId === state.currentPane) return;
+
+  // Disconnect the currently active pane's WebSocket (server will unzoom)
+  _splitTerminals.forEach(function (st) {
+    if (st.ws) {
+      st.ws.close();
+      st.ws = null;
+    }
+  });
+
+  state.currentPane = paneId;
+
+  // Connect the new active pane
+  _splitTerminals.forEach(function (st) {
+    if (st.paneId === paneId) {
+      st.ws = connectTerminalWs(paneId, st.term);
+      st.term.focus();
+      // Send resize after connection established
+      var entry = st;
+      setTimeout(function () {
+        if (entry.ws && entry.ws.readyState === WebSocket.OPEN) {
+          entry.ws.send(JSON.stringify({
+            type: 'resize',
+            cols: entry.term.cols,
+            rows: entry.term.rows,
+          }));
+        }
+      }, 150);
+    }
+  });
+
+  // Update pane cell highlights
+  document.querySelectorAll('.split-pane-cell').forEach(function (el) {
+    el.classList.toggle('active', el.getAttribute('data-pane-id') === paneId);
+  });
+
+  // Update header pills
+  document.querySelectorAll('.terminal-header-pills .pane-pill').forEach(function (el) {
+    el.classList.toggle('active', el.getAttribute('data-pane-id') === paneId);
+  });
+}
+
+// === Navigate back to windows and scroll to current window ===
+
+function _backToWindows() {
+  var windowIndex = state.currentWindow;
+  cleanupTerminal();
+  navigate('windows', { currentSession: state.currentSession });
+
+  // After render, scroll to the window card that was just open
+  if (windowIndex != null) {
+    _scrollToWindowCard(windowIndex);
+  }
+}
+
+function _scrollToWindowCard(windowIndex) {
+  // The render is async (fetches sessions then windows), so poll briefly
+  var attempts = 0;
+  var timer = setInterval(function () {
+    var card = document.querySelector('.swipe-container[data-window-index="' + windowIndex + '"]');
+    if (card) {
+      clearInterval(timer);
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Brief highlight
+      card.style.outline = '2px solid var(--accent-blue)';
+      card.style.outlineOffset = '2px';
+      card.style.borderRadius = '10px';
+      setTimeout(function () {
+        card.style.outline = '';
+        card.style.outlineOffset = '';
+      }, 1500);
+    }
+    if (++attempts > 20) clearInterval(timer);
+  }, 100);
+}
+

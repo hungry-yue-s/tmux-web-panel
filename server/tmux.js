@@ -150,6 +150,22 @@ export async function listWindows(session) {
   return parseWindows(stdout);
 }
 
+export async function unzoomWindow(session, window) {
+  requireValidSessionName(session);
+  requireValidWindowIndex(window);
+  try {
+    const flag = await tmuxExec([
+      'display-message', '-p', '-t', `${session}:${window}`,
+      '#{window_zoomed_flag}',
+    ]);
+    if (flag.trim() === '1') {
+      await tmuxExec(['resize-pane', '-Z', '-t', `${session}:${window}`]);
+    }
+  } catch {
+    // Ignore — window may not exist or already unzoomed
+  }
+}
+
 export async function listPanes(session, window) {
   requireValidSessionName(session);
   requireValidWindowIndex(window);

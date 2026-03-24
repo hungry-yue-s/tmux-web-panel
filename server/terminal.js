@@ -49,10 +49,14 @@ export class TerminalManager {
     const connectionId = randomUUID();
 
     // Spawn PTY: zoom the target pane so only it is visible, then attach.
-    // On disconnect (attach exits), restore zoom state if we changed it.
+    // Use trap TERM HUP to guarantee unzoom runs when pty.kill() sends SIGTERM.
+    // Without trap, the shell is killed before the post-attach unzoom can execute.
+    // The trap handler calls `exit 0` so the post-attach unzoom is skipped
+    // (avoids double toggle which would re-zoom the pane).
     const shellCmd = [
       `tmux select-pane -t '${paneId}' 2>/dev/null`,
       `_WZ=$(tmux display-message -p -t '${paneId}' '#{window_zoomed_flag}' 2>/dev/null)`,
+      `trap '[ "$_WZ" != "1" ] && tmux resize-pane -Z -t "'${paneId}'" 2>/dev/null; exit 0' TERM HUP`,
       `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
       `tmux attach-session -t '${paneId}'`,
       `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
