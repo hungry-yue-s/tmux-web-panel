@@ -3,7 +3,14 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import { httpAuth, wsAuth } from './auth.js';
+import {
+  hashPassword,
+  verifyPassword,
+  createToken,
+  deleteToken,
+  tokenAuth,
+  wsTokenAuth,
+} from './auth.js';
 import * as tmux from './tmux.js';
 import { TerminalManager } from './terminal.js';
 import { StatusMonitor } from './monitor.js';
@@ -46,14 +53,69 @@ const __dirname = dirname(__filename);
 
 const app = express();
 
-// Auth middleware (only when --auth is provided)
-if (config.auth) {
-  const [user, pass] = config.auth.split(':');
-  app.use(httpAuth(user, pass));
-}
-
-// Parse JSON request bodies
+// Parse JSON request bodies (before auth routes that need it)
 app.use(express.json());
+
+// --- Auth Setup ---
+
+const tokenMap = new Map();
+let authUser = null;
+let authSalt = null;
+let authHash = null;
+
+if (config.auth) {
+  const colonIndex = config.auth.indexOf(':');
+  authUser = config.auth.slice(0, colonIndex);
+  const rawPass = config.auth.slice(colonIndex + 1);
+  const hashed = hashPassword(rawPass);
+  authSalt = hashed.salt;
+  authHash = hashed.hash;
+
+  // --- Public auth routes (no token required) ---
+
+  app.post('/api/auth/login', (req, res) => {
+    const { username, password } = req.body || {};
+
+    if (
+      username === authUser &&
+      password &&
+      verifyPassword(password, authSalt, authHash)
+    ) {
+      const token = createToken(tokenMap);
+      res.json({ success: true, data: { token }, error: null });
+      return;
+    }
+
+    res.status(401).json({
+      success: false,
+      data: null,
+      error: 'Invalid username or password',
+    });
+  });
+
+  app.post('/api/auth/logout', (req, res) => {
+    const authHeader = req.headers.authorization || '';
+    const parts = authHeader.split(' ');
+    if (parts.length === 2 && parts[0] === 'Bearer') {
+      deleteToken(tokenMap, parts[1]);
+    }
+    res.json({ success: true, data: null, error: null });
+  });
+
+  // --- Serve public files before auth middleware ---
+
+  const publicDir = join(__dirname, '..', 'public');
+  app.get('/login.html', (_req, res) => {
+    res.sendFile(join(publicDir, 'login.html'));
+  });
+  app.get('/favicon.svg', (_req, res) => {
+    res.sendFile(join(publicDir, 'favicon.svg'));
+  });
+
+  // --- Token auth middleware (everything below requires valid token) ---
+
+  app.use(tokenAuth(tokenMap));
+}
 
 // Serve static files from public/
 app.use(express.static(join(__dirname, '..', 'public')));
@@ -100,9 +162,8 @@ server.on('upgrade', (req, socket, head) => {
 
   // Enforce auth on WebSocket upgrade if configured
   if (config.auth) {
-    const [user, pass] = config.auth.split(':');
-    if (!wsAuth(user, pass, req)) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="tmux-web-panel"\r\n\r\n');
+    if (!wsTokenAuth(tokenMap, req)) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
     }

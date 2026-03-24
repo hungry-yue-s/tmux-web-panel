@@ -1,10 +1,18 @@
-/* global Terminal, FitAddon, WebLinksAddon */
+/* global Terminal, FitAddon, WebLinksAddon, Auth */
 
 // === API Client ===
 
 class ApiClient {
+  _handleAuth(res) {
+    if (res.status === 401) {
+      Auth.clearToken();
+      window.location.href = '/login.html';
+    }
+  }
+
   async get(path) {
-    const res = await fetch(path);
+    const res = await fetch(path, { headers: Auth.headers() });
+    this._handleAuth(res);
     if (!res.ok) {
       throw new Error(`GET ${path} failed: ${res.status}`);
     }
@@ -14,9 +22,10 @@ class ApiClient {
   async post(path, body) {
     const res = await fetch(path, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: Object.assign({ 'Content-Type': 'application/json' }, Auth.headers()),
       body: JSON.stringify(body),
     });
+    this._handleAuth(res);
     if (!res.ok) {
       throw new Error(`POST ${path} failed: ${res.status}`);
     }
@@ -26,9 +35,10 @@ class ApiClient {
   async put(path, body) {
     const res = await fetch(path, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: Object.assign({ 'Content-Type': 'application/json' }, Auth.headers()),
       body: JSON.stringify(body),
     });
+    this._handleAuth(res);
     if (!res.ok) {
       throw new Error(`PUT ${path} failed: ${res.status}`);
     }
@@ -36,7 +46,11 @@ class ApiClient {
   }
 
   async delete(path) {
-    const res = await fetch(path, { method: 'DELETE' });
+    const res = await fetch(path, {
+      method: 'DELETE',
+      headers: Auth.headers(),
+    });
+    this._handleAuth(res);
     if (!res.ok) {
       throw new Error(`DELETE ${path} failed: ${res.status}`);
     }
@@ -196,8 +210,28 @@ function renderMore(container) {
   html += '</div>';
   html += '</div>';
 
+  // Logout button (only if authenticated)
+  if (Auth.getToken()) {
+    html += '<div class="more-section">';
+    html += '<div class="more-section-title">Account</div>';
+    html += '<div class="card more-status-card">';
+    html += '<button id="btn-logout" style="' +
+      'width:100%;padding:10px;font-size:0.95rem;font-weight:600;' +
+      'border:1px solid #f7768e;border-radius:8px;background:transparent;' +
+      'color:#f7768e;cursor:pointer;"' +
+      '>Sign Out</button>';
+    html += '</div>';
+    html += '</div>';
+  }
+
   html += '</div>';
   container.innerHTML = html;
+
+  // Bind logout button
+  var logoutBtn = document.getElementById('btn-logout');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', function () { Auth.logout(); });
+  }
 
   // Update More page when status changes
   statusSocket.onStatusChange = function () {
@@ -410,6 +444,8 @@ class StatusSocket {
   connect() {
     var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = protocol + '//' + location.host + '/ws/status';
+    var tokenParam = Auth.wsTokenParam();
+    if (tokenParam) url += '?' + tokenParam;
 
     this._ws = new WebSocket(url);
     var self = this;
@@ -667,6 +703,26 @@ function initTopbar() {
 var statusSocket = new StatusSocket();
 
 function init() {
+  // Auth check: if we have a token, verify it; if 401, redirect to login
+  if (Auth.getToken()) {
+    fetch('/api/status', { headers: Auth.headers() })
+      .then(function (res) {
+        if (res.status === 401) {
+          Auth.clearToken();
+          window.location.href = '/login.html';
+          return;
+        }
+        _startApp();
+      })
+      .catch(function () {
+        _startApp();
+      });
+  } else {
+    _startApp();
+  }
+}
+
+function _startApp() {
   initTopbar();
   updateTopbarSession();
   statusSocket.connect();

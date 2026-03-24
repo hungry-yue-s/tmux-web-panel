@@ -1,53 +1,117 @@
 /**
- * HTTP Basic Authentication middleware and WebSocket auth helper.
+ * Token-based session authentication.
  *
- * Parses `Authorization: Basic <base64>` headers and compares
- * against a configured user:pass string.
+ * Replaces HTTP Basic Auth with opaque bearer tokens stored in an
+ * in-memory Map with configurable TTL.
  */
+
+import { scryptSync, randomBytes, timingSafeEqual } from 'node:crypto';
+
+export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+
+const KEY_LENGTH = 64;
+const SALT_LENGTH = 16;
+const TOKEN_LENGTH = 32;
 
 /**
- * Decodes a Basic auth header value and returns { user, pass } or null.
- * @param {string|undefined} header - The Authorization header value
- * @returns {{ user: string, pass: string } | null}
+ * Hash a password with a random salt using scrypt.
+ * @param {string} password
+ * @returns {{ salt: string, hash: string }} hex-encoded salt and hash
  */
-function parseBasicAuth(header) {
-  if (!header || typeof header !== 'string') return null;
-
-  const parts = header.split(' ');
-  if (parts.length !== 2 || parts[0] !== 'Basic') return null;
-
-  const decoded = Buffer.from(parts[1], 'base64').toString('utf-8');
-  const colonIndex = decoded.indexOf(':');
-  if (colonIndex === -1) return null;
-
-  return {
-    user: decoded.slice(0, colonIndex),
-    pass: decoded.slice(colonIndex + 1),
-  };
+export function hashPassword(password) {
+  const salt = randomBytes(SALT_LENGTH).toString('hex');
+  const hash = scryptSync(password, salt, KEY_LENGTH).toString('hex');
+  return { salt, hash };
 }
 
 /**
- * Returns an Express middleware that enforces HTTP Basic auth.
- * Responds with 401 + WWW-Authenticate header on failure.
+ * Verify a password against a stored salt+hash using timing-safe comparison.
+ * @param {string} password
+ * @param {string} salt - hex-encoded
+ * @param {string} hash - hex-encoded
+ * @returns {boolean}
+ */
+export function verifyPassword(password, salt, hash) {
+  const derived = scryptSync(password, salt, KEY_LENGTH);
+  const expected = Buffer.from(hash, 'hex');
+  if (derived.length !== expected.length) return false;
+  return timingSafeEqual(derived, expected);
+}
+
+/**
+ * Create a new session token and store it in the map.
+ * @param {Map} tokenMap
+ * @returns {string} hex-encoded token
+ */
+export function createToken(tokenMap) {
+  const token = randomBytes(TOKEN_LENGTH).toString('hex');
+  tokenMap.set(token, {
+    expiresAt: Date.now() + SESSION_TTL_MS,
+  });
+  return token;
+}
+
+/**
+ * Delete a token from the map.
+ * @param {Map} tokenMap
+ * @param {string} token
+ */
+export function deleteToken(tokenMap, token) {
+  tokenMap.delete(token);
+}
+
+/**
+ * Validate a token: exists and not expired.
+ * Removes expired tokens as a side effect.
+ * @param {Map} tokenMap
+ * @param {string} token
+ * @returns {boolean}
+ */
+function isValidToken(tokenMap, token) {
+  if (!token || !tokenMap.has(token)) return false;
+  const entry = tokenMap.get(token);
+  if (Date.now() >= entry.expiresAt) {
+    tokenMap.delete(token);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Extract Bearer token from Authorization header.
+ * @param {string|undefined} header
+ * @returns {string|null}
+ */
+function parseBearerToken(header) {
+  if (!header || typeof header !== 'string') return null;
+  const parts = header.split(' ');
+  if (parts.length !== 2 || parts[0] !== 'Bearer') return null;
+  return parts[1];
+}
+
+/**
+ * Express middleware that requires a valid Bearer token.
+ * For HTML requests (Accept: text/html), redirects to /login.html.
+ * For API requests, returns 401 JSON.
  *
- * @param {string} user - Expected username
- * @param {string} pass - Expected password
+ * @param {Map} tokenMap
  * @returns {import('express').RequestHandler}
  */
-export function httpAuth(user, pass) {
+export function tokenAuth(tokenMap) {
   return (req, res, next) => {
-    const credentials = parseBasicAuth(req.headers.authorization);
+    const token = parseBearerToken(req.headers.authorization);
 
-    if (
-      credentials &&
-      credentials.user === user &&
-      credentials.pass === pass
-    ) {
+    if (isValidToken(tokenMap, token)) {
       next();
       return;
     }
 
-    res.set('WWW-Authenticate', 'Basic realm="tmux-web-panel"');
+    const accept = req.headers.accept || '';
+    if (accept.includes('text/html')) {
+      res.redirect('/login.html');
+      return;
+    }
+
     res.status(401).json({
       success: false,
       data: null,
@@ -57,23 +121,14 @@ export function httpAuth(user, pass) {
 }
 
 /**
- * Validates WebSocket upgrade request credentials.
+ * Validate a WebSocket upgrade request by checking the ?token= query param.
  *
- * @param {string} user - Expected username
- * @param {string} pass - Expected password
- * @param {import('http').IncomingMessage} req - The upgrade request
- * @returns {boolean} true if authenticated
+ * @param {Map} tokenMap
+ * @param {import('http').IncomingMessage} req
+ * @returns {boolean}
  */
-export function wsAuth(user, pass, req) {
-  const credentials = parseBasicAuth(req.headers.authorization);
-
-  if (
-    credentials &&
-    credentials.user === user &&
-    credentials.pass === pass
-  ) {
-    return true;
-  }
-
-  return false;
+export function wsTokenAuth(tokenMap, req) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const token = url.searchParams.get('token');
+  return isValidToken(tokenMap, token);
 }

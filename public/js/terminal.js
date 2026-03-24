@@ -235,7 +235,11 @@ function createTerminalInstance(paneCols, paneRows) {
 function connectTerminalWs(paneId, term, nozoom) {
   var wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   var wsUrl = wsProtocol + '//' + location.host + '/ws/terminal/' + encodeURIComponent(paneId);
-  if (nozoom) wsUrl += '?nozoom=1';
+  var queryParts = [];
+  if (nozoom) queryParts.push('nozoom=1');
+  var tokenParam = Auth.wsTokenParam();
+  if (tokenParam) queryParts.push(tokenParam);
+  if (queryParts.length > 0) wsUrl += '?' + queryParts.join('&');
 
   var ws = new WebSocket(wsUrl);
 

@@ -75,6 +75,9 @@
       // WebSocket connection
       var wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       var wsUrl = wsProtocol + '//' + location.host + '/ws/terminal/' + encodeURIComponent(paneId);
+      var authToken = null;
+      try { authToken = localStorage.getItem('tmux_auth_token'); } catch (_e) {}
+      if (authToken) wsUrl += '?token=' + encodeURIComponent(authToken);
       var ws = new WebSocket(wsUrl);
 
       ws.onopen = function () {
