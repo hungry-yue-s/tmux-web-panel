@@ -1,4 +1,4 @@
-/* global Terminal, FitAddon, WebLinksAddon, Auth */
+/* global Terminal, FitAddon, WebLinksAddon, Auth, Theme */
 
 // === API Client ===
 
@@ -200,6 +200,40 @@ function renderMore(container) {
   html += '</div>';
   html += '</div>';
 
+  // Theme
+  html += '<div class="more-section">';
+  html += '<div class="more-section-title">Theme</div>';
+  html += '<div class="theme-grid">';
+  var themeList = Theme.getThemeList();
+  var currentTheme = Theme.getCurrent();
+  themeList.forEach(function (t) {
+    var isActive = t.id === currentTheme;
+    var bg = t.colors['--bg-primary'];
+    var bgCard = t.colors['--bg-card'];
+    var text = t.colors['--text-primary'];
+    var accent = t.colors['--accent-blue'];
+    var green = t.colors['--accent-green'];
+    var red = t.colors['--accent-red'];
+    var purple = t.colors['--accent-purple'];
+    html += '<div class="theme-card' + (isActive ? ' active' : '') + '" data-theme="' + t.id + '" style="background:' + bg + ';border-color:' + (isActive ? accent : bgCard) + ';">';
+    html += '<div class="theme-card-preview">';
+    html += '<div class="theme-card-bar" style="background:' + bgCard + ';">';
+    html += '<span style="background:' + red + ';"></span>';
+    html += '<span style="background:' + green + ';"></span>';
+    html += '<span style="background:' + accent + ';"></span>';
+    html += '</div>';
+    html += '<div class="theme-card-body" style="background:' + bg + ';">';
+    html += '<div class="theme-card-line" style="background:' + text + ';opacity:0.6;width:70%;"></div>';
+    html += '<div class="theme-card-line" style="background:' + accent + ';opacity:0.7;width:50%;"></div>';
+    html += '<div class="theme-card-line" style="background:' + purple + ';opacity:0.5;width:60%;"></div>';
+    html += '</div>';
+    html += '</div>';
+    html += '<div class="theme-card-name" style="color:' + text + ';">' + escapeHtml(t.name) + '</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+  html += '</div>';
+
   // About
   html += '<div class="more-section">';
   html += '<div class="more-section-title">About</div>';
@@ -217,8 +251,8 @@ function renderMore(container) {
     html += '<div class="card more-status-card">';
     html += '<button id="btn-logout" style="' +
       'width:100%;padding:10px;font-size:0.95rem;font-weight:600;' +
-      'border:1px solid #f7768e;border-radius:8px;background:transparent;' +
-      'color:#f7768e;cursor:pointer;"' +
+      'border:1px solid var(--accent-red);border-radius:8px;background:transparent;' +
+      'color:var(--accent-red);cursor:pointer;"' +
       '>Sign Out</button>';
     html += '</div>';
     html += '</div>';
@@ -232,6 +266,15 @@ function renderMore(container) {
   if (logoutBtn) {
     logoutBtn.addEventListener('click', function () { Auth.logout(); });
   }
+
+  // Bind theme cards
+  container.querySelectorAll('.theme-card').forEach(function (card) {
+    card.addEventListener('click', function () {
+      var themeId = card.getAttribute('data-theme');
+      Theme.apply(themeId);
+      renderMore(container);
+    });
+  });
 
   // Update More page when status changes
   statusSocket.onStatusChange = function () {

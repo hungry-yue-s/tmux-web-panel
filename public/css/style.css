@@ -1,4 +1,5 @@
-/* === Tokyo Night Dark Theme === */
+/* === Theme colors are applied dynamically by theme.js === */
+/* === Fallback values match Tokyo Night (default theme) === */
 
 :root {
   --bg-primary: #1a1b26;
@@ -1518,4 +1519,75 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 #sidebar::-webkit-scrollbar-thumb {
   background: var(--border-subtle);
   border-radius: 2px;
+}
+
+/* === Theme Picker === */
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.theme-card {
+  border: 2px solid transparent;
+  border-radius: 10px;
+  padding: 6px;
+  cursor: pointer;
+  transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+}
+
+.theme-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.theme-card.active {
+  border-width: 2px;
+  box-shadow: 0 0 0 1px rgba(122, 162, 247, 0.3);
+}
+
+.theme-card-preview {
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.theme-card-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  height: 16px;
+}
+
+.theme-card-bar span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.theme-card-body {
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 32px;
+}
+
+.theme-card-line {
+  height: 3px;
+  border-radius: 2px;
+}
+
+.theme-card-name {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: center;
+  padding: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

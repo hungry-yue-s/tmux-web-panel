@@ -11,8 +11,8 @@
     html, body {
       height: 100%;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #1a1b26;
-      color: #c0caf5;
+      background: var(--bg-primary, #1a1b26);
+      color: var(--text-primary, #c0caf5);
     }
     .login-wrapper {
       display: flex;
@@ -24,7 +24,7 @@
     .login-card {
       width: 100%;
       max-width: 380px;
-      background: #24283b;
+      background: var(--bg-card, #24283b);
       border-radius: 12px;
       padding: 32px 28px;
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
@@ -34,12 +34,12 @@
       font-weight: 600;
       text-align: center;
       margin-bottom: 8px;
-      color: #c0caf5;
+      color: var(--text-primary, #c0caf5);
     }
     .login-subtitle {
       font-size: 0.85rem;
       text-align: center;
-      color: #565f89;
+      color: var(--text-muted, #565f89);
       margin-bottom: 24px;
     }
     .login-field {
@@ -48,7 +48,7 @@
     .login-field label {
       display: block;
       font-size: 0.8rem;
-      color: #565f89;
+      color: var(--text-muted, #565f89);
       margin-bottom: 6px;
       text-transform: uppercase;
       letter-spacing: 0.5px;
@@ -57,15 +57,15 @@
       width: 100%;
       padding: 10px 12px;
       font-size: 0.95rem;
-      border: 1px solid #3b4261;
+      border: 1px solid var(--border, #3b4261);
       border-radius: 8px;
-      background: #1a1b26;
-      color: #c0caf5;
+      background: var(--bg-primary, #1a1b26);
+      color: var(--text-primary, #c0caf5);
       outline: none;
       transition: border-color 0.2s;
     }
     .login-field input:focus {
-      border-color: #7aa2f7;
+      border-color: var(--accent-blue, #7aa2f7);
     }
     .login-btn {
       display: block;
@@ -75,14 +75,14 @@
       font-weight: 600;
       border: none;
       border-radius: 8px;
-      background: #7aa2f7;
-      color: #1a1b26;
+      background: var(--accent-blue, #7aa2f7);
+      color: var(--bg-primary, #1a1b26);
       cursor: pointer;
       margin-top: 8px;
       transition: background 0.2s;
     }
-    .login-btn:hover { background: #89b4fa; }
-    .login-btn:active { background: #6a92e7; }
+    .login-btn:hover { opacity: 0.9; }
+    .login-btn:active { opacity: 0.8; }
     .login-btn:disabled {
       opacity: 0.6;
       cursor: not-allowed;
@@ -92,7 +92,7 @@
       margin-top: 12px;
       padding: 8px 12px;
       font-size: 0.85rem;
-      color: #f7768e;
+      color: var(--accent-red, #f7768e);
       background: rgba(247, 118, 142, 0.1);
       border-radius: 6px;
       text-align: center;
@@ -119,6 +119,7 @@
       <div class="login-error" id="login-error"></div>
     </div>
   </div>
+  <script src="/js/theme.js"></script>
   <script>
     (function () {
       var TOKEN_KEY = 'tmux_auth_token';

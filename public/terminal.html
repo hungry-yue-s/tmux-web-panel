@@ -8,8 +8,9 @@
   <script src="https://unpkg.com/@xterm/xterm@5/lib/xterm.js"></script>
   <script src="https://unpkg.com/@xterm/addon-fit@0/lib/addon-fit.js"></script>
   <script src="https://unpkg.com/@xterm/addon-web-links@0/lib/addon-web-links.js"></script>
+  <script src="/js/theme.js"></script>
   <style>
-    html, body { margin: 0; padding: 0; background: #1a1b26; height: 100%; overflow: hidden; }
+    html, body { margin: 0; padding: 0; background: var(--bg-primary, #1a1b26); height: 100%; overflow: hidden; }
     #terminal { width: 100%; height: 100%; }
   </style>
 </head>
@@ -31,29 +32,7 @@
       document.title = 'Terminal — ' + paneId;
 
       var term = new Terminal({
-        theme: {
-          background: '#1a1b26',
-          foreground: '#c0caf5',
-          cursor: '#c0caf5',
-          cursorAccent: '#1a1b26',
-          selectionBackground: '#33467c',
-          black: '#15161e',
-          red: '#f7768e',
-          green: '#9ece6a',
-          yellow: '#e0af68',
-          blue: '#7aa2f7',
-          magenta: '#bb9af7',
-          cyan: '#7dcfff',
-          white: '#a9b1d6',
-          brightBlack: '#414868',
-          brightRed: '#f7768e',
-          brightGreen: '#9ece6a',
-          brightYellow: '#e0af68',
-          brightBlue: '#7aa2f7',
-          brightMagenta: '#bb9af7',
-          brightCyan: '#7dcfff',
-          brightWhite: '#c0caf5',
-        },
+        theme: Theme.getTerminalTheme(),
         fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
         fontSize: 14,
         cursorBlink: true,
