@@ -1,4 +1,4 @@
-/* global Terminal, FitAddon, WebLinksAddon, WebglAddon, Theme, api, state, navigate, escapeHtml, renderPaneLayout, renderPanePills */
+/* global Terminal, FitAddon, WebLinksAddon, WebglAddon, Theme, Auth, api, state, navigate, escapeHtml, renderPaneLayout, renderPanePills */
 
 // === Clipboard Helper ===
 
@@ -17,6 +17,82 @@ function _copyToClipboard(text) {
   ta.select();
   try { document.execCommand('copy'); } catch (_e) { /* ignore */ }
   document.body.removeChild(ta);
+}
+
+// === Toast Notification ===
+
+function _showToast(message, duration) {
+  duration = duration || 2000;
+  var existing = document.querySelector('.upload-toast');
+  if (existing) existing.remove();
+
+  var toast = document.createElement('div');
+  toast.className = 'upload-toast';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+
+  requestAnimationFrame(function () {
+    toast.classList.add('show');
+  });
+
+  setTimeout(function () {
+    toast.classList.remove('show');
+    setTimeout(function () { toast.remove(); }, 300);
+  }, duration);
+}
+
+// === Upload FAB ===
+
+function _createUploadFab(container) {
+  var fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.style.display = 'none';
+  container.appendChild(fileInput);
+
+  var fab = document.createElement('button');
+  fab.className = 'upload-fab';
+  fab.title = 'Upload file';
+  // Paperclip icon (SVG)
+  fab.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>';
+  container.appendChild(fab);
+
+  fab.addEventListener('click', function () {
+    fileInput.value = '';
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', function () {
+    if (!fileInput.files || !fileInput.files[0]) return;
+
+    var file = fileInput.files[0];
+    var formData = new FormData();
+    formData.append('file', file);
+
+    fab.classList.add('uploading');
+
+    fetch('/api/upload', {
+      method: 'POST',
+      headers: Auth.headers(),
+      body: formData,
+    })
+      .then(function (res) {
+        if (!res.ok) return res.json().then(function (j) { throw new Error(j.error || 'Upload failed'); });
+        return res.json();
+      })
+      .then(function (result) {
+        var filePath = result.data.path;
+        _copyToClipboard(filePath);
+        _showToast('路径已复制: ' + filePath);
+      })
+      .catch(function (err) {
+        _showToast('上传失败: ' + err.message, 3000);
+      })
+      .finally(function () {
+        fab.classList.remove('uploading');
+      });
+  });
+
+  return fab;
 }
 
 // === Terminal State ===
@@ -413,6 +489,7 @@ function renderTerminal(container) {
     '</div>';
 
   var view = container.querySelector('.terminal-view');
+  _createUploadFab(view);
   var titleEl = view.querySelector('.terminal-header-title');
   var paneSwitcher = view.querySelector('.terminal-pane-switcher');
   var termContainer = view.querySelector('.terminal-container');
