@@ -54,11 +54,15 @@ Go to the **More** page (gear icon) and click **Sign Out**.
 
 ## Command Completion Notifications
 
-The sidebar will blink when a command finishes in any non-active window. For interactive programs like Claude Code, enable terminal bell notification:
+The sidebar will blink when a command finishes in any non-active window.
+
+For interactive programs like Claude Code, install the bell notification hook:
 
 ```bash
-claude config set terminalBellOnCompletion true
+node scripts/install-claude-hook.js
 ```
+
+To uninstall: `node scripts/install-claude-hook.js --uninstall`
 
 ## Development
 
