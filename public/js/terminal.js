@@ -1,5 +1,24 @@
 /* global Terminal, FitAddon, WebLinksAddon, WebglAddon, api, state, navigate, escapeHtml, renderPaneLayout, renderPanePills */
 
+// === Clipboard Helper ===
+
+function _copyToClipboard(text) {
+  // Method 1: Clipboard API (works in secure contexts)
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).catch(function () {});
+    return;
+  }
+  // Method 2: execCommand fallback (works in HTTP)
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try { document.execCommand('copy'); } catch (_e) { /* ignore */ }
+  document.body.removeChild(ta);
+}
+
 // === Terminal State ===
 
 var terminalState = {
@@ -269,6 +288,8 @@ function connectTerminalWs(paneId, term, nozoom) {
       var msg = JSON.parse(e.data);
       if (msg.type === 'output') {
         term.write(msg.data);
+      } else if (msg.type === 'clipboard') {
+        _copyToClipboard(msg.data);
       }
     } catch (_err) {
       // Ignore parse errors
@@ -535,13 +556,6 @@ function _mountTerminal(termContainer, nozoom) {
     }
   }
 
-  // Auto-copy selection to clipboard
-  term.onSelectionChange(function () {
-    var sel = term.getSelection();
-    if (sel && navigator.clipboard) {
-      navigator.clipboard.writeText(sel).catch(function () {});
-    }
-  });
 
   // Small delay to ensure DOM is ready for fitting
   setTimeout(function () {

@@ -89,10 +89,27 @@ export class TerminalManager {
     this.paneConnectionCount.set(paneId, currentCount + 1);
 
     // PTY → WebSocket
+    // Also intercept OSC 52 clipboard sequences from tmux
     term.onData((data) => {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({ type: 'output', data }));
+      if (ws.readyState !== ws.OPEN) return;
+
+      // Detect OSC 52 sequence: \x1b]52;...;base64\x07 or \x1b]52;...;base64\x1b\\
+      const osc52Re = /\x1b\]52;([^;]*);([^\x07\x1b]*?)(?:\x07|\x1b\\)/g;
+      let match;
+      while ((match = osc52Re.exec(data)) !== null) {
+        try {
+          const decoded = Buffer.from(match[2], 'base64').toString('utf8');
+          if (decoded) {
+            ws.send(JSON.stringify({ type: 'clipboard', data: decoded }));
+          }
+        } catch {
+          // ignore invalid base64
+        }
       }
+
+
+
+      ws.send(JSON.stringify({ type: 'output', data }));
     });
 
     // PTY exit → close WebSocket + cleanup

@@ -86,11 +86,28 @@
         }
       };
 
+      function _copyToClipboard(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(text).catch(function () {});
+          return;
+        }
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try { document.execCommand('copy'); } catch (_e) { /* ignore */ }
+        document.body.removeChild(ta);
+      }
+
       ws.onmessage = function (e) {
         try {
           var msg = JSON.parse(e.data);
           if (msg.type === 'output') {
             term.write(msg.data);
+          } else if (msg.type === 'clipboard') {
+            _copyToClipboard(msg.data);
           }
         } catch (_err) {
           // Ignore
