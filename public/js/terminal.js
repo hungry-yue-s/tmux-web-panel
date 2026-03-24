@@ -795,6 +795,24 @@ function _mountTerminal(termContainer, nozoom) {
   });
   resizeObserver.observe(termContainer);
 
+  // Ctrl+wheel to zoom font size (desktop).
+  // Debounce: a single scroll gesture triggers only one font size step.
+  var _wheelZoomTimer = null;
+  var _wheelZoomDir = 0;
+  termContainer.addEventListener('wheel', function (e) {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    _wheelZoomDir += e.deltaY;
+    clearTimeout(_wheelZoomTimer);
+    _wheelZoomTimer = setTimeout(function () {
+      if (_wheelZoomDir !== 0) {
+        _adjustFontSize(_wheelZoomDir < 0 ? 1 : -1);
+      }
+      _wheelZoomDir = 0;
+    }, 150);
+  }, { passive: false, capture: true });
+
   // Handle mobile virtual keyboard: when keyboard opens, visualViewport
   // shrinks but CSS vh doesn't. Resize terminal-container (not the whole view)
   // to keep the header visible.
