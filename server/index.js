@@ -112,12 +112,13 @@ server.on('upgrade', (req, socket, head) => {
     // Extract paneId (URL decode %250 → %0)
     const paneId = decodeURIComponent(url.pathname.split('/ws/terminal/')[1]);
 
-    // Parse optional cols/rows from query string
+    // Parse optional cols/rows/nozoom from query string
     const cols = Number(url.searchParams.get('cols')) || 80;
     const rows = Number(url.searchParams.get('rows')) || 24;
+    const nozoom = url.searchParams.get('nozoom') === '1';
 
     wss.handleUpgrade(req, socket, head, (ws) => {
-      terminalManager.create(ws, paneId, cols, rows);
+      terminalManager.create(ws, paneId, cols, rows, nozoom);
     });
     return;
   }

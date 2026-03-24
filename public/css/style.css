@@ -1080,40 +1080,6 @@ body {
   color: var(--bg-primary);
 }
 
-/* Split layout */
-.terminal-container.split-layout-active {
-  position: relative;
-}
-
-.split-pane-cell {
-  overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  box-sizing: border-box;
-  transition: border-color 0.2s;
-  cursor: pointer;
-}
-
-.split-pane-cell.active {
-  border-color: var(--accent-blue);
-  z-index: 1;
-  cursor: default;
-}
-
-/* Dim inactive panes to show they are frozen */
-.split-pane-cell:not(.active)::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.2);
-  pointer-events: none;
-  z-index: 5;
-}
-
-.split-pane-cell .xterm {
-  height: 100%;
-  padding: 2px;
-}
-
 /* Split popup */
 .split-popup {
   position: absolute;

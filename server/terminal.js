@@ -32,7 +32,7 @@ export class TerminalManager {
    * @param {number} [rows=24]
    * @returns {string} connectionId
    */
-  create(ws, paneId, cols = 80, rows = 24) {
+  create(ws, paneId, cols = 80, rows = 24, nozoom = false) {
     // Validate paneId format
     if (!PANE_ID_PATTERN.test(paneId)) {
       ws.close(1008, `Invalid paneId format: ${paneId}`);
@@ -48,19 +48,29 @@ export class TerminalManager {
 
     const connectionId = randomUUID();
 
-    // Spawn PTY: zoom the target pane so only it is visible, then attach.
-    // Use trap TERM HUP to guarantee unzoom runs when pty.kill() sends SIGTERM.
-    // Without trap, the shell is killed before the post-attach unzoom can execute.
-    // The trap handler calls `exit 0` so the post-attach unzoom is skipped
-    // (avoids double toggle which would re-zoom the pane).
-    const shellCmd = [
-      `tmux select-pane -t '${paneId}' 2>/dev/null`,
-      `_WZ=$(tmux display-message -p -t '${paneId}' '#{window_zoomed_flag}' 2>/dev/null)`,
-      `trap '[ "$_WZ" != "1" ] && tmux resize-pane -Z -t "'${paneId}'" 2>/dev/null; exit 0' TERM HUP`,
-      `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
-      `tmux attach-session -t '${paneId}'`,
-      `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
-    ].join('; ');
+    let shellCmd;
+    if (nozoom) {
+      // No-zoom mode: show the full window with native tmux split layout.
+      // Force unzoom first (previous tab-mode connection may have left it zoomed).
+      shellCmd = [
+        `tmux select-pane -t '${paneId}' 2>/dev/null`,
+        `[ "$(tmux display-message -p -t '${paneId}' '#{window_zoomed_flag}' 2>/dev/null)" = "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
+        `tmux attach-session -t '${paneId}'`,
+      ].join('; ');
+    } else {
+      // Zoom mode: zoom the target pane so only it is visible, then attach.
+      // Use trap TERM HUP to guarantee unzoom runs when pty.kill() sends SIGTERM.
+      // The trap handler calls `exit 0` so the post-attach unzoom is skipped
+      // (avoids double toggle which would re-zoom the pane).
+      shellCmd = [
+        `tmux select-pane -t '${paneId}' 2>/dev/null`,
+        `_WZ=$(tmux display-message -p -t '${paneId}' '#{window_zoomed_flag}' 2>/dev/null)`,
+        `trap '[ "$_WZ" != "1" ] && tmux resize-pane -Z -t "'${paneId}'" 2>/dev/null; exit 0' TERM HUP`,
+        `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
+        `tmux attach-session -t '${paneId}'`,
+        `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
+      ].join('; ');
+    }
     const term = pty.spawn('sh', ['-c', shellCmd], {
       name: 'xterm-256color',
       cols: cols || 80,

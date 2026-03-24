@@ -32,14 +32,6 @@ function _cleanupTerminalResources() {
     terminalState.term = null;
   }
   terminalState.fitAddon = null;
-
-  // Clean up split mode terminals
-  _splitTerminals.forEach(function (st) {
-    if (st.resizeObserver) st.resizeObserver.disconnect();
-    if (st.ws) st.ws.close();
-    if (st.term) st.term.dispose();
-  });
-  _splitTerminals = [];
 }
 
 function cleanupTerminal() {
@@ -67,20 +59,18 @@ function toggleFullscreen() {
     enterFullscreen();
   }
   // Re-fit after layout change
-  setTimeout(function () {
-    if (terminalState.fitAddon) terminalState.fitAddon.fit();
-    _splitTerminals.forEach(function (st) { st.fitAddon.fit(); });
-  }, 100);
+  if (terminalState.fitAddon) {
+    setTimeout(function () { terminalState.fitAddon.fit(); }, 100);
+  }
 }
 
 // Escape key exits fullscreen
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape' && terminalState.isFullscreen) {
     exitFullscreen();
-    setTimeout(function () {
-      if (terminalState.fitAddon) terminalState.fitAddon.fit();
-      _splitTerminals.forEach(function (st) { st.fitAddon.fit(); });
-    }, 100);
+    if (terminalState.fitAddon) {
+      setTimeout(function () { terminalState.fitAddon.fit(); }, 100);
+    }
   }
 });
 
@@ -158,44 +148,21 @@ function renderPaneNavBar(container, panes, activePaneId, onSwitch) {
 // === Terminal Font Size ===
 
 function _adjustFontSize(dir) {
-  var updated = false;
-
-  // Single terminal mode
-  if (terminalState.term && terminalState.fitAddon) {
-    var current = terminalState.term.options.fontSize || 14;
-    var next = Math.max(8, Math.min(22, current + dir));
-    if (next !== current) {
-      terminalState.term.options.fontSize = next;
-      terminalState.fitAddon.fit();
-      if (terminalState.ws && terminalState.ws.readyState === WebSocket.OPEN) {
-        terminalState.ws.send(JSON.stringify({
-          type: 'resize',
-          cols: terminalState.term.cols,
-          rows: terminalState.term.rows,
-        }));
-      }
-      updated = true;
-    }
+  if (!terminalState.term || !terminalState.fitAddon) return;
+  var current = terminalState.term.options.fontSize || 14;
+  var next = Math.max(8, Math.min(22, current + dir));
+  if (next === current) return;
+  _fontOffset += dir;
+  terminalState.term.options.fontSize = next;
+  terminalState.fitAddon.fit();
+  if (terminalState.ws && terminalState.ws.readyState === WebSocket.OPEN) {
+    terminalState.ws.send(JSON.stringify({
+      type: 'resize',
+      cols: terminalState.term.cols,
+      rows: terminalState.term.rows,
+    }));
   }
-
-  // Split mode terminals
-  _splitTerminals.forEach(function (st) {
-    var cur = st.term.options.fontSize || 14;
-    var nxt = Math.max(8, Math.min(22, cur + dir));
-    if (nxt !== cur) {
-      st.term.options.fontSize = nxt;
-      st.fitAddon.fit();
-      if (st.ws && st.ws.readyState === WebSocket.OPEN) {
-        st.ws.send(JSON.stringify({ type: 'resize', cols: st.term.cols, rows: st.term.rows }));
-      }
-      updated = true;
-    }
-  });
-
-  if (updated) {
-    _fontOffset += dir;
-    try { localStorage.setItem('tmux_font_offset', String(_fontOffset)); } catch (_e) {}
-  }
+  try { localStorage.setItem('tmux_font_offset', String(_fontOffset)); } catch (_e) {}
 }
 
 var _fontOffset = (function () {
@@ -207,8 +174,6 @@ var _fontOffset = (function () {
 var _terminalMode = (function () {
   try { return localStorage.getItem('tmux_terminal_mode') || 'tab'; } catch (_e) { return 'tab'; }
 })();
-
-var _splitTerminals = []; // Array of { paneId, term, ws, fitAddon, resizeObserver }
 
 function _calcTerminalFontSize(paneCols, paneRows, containerEl) {
   var container = containerEl || document.querySelector('.terminal-container');
@@ -266,9 +231,10 @@ function createTerminalInstance(paneCols, paneRows) {
 
 // === Connect WebSocket ===
 
-function connectTerminalWs(paneId, term) {
+function connectTerminalWs(paneId, term, nozoom) {
   var wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   var wsUrl = wsProtocol + '//' + location.host + '/ws/terminal/' + encodeURIComponent(paneId);
+  if (nozoom) wsUrl += '?nozoom=1';
 
   var ws = new WebSocket(wsUrl);
 
@@ -472,25 +438,17 @@ function renderTerminal(container) {
   exitFsBtn.addEventListener('click', function () {
     exitFullscreen();
     exitFsBtn.style.display = 'none';
-    setTimeout(function () {
-      if (terminalState.fitAddon) {
-        terminalState.fitAddon.fit();
-      }
-      _splitTerminals.forEach(function (st) { st.fitAddon.fit(); });
-    }, 100);
+    if (terminalState.fitAddon) {
+      setTimeout(function () { terminalState.fitAddon.fit(); }, 100);
+    }
   });
 
   // Fetch panes and set up terminal
-  // In split mode, pass ?unzoom=1 so the server returns real (non-zoomed)
-  // pane geometry. Without this, the zoomed pane covers 100% of the layout.
-  var _panesUrl = '/api/sessions/' + encodeURIComponent(state.currentSession) +
-    '/windows/' + encodeURIComponent(state.currentWindow) + '/panes';
-  if (_terminalMode === 'split' && window.innerWidth >= 768) {
-    _panesUrl += '?unzoom=1';
-  }
-
   api
-    .get(_panesUrl)
+    .get(
+      '/api/sessions/' + encodeURIComponent(state.currentSession) +
+      '/windows/' + encodeURIComponent(state.currentWindow) + '/panes'
+    )
     .then(function (result) {
       var panes = result.data || [];
       state.panes = panes;
@@ -500,14 +458,12 @@ function renderTerminal(container) {
         state.currentPane = panes.length > 0 ? panes[0].id : null;
       }
 
-      // Determine if split mode is active (desktop only, 2+ panes)
       var useSplit = _terminalMode === 'split' && panes.length > 1 && window.innerWidth >= 768;
 
-      // Render pane pills
+      // Render pane pills (tab mode: switch pane, split mode: select-pane via tmux)
       if (panes.length > 1) {
         var headerPills = view.querySelector('.terminal-header-pills');
-        var pillHandler = useSplit ? _activateSplitPane : switchPane;
-        renderPanePills(headerPills, panes, state.currentPane, pillHandler);
+        renderPanePills(headerPills, panes, state.currentPane, useSplit ? _selectSplitPane : switchPane);
       }
 
       // Hide mode toggle when only 1 pane
@@ -516,11 +472,9 @@ function renderTerminal(container) {
         if (toggle) toggle.style.display = 'none';
       }
 
-      // Create and mount terminal(s)
-      if (useSplit) {
-        _renderSplitMode(termContainer, panes);
-      } else if (state.currentPane) {
-        _mountTerminal(termContainer);
+      // Mount terminal — split mode uses nozoom (tmux renders native splits)
+      if (state.currentPane) {
+        _mountTerminal(termContainer, useSplit);
       } else {
         termContainer.innerHTML =
           '<div style="padding: 24px; text-align: center; color: var(--text-muted);">No panes available</div>';
@@ -536,11 +490,11 @@ function renderTerminal(container) {
 
 // === Mount Terminal Instance ===
 
-function _mountTerminal(termContainer) {
-  // Get current pane's tmux dimensions
+function _mountTerminal(termContainer, nozoom) {
+  // Get current pane's tmux dimensions (in split/nozoom mode, pass null to auto-fit)
   var currentPane = state.panes ? state.panes.find(function (p) { return p.id === state.currentPane; }) : null;
-  var paneCols = currentPane ? currentPane.width : null;
-  var paneRows = currentPane ? currentPane.height : null;
+  var paneCols = nozoom ? null : (currentPane ? currentPane.width : null);
+  var paneRows = nozoom ? null : (currentPane ? currentPane.height : null);
   var term = createTerminalInstance(paneCols, paneRows);
   var fitAddon = new FitAddon.FitAddon();
   var webLinksAddon = new WebLinksAddon.WebLinksAddon();
@@ -563,8 +517,8 @@ function _mountTerminal(termContainer) {
   }, 50);
 
 
-  // Connect WebSocket
-  var ws = connectTerminalWs(state.currentPane, term);
+  // Connect WebSocket (nozoom = split mode, shows full window with native tmux splits)
+  var ws = connectTerminalWs(state.currentPane, term, nozoom);
 
   // Enable touch scrolling on mobile.
   // xterm.js preventDefault()s all touch events on its canvas, and tmux uses
@@ -773,141 +727,14 @@ function _mountTerminal(termContainer) {
   terminalState._vpHandler = vpHandler;
 }
 
-// === Split Mode ===
+// === Split Mode: select pane via tmux (native split rendering) ===
 
-function _renderSplitMode(container, panes) {
-  container.innerHTML = '';
-  container.classList.add('split-layout-active');
-
-  // Calculate total dimensions from pane geometry
-  var totalWidth = 0, totalHeight = 0;
-  panes.forEach(function (p) {
-    var pLeft = Number(p.left != null ? p.left : (p.x || 0));
-    var pTop = Number(p.top != null ? p.top : (p.y || 0));
-    var right = pLeft + (Number(p.width) || 1);
-    var bottom = pTop + (Number(p.height) || 1);
-    if (right > totalWidth) totalWidth = right;
-    if (bottom > totalHeight) totalHeight = bottom;
-  });
-
-  if (totalWidth === 0 || totalHeight === 0) return;
-
-  panes.forEach(function (p) {
-    var pLeft = Number(p.left != null ? p.left : (p.x || 0));
-    var pTop = Number(p.top != null ? p.top : (p.y || 0));
-    var pWidth = Number(p.width) || 1;
-    var pHeight = Number(p.height) || 1;
-    var isActive = p.id === state.currentPane;
-
-    var paneEl = document.createElement('div');
-    paneEl.className = 'split-pane-cell' + (isActive ? ' active' : '');
-    paneEl.style.position = 'absolute';
-    paneEl.style.left = (pLeft / totalWidth * 100).toFixed(2) + '%';
-    paneEl.style.top = (pTop / totalHeight * 100).toFixed(2) + '%';
-    paneEl.style.width = (pWidth / totalWidth * 100).toFixed(2) + '%';
-    paneEl.style.height = (pHeight / totalHeight * 100).toFixed(2) + '%';
-    paneEl.setAttribute('data-pane-id', p.id);
-
-    container.appendChild(paneEl);
-    _mountSplitTerminal(paneEl, p, isActive);
-  });
-}
-
-function _mountSplitTerminal(containerEl, pane, isActive) {
-  var term = createTerminalInstance(pane.width, pane.height);
-  var fitAddon = new FitAddon.FitAddon();
-  var webLinksAddon = new WebLinksAddon.WebLinksAddon();
-
-  term.loadAddon(fitAddon);
-  term.loadAddon(webLinksAddon);
-  term.open(containerEl);
-
-  // Mutable entry — ResizeObserver and activation callbacks reference this
-  var entry = {
-    paneId: pane.id,
-    term: term,
-    ws: null,
-    fitAddon: fitAddon,
-    resizeObserver: null,
-  };
-
-  setTimeout(function () {
-    // Recalculate font size using actual container dimensions
-    var newSize = _calcTerminalFontSize(pane.width, pane.height, containerEl);
-    if (newSize !== term.options.fontSize) {
-      term.options.fontSize = newSize;
-    }
-    fitAddon.fit();
-    if (isActive) {
-      term.focus();
-    }
-  }, 80);
-
-  // Only connect WebSocket for the active pane.
-  // Server zooms the pane on connect — simultaneous connections would conflict.
-  if (isActive) {
-    entry.ws = connectTerminalWs(pane.id, term);
-  }
-
-  var resizeObserver = new ResizeObserver(function () {
-    fitAddon.fit();
-    if (entry.ws && entry.ws.readyState === WebSocket.OPEN) {
-      entry.ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-    }
-  });
-  resizeObserver.observe(containerEl);
-  entry.resizeObserver = resizeObserver;
-
-  // Click to activate this pane (capture phase to intercept before xterm)
-  containerEl.addEventListener('mousedown', function (e) {
-    if (pane.id !== state.currentPane) {
-      e.preventDefault();
-      e.stopPropagation();
-      _activateSplitPane(pane.id);
-    }
-  }, true);
-
-  _splitTerminals.push(entry);
-}
-
-function _activateSplitPane(paneId) {
+function _selectSplitPane(paneId) {
   if (paneId === state.currentPane) return;
-
-  // Disconnect the currently active pane's WebSocket (server will unzoom)
-  _splitTerminals.forEach(function (st) {
-    if (st.ws) {
-      st.ws.close();
-      st.ws = null;
-    }
-  });
-
   state.currentPane = paneId;
-
-  // Connect the new active pane
-  _splitTerminals.forEach(function (st) {
-    if (st.paneId === paneId) {
-      st.ws = connectTerminalWs(paneId, st.term);
-      st.term.focus();
-      // Send resize after connection established
-      var entry = st;
-      setTimeout(function () {
-        if (entry.ws && entry.ws.readyState === WebSocket.OPEN) {
-          entry.ws.send(JSON.stringify({
-            type: 'resize',
-            cols: entry.term.cols,
-            rows: entry.term.rows,
-          }));
-        }
-      }, 150);
-    }
-  });
-
-  // Update pane cell highlights
-  document.querySelectorAll('.split-pane-cell').forEach(function (el) {
-    el.classList.toggle('active', el.getAttribute('data-pane-id') === paneId);
-  });
-
-  // Update header pills
+  // Tell tmux to focus this pane — the terminal already shows all panes
+  api.post('/api/panes/' + encodeURIComponent(paneId) + '/select').catch(function () {});
+  // Update pill highlights
   document.querySelectorAll('.terminal-header-pills .pane-pill').forEach(function (el) {
     el.classList.toggle('active', el.getAttribute('data-pane-id') === paneId);
   });
