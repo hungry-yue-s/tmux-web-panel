@@ -178,14 +178,69 @@ function renderPaneNavBar(container, panes, activePaneId, onSwitch) {
   container.appendChild(indicator);
 }
 
-// === Terminal Font Size ===
+// === Per-pane/window Font Size Offset ===
+//
+// In tab mode, font offset is stored per pane (key = pane ID, e.g. "%0").
+// In split mode, font offset is stored per window (key = "session:windowIndex").
+// All offsets are stored in a single localStorage JSON object under 'tmux_font_offsets'.
+
+var _fontOffsets = (function () {
+  try {
+    // Remove legacy single-offset key
+    localStorage.removeItem('tmux_font_offset');
+  } catch (_e) {}
+  try {
+    return JSON.parse(localStorage.getItem('tmux_font_offsets')) || {};
+  } catch (_e) { return {}; }
+})();
+
+function _fontOffsetKey() {
+  if (_terminalMode === 'split') {
+    return (state.currentSession || '') + ':' + (state.currentWindow || '');
+  }
+  return state.currentPane || '';
+}
+
+function _getFontOffset() {
+  return _fontOffsets[_fontOffsetKey()] || 0;
+}
+
+function _setFontOffset(val) {
+  var key = _fontOffsetKey();
+  if (val === 0) {
+    delete _fontOffsets[key];
+  } else {
+    _fontOffsets[key] = val;
+  }
+  _saveFontOffsets();
+}
+
+function _saveFontOffsets() {
+  try { localStorage.setItem('tmux_font_offsets', JSON.stringify(_fontOffsets)); } catch (_e) {}
+}
+
+// Clean up offsets for pane IDs that no longer exist
+function _cleanupFontOffsets(validPaneIds) {
+  var changed = false;
+  var keys = Object.keys(_fontOffsets);
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i];
+    // Pane keys start with '%', window keys contain ':'
+    if (k.charAt(0) === '%' && validPaneIds.indexOf(k) === -1) {
+      delete _fontOffsets[k];
+      changed = true;
+    }
+  }
+  if (changed) _saveFontOffsets();
+}
 
 function _adjustFontSize(dir) {
   if (!terminalState.term || !terminalState.fitAddon) return;
   var current = terminalState.term.options.fontSize || 14;
   var next = Math.max(8, Math.min(22, current + dir));
   if (next === current) return;
-  _fontOffset += dir;
+  var offset = _getFontOffset() + dir;
+  _setFontOffset(offset);
   terminalState.term.options.fontSize = next;
   terminalState.fitAddon.fit();
   if (terminalState.ws && terminalState.ws.readyState === WebSocket.OPEN) {
@@ -195,12 +250,7 @@ function _adjustFontSize(dir) {
       rows: terminalState.term.rows,
     }));
   }
-  try { localStorage.setItem('tmux_font_offset', String(_fontOffset)); } catch (_e) {}
 }
-
-var _fontOffset = (function () {
-  try { return parseInt(localStorage.getItem('tmux_font_offset'), 10) || 0; } catch (_e) { return 0; }
-})();
 
 // === Terminal View Mode (tab / split) ===
 
@@ -224,7 +274,7 @@ function _calcTerminalFontSize(paneCols, paneRows, containerEl) {
   var size = Math.min(fromWidth, fromHeight);
   var base = Math.max(10, Math.min(16, Math.round(size)));
   // Apply user's manual offset (from A+/A- buttons), clamped to [8, 22]
-  return Math.max(8, Math.min(22, base + _fontOffset));
+  return Math.max(8, Math.min(22, base + _getFontOffset()));
 }
 
 // === Create xterm Terminal ===
@@ -470,6 +520,9 @@ function renderTerminal(container) {
       var panes = result.data || [];
       state.panes = panes;
 
+      // Clean up font offsets for panes that no longer exist
+      _cleanupFontOffsets(panes.map(function (p) { return p.id; }));
+
       // If no current pane or current pane not in this window, pick first
       if (!state.currentPane || !panes.some(function (p) { return p.id === state.currentPane; })) {
         state.currentPane = panes.length > 0 ? panes[0].id : null;
@@ -620,13 +673,13 @@ function _mountTerminal(termContainer, nozoom) {
       var newSize = Math.round(pinch.startFontSize * scale);
       newSize = Math.max(8, Math.min(22, newSize));
       if (newSize !== term.options.fontSize) {
-        _fontOffset += newSize - term.options.fontSize;
+        var delta = newSize - term.options.fontSize;
+        _setFontOffset(_getFontOffset() + delta);
         term.options.fontSize = newSize;
         fitAddon.fit();
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
         }
-        try { localStorage.setItem('tmux_font_offset', String(_fontOffset)); } catch (_e) {}
       }
       e.preventDefault();
       return;

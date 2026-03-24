@@ -407,6 +407,12 @@ function _deleteWindow(windowIndex, container) {
   api
     .delete('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/' + encodeURIComponent(windowIndex))
     .then(function () {
+      // Clean up split-mode font offset for this window
+      if (typeof _fontOffsets !== 'undefined' && typeof _saveFontOffsets === 'function') {
+        var wKey = (state.currentSession || '') + ':' + windowIndex;
+        delete _fontOffsets[wKey];
+        _saveFontOffsets();
+      }
       renderWindows(container);
     })
     .catch(function (err) {

@@ -155,6 +155,11 @@ function _confirmClosePane(paneId) {
       '/panes/' + encodeURIComponent(paneId)
     )
     .then(function () {
+      // Clean up font offset for the closed pane
+      if (typeof _fontOffsets !== 'undefined') {
+        delete _fontOffsets[paneId];
+        _saveFontOffsets();
+      }
       // Re-render terminal view
       var content = document.getElementById('content');
       if (content && typeof renderTerminal === 'function') {
