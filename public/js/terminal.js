@@ -332,11 +332,26 @@ function connectTerminalWs(paneId, term, nozoom) {
     // Will trigger onclose
   };
 
+  // Suppress mouse-move reports after right-click so tmux popup menus stay open.
+  // SGR mouse move: \x1b[<35;X;YM (button 35 = no-button movement)
+  // SGR mouse drag: \x1b[<32..34;X;YM (button held + movement)
+  var _suppressMouseMove = false;
+  var _sgrMoveRe = /^\x1b\[<(35|32|33|34);\d+;\d+[Mm]$/;
+
   term.onData(function (data) {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'input', data: data }));
-    }
+    if (ws.readyState !== WebSocket.OPEN) return;
+    if (_suppressMouseMove && _sgrMoveRe.test(data)) return;
+    ws.send(JSON.stringify({ type: 'input', data: data }));
   });
+
+  // Track right-click on terminal element
+  var termEl = term.element;
+  if (termEl) {
+    termEl.addEventListener('mousedown', function (e) {
+      if (e.button === 2) _suppressMouseMove = true;
+      if (e.button === 0) _suppressMouseMove = false;
+    }, true);
+  }
 
   return ws;
 }
@@ -588,38 +603,6 @@ function _mountTerminal(termContainer, nozoom) {
   }
 
 
-  // Suppress mousemove after right-click so tmux popup menus stay open.
-  // tmux's display-menu closes when it receives mouse-move events outside
-  // the popup area. In a native terminal, mouse movement isn't reported
-  // unless a button is held, but xterm.js always reports it.
-  (function () {
-    var suppress = false;
-    var el = term.element;
-    if (!el) return;
-    el.addEventListener('mousedown', function (e) {
-      if (e.button === 2) { // right-click
-        suppress = true;
-      }
-    }, true);
-    el.addEventListener('mousemove', function (e) {
-      if (suppress) {
-        e.stopPropagation();
-        e.preventDefault();
-      }
-    }, true);
-    el.addEventListener('mouseup', function (e) {
-      if (e.button === 2 && suppress) {
-        // Keep suppressing moves briefly after right-click release
-        setTimeout(function () { suppress = false; }, 100);
-      }
-    }, true);
-    // Any left-click dismisses the tmux menu, stop suppressing
-    el.addEventListener('mousedown', function (e) {
-      if (e.button === 0) {
-        suppress = false;
-      }
-    });
-  })();
 
   // Small delay to ensure DOM is ready for fitting
   setTimeout(function () {
