@@ -98,6 +98,51 @@ describe('StatusMonitor', () => {
       expect(message.data.sessions[0].windowDetails).toHaveLength(2);
     });
 
+    it('includes pane details (id, command, path) per window in status payload', async () => {
+      tmux.listSessions.mockResolvedValue([
+        { name: 'main', windows: 1, attached: true, lastActivity: '12345' },
+      ]);
+      tmux.listWindows.mockResolvedValue([
+        { index: 0, name: 'bash', active: true, width: 80, height: 24 },
+      ]);
+      tmux.listPaneCommands.mockResolvedValue([
+        { windowIndex: 0, paneId: '%1', command: 'vim', path: '/home/user/project', pid: 1234 },
+        { windowIndex: 0, paneId: '%2', command: 'bash', path: '/home/user', pid: 1235 },
+      ]);
+
+      const ws = createMockWs();
+      monitor.subscribe(ws);
+
+      await monitor.poll();
+
+      const message = JSON.parse(ws.send.mock.calls[0][0]);
+      const windowDetails = message.data.sessions[0].windowDetails;
+      expect(windowDetails).toHaveLength(1);
+      expect(windowDetails[0].panes).toEqual([
+        { id: '%1', command: 'vim', path: '/home/user/project' },
+        { id: '%2', command: 'bash', path: '/home/user' },
+      ]);
+    });
+
+    it('does not expose internal _paneCommands in status payload', async () => {
+      tmux.listSessions.mockResolvedValue([
+        { name: 'main', windows: 1, attached: true, lastActivity: '12345' },
+      ]);
+      tmux.listWindows.mockResolvedValue([
+        { index: 0, name: 'bash', active: true, width: 80, height: 24 },
+      ]);
+      tmux.listPaneCommands.mockResolvedValue([
+        { windowIndex: 0, paneId: '%1', command: 'vim', path: '/home/user', pid: 1234 },
+      ]);
+
+      const ws = createMockWs();
+      monitor.subscribe(ws);
+      await monitor.poll();
+
+      const message = JSON.parse(ws.send.mock.calls[0][0]);
+      expect(message.data.sessions[0]._paneCommands).toBeUndefined();
+    });
+
     it('does not broadcast when state has not changed', async () => {
       tmux.listSessions.mockResolvedValue([
         { name: 'main', windows: 1, attached: false, lastActivity: '0' },

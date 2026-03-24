@@ -138,13 +138,23 @@ describe('parsePaneCommands', () => {
     const output = '0|%0|zsh\n0|%1|node\n1|%2|python';
     const result = parsePaneCommands(output);
     expect(result).toEqual([
-      { windowIndex: 0, paneId: '%0', command: 'zsh' },
-      { windowIndex: 0, paneId: '%1', command: 'node' },
-      { windowIndex: 1, paneId: '%2', command: 'python' },
+      { windowIndex: 0, paneId: '%0', command: 'zsh', path: '', pid: 0 },
+      { windowIndex: 0, paneId: '%1', command: 'node', path: '', pid: 0 },
+      { windowIndex: 1, paneId: '%2', command: 'python', path: '', pid: 0 },
     ]);
   });
 
   it('returns empty array for empty input', () => {
     expect(parsePaneCommands('')).toEqual([]);
+  });
+
+  it('parsePaneCommands should parse path and pid fields', () => {
+    const output = '0|%1|vim|/home/user/project|1234\n0|%2|bash|/home/user|1235\n1|%3|node|/home/user/api|1236';
+    const result = parsePaneCommands(output);
+    expect(result).toEqual([
+      { windowIndex: 0, paneId: '%1', command: 'vim', path: '/home/user/project', pid: 1234 },
+      { windowIndex: 0, paneId: '%2', command: 'bash', path: '/home/user', pid: 1235 },
+      { windowIndex: 1, paneId: '%3', command: 'node', path: '/home/user/api', pid: 1236 },
+    ]);
   });
 });

@@ -43,7 +43,19 @@ export class StatusMonitor {
       const sessionsWithWindows = await Promise.all(
         sessions.map(async (session) => {
           const windows = await tmux.listWindows(session.name);
-          return { ...session, windowDetails: windows };
+          let paneCommands = [];
+          try {
+            paneCommands = await tmux.listPaneCommands(session.name);
+          } catch {
+            // Ignore — pane command fetch failure should not abort status
+          }
+          const windowsWithPanes = windows.map((w) => {
+            const panes = paneCommands
+              .filter((pc) => pc.windowIndex === w.index)
+              .map((pc) => ({ id: pc.paneId, command: pc.command, path: pc.path }));
+            return { ...w, panes };
+          });
+          return { ...session, windowDetails: windowsWithPanes, _paneCommands: paneCommands };
         }),
       );
 
@@ -53,13 +65,16 @@ export class StatusMonitor {
         0,
       );
 
-      // Detect completions
+      // Detect completions (using already-fetched paneCommands)
       const completedWindows = await this._detectCompletions(sessionsWithWindows);
+
+      // Strip internal _paneCommands before broadcasting
+      const sessionsForPayload = sessionsWithWindows.map(({ _paneCommands: _, ...rest }) => rest);
 
       // Build status message WITHOUT completedWindows for dedup
       const statusMessage = {
         type: 'status',
-        data: { sessions: sessionsWithWindows, totalSessions, totalWindows },
+        data: { sessions: sessionsForPayload, totalSessions, totalWindows },
       };
       const serialized = JSON.stringify(statusMessage);
       const hasCompletions = completedWindows.length > 0;
@@ -86,12 +101,7 @@ export class StatusMonitor {
     const newBellFlags = new Map();
 
     for (const session of sessionsWithWindows) {
-      let paneCommands = [];
-      try {
-        paneCommands = await tmux.listPaneCommands(session.name);
-      } catch {
-        continue;
-      }
+      const paneCommands = session._paneCommands || [];
 
       // Check command transitions
       const completedInSession = new Set();
