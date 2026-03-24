@@ -102,23 +102,16 @@ if (config.auth) {
     res.json({ success: true, data: null, error: null });
   });
 
-  // --- Serve public files before auth middleware ---
-
-  const publicDir = join(__dirname, '..', 'public');
-  app.get('/login.html', (_req, res) => {
-    res.sendFile(join(publicDir, 'login.html'));
-  });
-  app.get('/favicon.svg', (_req, res) => {
-    res.sendFile(join(publicDir, 'favicon.svg'));
-  });
-
-  // --- Token auth middleware (everything below requires valid token) ---
-
-  app.use(tokenAuth(tokenMap));
 }
 
-// Serve static files from public/
+// Serve static files from public/ (publicly accessible — client JS handles auth redirect)
 app.use(express.static(join(__dirname, '..', 'public')));
+
+// --- Token auth middleware (protects API routes below) ---
+
+if (config.auth) {
+  app.use('/api', tokenAuth(tokenMap));
+}
 
 // API status route
 app.get('/api/status', async (_req, res) => {

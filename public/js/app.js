@@ -703,23 +703,19 @@ function initTopbar() {
 var statusSocket = new StatusSocket();
 
 function init() {
-  // Auth check: if we have a token, verify it; if 401, redirect to login
-  if (Auth.getToken()) {
-    fetch('/api/status', { headers: Auth.headers() })
-      .then(function (res) {
-        if (res.status === 401) {
-          Auth.clearToken();
-          window.location.href = '/login.html';
-          return;
-        }
-        _startApp();
-      })
-      .catch(function () {
-        _startApp();
-      });
-  } else {
-    _startApp();
-  }
+  // Auth check: verify token (or detect if auth is enabled)
+  fetch('/api/status', { headers: Auth.headers() })
+    .then(function (res) {
+      if (res.status === 401) {
+        Auth.clearToken();
+        window.location.href = '/login.html';
+        return;
+      }
+      _startApp();
+    })
+    .catch(function () {
+      _startApp();
+    });
 }
 
 function _startApp() {
