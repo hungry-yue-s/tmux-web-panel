@@ -52,6 +52,14 @@ Format: `username:password` (separated by the first `:`; password may contain `:
 
 Go to the **More** page (gear icon) and click **Sign Out**.
 
+## Command Completion Notifications
+
+The sidebar will blink when a command finishes in any non-active window. For interactive programs like Claude Code, enable terminal bell notification:
+
+```bash
+claude config set terminalBellOnCompletion true
+```
+
 ## Development
 
 ```bash
