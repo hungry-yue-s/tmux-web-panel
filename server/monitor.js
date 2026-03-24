@@ -1,27 +1,24 @@
 import * as tmux from './tmux.js';
 
+const SHELL_COMMANDS = new Set(['zsh', 'bash', 'fish', 'sh', 'dash', 'ksh', 'csh', 'tcsh']);
+
 export class StatusMonitor {
   constructor() {
     this.subscribers = new Set();
     this.previousState = null;
     this.interval = null;
+    this._previousCommands = new Map();
+    this._previousBellFlags = new Map();
   }
 
-  /**
-   * Start polling at the given interval (ms).
-   */
   start(intervalMs) {
     if (this.interval) {
       this.stop();
     }
-    // Poll immediately on start
     this.poll();
     this.interval = setInterval(() => this.poll(), intervalMs);
   }
 
-  /**
-   * Stop polling.
-   */
   stop() {
     if (this.interval) {
       clearInterval(this.interval);
@@ -29,9 +26,6 @@ export class StatusMonitor {
     }
   }
 
-  /**
-   * Subscribe a WebSocket client. Immediately sends current state if available.
-   */
   subscribe(ws) {
     this.subscribers.add(ws);
     if (this.previousState) {
@@ -39,16 +33,10 @@ export class StatusMonitor {
     }
   }
 
-  /**
-   * Unsubscribe a WebSocket client.
-   */
   unsubscribe(ws) {
     this.subscribers.delete(ws);
   }
 
-  /**
-   * Poll tmux for current session/window state and broadcast to subscribers.
-   */
   async poll() {
     try {
       const sessions = await tmux.listSessions();
@@ -65,21 +53,23 @@ export class StatusMonitor {
         0,
       );
 
-      const message = {
+      // Detect completions
+      const completedWindows = await this._detectCompletions(sessionsWithWindows);
+
+      // Build status message WITHOUT completedWindows for dedup
+      const statusMessage = {
         type: 'status',
-        data: {
-          sessions: sessionsWithWindows,
-          totalSessions,
-          totalWindows,
-        },
+        data: { sessions: sessionsWithWindows, totalSessions, totalWindows },
       };
+      const serialized = JSON.stringify(statusMessage);
+      const hasCompletions = completedWindows.length > 0;
 
-      const serialized = JSON.stringify(message);
-
-      // Only broadcast if state has changed
-      if (serialized !== this.previousState) {
+      if (serialized !== this.previousState || hasCompletions) {
         this.previousState = serialized;
-        this._broadcast(serialized);
+        if (hasCompletions) {
+          statusMessage.data.completedWindows = completedWindows;
+        }
+        this._broadcast(JSON.stringify(statusMessage));
       }
     } catch (err) {
       const errorMessage = {
@@ -90,18 +80,77 @@ export class StatusMonitor {
     }
   }
 
-  /**
-   * Send a serialized message to a single WebSocket client.
-   */
+  async _detectCompletions(sessionsWithWindows) {
+    const completedWindows = [];
+    const newCommands = new Map();
+    const newBellFlags = new Map();
+
+    for (const session of sessionsWithWindows) {
+      let paneCommands = [];
+      try {
+        paneCommands = await tmux.listPaneCommands(session.name);
+      } catch {
+        continue;
+      }
+
+      // Check command transitions
+      const completedInSession = new Set();
+      for (const pc of paneCommands) {
+        const key = `${session.name}:${pc.windowIndex}:${pc.paneId}`;
+        newCommands.set(key, pc.command);
+
+        const prev = this._previousCommands.get(key);
+        if (
+          prev !== undefined &&
+          !SHELL_COMMANDS.has(prev) &&
+          SHELL_COMMANDS.has(pc.command) &&
+          !completedInSession.has(pc.windowIndex)
+        ) {
+          completedInSession.add(pc.windowIndex);
+          completedWindows.push({
+            session: session.name,
+            windowIndex: pc.windowIndex,
+            prevCommand: prev,
+            source: 'command',
+          });
+        }
+      }
+
+      // Check bell flags (rising edge only)
+      for (const w of session.windowDetails) {
+        const bellKey = `${session.name}:${w.index}`;
+        newBellFlags.set(bellKey, w.bell);
+
+        const prevBell = this._previousBellFlags.get(bellKey);
+        if (
+          prevBell === false &&
+          w.bell === true &&
+          !completedInSession.has(w.index)
+        ) {
+          const activePc = paneCommands.find(
+            (pc) => pc.windowIndex === w.index,
+          );
+          completedWindows.push({
+            session: session.name,
+            windowIndex: w.index,
+            prevCommand: activePc ? activePc.command : '',
+            source: 'bell',
+          });
+        }
+      }
+    }
+
+    this._previousCommands = newCommands;
+    this._previousBellFlags = newBellFlags;
+    return completedWindows;
+  }
+
   _send(ws, serialized) {
     if (ws.readyState === 1) {
       ws.send(serialized);
     }
   }
 
-  /**
-   * Broadcast a serialized message to all subscribers.
-   */
   _broadcast(serialized) {
     for (const ws of this.subscribers) {
       this._send(ws, serialized);

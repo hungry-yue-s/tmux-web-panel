@@ -152,6 +152,7 @@ describe('StatusMonitor', () => {
     it('starts periodic polling', async () => {
       tmux.listSessions.mockResolvedValue([]);
       tmux.listWindows.mockResolvedValue([]);
+      tmux.listPaneCommands.mockResolvedValue([]);
 
       monitor.start(1000);
 
@@ -168,6 +169,7 @@ describe('StatusMonitor', () => {
     it('stops periodic polling', async () => {
       tmux.listSessions.mockResolvedValue([]);
       tmux.listWindows.mockResolvedValue([]);
+      tmux.listPaneCommands.mockResolvedValue([]);
 
       monitor.start(1000);
       expect(tmux.listSessions).toHaveBeenCalledTimes(1);
@@ -182,6 +184,7 @@ describe('StatusMonitor', () => {
     it('restarts cleanly when start is called twice', async () => {
       tmux.listSessions.mockResolvedValue([]);
       tmux.listWindows.mockResolvedValue([]);
+      tmux.listPaneCommands.mockResolvedValue([]);
 
       monitor.start(1000);
       monitor.start(2000);
@@ -195,6 +198,131 @@ describe('StatusMonitor', () => {
 
     it('stop is safe to call when not started', () => {
       expect(() => monitor.stop()).not.toThrow();
+    });
+  });
+
+  describe('completion detection', () => {
+    const SESSION = [
+      { name: 'main', windows: 1, attached: true, lastActivity: '12345' },
+    ];
+
+    function windowsWith(bell = false) {
+      return [{ index: 0, name: 'bash', active: true, width: 80, height: 24, bell }];
+    }
+
+    function paneCommandsWith(command) {
+      return [{ windowIndex: 0, paneId: '%0', command }];
+    }
+
+    it('detects command completion when pane returns to shell', async () => {
+      const ws = createMockWs();
+      monitor.subscribe(ws);
+
+      // Poll 1: command is 'node'
+      tmux.listSessions.mockResolvedValue(SESSION);
+      tmux.listWindows.mockResolvedValue(windowsWith(false));
+      tmux.listPaneCommands.mockResolvedValue(paneCommandsWith('node'));
+      await monitor.poll();
+
+      ws.send.mockClear();
+
+      // Poll 2: command is 'zsh' (returned to shell)
+      tmux.listSessions.mockResolvedValue(SESSION);
+      tmux.listWindows.mockResolvedValue(windowsWith(false));
+      tmux.listPaneCommands.mockResolvedValue(paneCommandsWith('zsh'));
+      await monitor.poll();
+
+      expect(ws.send).toHaveBeenCalledTimes(1);
+      const msg = JSON.parse(ws.send.mock.calls[0][0]);
+      expect(msg.data.completedWindows).toEqual([
+        { session: 'main', windowIndex: 0, prevCommand: 'node', source: 'command' },
+      ]);
+    });
+
+    it('detects bell signal on rising edge only', async () => {
+      const ws = createMockWs();
+      monitor.subscribe(ws);
+
+      // Poll 1: bell=false
+      tmux.listSessions.mockResolvedValue(SESSION);
+      tmux.listWindows.mockResolvedValue(windowsWith(false));
+      tmux.listPaneCommands.mockResolvedValue(paneCommandsWith('zsh'));
+      await monitor.poll();
+
+      ws.send.mockClear();
+
+      // Poll 2: bell=true (rising edge)
+      tmux.listSessions.mockResolvedValue(SESSION);
+      tmux.listWindows.mockResolvedValue(windowsWith(true));
+      tmux.listPaneCommands.mockResolvedValue(paneCommandsWith('zsh'));
+      await monitor.poll();
+
+      expect(ws.send).toHaveBeenCalledTimes(1);
+      const msg2 = JSON.parse(ws.send.mock.calls[0][0]);
+      expect(msg2.data.completedWindows).toEqual([
+        { session: 'main', windowIndex: 0, prevCommand: 'zsh', source: 'bell' },
+      ]);
+
+      ws.send.mockClear();
+
+      // Poll 3: bell=true (still true — no re-fire)
+      tmux.listSessions.mockResolvedValue(SESSION);
+      tmux.listWindows.mockResolvedValue(windowsWith(true));
+      tmux.listPaneCommands.mockResolvedValue(paneCommandsWith('zsh'));
+      await monitor.poll();
+
+      // Should not broadcast again (state unchanged and no new completion)
+      if (ws.send.mock.calls.length > 0) {
+        const msg3 = JSON.parse(ws.send.mock.calls[0][0]);
+        expect(msg3.data.completedWindows).toBeUndefined();
+      }
+    });
+
+    it('does not fire when shell stays as shell', async () => {
+      const ws = createMockWs();
+      monitor.subscribe(ws);
+
+      // Poll 1: command='zsh'
+      tmux.listSessions.mockResolvedValue(SESSION);
+      tmux.listWindows.mockResolvedValue(windowsWith(false));
+      tmux.listPaneCommands.mockResolvedValue(paneCommandsWith('zsh'));
+      await monitor.poll();
+
+      ws.send.mockClear();
+
+      // Poll 2: still command='zsh'
+      tmux.listSessions.mockResolvedValue(SESSION);
+      tmux.listWindows.mockResolvedValue(windowsWith(false));
+      tmux.listPaneCommands.mockResolvedValue(paneCommandsWith('zsh'));
+      await monitor.poll();
+
+      // No broadcast because state unchanged and no completion
+      expect(ws.send).not.toHaveBeenCalled();
+    });
+
+    it('isolates pane command errors per session', async () => {
+      const ws = createMockWs();
+      monitor.subscribe(ws);
+
+      const twoSessions = [
+        { name: 'good', windows: 1, attached: true, lastActivity: '1' },
+        { name: 'bad', windows: 1, attached: true, lastActivity: '2' },
+      ];
+
+      tmux.listSessions.mockResolvedValue(twoSessions);
+      tmux.listWindows.mockResolvedValue(windowsWith(false));
+      tmux.listPaneCommands.mockImplementation((session) => {
+        if (session === 'bad') return Promise.reject(new Error('fail'));
+        return Promise.resolve(paneCommandsWith('zsh'));
+      });
+
+      await monitor.poll();
+
+      expect(ws.send).toHaveBeenCalledTimes(1);
+      const msg = JSON.parse(ws.send.mock.calls[0][0]);
+      expect(msg.type).toBe('status');
+      // The broadcast still happens (not an error)
+      expect(msg.data.sessions).toHaveLength(2);
     });
   });
 });
