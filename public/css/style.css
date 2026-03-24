@@ -1963,3 +1963,111 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+
+/* Notification Panel */
+.notification-panel {
+  position: fixed;
+  top: 48px;
+  right: 12px;
+  width: 320px;
+  max-height: 400px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  z-index: 1000;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.notification-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.notification-panel-title {
+  color: var(--accent-blue);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.notification-clear-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.notification-list {
+  overflow-y: auto;
+  flex: 1;
+}
+.notification-item {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  border-left: 3px solid var(--accent-yellow);
+}
+.notification-item:hover {
+  background: var(--bg-hover);
+}
+.notification-item-read {
+  opacity: 0.5;
+  border-left-color: transparent;
+}
+.notification-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.notification-item-target {
+  font-size: 0.8rem;
+  color: var(--text-primary);
+}
+.notification-item-time {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+.notification-item-command {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.notification-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+.notification-bell {
+  position: relative;
+}
+.notification-bell-count {
+  background: var(--accent-yellow);
+  color: var(--bg-primary);
+  border-radius: 8px;
+  padding: 0 4px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 12px;
+  text-align: center;
+}
+.notification-mobile-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+}
+.notification-back-btn {
+  background: none;
+  border: none;
+  color: var(--accent-blue);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
