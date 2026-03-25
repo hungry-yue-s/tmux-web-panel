@@ -1,6 +1,8 @@
 import * as tmux from './tmux.js';
+import { scanPorts } from './ports.js';
 
 const SHELL_COMMANDS = new Set(['zsh', 'bash', 'fish', 'sh', 'dash', 'ksh', 'csh', 'tcsh']);
+const PORT_CACHE_TTL_MS = 10_000;
 
 export class StatusMonitor {
   constructor() {
@@ -9,6 +11,7 @@ export class StatusMonitor {
     this.interval = null;
     this._previousCommands = new Map();
     this._previousBellFlags = new Map();
+    this._portCache = new Map(); // paneId → { pid, ports, timestamp }
   }
 
   start(intervalMs) {
@@ -43,7 +46,52 @@ export class StatusMonitor {
       const sessionsWithWindows = await Promise.all(
         sessions.map(async (session) => {
           const windows = await tmux.listWindows(session.name);
-          return { ...session, windowDetails: windows };
+          let paneCommands = [];
+          try {
+            paneCommands = await tmux.listPaneCommands(session.name);
+          } catch {
+            // Ignore — pane command fetch failure should not abort status
+          }
+
+          // Build panePids map for port scanning, with cache support
+          const panePids = new Map();
+          const now = Date.now();
+          for (const pc of paneCommands) {
+            const cached = this._portCache.get(pc.paneId);
+            const isStale = !cached ||
+              cached.pid !== pc.pid ||
+              (now - cached.timestamp) >= PORT_CACHE_TTL_MS;
+            if (isStale && pc.pid > 0) {
+              panePids.set(pc.paneId, pc.pid);
+            }
+          }
+
+          // Scan ports for panes that need refreshing
+          let newPortMap = new Map();
+          if (panePids.size > 0) {
+            try {
+              newPortMap = await scanPorts(panePids);
+            } catch {
+              // Port scan failure should not abort status
+            }
+            // Update cache with newly scanned results
+            for (const [paneId, ports] of newPortMap) {
+              const pid = panePids.get(paneId);
+              this._portCache.set(paneId, { pid, ports, timestamp: now });
+            }
+          }
+
+          const windowsWithPanes = windows.map((w) => {
+            const panes = paneCommands
+              .filter((pc) => pc.windowIndex === w.index)
+              .map((pc) => {
+                const cached = this._portCache.get(pc.paneId);
+                const ports = cached ? cached.ports : [];
+                return { id: pc.paneId, command: pc.command, path: pc.path, ports };
+              });
+            return { ...w, panes };
+          });
+          return { ...session, windowDetails: windowsWithPanes, _paneCommands: paneCommands };
         }),
       );
 
@@ -53,21 +101,25 @@ export class StatusMonitor {
         0,
       );
 
-      // Detect completions
-      const completedWindows = await this._detectCompletions(sessionsWithWindows);
+      // Detect completions (using already-fetched paneCommands)
+      const { completedWindows, completedPanes } = await this._detectCompletions(sessionsWithWindows);
 
-      // Build status message WITHOUT completedWindows for dedup
+      // Strip internal _paneCommands before broadcasting
+      const sessionsForPayload = sessionsWithWindows.map(({ _paneCommands: _, ...rest }) => rest);
+
+      // Build status message WITHOUT completedWindows/completedPanes for dedup
       const statusMessage = {
         type: 'status',
-        data: { sessions: sessionsWithWindows, totalSessions, totalWindows },
+        data: { sessions: sessionsForPayload, totalSessions, totalWindows },
       };
       const serialized = JSON.stringify(statusMessage);
-      const hasCompletions = completedWindows.length > 0;
+      const hasCompletions = completedWindows.length > 0 || completedPanes.length > 0;
 
       if (serialized !== this.previousState || hasCompletions) {
         this.previousState = serialized;
         if (hasCompletions) {
           statusMessage.data.completedWindows = completedWindows;
+          statusMessage.data.completedPanes = completedPanes;
         }
         this._broadcast(JSON.stringify(statusMessage));
       }
@@ -82,16 +134,12 @@ export class StatusMonitor {
 
   async _detectCompletions(sessionsWithWindows) {
     const completedWindows = [];
+    const completedPanes = [];
     const newCommands = new Map();
     const newBellFlags = new Map();
 
     for (const session of sessionsWithWindows) {
-      let paneCommands = [];
-      try {
-        paneCommands = await tmux.listPaneCommands(session.name);
-      } catch {
-        continue;
-      }
+      const paneCommands = session._paneCommands || [];
 
       // Check command transitions
       const completedInSession = new Set();
@@ -103,16 +151,26 @@ export class StatusMonitor {
         if (
           prev !== undefined &&
           !SHELL_COMMANDS.has(prev) &&
-          SHELL_COMMANDS.has(pc.command) &&
-          !completedInSession.has(pc.windowIndex)
+          SHELL_COMMANDS.has(pc.command)
         ) {
-          completedInSession.add(pc.windowIndex);
-          completedWindows.push({
+          // Per-pane entry (no dedup)
+          completedPanes.push({
             session: session.name,
             windowIndex: pc.windowIndex,
+            paneId: pc.paneId,
             prevCommand: prev,
-            source: 'command',
           });
+
+          // Per-window entry (dedup by window)
+          if (!completedInSession.has(pc.windowIndex)) {
+            completedInSession.add(pc.windowIndex);
+            completedWindows.push({
+              session: session.name,
+              windowIndex: pc.windowIndex,
+              prevCommand: prev,
+              source: 'command',
+            });
+          }
         }
       }
 
@@ -142,7 +200,7 @@ export class StatusMonitor {
 
     this._previousCommands = newCommands;
     this._previousBellFlags = newBellFlags;
-    return completedWindows;
+    return { completedWindows, completedPanes };
   }
 
   _send(ws, serialized) {

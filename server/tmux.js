@@ -101,8 +101,8 @@ export function parsePanes(output) {
 export function parsePaneCommands(output) {
   if (!output || output.trim().length === 0) return [];
   return output.trim().split('\n').map((line) => {
-    const [windowIndex, paneId, command] = line.split('|');
-    return { windowIndex: Number(windowIndex), paneId, command };
+    const [windowIndex, paneId, command, path, pid] = line.split('|');
+    return { windowIndex: Number(windowIndex), paneId, command, path: path || '', pid: pid ? Number(pid) : 0 };
   });
 }
 
@@ -194,7 +194,7 @@ export async function listPaneCommands(session) {
   requireValidSessionName(session);
   const stdout = await tmuxExec([
     'list-panes', '-s', '-t', session, '-F',
-    '#{window_index}|#{pane_id}|#{pane_current_command}',
+    '#{window_index}|#{pane_id}|#{pane_current_command}|#{pane_current_path}|#{pane_pid}',
   ]);
   return parsePaneCommands(stdout);
 }

@@ -98,6 +98,51 @@ describe('StatusMonitor', () => {
       expect(message.data.sessions[0].windowDetails).toHaveLength(2);
     });
 
+    it('includes pane details (id, command, path) per window in status payload', async () => {
+      tmux.listSessions.mockResolvedValue([
+        { name: 'main', windows: 1, attached: true, lastActivity: '12345' },
+      ]);
+      tmux.listWindows.mockResolvedValue([
+        { index: 0, name: 'bash', active: true, width: 80, height: 24 },
+      ]);
+      tmux.listPaneCommands.mockResolvedValue([
+        { windowIndex: 0, paneId: '%1', command: 'vim', path: '/home/user/project', pid: 1234 },
+        { windowIndex: 0, paneId: '%2', command: 'bash', path: '/home/user', pid: 1235 },
+      ]);
+
+      const ws = createMockWs();
+      monitor.subscribe(ws);
+
+      await monitor.poll();
+
+      const message = JSON.parse(ws.send.mock.calls[0][0]);
+      const windowDetails = message.data.sessions[0].windowDetails;
+      expect(windowDetails).toHaveLength(1);
+      expect(windowDetails[0].panes).toEqual([
+        { id: '%1', command: 'vim', path: '/home/user/project', ports: [] },
+        { id: '%2', command: 'bash', path: '/home/user', ports: [] },
+      ]);
+    });
+
+    it('does not expose internal _paneCommands in status payload', async () => {
+      tmux.listSessions.mockResolvedValue([
+        { name: 'main', windows: 1, attached: true, lastActivity: '12345' },
+      ]);
+      tmux.listWindows.mockResolvedValue([
+        { index: 0, name: 'bash', active: true, width: 80, height: 24 },
+      ]);
+      tmux.listPaneCommands.mockResolvedValue([
+        { windowIndex: 0, paneId: '%1', command: 'vim', path: '/home/user', pid: 1234 },
+      ]);
+
+      const ws = createMockWs();
+      monitor.subscribe(ws);
+      await monitor.poll();
+
+      const message = JSON.parse(ws.send.mock.calls[0][0]);
+      expect(message.data.sessions[0]._paneCommands).toBeUndefined();
+    });
+
     it('does not broadcast when state has not changed', async () => {
       tmux.listSessions.mockResolvedValue([
         { name: 'main', windows: 1, attached: false, lastActivity: '0' },
@@ -298,6 +343,66 @@ describe('StatusMonitor', () => {
 
       // No broadcast because state unchanged and no completion
       expect(ws.send).not.toHaveBeenCalled();
+    });
+
+    it('emits completedPanes alongside completedWindows on pane transition', async () => {
+      const twoSessions = [
+        { name: 'main', windows: 2, attached: true, lastActivity: '12345' },
+      ];
+
+      function windowsWithTwo() {
+        return [
+          { index: 0, name: 'win0', active: true, width: 80, height: 24, bell: false },
+          { index: 1, name: 'win1', active: false, width: 80, height: 24, bell: false },
+        ];
+      }
+
+      const ws = createMockWs();
+      monitor.subscribe(ws);
+
+      // Poll 1: window 0 has two panes running commands; window 1 has one pane
+      tmux.listSessions.mockResolvedValue(twoSessions);
+      tmux.listWindows.mockResolvedValue(windowsWithTwo());
+      tmux.listPaneCommands.mockResolvedValue([
+        { windowIndex: 0, paneId: '%1', command: 'npm', path: '/proj' },
+        { windowIndex: 0, paneId: '%2', command: 'node', path: '/proj' },
+        { windowIndex: 1, paneId: '%3', command: 'python', path: '/proj' },
+      ]);
+      await monitor.poll();
+
+      ws.send.mockClear();
+
+      // Poll 2: all three panes return to shell
+      tmux.listSessions.mockResolvedValue(twoSessions);
+      tmux.listWindows.mockResolvedValue(windowsWithTwo());
+      tmux.listPaneCommands.mockResolvedValue([
+        { windowIndex: 0, paneId: '%1', command: 'zsh', path: '/proj' },
+        { windowIndex: 0, paneId: '%2', command: 'zsh', path: '/proj' },
+        { windowIndex: 1, paneId: '%3', command: 'zsh', path: '/proj' },
+      ]);
+      await monitor.poll();
+
+      expect(ws.send).toHaveBeenCalledTimes(1);
+      const msg = JSON.parse(ws.send.mock.calls[0][0]);
+
+      // completedWindows deduplicates by window — window 0 appears once, window 1 once
+      expect(msg.data.completedWindows).toHaveLength(2);
+      expect(msg.data.completedWindows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ session: 'main', windowIndex: 0, source: 'command' }),
+          expect.objectContaining({ session: 'main', windowIndex: 1, source: 'command' }),
+        ]),
+      );
+
+      // completedPanes has one entry per pane — all three panes
+      expect(msg.data.completedPanes).toHaveLength(3);
+      expect(msg.data.completedPanes).toEqual(
+        expect.arrayContaining([
+          { session: 'main', windowIndex: 0, paneId: '%1', prevCommand: 'npm' },
+          { session: 'main', windowIndex: 0, paneId: '%2', prevCommand: 'node' },
+          { session: 'main', windowIndex: 1, paneId: '%3', prevCommand: 'python' },
+        ]),
+      );
     });
 
     it('isolates pane command errors per session', async () => {

@@ -25,6 +25,7 @@
       </button>
       <span id="status-info"></span>
       <button id="btn-add-window" class="btn topbar-action-btn" title="New Window">&#43;</button>
+      <button class="btn topbar-action-btn notification-bell" title="Notifications" onclick="NotificationPanel.render()">🔔<span class="notification-bell-count" style="display:none">0</span></button>
       <button id="btn-more" class="btn topbar-action-btn" title="More">&#9881;</button>
     </header>
     <div id="session-dropdown" class="session-dropdown" style="display:none;"></div>
@@ -39,6 +40,8 @@
   <script src="/js/sessions.js?v=2"></script>
   <script src="/js/windows.js?v=2"></script>
   <script src="/js/terminal.js?v=2"></script>
+  <script src="/js/notifications.js?v=2"></script>
   <script src="/js/app.js?v=2"></script>
+  <script src="/js/command-palette.js?v=2"></script>
 </body>
 </html>

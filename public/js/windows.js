@@ -103,21 +103,60 @@ function _buildWindowCard(w) {
   var shortPath = _shortenPath(w.path);
   var paneCount = w.panes || 0;
 
+  // Notification indicator
+  var notificationKey = (state.currentSession || '') + ':' + w.index;
+  var hasNotification = typeof _windowNotifications !== 'undefined' && _windowNotifications[notificationKey];
+  var cardExtraClass = hasNotification ? ' window-card-notified' : '';
+
+  // Pane completion info
+  var paneInfo = typeof _getPaneCompletionInfo === 'function'
+    ? _getPaneCompletionInfo(state.currentSession, w.index) : { total: 0, completed: 0 };
+  var completionHtml = paneInfo.completed > 0
+    ? '<span class="window-card-completion">' + paneInfo.completed + '/' + paneInfo.total + ' \u2713</span>' : '';
+
+  // Pane sub-rows from session data
+  var sessionData = state.sessions.find(function (s) { return s.name === state.currentSession; });
+  var wd = sessionData && sessionData.windowDetails
+    ? sessionData.windowDetails.find(function (d) { return d.index === w.index; })
+    : null;
+  var panes = wd && wd.panes ? wd.panes : [];
+
+  var paneRowsHtml = '';
+  if (panes.length > 0) {
+    paneRowsHtml += '<div class="window-card-panes">';
+    panes.forEach(function (p) {
+      var isCompleted = typeof _isPaneCompleted === 'function' && _isPaneCompleted(state.currentSession, w.index, p.id);
+      var portsHtml = '';
+      if (p.ports && p.ports.length > 0) {
+        portsHtml = p.ports.map(function (port) {
+          return '<span class="window-card-pane-port" data-port="' + port + '">:' + port + '</span>';
+        }).join('');
+      }
+      paneRowsHtml += '<div class="window-card-pane">';
+      paneRowsHtml += '<span class="window-card-pane-cmd">' + escapeHtml(p.command || 'shell') + (isCompleted ? ' \u2713' : '') + '</span>';
+      paneRowsHtml += portsHtml;
+      paneRowsHtml += '</div>';
+    });
+    paneRowsHtml += '</div>';
+  }
+
   return (
     '<div class="swipe-container" data-window-index="' + w.index + '" data-window-name="' + escapeHtml(w.name || '') + '">' +
     '<div class="swipe-actions">' +
     '<button class="btn swipe-action-rename" data-window-index="' + w.index + '">Rename</button>' +
     '<button class="btn btn-danger swipe-action-delete" data-window-index="' + w.index + '">Delete</button>' +
     '</div>' +
-    '<div class="window-card card" data-window-index="' + w.index + '">' +
+    '<div class="window-card card' + cardExtraClass + '" data-window-index="' + w.index + '">' +
     '<div class="window-card-header">' +
     '<strong class="window-card-name">' + escapeHtml(w.index + ': ' + (w.name || '')) + '</strong>' +
+    completionHtml +
     '<span class="command-badge ' + commandBadgeClass + '">' + escapeHtml(w.command || 'unknown') + '</span>' +
     '</div>' +
     '<div class="window-card-meta">' +
     '<span class="tag">' + escapeHtml(shortPath) + '</span>' +
     '<span class="tag">' + paneCount + ' pane' + (paneCount !== 1 ? 's' : '') + '</span>' +
     '</div>' +
+    paneRowsHtml +
     '<div class="pane-thumbnail" data-thumb-index="' + w.index + '"></div>' +
     '</div>' +
     '</div>'
@@ -210,6 +249,15 @@ function _attachWindowHandlers(view, container) {
         .catch(function () {
           navigate('terminal', { currentWindow: windowIndex, currentPane: null });
         });
+    });
+  });
+
+  // Port click handlers
+  view.querySelectorAll('.window-card-pane-port').forEach(function (el) {
+    el.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var port = el.getAttribute('data-port');
+      if (typeof _showPortMenu === 'function') _showPortMenu(e, port);
     });
   });
 
