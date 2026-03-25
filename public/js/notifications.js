@@ -111,8 +111,12 @@ var NotificationPanel = (function () {
       if (bell) {
         var rect = bell.getBoundingClientRect();
         panel.style.top = (rect.bottom + 4) + 'px';
-        panel.style.right = Math.max(4, window.innerWidth - rect.right) + 'px';
-        panel.style.left = 'auto';
+        // Align left edge with bell, but clamp to viewport
+        var left = rect.left;
+        if (left + 320 > window.innerWidth) left = window.innerWidth - 324;
+        if (left < 4) left = 4;
+        panel.style.left = left + 'px';
+        panel.style.right = 'auto';
       }
 
       _isOpen = true;
@@ -157,8 +161,9 @@ var NotificationPanel = (function () {
           '" data-session="' + (typeof escapeHtml === 'function' ? escapeHtml(n.session) : n.session) +
           '" data-window-index="' + n.windowIndex + '">';
         html += '<div class="notification-item-header">';
-        var displayName = n.windowName
-          ? n.windowIndex + ': ' + n.windowName
+        var wName = n.windowName || _lookupWindowName(n.session, n.windowIndex);
+        var displayName = wName
+          ? n.windowIndex + ': ' + wName
           : 'window ' + n.windowIndex;
         html += '<span class="notification-item-target">' + (typeof escapeHtml === 'function' ? escapeHtml(displayName) : displayName) + '</span>';
         html += '<span class="notification-item-time">' + _relativeTime(n.timestamp) + '</span>';
