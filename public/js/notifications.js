@@ -82,9 +82,35 @@ var NotificationPanel = (function () {
 
     var isMobile = window.innerWidth < 768;
     if (isMobile) {
-      var content = document.getElementById('content');
-      if (!content) return;
-      _renderInto(content, true);
+      // Mobile: bottom sheet with overlay
+      var existing = document.getElementById('notification-panel');
+      var existingOverlay = document.getElementById('notification-sheet-overlay');
+      if (existing) {
+        existing.remove();
+        if (existingOverlay) existingOverlay.remove();
+        _isOpen = false;
+        return;
+      }
+
+      var overlay = document.createElement('div');
+      overlay.id = 'notification-sheet-overlay';
+      overlay.className = 'notification-sheet-overlay';
+
+      var panel = document.createElement('div');
+      panel.id = 'notification-panel';
+      panel.className = 'notification-panel notification-mobile-sheet';
+      _renderInto(panel, false);
+
+      document.body.appendChild(overlay);
+      document.body.appendChild(panel);
+      _isOpen = true;
+
+      var closeSheet = function () {
+        panel.remove();
+        overlay.remove();
+        _isOpen = false;
+      };
+      overlay.addEventListener('click', closeSheet);
     } else {
       // Toggle: if already open, close it
       var existing = document.getElementById('notification-panel');

@@ -12,8 +12,6 @@ function renderWindows(container) {
   container.innerHTML =
     '<div class="windows-view">' +
     '<div class="windows-body">' +
-    '<div class="spinner"></div>' +
-    '<p>Loading...</p>' +
     '</div>' +
     '</div>';
 
@@ -69,8 +67,17 @@ function renderWindows(container) {
 // === Load Windows for current session ===
 
 function _loadWindows(bodyEl, parentContainer) {
-  bodyEl.innerHTML =
-    '<div class="spinner"></div><p style="text-align:center;color:var(--text-muted);">Loading windows...</p>';
+  var _skHtml = '<div class="windows-list">';
+  for (var _ski = 0; _ski < 4; _ski++) {
+    _skHtml +=
+      '<div class="skeleton-card">' +
+      '<div class="skeleton-row"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-badge"></div></div>' +
+      '<div class="skeleton-row" style="gap:6px"><div class="skeleton skeleton-badge" style="width:80px"></div><div class="skeleton skeleton-badge" style="width:50px"></div></div>' +
+      '<div class="skeleton skeleton-thumb"></div>' +
+      '</div>';
+  }
+  _skHtml += '</div>';
+  bodyEl.innerHTML = _skHtml;
 
   api
     .get('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows')

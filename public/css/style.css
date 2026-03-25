@@ -7,6 +7,9 @@
   font-display: swap;
 }
 
+/* === Monospace accent font === */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
 /* === Theme colors are applied dynamically by theme.js === */
 /* === Fallback values match Tokyo Night (default theme) === */
 
@@ -50,6 +53,13 @@ body {
   color: var(--text-primary);
   overflow: hidden;
   line-height: 1.5;
+}
+
+/* Monospace accent for stats, indices, badges */
+.mono, .dh-stat-num, .sidebar-window-index, .badge, .tag,
+.pane-box-index, .notification-bell-count, .more-status-value,
+.window-card-completion, .pane-nav-indicator {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 }
 
 /* === Layout === */
@@ -245,8 +255,28 @@ body {
   min-width: var(--sidebar-width);
   background: var(--bg-deep);
   border-right: 1px solid var(--border-subtle);
-  overflow-y: auto;
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#sidebar .sidebar-section {
   padding: 8px 0;
+}
+
+#sidebar .sidebar-header {
+  flex-shrink: 0;
+}
+
+#sidebar .sidebar-section {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+#sidebar .sidebar-collapse-btn {
+  flex-shrink: 0;
 }
 
 #content {
@@ -2221,3 +2251,410 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 .window-card-pane-port { background: rgba(158, 206, 106, 0.15); color: var(--accent-green); border-radius: 3px; padding: 1px 6px; font-size: 0.65rem; cursor: pointer; }
 .window-card-notified { border-left: 3px solid var(--accent-yellow); }
 .window-card-completion { color: var(--accent-yellow); font-size: 0.7rem; }
+
+/* ================================================================== */
+/* === UI Optimizations                                           === */
+/* ================================================================== */
+
+/* === 1. Page Transition Animation === */
+
+.view-transition {
+  animation: viewFadeSlideIn 0.22s ease-out;
+}
+
+@keyframes viewFadeSlideIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* === 2. Skeleton Loading Screen === */
+
+.skeleton {
+  background: var(--bg-hover);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.04) 50%, transparent 100%);
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+
+.skeleton-card {
+  padding: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.skeleton-line {
+  height: 12px;
+  border-radius: 4px;
+}
+
+.skeleton-line-short { width: 40%; }
+.skeleton-line-medium { width: 65%; }
+.skeleton-line-long { width: 90%; }
+
+.skeleton-title {
+  height: 18px;
+  width: 50%;
+  border-radius: 4px;
+}
+
+.skeleton-row {
+  display: flex;
+  gap: 8px;
+}
+
+.skeleton-badge {
+  height: 20px;
+  width: 60px;
+  border-radius: 999px;
+}
+
+.skeleton-thumb {
+  height: 72px;
+  border-radius: 6px;
+}
+
+/* === 3. Hover effects only for pointer devices === */
+
+@media (hover: none) {
+  .card:hover {
+    background: var(--bg-card);
+    border-color: var(--border);
+  }
+  .btn:hover {
+    background: var(--bg-card);
+    border-color: var(--border);
+  }
+  .sidebar-item:hover {
+    background: transparent;
+  }
+  .sidebar-window-item:hover {
+    color: var(--text-muted);
+  }
+  .sidebar-pane-item:hover {
+    background: transparent;
+  }
+  .session-dropdown-item:hover,
+  .session-dropdown-action:hover {
+    background: transparent;
+  }
+  .context-menu-item:hover {
+    background: transparent;
+  }
+  .pane-pill:hover {
+    background: var(--bg-card);
+    border-color: var(--border);
+  }
+  .pane-thumb-cell:hover {
+    filter: none;
+  }
+  .theme-card:hover {
+    transform: none;
+    box-shadow: none;
+  }
+  .dh-recent-item:hover {
+    background: transparent;
+  }
+}
+
+/* === 4. Mobile Notification Bottom Sheet === */
+
+@media (max-width: 767px) {
+  .notification-sheet-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 999;
+    animation: modal-fade-in 0.2s ease;
+  }
+
+  .notification-panel.notification-mobile-sheet {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    width: 100%;
+    max-width: 100%;
+    max-height: 75vh;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.4);
+    animation: sheetSlideUp 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+
+  .notification-mobile-sheet .notification-panel-header {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .notification-mobile-sheet .notification-panel-header::before {
+    content: '';
+    display: block;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    margin: 0 auto 10px;
+  }
+
+  .notification-mobile-sheet .notification-item {
+    min-height: 44px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+}
+
+@keyframes sheetSlideUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+/* === 5. Terminal Touch Targets Uniformity (mobile) === */
+
+@media (max-width: 767px) {
+  .terminal-back-btn {
+    min-height: 36px !important;
+    min-width: 36px;
+    padding: 4px 10px !important;
+  }
+
+  .terminal-header-actions .btn {
+    min-height: 36px !important;
+    min-width: 36px;
+    padding: 4px 8px !important;
+  }
+
+  .terminal-header-pills .pane-pill {
+    min-height: 32px !important;
+    padding: 4px 12px !important;
+    font-size: 0.72rem !important;
+  }
+}
+
+/* === 6. Desktop Card Grid Layout === */
+
+@media (min-width: 1024px) {
+  .sessions-view,
+  .windows-view {
+    max-width: 920px;
+  }
+
+  .sessions-list,
+  .windows-list {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1400px) {
+  .sessions-view,
+  .windows-view {
+    max-width: 1280px;
+  }
+
+  .sessions-list,
+  .windows-list {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* === 7. Context Menu with Icons === */
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-menu-icon {
+  width: 16px;
+  font-size: 0.85rem;
+  text-align: center;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.context-menu-shortcut {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  opacity: 0.6;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* === 8. Sidebar Collapse === */
+
+.sidebar-collapse-btn {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  #sidebar {
+    position: relative;
+    transition: width 0.2s ease, min-width 0.2s ease;
+  }
+
+  .sidebar-collapse-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 32px;
+    border: none;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--bg-deep);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+    margin-top: auto;
+    flex-shrink: 0;
+    transition: color 0.15s, background 0.15s;
+  }
+
+  .sidebar-collapse-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  #sidebar.collapsed {
+    width: 48px;
+    min-width: 48px;
+  }
+
+  #sidebar.collapsed .sidebar-section {
+    display: none;
+  }
+
+  #sidebar.collapsed .sidebar-header-row > *:not(:first-child) {
+    display: none;
+  }
+
+  #sidebar.collapsed .sidebar-header {
+    display: flex;
+    justify-content: center;
+    padding: 4px 0;
+    border-bottom: none;
+  }
+}
+
+/* === 9. Split Mode Active Pane Highlight === */
+
+.terminal-split-active {
+  box-shadow: inset 0 0 0 2px var(--accent-blue);
+  border-color: var(--accent-blue) !important;
+}
+
+.terminal-split-inactive {
+  opacity: 0.6;
+  filter: brightness(0.85);
+  transition: opacity 0.2s, filter 0.2s;
+}
+
+.terminal-split-inactive:hover {
+  opacity: 0.85;
+  filter: brightness(0.95);
+}
+
+/* === 10. Mobile Topbar Small Screen Optimization === */
+
+@media (max-width: 374px) {
+  #status-info {
+    display: none;
+  }
+
+  .topbar-session-btn {
+    max-width: 140px;
+  }
+}
+
+/* === 11. Command Palette Mobile Fix === */
+
+@media (max-width: 767px) {
+  .cmd-palette-overlay {
+    padding-top: 0;
+    align-items: stretch;
+  }
+
+  .cmd-palette-modal.cmd-palette-mobile {
+    width: 100%;
+    max-width: 100%;
+    border-radius: 0;
+    max-height: 100dvh;
+    max-height: 100vh;
+    margin-top: 0;
+    padding-top: env(safe-area-inset-top, 0);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+
+  .cmd-palette-mobile .cmd-palette-input {
+    font-size: 16px; /* Prevent iOS zoom */
+  }
+
+  .cmd-palette-mobile .cmd-palette-item {
+    min-height: 44px;
+  }
+}
+
+/* === 12. Desktop Home Enrichment === */
+
+.dh-grid-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+  max-width: 420px;
+}
+
+.dh-stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 12px;
+  text-align: center;
+  transition: border-color 0.15s;
+}
+
+.dh-stat-card:hover {
+  border-color: var(--text-muted);
+}
+
+.dh-stat-card-num {
+  font-size: 1.6rem;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  line-height: 1.2;
+}
+
+.dh-stat-card-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+.dh-recent-list {
+  max-width: 420px;
+}
+
+.dh-recent-item {
+  transition: background 0.12s;
+}

@@ -9,6 +9,7 @@ const EXEC_TIMEOUT = 5000;
 // --- Validation ---
 
 const SESSION_NAME_RE = /^[\w\-\u4e00-\u9fff][\w\-\u4e00-\u9fff\s]*$/;
+const WINDOW_NAME_RE = /^[^\x00-\x1f:]*$/;
 const PANE_ID_RE = /^%\d+$/;
 const WINDOW_INDEX_RE = /^\d+$/;
 
@@ -20,6 +21,16 @@ export function validateSessionName(name) {
   if (typeof name !== 'string') return false;
   if (name.trim().length === 0) return false;
   return SESSION_NAME_RE.test(name);
+}
+
+/**
+ * Validates a tmux window name.
+ * More permissive than session names — disallows control chars and colon (tmux separator).
+ */
+export function validateWindowName(name) {
+  if (typeof name !== 'string') return false;
+  if (name.trim().length === 0) return false;
+  return WINDOW_NAME_RE.test(name);
 }
 
 /**
@@ -128,6 +139,12 @@ function requireValidSessionName(name) {
   }
 }
 
+function requireValidWindowName(name) {
+  if (!validateWindowName(name)) {
+    throw new Error(`Invalid window name: ${name}`);
+  }
+}
+
 function requireValidPaneId(id) {
   if (!validatePaneId(id)) {
     throw new Error(`Invalid pane ID: ${id}`);
@@ -208,7 +225,7 @@ export async function createWindow(session, name) {
   requireValidSessionName(session);
   const args = ['new-window', '-t', session + ':', '-P', '-F', '#{window_index}'];
   if (name) {
-    requireValidSessionName(name);
+    requireValidWindowName(name);
     args.push('-n', name);
   }
   const stdout = await tmuxExec(args);
@@ -230,7 +247,7 @@ export async function renameSession(name, newName) {
 export async function renameWindow(session, index, newName) {
   requireValidSessionName(session);
   requireValidWindowIndex(index);
-  requireValidSessionName(newName);
+  requireValidWindowName(newName);
   await tmuxExec(['rename-window', '-t', `${session}:${index}`, newName]);
 }
 

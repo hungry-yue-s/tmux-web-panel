@@ -3,13 +3,17 @@
 // === Sessions View ===
 
 function renderSessions(container) {
-  container.innerHTML =
-    '<div class="sessions-view">' +
-    '<div class="sessions-loading">' +
-    '<div class="spinner"></div>' +
-    '<p>Loading sessions...</p>' +
-    '</div>' +
-    '</div>';
+  var skeletonHtml = '<div class="sessions-view"><div class="sessions-list">';
+  for (var _sk = 0; _sk < 3; _sk++) {
+    skeletonHtml +=
+      '<div class="skeleton-card">' +
+      '<div class="skeleton-row"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-badge"></div></div>' +
+      '<div class="skeleton skeleton-line skeleton-line-short"></div>' +
+      '<div class="skeleton-row" style="gap:6px"><div class="skeleton skeleton-badge"></div><div class="skeleton skeleton-badge"></div><div class="skeleton skeleton-badge"></div></div>' +
+      '</div>';
+  }
+  skeletonHtml += '</div></div>';
+  container.innerHTML = skeletonHtml;
 
   api
     .get('/api/sessions')
