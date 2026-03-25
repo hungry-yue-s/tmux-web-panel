@@ -16,11 +16,21 @@ var NotificationPanel = (function () {
   }
   _load();
 
+  function _lookupWindowName(session, windowIndex) {
+    if (typeof state === 'undefined' || !state.sessions) return '';
+    var s = state.sessions.find(function (s) { return s.name === session; });
+    if (!s || !s.windowDetails) return '';
+    var w = s.windowDetails.find(function (w) { return String(w.index) === String(windowIndex); });
+    return w ? (w.name || '') : '';
+  }
+
   function add(notification) {
+    var windowName = _lookupWindowName(notification.session, notification.windowIndex);
     _notifications.unshift({
       id: Date.now() + '-' + Math.random().toString(36).substr(2, 5),
       session: notification.session,
       windowIndex: notification.windowIndex,
+      windowName: windowName,
       command: notification.prevCommand || '',
       paneId: notification.paneId || '',
       timestamp: Date.now(),
@@ -78,6 +88,16 @@ var NotificationPanel = (function () {
       panel.className = 'notification-panel';
       _renderInto(panel, false);
       document.body.appendChild(panel);
+
+      // Position below the bell icon
+      var bell = document.querySelector('.sidebar .notification-bell') || document.querySelector('.notification-bell');
+      if (bell) {
+        var rect = bell.getBoundingClientRect();
+        panel.style.top = (rect.bottom + 4) + 'px';
+        panel.style.right = (window.innerWidth - rect.right) + 'px';
+        panel.style.left = 'auto';
+      }
+
       _isOpen = true;
       setTimeout(function () {
         document.addEventListener('click', function handler(e) {
@@ -116,7 +136,10 @@ var NotificationPanel = (function () {
           '" data-session="' + (typeof escapeHtml === 'function' ? escapeHtml(n.session) : n.session) +
           '" data-window-index="' + n.windowIndex + '">';
         html += '<div class="notification-item-header">';
-        html += '<span class="notification-item-target">' + (typeof escapeHtml === 'function' ? escapeHtml(n.session) : n.session) + ' / ' + n.windowIndex + '</span>';
+        var displayName = n.windowName
+          ? n.windowIndex + ': ' + n.windowName
+          : 'window ' + n.windowIndex;
+        html += '<span class="notification-item-target">' + (typeof escapeHtml === 'function' ? escapeHtml(displayName) : displayName) + '</span>';
         html += '<span class="notification-item-time">' + _relativeTime(n.timestamp) + '</span>';
         html += '</div>';
         html += '<div class="notification-item-command">命令完成: ' + (typeof escapeHtml === 'function' ? escapeHtml(n.command) : n.command) + '</div>';

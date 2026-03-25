@@ -2044,8 +2044,6 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 /* Notification Panel */
 .notification-panel {
   position: fixed;
-  top: 48px;
-  right: 12px;
   width: 320px;
   max-height: 400px;
   background: var(--bg-card);
