@@ -946,6 +946,20 @@ function _updateSidebarNotifications() {
     } else if (!notif && dot) {
       dot.remove();
     }
+
+    // Update pane completion ratio
+    var ratioEl = el.querySelector('.sidebar-pane-ratio');
+    var info = _getPaneCompletionInfo(sess, winIdx);
+    if (info.total > 0 && info.completed > 0) {
+      if (!ratioEl) {
+        ratioEl = document.createElement('span');
+        ratioEl.className = 'sidebar-pane-ratio';
+        el.appendChild(ratioEl);
+      }
+      ratioEl.textContent = info.completed + '/' + info.total;
+    } else if (ratioEl) {
+      ratioEl.remove();
+    }
   });
 }
 
