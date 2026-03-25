@@ -868,7 +868,7 @@ body {
 /* Pane thumbnail */
 .pane-thumbnail {
   position: relative;
-  height: 60px;
+  height: 72px;
   border-radius: 6px;
   overflow: hidden;
   background: var(--bg-primary);
@@ -878,10 +878,41 @@ body {
 .pane-thumb-cell {
   position: absolute;
   border-radius: 3px;
-  opacity: 0.25;
-  /* 1px gap between cells */
+  opacity: 0.3;
   box-sizing: border-box;
   border: 1px solid var(--bg-primary);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 2px 4px;
+  overflow: hidden;
+  transition: opacity 0.15s;
+}
+.pane-thumb-cell:hover {
+  opacity: 0.5;
+}
+.pane-thumb-cmd {
+  font-size: 0.6rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  line-height: 1.2;
+}
+.pane-thumb-completed {
+  color: var(--accent-yellow);
+}
+.pane-thumb-port {
+  font-size: 0.55rem;
+  color: var(--accent-green);
+  cursor: pointer;
+  line-height: 1.2;
+}
+.pane-thumb-port:hover {
+  text-decoration: underline;
 }
 
 /* === Pane Layout === */

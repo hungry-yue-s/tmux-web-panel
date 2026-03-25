@@ -124,31 +124,7 @@ function _buildWindowCard(w) {
   var completionHtml = paneInfo.completed > 0
     ? '<span class="window-card-completion">' + paneInfo.completed + '/' + paneInfo.total + ' \u2713</span>' : '';
 
-  // Pane sub-rows from session data
-  var sessionData = state.sessions.find(function (s) { return s.name === state.currentSession; });
-  var wd = sessionData && sessionData.windowDetails
-    ? sessionData.windowDetails.find(function (d) { return d.index === w.index; })
-    : null;
-  var panes = wd && wd.panes ? wd.panes : [];
-
-  var paneRowsHtml = '';
-  if (panes.length > 0) {
-    paneRowsHtml += '<div class="window-card-panes">';
-    panes.forEach(function (p) {
-      var isCompleted = typeof _isPaneCompleted === 'function' && _isPaneCompleted(state.currentSession, w.index, p.id);
-      var portsHtml = '';
-      if (p.ports && p.ports.length > 0) {
-        portsHtml = p.ports.map(function (port) {
-          return '<span class="window-card-pane-port" data-port="' + port + '">:' + port + '</span>';
-        }).join('');
-      }
-      paneRowsHtml += '<div class="window-card-pane">';
-      paneRowsHtml += '<span class="window-card-pane-cmd">' + escapeHtml(p.command || 'shell') + (isCompleted ? ' \u2713' : '') + '</span>';
-      paneRowsHtml += portsHtml;
-      paneRowsHtml += '</div>';
-    });
-    paneRowsHtml += '</div>';
-  }
+  // Pane info is now rendered inside the thumbnail preview below
 
   return (
     '<div class="swipe-container" data-window-index="' + w.index + '" data-window-name="' + escapeHtml(w.name || '') + '">' +
@@ -166,7 +142,6 @@ function _buildWindowCard(w) {
     '<span class="tag">' + escapeHtml(shortPath) + '</span>' +
     '<span class="tag">' + paneCount + ' pane' + (paneCount !== 1 ? 's' : '') + '</span>' +
     '</div>' +
-    paneRowsHtml +
     '<div class="pane-thumbnail" data-thumb-index="' + w.index + '"></div>' +
     '</div>' +
     '</div>'
@@ -190,6 +165,9 @@ function _shortenPath(path) {
 // === Pane Thumbnails ===
 
 function _fetchPaneThumbnails(view, windows) {
+  // Get pane detail data from WebSocket state
+  var sessionData = state.sessions.find(function (s) { return s.name === state.currentSession; });
+
   windows.forEach(function (w) {
     api
       .get('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/' + encodeURIComponent(w.index) + '/panes')
@@ -199,6 +177,14 @@ function _fetchPaneThumbnails(view, windows) {
         if (!thumbEl) return;
 
         if (panes.length === 0) return;
+
+        // Get pane command/port info from WebSocket data
+        var wd = sessionData && sessionData.windowDetails
+          ? sessionData.windowDetails.find(function (d) { return d.index === w.index; })
+          : null;
+        var paneDetails = wd && wd.panes ? wd.panes : [];
+        var detailById = {};
+        paneDetails.forEach(function (pd) { detailById[pd.id] = pd; });
 
         var maxRight = 0;
         var maxBottom = 0;
@@ -223,16 +209,56 @@ function _fetchPaneThumbnails(view, windows) {
           var widthPct = ((p.width || 1) / maxRight * 100).toFixed(1);
           var heightPct = ((p.height || 1) / maxBottom * 100).toFixed(1);
           var color = colors[i % colors.length];
+
+          // Get command/port info for this pane
+          var detail = detailById[p.id] || {};
+          var cmd = detail.command || p.command || '';
+          var ports = detail.ports || [];
+          var portHtml = ports.length > 0
+            ? ports.map(function (port) {
+                return '<span class="pane-thumb-port" data-port="' + port + '">:' + port + '</span>';
+              }).join('')
+            : '';
+          var isCompleted = typeof _isPaneCompleted === 'function' &&
+            _isPaneCompleted(state.currentSession, w.index, p.id);
+
           html +=
-            '<div class="pane-thumb-cell" style="' +
+            '<div class="pane-thumb-cell" data-pane-id="' + (p.id || '') + '"' +
+            ' data-window-index="' + w.index + '"' +
+            ' style="' +
             'left:' + leftPct + '%;' +
             'top:' + topPct + '%;' +
             'width:' + widthPct + '%;' +
             'height:' + heightPct + '%;' +
             'background:' + color + ';">' +
+            '<span class="pane-thumb-cmd' + (isCompleted ? ' pane-thumb-completed' : '') + '">' +
+            escapeHtml(cmd) + (isCompleted ? ' ✓' : '') +
+            '</span>' +
+            portHtml +
             '</div>';
         });
         thumbEl.innerHTML = html;
+
+        // Bind pane thumbnail click → navigate to that pane
+        thumbEl.querySelectorAll('.pane-thumb-cell').forEach(function (cell) {
+          cell.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var paneId = cell.getAttribute('data-pane-id');
+            var winIdx = cell.getAttribute('data-window-index');
+            if (paneId) {
+              navigate('terminal', { currentWindow: winIdx, currentPane: paneId });
+            }
+          });
+        });
+
+        // Bind port click in thumbnails
+        thumbEl.querySelectorAll('.pane-thumb-port').forEach(function (el) {
+          el.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var port = el.getAttribute('data-port');
+            if (typeof _showPortMenu === 'function') _showPortMenu(e, port);
+          });
+        });
       })
       .catch(function () {
         // Silently ignore thumbnail fetch errors
@@ -259,15 +285,6 @@ function _attachWindowHandlers(view, container) {
         .catch(function () {
           navigate('terminal', { currentWindow: windowIndex, currentPane: null });
         });
-    });
-  });
-
-  // Port click handlers
-  view.querySelectorAll('.window-card-pane-port').forEach(function (el) {
-    el.addEventListener('click', function (e) {
-      e.stopPropagation();
-      var port = el.getAttribute('data-port');
-      if (typeof _showPortMenu === 'function') _showPortMenu(e, port);
     });
   });
 
