@@ -1727,7 +1727,8 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   }
 
   #sidebar {
-    display: block;
+    display: flex;
+    flex-direction: column;
   }
 
   .sidebar-header {
