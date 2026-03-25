@@ -64,6 +64,30 @@ node scripts/install-claude-hook.js
 
 To uninstall: `node scripts/install-claude-hook.js --uninstall`
 
+## Auto-Start Service
+
+Install as a user-level service that starts on login and auto-restarts on crash:
+
+```bash
+./scripts/install-service.sh install
+```
+
+With custom config:
+
+```bash
+PORT=8080 AUTH=user:pass ./scripts/install-service.sh install
+```
+
+| Command | Description |
+|---------|-------------|
+| `./scripts/install-service.sh install` | Install and start service |
+| `./scripts/install-service.sh uninstall` | Remove service |
+| `./scripts/install-service.sh status` | Show service status |
+| `./scripts/install-service.sh logs` | Tail service logs |
+
+- **Linux** — systemd user service (`~/.config/systemd/user/`), restarts on failure, enables lingering
+- **macOS** — launchd user agent (`~/Library/LaunchAgents/`), logs at `~/Library/Logs/tmux-web-panel/`
+
 ## Development
 
 ```bash
