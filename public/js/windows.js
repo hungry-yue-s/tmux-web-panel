@@ -24,6 +24,16 @@ function renderWindows(container) {
     .get('/api/sessions')
     .then(function (result) {
       var sessions = result.data || [];
+      // Merge API sessions with existing state to preserve windowDetails from WebSocket
+      var existingByName = {};
+      (state.sessions || []).forEach(function (s) {
+        if (s.windowDetails) existingByName[s.name] = s.windowDetails;
+      });
+      sessions.forEach(function (s) {
+        if (!s.windowDetails && existingByName[s.name]) {
+          s.windowDetails = existingByName[s.name];
+        }
+      });
       state.sessions = sessions;
       if (typeof updateSidebar === 'function') updateSidebar();
 
