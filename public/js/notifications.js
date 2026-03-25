@@ -74,40 +74,61 @@ var NotificationPanel = (function () {
     return Math.floor(diff / 86400) + 'd';
   }
 
-  function render() {
+  var _closeHandler = null;
+
+  function render(event) {
+    // Stop the click from propagating to the document close handler
+    if (event && event.stopPropagation) event.stopPropagation();
+
     var isMobile = window.innerWidth < 768;
     if (isMobile) {
       var content = document.getElementById('content');
       if (!content) return;
       _renderInto(content, true);
     } else {
+      // Toggle: if already open, close it
       var existing = document.getElementById('notification-panel');
-      if (existing) { existing.remove(); _isOpen = false; return; }
+      if (existing) {
+        existing.remove();
+        _isOpen = false;
+        if (_closeHandler) {
+          document.removeEventListener('click', _closeHandler);
+          _closeHandler = null;
+        }
+        return;
+      }
+
       var panel = document.createElement('div');
       panel.id = 'notification-panel';
       panel.className = 'notification-panel';
       _renderInto(panel, false);
       document.body.appendChild(panel);
 
-      // Position below the bell icon
-      var bell = document.querySelector('.sidebar .notification-bell') || document.querySelector('.notification-bell');
+      // Position below the bell icon that was clicked
+      var bell = (event && event.currentTarget) ||
+        document.querySelector('#sidebar .notification-bell') ||
+        document.querySelector('.notification-bell');
       if (bell) {
         var rect = bell.getBoundingClientRect();
         panel.style.top = (rect.bottom + 4) + 'px';
-        panel.style.right = (window.innerWidth - rect.right) + 'px';
+        panel.style.right = Math.max(4, window.innerWidth - rect.right) + 'px';
         panel.style.left = 'auto';
       }
 
       _isOpen = true;
+
+      // Close on outside click (delay to avoid catching current click)
+      _closeHandler = function (e) {
+        if (!panel.contains(e.target) && !e.target.closest('.notification-bell')) {
+          panel.remove();
+          _isOpen = false;
+          document.removeEventListener('click', _closeHandler);
+          _closeHandler = null;
+        }
+      };
       setTimeout(function () {
-        document.addEventListener('click', function handler(e) {
-          if (!panel.contains(e.target) && !e.target.closest('.notification-bell')) {
-            panel.remove();
-            _isOpen = false;
-            document.removeEventListener('click', handler);
-          }
-        });
-      }, 0);
+        document.addEventListener('click', _closeHandler);
+      }, 10);
     }
   }
 

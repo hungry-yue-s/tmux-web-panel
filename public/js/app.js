@@ -741,7 +741,7 @@ function _rebuildSidebar(sidebar) {
   html += '<div class="sidebar-header-row">';
   html += '<span id="sidebar-dot" class="topbar-dot"></span>';
   html += '<span id="sidebar-status-info" class="sidebar-status-info"></span>';
-  html += '<button class="sidebar-action-btn notification-bell" title="Notifications" onclick="NotificationPanel.render()">🔔<span class="notification-bell-count" style="display:none">0</span></button>';
+  html += '<button class="sidebar-action-btn notification-bell" title="Notifications" onclick="NotificationPanel.render(event)">🔔<span class="notification-bell-count" style="display:none">0</span></button>';
   html += '<button id="sidebar-btn-add-window" class="sidebar-action-btn" title="New Window">&#43;</button>';
   html += '<button id="sidebar-btn-more" class="sidebar-action-btn" title="More">&#9881;</button>';
   html += '</div>';
