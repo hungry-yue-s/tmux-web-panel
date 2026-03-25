@@ -59,7 +59,7 @@ After=network.target
 Type=simple
 WorkingDirectory=${PROJECT_DIR}
 ExecStart=${NODE_BIN} server/index.js
-Restart=on-failure
+Restart=always
 RestartSec=3
 $(echo -e "$env_lines")
 
@@ -139,10 +139,7 @@ ${env_xml}    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <dict>
-        <key>SuccessfulExit</key>
-        <false/>
-    </dict>
+    <true/>
     <key>StandardOutPath</key>
     <string>${launchd_log_dir}/stdout.log</string>
     <key>StandardErrorPath</key>
