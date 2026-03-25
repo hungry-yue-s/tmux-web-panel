@@ -597,6 +597,12 @@ body {
   text-overflow: ellipsis;
   max-width: 80px;
 }
+.sidebar-pane-count {
+  color: var(--text-muted);
+  font-size: 0.6rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
 .sidebar-pane-ratio {
   color: var(--accent-yellow);
   font-size: 0.65rem;

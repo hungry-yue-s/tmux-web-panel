@@ -964,10 +964,13 @@ function _loadSidebarWindows(sessionName) {
           '<span class="sidebar-window-name">' + escapeHtml(w.name || 'window') + '</span>' +
           (notif ? '<span class="notification-dot"></span>' : '') +
           '<span class="sidebar-window-cmd">' + escapeHtml(w.command || '') + '</span>' +
+          (panes.length > 1 ? '<span class="sidebar-pane-count">' + panes.length + 'p</span>' : '') +
           ratioHtml +
           '</div>';
 
-        // Pane sub-items
+        // Pane sub-items (collapsed by default, expanded for active window)
+        var panesVisible = isCurrentWindow ? '' : 'display:none;';
+        html += '<div class="sidebar-pane-list" data-session="' + escapeHtml(sessionName) + '" data-window-index="' + w.index + '" style="' + panesVisible + '">';
         panes.forEach(function (p) {
           var isCompleted = _isPaneCompleted(sessionName, w.index, p.id);
           var completedClass = isCompleted ? ' sidebar-pane-completed' : '';
@@ -995,6 +998,7 @@ function _loadSidebarWindows(sessionName) {
             (shortPath ? '<span class="sidebar-pane-path">' + escapeHtml(shortPath) + '</span>' : '') +
             '</div>';
         });
+        html += '</div>';
       });
       windowsEl.innerHTML = html;
 
