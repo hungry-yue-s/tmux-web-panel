@@ -787,7 +787,7 @@ function renderTerminal(container) {
     '</div>';
 
   var view = container.querySelector('.terminal-view');
-  _createFabPanel(view);
+  if (window.innerWidth < 768) _createFabPanel(view);
   var titleEl = view.querySelector('.terminal-header-title');
   var paneSwitcher = view.querySelector('.terminal-pane-switcher');
   var termContainer = view.querySelector('.terminal-container');
