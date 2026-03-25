@@ -200,7 +200,13 @@ function _fetchPaneThumbnails(view, windows) {
         if (maxRight === 0 || maxBottom === 0) return;
 
         var html = '';
-        var colors = ['var(--accent-blue)', 'var(--accent-green)', 'var(--accent-purple)', 'var(--accent-yellow)', 'var(--accent-red)'];
+        var colors = [
+          'rgba(122, 162, 247, 0.25)',
+          'rgba(158, 206, 106, 0.25)',
+          'rgba(187, 154, 247, 0.25)',
+          'rgba(224, 175, 104, 0.25)',
+          'rgba(247, 118, 142, 0.25)',
+        ];
         panes.forEach(function (p, i) {
           var pL = p.left != null ? p.left : (p.x || 0);
           var pT = p.top != null ? p.top : (p.y || 0);
