@@ -151,11 +151,20 @@ class ApiClient {
     }
   }
 
+  async _throwWithBody(method, path, res) {
+    let detail = '';
+    try {
+      const json = await res.json();
+      if (json && json.error) detail = ': ' + json.error;
+    } catch (_e) { /* ignore parse errors */ }
+    throw new Error(`${method} ${path} failed: ${res.status}${detail}`);
+  }
+
   async get(path) {
     const res = await fetch(path, { headers: Auth.headers() });
     this._handleAuth(res);
     if (!res.ok) {
-      throw new Error(`GET ${path} failed: ${res.status}`);
+      await this._throwWithBody('GET', path, res);
     }
     return res.json();
   }
@@ -168,7 +177,7 @@ class ApiClient {
     });
     this._handleAuth(res);
     if (!res.ok) {
-      throw new Error(`POST ${path} failed: ${res.status}`);
+      await this._throwWithBody('POST', path, res);
     }
     return res.json();
   }
@@ -181,7 +190,7 @@ class ApiClient {
     });
     this._handleAuth(res);
     if (!res.ok) {
-      throw new Error(`PUT ${path} failed: ${res.status}`);
+      await this._throwWithBody('PUT', path, res);
     }
     return res.json();
   }
@@ -193,7 +202,7 @@ class ApiClient {
     });
     this._handleAuth(res);
     if (!res.ok) {
-      throw new Error(`DELETE ${path} failed: ${res.status}`);
+      await this._throwWithBody('DELETE', path, res);
     }
     return res.json();
   }
@@ -290,6 +299,12 @@ function render() {
     document.body.classList.remove('terminal-active', 'terminal-fullscreen');
   }
 
+  // Add page transition animation
+  content.classList.remove('view-transition');
+  // Force reflow to restart animation
+  void content.offsetWidth;
+  content.classList.add('view-transition');
+
   switch (state.currentTab) {
     case 'sessions':
     case 'windows':
@@ -323,12 +338,10 @@ function renderDesktopHome(container) {
   var recent = _recentWindows.get();
 
   var html = '<div class="desktop-home"><div class="desktop-home-inner">';
-  html += '<div class="desktop-home-stats-line">';
-  html += '<span class="dh-stat"><b class="dh-stat-num dh-blue">' + sc + '</b> sessions</span>';
-  html += '<span class="dh-dot">&middot;</span>';
-  html += '<span class="dh-stat"><b class="dh-stat-num dh-green">' + wc + '</b> windows</span>';
-  html += '<span class="dh-dot">&middot;</span>';
-  html += '<span class="dh-stat"><b class="dh-stat-num dh-purple">' + pc + '</b> panes</span>';
+  html += '<div class="dh-grid-stats">';
+  html += '<div class="dh-stat-card"><div class="dh-stat-card-num dh-blue">' + sc + '</div><div class="dh-stat-card-label">Sessions</div></div>';
+  html += '<div class="dh-stat-card"><div class="dh-stat-card-num dh-green">' + wc + '</div><div class="dh-stat-card-label">Windows</div></div>';
+  html += '<div class="dh-stat-card"><div class="dh-stat-card-num dh-purple">' + pc + '</div><div class="dh-stat-card-label">Panes</div></div>';
   html += '</div>';
   html += '<div class="dh-actions">';
   html += '<button class="dh-btn dh-btn-primary" id="dh-new-session">＋ Session</button>';
@@ -772,6 +785,9 @@ function _rebuildSidebar(sidebar) {
   });
   html += '</div>';
 
+  // Collapse button at bottom of sidebar
+  html += '<button class="sidebar-collapse-btn" onclick="_toggleSidebarCollapse()" title="收起侧边栏">« 收起</button>';
+
   sidebar.innerHTML = html;
 
   // Attach session click handlers
@@ -812,6 +828,17 @@ function _rebuildSidebar(sidebar) {
   // Load windows for active session
   if (state.currentSession) {
     _loadSidebarWindows(state.currentSession);
+  }
+}
+
+function _toggleSidebarCollapse() {
+  var sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+  sidebar.classList.toggle('collapsed');
+  var btn = sidebar.querySelector('.sidebar-collapse-btn');
+  if (btn) {
+    btn.innerHTML = sidebar.classList.contains('collapsed') ? '»' : '« 收起';
+    btn.title = sidebar.classList.contains('collapsed') ? '展开侧边栏' : '收起侧边栏';
   }
 }
 
@@ -989,37 +1016,6 @@ function _loadSidebarWindows(sessionName) {
           ratioHtml +
           '</div>';
 
-        // Pane sub-items (collapsed by default, expanded for active window)
-        var panesVisible = isCurrentWindow ? '' : 'display:none;';
-        html += '<div class="sidebar-pane-list" data-session="' + escapeHtml(sessionName) + '" data-window-index="' + w.index + '" style="' + panesVisible + '">';
-        panes.forEach(function (p) {
-          var isCompleted = _isPaneCompleted(sessionName, w.index, p.id);
-          var completedClass = isCompleted ? ' sidebar-pane-completed' : '';
-
-          // Shorten path: replace /home/username with ~
-          var shortPath = p.currentPath || '';
-          shortPath = shortPath.replace(/^\/home\/[^/]+/, '~');
-
-          // Build port spans
-          var portsHtml = '';
-          if (p.ports && p.ports.length > 0) {
-            p.ports.forEach(function (port) {
-              portsHtml += '<span class="sidebar-pane-port" data-port="' + port + '">:' + port + '</span>';
-            });
-          }
-
-          html +=
-            '<div class="sidebar-pane-item' + completedClass + '"' +
-            ' data-session="' + escapeHtml(sessionName) +
-            '" data-window-index="' + w.index +
-            '" data-pane-id="' + escapeHtml(String(p.id)) + '">' +
-            '<span class="sidebar-pane-arrow">▸</span>' +
-            '<span class="sidebar-pane-cmd">' + (isCompleted ? '✓ ' : '') + escapeHtml(p.command || '') + '</span>' +
-            portsHtml +
-            (shortPath ? '<span class="sidebar-pane-path">' + escapeHtml(shortPath) + '</span>' : '') +
-            '</div>';
-        });
-        html += '</div>';
       });
       windowsEl.innerHTML = html;
 
@@ -1045,28 +1041,6 @@ function _loadSidebarWindows(sessionName) {
         });
       });
 
-      // Attach pane item click handlers
-      windowsEl.querySelectorAll('.sidebar-pane-item').forEach(function (el) {
-        el.addEventListener('click', function (e) {
-          e.stopPropagation();
-          var winIdx = el.getAttribute('data-window-index');
-          var sess = el.getAttribute('data-session');
-          var paneId = el.getAttribute('data-pane-id');
-          _clearWindowNotification(sess, winIdx);
-          navigate('terminal', { currentSession: sess, currentWindow: winIdx, currentPane: paneId });
-        });
-      });
-
-      // Attach port click handlers
-      windowsEl.querySelectorAll('.sidebar-pane-port').forEach(function (el) {
-        el.addEventListener('click', function (e) {
-          e.stopPropagation();
-          var port = el.getAttribute('data-port');
-          if (typeof _showPortMenu === 'function') {
-            _showPortMenu(e, port);
-          }
-        });
-      });
 
     })
     .catch(function () {
@@ -1123,8 +1097,8 @@ function _loadSidebarWindows(sessionName) {
     if (sessionHeader) {
       var sess = sessionHeader.getAttribute('data-session');
       _showMenu(e,
-        '<div class="context-menu-item" data-action="rename">重命名</div>' +
-        '<div class="context-menu-item context-menu-item-danger" data-action="delete">删除</div>',
+        '<div class="context-menu-item" data-action="rename"><span class="context-menu-icon">✏</span>重命名</div>' +
+        '<div class="context-menu-item context-menu-item-danger" data-action="delete"><span class="context-menu-icon">✕</span>删除</div>',
         function (action) {
           if (action === 'rename') {
             showPrompt({ title: '重命名会话', placeholder: '新名称', value: sess })
@@ -1171,8 +1145,8 @@ function _loadSidebarWindows(sessionName) {
       var winIdx = windowItem.getAttribute('data-window-index');
       var winSess = windowItem.getAttribute('data-session');
       _showMenu(e,
-        '<div class="context-menu-item" data-action="rename">重命名</div>' +
-        '<div class="context-menu-item context-menu-item-danger" data-action="delete">删除</div>',
+        '<div class="context-menu-item" data-action="rename"><span class="context-menu-icon">✏</span>重命名</div>' +
+        '<div class="context-menu-item context-menu-item-danger" data-action="delete"><span class="context-menu-icon">✕</span>删除</div>',
         function (action) {
           if (action === 'rename') {
             showPrompt({ title: '重命名窗口 ' + winIdx, placeholder: '新名称' })
