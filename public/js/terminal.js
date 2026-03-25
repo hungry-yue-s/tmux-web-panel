@@ -41,35 +41,98 @@ function _showToast(message, duration) {
   }, duration);
 }
 
-// === Upload FAB ===
+// === FAB Tool Panel ===
 
-function _createUploadFab(container) {
+var _fabDefaultKeys = [
+  { label: 'Tab',  send: '\x09' },
+  { label: '\u2191', send: '\x1b[A', repeat: true },
+  { label: 'Esc',  send: '\x1b' },
+  { label: 'C-c',  send: '\x03' },
+  { label: '\u2190', send: '\x1b[D', repeat: true },
+  { label: '\u2193', send: '\x1b[B', repeat: true },
+  { label: '\u2192', send: '\x1b[C', repeat: true },
+  { label: 'C-d',  send: '\x04' },
+  { label: '\u7ee7\u7eed', send: '\u7ee7\u7eed\r', accent: true, wide: true },
+  { label: '\ud83d\udcce', send: '__upload__', accent: true, wide: true },
+];
+
+var _fabPresets = [
+  { label: 'Tab',  send: '\x09' },
+  { label: 'Esc',  send: '\x1b' },
+  { label: 'C-c',  send: '\x03' },
+  { label: 'C-d',  send: '\x04' },
+  { label: 'C-z',  send: '\x1a' },
+  { label: 'C-l',  send: '\x0c' },
+  { label: 'C-a',  send: '\x01' },
+  { label: 'C-e',  send: '\x05' },
+  { label: 'C-r',  send: '\x12' },
+  { label: 'C-w',  send: '\x17' },
+  { label: '\u2191', send: '\x1b[A' },
+  { label: '\u2193', send: '\x1b[B' },
+  { label: '\u2190', send: '\x1b[D' },
+  { label: '\u2192', send: '\x1b[C' },
+  { label: '~',    send: '~' },
+  { label: '|',    send: '|' },
+  { label: '/',    send: '/' },
+  { label: '\u7ee7\u7eed', send: '\u7ee7\u7eed\r' },
+];
+
+function _loadFabKeys() {
+  try {
+    var s = localStorage.getItem('fab-keys');
+    if (s) return JSON.parse(s);
+  } catch (_e) { /* ignore */ }
+  return _fabDefaultKeys.map(function (k) { return Object.assign({}, k); });
+}
+
+function _saveFabKeys(keys) {
+  localStorage.setItem('fab-keys', JSON.stringify(keys));
+}
+
+function _displayEscape(s) {
+  return s
+    .replace(/\x1b/g, '\\x1b')
+    .replace(/\x09/g, '\\x09')
+    .replace(/[\x01-\x1a]/g, function (c) {
+      return '\\x' + ('0' + c.charCodeAt(0).toString(16)).slice(-2);
+    })
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n');
+}
+
+function _parseEscape(s) {
+  return s
+    .replace(/\\x([0-9a-fA-F]{2})/g, function (_, h) { return String.fromCharCode(parseInt(h, 16)); })
+    .replace(/\\r/g, '\r')
+    .replace(/\\n/g, '\n');
+}
+
+function _sendTermData(data) {
+  if (terminalState.ws && terminalState.ws.readyState === WebSocket.OPEN) {
+    terminalState.ws.send(JSON.stringify({ type: 'input', data: data }));
+  }
+}
+
+function _createFabPanel(container) {
+  var keys = _loadFabKeys();
+  var isOpen = false;
+  var editingIdx = -1;
+  var longPressTimer = null;
+  var longPressed = false;
+  var repeatTimer = null;
+
+  // -- File input for upload --
   var fileInput = document.createElement('input');
   fileInput.type = 'file';
   fileInput.style.display = 'none';
   container.appendChild(fileInput);
 
-  var fab = document.createElement('button');
-  fab.className = 'upload-fab';
-  fab.title = 'Upload file';
-  // Paperclip icon (SVG)
-  fab.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>';
-  container.appendChild(fab);
-
-  fab.addEventListener('click', function () {
-    fileInput.value = '';
-    fileInput.click();
-  });
-
   fileInput.addEventListener('change', function () {
     if (!fileInput.files || !fileInput.files[0]) return;
-
     var file = fileInput.files[0];
     var formData = new FormData();
     formData.append('file', file);
-
-    fab.classList.add('uploading');
-
+    fabEl.classList.add('uploading');
     fetch('/api/upload', {
       method: 'POST',
       headers: Auth.headers(),
@@ -80,19 +143,254 @@ function _createUploadFab(container) {
         return res.json();
       })
       .then(function (result) {
-        var filePath = result.data.path;
-        _copyToClipboard(filePath);
-        _showToast('路径已复制: ' + filePath);
+        _copyToClipboard(result.data.path);
+        _showToast('\u8def\u5f84\u5df2\u590d\u5236: ' + result.data.path);
       })
       .catch(function (err) {
-        _showToast('上传失败: ' + err.message, 3000);
+        _showToast('\u4e0a\u4f20\u5931\u8d25: ' + err.message, 3000);
       })
       .finally(function () {
-        fab.classList.remove('uploading');
+        fabEl.classList.remove('uploading');
       });
   });
 
-  return fab;
+  // -- Panel element --
+  var panelEl = document.createElement('div');
+  panelEl.className = 'fab-panel';
+  container.appendChild(panelEl);
+
+  function renderButtons() {
+    panelEl.innerHTML = '';
+    keys.forEach(function (k, i) {
+      var btn = document.createElement('button');
+      btn.textContent = k.label;
+      btn.dataset.idx = i;
+      if (k.accent) btn.classList.add('accent-btn');
+      if (k.wide) btn.classList.add('wide');
+      panelEl.appendChild(btn);
+    });
+  }
+  renderButtons();
+
+  // -- FAB button --
+  var fabEl = document.createElement('div');
+  fabEl.className = 'fab-tool';
+  fabEl.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>';
+  container.appendChild(fabEl);
+
+  // -- Modal for customization --
+  var modalEl = document.createElement('div');
+  modalEl.className = 'fab-modal-overlay';
+  modalEl.innerHTML =
+    '<div class="fab-modal">' +
+    '<h3>\u81ea\u5b9a\u4e49\u6309\u952e</h3>' +
+    '<div class="fab-presets"><label>\u5feb\u901f\u9009\u62e9</label><div class="fab-presets-grid"></div></div>' +
+    '<label>\u663e\u793a\u540d\u79f0</label>' +
+    '<input type="text" class="fab-edit-label" placeholder="\u6309\u94ae\u4e0a\u663e\u793a\u7684\u6587\u5b57">' +
+    '<label>\u53d1\u9001\u5185\u5bb9</label>' +
+    '<input type="text" class="fab-edit-send" placeholder="\u53d1\u9001\u7684\u6587\u672c\u6216\u8f6c\u4e49\u5e8f\u5217">' +
+    '<div class="fab-edit-hint">\\x03=C-c, \\x1b=Esc, \\r=\u56de\u8f66, \u6216\u4efb\u610f\u6587\u672c</div>' +
+    '<div class="fab-modal-actions">' +
+    '<button class="fab-btn-cancel">\u53d6\u6d88</button>' +
+    '<button class="fab-btn-save">\u4fdd\u5b58</button>' +
+    '</div>' +
+    '<div class="fab-modal-reset"><button class="fab-btn-reset">\u6062\u590d\u9ed8\u8ba4</button></div>' +
+    '</div>';
+  container.appendChild(modalEl);
+
+  var editLabel = modalEl.querySelector('.fab-edit-label');
+  var editSend = modalEl.querySelector('.fab-edit-send');
+  var presetsGrid = modalEl.querySelector('.fab-presets-grid');
+
+  _fabPresets.forEach(function (p) {
+    var btn = document.createElement('button');
+    btn.textContent = p.label;
+    btn.addEventListener('click', function () {
+      editLabel.value = p.label;
+      editSend.value = _displayEscape(p.send);
+    });
+    presetsGrid.appendChild(btn);
+  });
+
+  function openEditor(idx) {
+    editingIdx = idx;
+    editLabel.value = keys[idx].label;
+    editSend.value = _displayEscape(keys[idx].send);
+    modalEl.classList.add('show');
+  }
+
+  modalEl.querySelector('.fab-btn-cancel').addEventListener('click', function () {
+    modalEl.classList.remove('show');
+  });
+
+  modalEl.querySelector('.fab-btn-save').addEventListener('click', function () {
+    if (editingIdx < 0) return;
+    keys[editingIdx].label = editLabel.value || '?';
+    keys[editingIdx].send = _parseEscape(editSend.value);
+    _saveFabKeys(keys);
+    renderButtons();
+    modalEl.classList.remove('show');
+  });
+
+  modalEl.querySelector('.fab-btn-reset').addEventListener('click', function () {
+    if (editingIdx >= 0 && _fabDefaultKeys[editingIdx]) {
+      keys[editingIdx] = Object.assign({}, _fabDefaultKeys[editingIdx]);
+      _saveFabKeys(keys);
+      renderButtons();
+    }
+    modalEl.classList.remove('show');
+  });
+
+  modalEl.addEventListener('click', function (e) {
+    if (e.target === modalEl) modalEl.classList.remove('show');
+  });
+
+  // -- Position panel --
+  function positionPanel() {
+    var rect = fabEl.getBoundingClientRect();
+    var pw = panelEl.offsetWidth || 200;
+    var ph = panelEl.offsetHeight || 200;
+    var left = rect.left + rect.width / 2 - pw / 2;
+    var top = rect.top - ph - 10;
+    if (left < 8) left = 8;
+    if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+    if (top < 8) top = rect.bottom + 10;
+    panelEl.style.left = left + 'px';
+    panelEl.style.top = top + 'px';
+  }
+
+  function togglePanel() {
+    isOpen = !isOpen;
+    fabEl.classList.toggle('open', isOpen);
+    panelEl.classList.toggle('open', isOpen);
+    if (isOpen) positionPanel();
+  }
+
+  // -- FAB drag --
+  var dragStartX, dragStartY, fabStartX, fabStartY, dragMoved;
+
+  fabEl.addEventListener('touchstart', function (e) {
+    var t = e.touches[0];
+    dragStartX = t.clientX; dragStartY = t.clientY;
+    var rect = fabEl.getBoundingClientRect();
+    fabStartX = rect.left; fabStartY = rect.top;
+    dragMoved = false;
+    fabEl.classList.add('dragging');
+  }, { passive: true });
+
+  fabEl.addEventListener('touchmove', function (e) {
+    var t = e.touches[0];
+    var dx = t.clientX - dragStartX, dy = t.clientY - dragStartY;
+    if (Math.abs(dx) > 5 || Math.abs(dy) > 5) dragMoved = true;
+    if (!dragMoved) return;
+    var nx = Math.max(0, Math.min(window.innerWidth - 48, fabStartX + dx));
+    var ny = Math.max(0, Math.min(window.innerHeight - 48, fabStartY + dy));
+    fabEl.style.left = nx + 'px'; fabEl.style.top = ny + 'px';
+    fabEl.style.right = 'auto'; fabEl.style.bottom = 'auto';
+    if (isOpen) positionPanel();
+  }, { passive: true });
+
+  fabEl.addEventListener('touchend', function () {
+    fabEl.classList.remove('dragging');
+    if (!dragMoved) togglePanel();
+    if (dragMoved) {
+      localStorage.setItem('fab-pos', JSON.stringify({ left: fabEl.style.left, top: fabEl.style.top }));
+    }
+  }, { passive: true });
+
+  fabEl.addEventListener('click', function () {
+    if (!('ontouchstart' in window)) togglePanel();
+  });
+
+  // Restore position
+  try {
+    var pos = JSON.parse(localStorage.getItem('fab-pos'));
+    if (pos) {
+      fabEl.style.left = pos.left; fabEl.style.top = pos.top;
+      fabEl.style.right = 'auto'; fabEl.style.bottom = 'auto';
+    }
+  } catch (_e) { /* ignore */ }
+
+  // -- Panel button tap & long-press --
+  panelEl.addEventListener('touchstart', function (e) {
+    var btn = e.target.closest('button');
+    if (!btn) return;
+    var idx = +btn.dataset.idx;
+    longPressed = false;
+
+    longPressTimer = setTimeout(function () {
+      longPressed = true;
+      if (navigator.vibrate) navigator.vibrate(30);
+      openEditor(idx);
+    }, 500);
+
+    var k = keys[idx];
+    if (k && k.repeat) {
+      repeatTimer = setTimeout(function () {
+        repeatTimer = setInterval(function () {
+          if (longPressed) return;
+          _sendTermData(k.send);
+          if (navigator.vibrate) navigator.vibrate(5);
+        }, 80);
+      }, 300);
+    }
+  }, { passive: true });
+
+  panelEl.addEventListener('touchend', function (e) {
+    clearTimeout(longPressTimer);
+    clearTimeout(repeatTimer);
+    clearInterval(repeatTimer);
+    longPressTimer = null;
+    repeatTimer = null;
+    if (longPressed) { longPressed = false; return; }
+
+    var btn = e.target.closest('button');
+    if (!btn) return;
+    var k = keys[+btn.dataset.idx];
+    if (!k) return;
+
+    if (k.send === '__upload__') {
+      fileInput.value = '';
+      fileInput.click();
+    } else {
+      _sendTermData(k.send);
+    }
+    if (navigator.vibrate) navigator.vibrate(10);
+  });
+
+  // Desktop click
+  panelEl.addEventListener('click', function (e) {
+    if ('ontouchstart' in window) return;
+    var btn = e.target.closest('button');
+    if (!btn) return;
+    var k = keys[+btn.dataset.idx];
+    if (!k) return;
+    if (k.send === '__upload__') { fileInput.value = ''; fileInput.click(); }
+    else { _sendTermData(k.send); }
+  });
+
+  // Desktop right-click to customize
+  panelEl.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    var btn = e.target.closest('button');
+    if (!btn) return;
+    openEditor(+btn.dataset.idx);
+  });
+
+  // Close on outside tap
+  function onOutsideTap(e) {
+    if (isOpen && !fabEl.contains(e.target) && !panelEl.contains(e.target) && !modalEl.contains(e.target)) {
+      togglePanel();
+    }
+  }
+  document.addEventListener('touchstart', onOutsideTap, { passive: true });
+  document.addEventListener('click', onOutsideTap);
+
+  // Return cleanup function
+  return function () {
+    document.removeEventListener('touchstart', onOutsideTap);
+    document.removeEventListener('click', onOutsideTap);
+  };
 }
 
 // === Terminal State ===
@@ -489,7 +787,7 @@ function renderTerminal(container) {
     '</div>';
 
   var view = container.querySelector('.terminal-view');
-  _createUploadFab(view);
+  _createFabPanel(view);
   var titleEl = view.querySelector('.terminal-header-title');
   var paneSwitcher = view.querySelector('.terminal-pane-switcher');
   var termContainer = view.querySelector('.terminal-container');
@@ -899,6 +1197,8 @@ function _mountTerminal(termContainer, nozoom) {
     vpHandler = function () {
       var vvHeight = window.visualViewport.height;
       // Only intervene when keyboard is likely open (viewport shrunk > 100px)
+      var fabTool = document.querySelector('.fab-tool');
+      var fabPanel = document.querySelector('.fab-panel');
       if (initialVpHeight - vvHeight > 100) {
         var header = termContainer.closest('.terminal-view')
           ? termContainer.closest('.terminal-view').querySelector('.terminal-header')
@@ -910,9 +1210,49 @@ function _mountTerminal(termContainer, nozoom) {
           termContainer.style.height = available + 'px';
           termContainer.style.maxHeight = available + 'px';
         }
+        // Move FAB above the keyboard
+        if (fabTool) {
+          var visibleBottom = window.visualViewport.offsetTop + vvHeight;
+          var fabY = visibleBottom - 48 - 16; // 48=fab height, 16=margin
+          fabTool.style.top = fabY + 'px';
+          fabTool.style.bottom = 'auto';
+          fabTool.style.right = '16px';
+          fabTool.style.left = 'auto';
+          fabTool._kbOpen = true;
+        }
       } else {
         termContainer.style.height = '';
         termContainer.style.maxHeight = '';
+        // Reset FAB position
+        if (fabTool && fabTool._kbOpen) {
+          fabTool._kbOpen = false;
+          var savedPos = null;
+          try { savedPos = JSON.parse(localStorage.getItem('fab-pos')); } catch(_e) {}
+          if (savedPos) {
+            fabTool.style.left = savedPos.left;
+            fabTool.style.top = savedPos.top;
+            fabTool.style.right = 'auto';
+            fabTool.style.bottom = 'auto';
+          } else {
+            fabTool.style.top = '';
+            fabTool.style.left = '';
+            fabTool.style.right = '';
+            fabTool.style.bottom = '';
+          }
+        }
+      }
+      // Reposition panel if open
+      if (fabPanel && fabPanel.classList.contains('open') && fabTool) {
+        var rect = fabTool.getBoundingClientRect();
+        var pw = fabPanel.offsetWidth || 200;
+        var ph = fabPanel.offsetHeight || 200;
+        var left = rect.left + rect.width / 2 - pw / 2;
+        var top = rect.top - ph - 10;
+        if (left < 8) left = 8;
+        if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+        if (top < 8) top = rect.bottom + 10;
+        fabPanel.style.left = left + 'px';
+        fabPanel.style.top = top + 'px';
       }
       fitAddon.fit();
       if (ws.readyState === WebSocket.OPEN) {
