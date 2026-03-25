@@ -230,6 +230,7 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 // --- Start ---
 
 statusMonitor.start(config.pollInterval);
+terminalManager.startReaper();
 
 server.listen(config.port, config.host, () => {
   console.log(`tmux-web-panel listening on http://${config.host}:${config.port}`);

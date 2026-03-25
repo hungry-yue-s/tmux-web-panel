@@ -101,6 +101,16 @@ export class StatusMonitor {
         0,
       );
 
+      // Prune _portCache entries for panes that no longer exist
+      const livePaneIds = new Set(
+        sessionsWithWindows.flatMap((s) => (s._paneCommands || []).map((pc) => pc.paneId)),
+      );
+      for (const cachedId of this._portCache.keys()) {
+        if (!livePaneIds.has(cachedId)) {
+          this._portCache.delete(cachedId);
+        }
+      }
+
       // Detect completions (using already-fetched paneCommands)
       const { completedWindows, completedPanes } = await this._detectCompletions(sessionsWithWindows);
 

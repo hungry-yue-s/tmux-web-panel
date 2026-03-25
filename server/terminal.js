@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 
 const PANE_ID_PATTERN = /^%\d+$/;
 const PING_INTERVAL_MS = 30_000;
+const REAP_INTERVAL_MS = 60_000;
 
 export class TerminalManager {
   /** @param {{ maxConnectionsPerPane?: number }} [options] */
@@ -21,6 +22,37 @@ export class TerminalManager {
     this.paneConnectionCount = new Map();
 
     this.maxConnectionsPerPane = options.maxConnectionsPerPane ?? 5;
+
+    /** @type {ReturnType<typeof setInterval> | null} */
+    this._reapTimer = null;
+  }
+
+  /**
+   * Start periodic reaper that kills orphaned PTY processes.
+   */
+  startReaper() {
+    if (this._reapTimer) return;
+    this._reapTimer = setInterval(() => this._reapOrphans(), REAP_INTERVAL_MS);
+  }
+
+  stopReaper() {
+    if (this._reapTimer) {
+      clearInterval(this._reapTimer);
+      this._reapTimer = null;
+    }
+  }
+
+  /**
+   * Kill any PTY whose WebSocket is no longer open.
+   * @private
+   */
+  _reapOrphans() {
+    for (const [connectionId, conn] of this.connections) {
+      if (conn.ws.readyState !== conn.ws.OPEN && conn.ws.readyState !== conn.ws.CONNECTING) {
+        this._killPty(connectionId);
+        this._cleanup(connectionId);
+      }
+    }
   }
 
   /**
@@ -59,9 +91,8 @@ export class TerminalManager {
       ].join('; ');
     } else {
       // Zoom mode: zoom the target pane so only it is visible, then attach.
-      // Use trap TERM HUP to guarantee unzoom runs when pty.kill() sends SIGTERM.
-      // The trap handler calls `exit 0` so the post-attach unzoom is skipped
-      // (avoids double toggle which would re-zoom the pane).
+      // Trap TERM/HUP to attempt unzoom before exit. _killPty sends SIGTERM first
+      // (giving the trap 500ms to run), then SIGKILL as a hard guarantee.
       shellCmd = [
         `tmux select-pane -t '${paneId}' 2>/dev/null`,
         `_WZ=$(tmux display-message -p -t '${paneId}' '#{window_zoomed_flag}' 2>/dev/null)`,
@@ -200,6 +231,7 @@ export class TerminalManager {
    * Destroy all connections (for graceful shutdown).
    */
   destroyAll() {
+    this.stopReaper();
     for (const connectionId of [...this.connections.keys()]) {
       this.destroy(connectionId);
     }
@@ -213,11 +245,31 @@ export class TerminalManager {
   _killPty(connectionId) {
     const conn = this.connections.get(connectionId);
     if (!conn) return;
+
+    const pid = conn.pty.pid;
+
+    // Send SIGTERM first to give the shell trap a chance to run (unzoom cleanup).
+    // Then schedule SIGKILL after a short delay as a hard guarantee — SIGTERM alone
+    // is unreliable because tmux attach-session may not propagate the signal,
+    // leading to zombie tmux client processes accumulating.
     try {
-      conn.pty.kill();
+      process.kill(-pid, 'SIGTERM');
     } catch {
-      // PTY may already be dead
+      // Process group may not exist
     }
+
+    setTimeout(() => {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        // Process group already dead — try individual PID
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          // Already dead
+        }
+      }
+    }, 500);
   }
 
   /**
