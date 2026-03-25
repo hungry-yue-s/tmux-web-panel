@@ -265,6 +265,13 @@ function navigate(tab, params) {
     }
   }
 
+  // Auto-clear notification when navigating to a window
+  if (tab === 'terminal' && newParams.currentSession && newParams.currentWindow != null) {
+    _clearWindowNotification(newParams.currentSession, newParams.currentWindow);
+  } else if (tab === 'terminal' && state.currentSession && newParams.currentWindow != null) {
+    _clearWindowNotification(state.currentSession, newParams.currentWindow);
+  }
+
   state.currentTab = tab;
   Object.assign(state, newParams);
   saveNavState();
@@ -654,6 +661,14 @@ function _applyCompletedWindows(completedWindows) {
   });
 
   completedWindows.forEach(function (cw) {
+    // Don't add to notification panel if it's the current terminal window
+    if (
+      state.currentTab === 'terminal' &&
+      state.currentSession === cw.session &&
+      String(state.currentWindow) === String(cw.windowIndex)
+    ) {
+      return;
+    }
     if (typeof NotificationPanel !== 'undefined') NotificationPanel.add(cw);
   });
 
@@ -668,8 +683,14 @@ function _clearWindowNotification(session, windowIndex) {
   if (existing) {
     if (existing.timerId) clearTimeout(existing.timerId);
     delete _windowNotifications[key];
+    _updateSidebarNotifications();
   }
   _clearPaneCompletions(session, windowIndex);
+
+  // Also mark notification panel items as read for this window
+  if (typeof NotificationPanel !== 'undefined' && NotificationPanel._markReadByWindow) {
+    NotificationPanel._markReadByWindow(session, windowIndex);
+  }
 }
 
 function updateSidebar() {

@@ -142,5 +142,16 @@ var NotificationPanel = (function () {
     });
   }
 
-  return { add: add, markRead: markRead, clearAll: clearAll, unreadCount: unreadCount, render: render, updateBadge: _updateBadge };
+  function markReadByWindow(session, windowIndex) {
+    var changed = false;
+    _notifications.forEach(function (n) {
+      if (!n.read && n.session === session && String(n.windowIndex) === String(windowIndex)) {
+        n.read = true;
+        changed = true;
+      }
+    });
+    if (changed) { _save(); _updateBadge(); }
+  }
+
+  return { add: add, markRead: markRead, _markReadByWindow: markReadByWindow, clearAll: clearAll, unreadCount: unreadCount, render: render, updateBadge: _updateBadge };
 })();
