@@ -2116,8 +2116,43 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   background: color-mix(in srgb, var(--accent-blue) 80%, white);
 }
 
+.fab-panel button.voice-btn.recording {
+  background: #e53e3e;
+  color: #fff;
+  animation: voice-pulse 1s ease-in-out infinite;
+}
+
+@keyframes voice-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(229, 62, 62, 0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(229, 62, 62, 0); }
+}
+
 .fab-panel button.wide {
   grid-column: span 2;
+}
+
+/* --- FAB Button Color Variants --- */
+
+.fab-panel button.color-green {
+  background: color-mix(in srgb, #48bb78 20%, var(--bg-hover));
+  color: #48bb78;
+  border: 1px solid color-mix(in srgb, #48bb78 30%, transparent);
+}
+
+.fab-panel button.color-green:active {
+  background: #48bb78;
+  color: var(--bg-primary);
+}
+
+.fab-panel button.color-red {
+  background: color-mix(in srgb, #fc8181 15%, var(--bg-hover));
+  color: #fc8181;
+  border: 1px solid color-mix(in srgb, #fc8181 25%, transparent);
+}
+
+.fab-panel button.color-red:active {
+  background: #fc8181;
+  color: var(--bg-primary);
 }
 
 /* --- FAB Customization Modal --- */
@@ -2243,6 +2278,314 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 .fab-presets-grid button:active {
   background: var(--accent-blue);
   color: var(--bg-primary);
+}
+
+/* --- FAB Drawer --- */
+
+.fab-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 200;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+
+.fab-drawer-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.fab-drawer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 70vh;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  border-radius: 16px 16px 0 0;
+  z-index: 201;
+  transform: translateY(100%);
+  transition: transform 0.25s ease;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.fab-drawer.open {
+  transform: translateY(0);
+}
+
+.fab-drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.fab-drawer-header span:first-child {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.fab-drawer-close {
+  font-size: 18px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.fab-drawer-body {
+  padding: 16px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  flex: 1;
+}
+
+/* --- Drawer Group --- */
+
+.fab-drawer-group {
+  margin-bottom: 20px;
+}
+
+.fab-drawer-group:last-child {
+  margin-bottom: 0;
+}
+
+.fab-drawer-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.fab-drawer-group-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  opacity: 0.5;
+  font-weight: 600;
+}
+
+.fab-drawer-group-edit {
+  font-size: 10px;
+  color: var(--accent-blue);
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* --- Drawer Grid Buttons --- */
+
+.fab-drawer-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.fab-drawer-grid-2col {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.fab-drawer-btn {
+  height: 44px;
+  border: none;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: 'Menlo', 'Courier New', monospace;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.fab-drawer-btn:active {
+  background: var(--accent-blue);
+  color: var(--bg-primary);
+}
+
+.fab-drawer-btn.accent-blue {
+  background: color-mix(in srgb, var(--accent-blue) 15%, var(--bg-hover));
+  color: var(--accent-blue);
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 25%, transparent);
+}
+
+.fab-drawer-btn.accent-orange {
+  background: color-mix(in srgb, #f6a623 10%, var(--bg-hover));
+  color: #f6a623;
+  border: 1px solid color-mix(in srgb, #f6a623 20%, transparent);
+}
+
+.fab-drawer-btn.accent-orange:active {
+  background: #f6a623;
+  color: var(--bg-primary);
+}
+
+/* --- Drawer Slash Command Chips --- */
+
+.fab-drawer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fab-drawer-chip {
+  padding: 7px 12px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-hover));
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 18%, transparent);
+  color: color-mix(in srgb, var(--accent-blue) 70%, white);
+  font-size: 12px;
+  font-family: 'Menlo', 'Courier New', monospace;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.fab-drawer-chip:active {
+  background: var(--accent-blue);
+  color: var(--bg-primary);
+}
+
+.fab-drawer-chip.add-chip {
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--accent-blue) 25%, transparent);
+  color: color-mix(in srgb, var(--accent-blue) 50%, transparent);
+}
+
+.fab-drawer-chip.editing {
+  animation: chip-shake 0.3s ease;
+}
+
+.fab-drawer-chip .chip-delete {
+  margin-left: 6px;
+  color: #fc8181;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+/* --- Drawer Template Items --- */
+
+.fab-drawer-templates {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fab-drawer-template {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, #48bb78 8%, var(--bg-hover));
+  border: 1px solid color-mix(in srgb, #48bb78 15%, transparent);
+  color: color-mix(in srgb, #48bb78 70%, white);
+  font-size: 12px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.fab-drawer-template:active {
+  background: #48bb78;
+  color: var(--bg-primary);
+}
+
+.fab-drawer-template.add-template {
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, #48bb78 20%, transparent);
+  color: color-mix(in srgb, #48bb78 40%, transparent);
+}
+
+.fab-drawer-template .template-delete {
+  float: right;
+  color: #fc8181;
+  font-size: 14px;
+  font-weight: bold;
+  margin-left: 8px;
+}
+
+/* --- Drawer Edit Modal --- */
+
+.fab-drawer-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 310;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.fab-drawer-modal-overlay.show {
+  display: flex;
+}
+
+.fab-drawer-modal {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  width: 300px;
+}
+
+.fab-drawer-modal h3 {
+  font-size: 15px;
+  margin-bottom: 14px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.fab-drawer-modal label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.fab-drawer-modal input {
+  width: 100%;
+  height: 38px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  padding: 0 10px;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.fab-drawer-modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.fab-drawer-modal-actions button {
+  flex: 1;
+  height: 36px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
 }
 
 /* === Upload Toast === */
