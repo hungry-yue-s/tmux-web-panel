@@ -20,6 +20,8 @@ Open `http://localhost:7681` in your browser.
 | Auth | `--auth` | `AUTH` | disabled |
 | Poll interval | `--poll-interval` | `POLL_INTERVAL` | `3000` |
 | Max connections | `--max-connections` | `MAX_CONNECTIONS` | `5` |
+| TLS certificate | `--tls-cert` | `TLS_CERT` | disabled |
+| TLS private key | `--tls-key` | `TLS_KEY` | disabled |
 
 ## Authentication
 

@@ -1,4 +1,6 @@
 import { createServer } from 'node:http';
+import { createServer as createSecureServer } from 'node:https';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import express from 'express';
@@ -35,6 +37,9 @@ function parseArgs(argv) {
 
 const cliArgs = parseArgs(process.argv);
 
+const tlsCert = cliArgs['tls-cert'] ?? process.env.TLS_CERT ?? null;
+const tlsKey = cliArgs['tls-key'] ?? process.env.TLS_KEY ?? null;
+
 const config = Object.freeze({
   port: Number(cliArgs.port ?? process.env.PORT ?? 7681),
   host: cliArgs.host ?? process.env.HOST ?? '0.0.0.0',
@@ -45,6 +50,7 @@ const config = Object.freeze({
   maxConnections: Number(
     cliArgs['max-connections'] ?? process.env.MAX_CONNECTIONS ?? 5,
   ),
+  tls: tlsCert && tlsKey ? { cert: tlsCert, key: tlsKey } : null,
 });
 
 // --- Express App ---
@@ -142,9 +148,17 @@ app.use('/api/panes', flatPanesRouter);
 // File upload (uses /tmp — cleaned by OS on reboot)
 app.use('/api/upload', createUploadRouter('/tmp/tmux-web-panel-uploads'));
 
-// --- HTTP + WebSocket Server ---
+// --- HTTP(S) + WebSocket Server ---
 
-const server = createServer(app);
+const server = config.tls
+  ? createSecureServer(
+      {
+        cert: readFileSync(config.tls.cert),
+        key: readFileSync(config.tls.key),
+      },
+      app,
+    )
+  : createServer(app);
 
 const wss = new WebSocketServer({ noServer: true });
 
@@ -155,7 +169,8 @@ const terminalManager = new TerminalManager({
 const statusMonitor = new StatusMonitor();
 
 server.on('upgrade', (req, socket, head) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  const proto = config.tls ? 'https' : 'http';
+  const url = new URL(req.url, `${proto}://${req.headers.host}`);
 
   // Enforce auth on WebSocket upgrade if configured
   if (config.auth) {
@@ -233,7 +248,8 @@ statusMonitor.start(config.pollInterval);
 terminalManager.startReaper();
 
 server.listen(config.port, config.host, () => {
-  console.log(`tmux-web-panel listening on http://${config.host}:${config.port}`);
+  const proto = config.tls ? 'https' : 'http';
+  console.log(`tmux-web-panel listening on ${proto}://${config.host}:${config.port}`);
   if (config.auth) {
     console.log('Authentication: enabled');
   } else {
@@ -242,6 +258,26 @@ server.listen(config.port, config.host, () => {
   console.log(`Poll interval: ${config.pollInterval}ms`);
   console.log(`Max connections: ${config.maxConnections}`);
 });
+
+// When TLS is enabled, also start an HTTP server that redirects to HTTPS
+let httpRedirectServer = null;
+if (config.tls) {
+  const httpPort = Number(cliArgs['http-port'] ?? process.env.HTTP_PORT ?? 80);
+  httpRedirectServer = createServer((req, res) => {
+    const host = (req.headers.host || '').replace(/:.*/, '');
+    const portSuffix = config.port === 443 ? '' : ':' + config.port;
+    res.writeHead(301, { Location: `https://${host}${portSuffix}${req.url}` });
+    res.end();
+  });
+  httpRedirectServer.listen(httpPort, config.host, () => {
+    console.log(`HTTP redirect listening on http://${config.host}:${httpPort} → https`);
+  });
+  httpRedirectServer.on('error', (err) => {
+    if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
+      console.log(`HTTP redirect on port ${httpPort} skipped (${err.code})`);
+    }
+  });
+}
 
 // Export for testing
 export { app, server, wss, config, terminalManager, statusMonitor };
