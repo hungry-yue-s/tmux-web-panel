@@ -44,16 +44,15 @@ function _showToast(message, duration) {
 // === FAB Tool Panel ===
 
 var _fabDefaultKeys = [
-  { label: 'Tab',  send: '\x09' },
-  { label: '\u2191', send: '\x1b[A', repeat: true },
-  { label: 'Esc',  send: '\x1b' },
-  { label: 'C-c',  send: '\x03' },
-  { label: '\u2190', send: '\x1b[D', repeat: true },
-  { label: '\u2193', send: '\x1b[B', repeat: true },
-  { label: '\u2192', send: '\x1b[C', repeat: true },
-  { label: 'C-d',  send: '\x04' },
-  { label: '\u7ee7\u7eed', send: '\u7ee7\u7eed\r', accent: true, wide: true },
-  { label: '\ud83d\udcce', send: '__upload__', accent: true, wide: true },
+  { label: 'Esc',    send: '\x1b' },
+  { label: 'C-c',    send: '\x03' },
+  { label: 'y',      send: 'y\r', color: 'green' },
+  { label: 'n',      send: 'n\r', color: 'red' },
+  { label: '\u7ee7\u7eed', send: '\u7ee7\u7eed\r', accent: true },
+  { label: '\u21b5',  send: '\r' },
+  { label: 'S-Tab',  send: '\x1b[Z' },
+  { label: '\ud83c\udf99', send: '__voice__', accent: true },
+  { label: '\u22ef \u66f4\u591a', send: '__drawer__', accent: true, wide: true },
 ];
 
 var _fabPresets = [
@@ -76,6 +75,46 @@ var _fabPresets = [
   { label: '/',    send: '/' },
   { label: '\u7ee7\u7eed', send: '\u7ee7\u7eed\r' },
 ];
+
+var _drawerDefaultCommands = [
+  { label: '/compact', send: '/compact\r' },
+  { label: '/clear', send: '/clear\r' },
+  { label: '/help', send: '/help\r' },
+  { label: '/commit', send: '/commit\r' },
+  { label: '/review-pr', send: '/review-pr\r' },
+  { label: '/work-log', send: '/work-log\r' },
+  { label: '/deploy-android-container', send: '/deploy-android-container\r' },
+];
+
+var _drawerDefaultTemplates = [
+  { label: '\u8bf7\u68c0\u67e5\u5e76\u4fee\u590d\u5f53\u524d\u7684\u9519\u8bef', send: '\u8bf7\u68c0\u67e5\u5e76\u4fee\u590d\u5f53\u524d\u7684\u9519\u8bef\r' },
+  { label: '\u8bf7\u89e3\u91ca\u8fd9\u6bb5\u4ee3\u7801\u7684\u4f5c\u7528', send: '\u8bf7\u89e3\u91ca\u8fd9\u6bb5\u4ee3\u7801\u7684\u4f5c\u7528\r' },
+  { label: '\u8bb0\u5f55\u5de5\u4f5c\u65e5\u5fd7', send: '\u8bb0\u5f55\u5de5\u4f5c\u65e5\u5fd7\r' },
+];
+
+function _loadDrawerCommands() {
+  try {
+    var s = localStorage.getItem('fab-drawer-commands');
+    if (s) return JSON.parse(s);
+  } catch (_e) { /* ignore */ }
+  return _drawerDefaultCommands.map(function (c) { return Object.assign({}, c); });
+}
+
+function _saveDrawerCommands(cmds) {
+  localStorage.setItem('fab-drawer-commands', JSON.stringify(cmds));
+}
+
+function _loadDrawerTemplates() {
+  try {
+    var s = localStorage.getItem('fab-drawer-templates');
+    if (s) return JSON.parse(s);
+  } catch (_e) { /* ignore */ }
+  return _drawerDefaultTemplates.map(function (t) { return Object.assign({}, t); });
+}
+
+function _saveDrawerTemplates(tpls) {
+  localStorage.setItem('fab-drawer-templates', JSON.stringify(tpls));
+}
 
 function _loadFabKeys() {
   try {
@@ -154,6 +193,69 @@ function _createFabPanel(container) {
       });
   });
 
+  // -- Voice input (Web Speech API) --
+  var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var voiceRecognition = null;
+  var voiceActive = false;
+
+  function _startVoice() {
+    if (!SpeechRecognition) {
+      _showToast('浏览器不支持语音输入', 2000);
+      return;
+    }
+    if (voiceActive) {
+      _stopVoice();
+      return;
+    }
+    voiceRecognition = new SpeechRecognition();
+    voiceRecognition.lang = 'en-US';
+    voiceRecognition.continuous = true;
+    voiceRecognition.interimResults = true;
+
+    var voiceBtn = panelEl.querySelector('.voice-btn');
+
+    voiceRecognition.onstart = function () {
+      voiceActive = true;
+      if (voiceBtn) voiceBtn.classList.add('recording');
+      if (navigator.vibrate) navigator.vibrate(30);
+    };
+
+    voiceRecognition.onresult = function (event) {
+      var last = event.results[event.results.length - 1];
+      if (last.isFinal) {
+        var text = last[0].transcript.trim();
+        if (text) {
+          _sendTermData(text);
+          _showToast('语音: ' + text, 1500);
+        }
+      }
+    };
+
+    voiceRecognition.onerror = function (event) {
+      console.error('SpeechRecognition error:', event.error, event);
+      if (event.error !== 'aborted' && event.error !== 'no-speech') {
+        _showToast('语音错误: ' + event.error, 3000);
+      }
+      _stopVoice();
+    };
+
+    voiceRecognition.onend = function () {
+      _stopVoice();
+    };
+
+    voiceRecognition.start();
+  }
+
+  function _stopVoice() {
+    voiceActive = false;
+    if (voiceRecognition) {
+      try { voiceRecognition.abort(); } catch (_e) { /* ignore */ }
+      voiceRecognition = null;
+    }
+    var voiceBtn = panelEl.querySelector('.voice-btn');
+    if (voiceBtn) voiceBtn.classList.remove('recording');
+  }
+
   // -- Panel element --
   var panelEl = document.createElement('div');
   panelEl.className = 'fab-panel';
@@ -167,6 +269,7 @@ function _createFabPanel(container) {
       btn.dataset.idx = i;
       if (k.accent) btn.classList.add('accent-btn');
       if (k.wide) btn.classList.add('wide');
+      if (k.send === '__voice__') btn.classList.add('voice-btn');
       panelEl.appendChild(btn);
     });
   }
@@ -352,6 +455,8 @@ function _createFabPanel(container) {
     if (k.send === '__upload__') {
       fileInput.value = '';
       fileInput.click();
+    } else if (k.send === '__voice__') {
+      _startVoice();
     } else {
       _sendTermData(k.send);
     }
@@ -366,6 +471,7 @@ function _createFabPanel(container) {
     var k = keys[+btn.dataset.idx];
     if (!k) return;
     if (k.send === '__upload__') { fileInput.value = ''; fileInput.click(); }
+    else if (k.send === '__voice__') { _startVoice(); }
     else { _sendTermData(k.send); }
   });
 
@@ -388,6 +494,7 @@ function _createFabPanel(container) {
 
   // Return cleanup function
   return function () {
+    _stopVoice();
     document.removeEventListener('touchstart', onOutsideTap);
     document.removeEventListener('click', onOutsideTap);
   };
@@ -659,15 +766,16 @@ function _calcTerminalFontSize(paneCols, paneRows, containerEl) {
 // === Create xterm Terminal ===
 
 function createTerminalInstance(paneCols, paneRows) {
-  return new Terminal({
+  var term = new Terminal({
     theme: Theme.getTerminalTheme(),
     fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace",
     fontSize: _calcTerminalFontSize(paneCols, paneRows),
     cursorBlink: true,
     scrollback: 5000,
-    overviewRulerWidth: 0,
+    overviewRuler: { width: 0 },
     rescaleOverlappingGlyphs: true,
   });
+  return term;
 }
 
 // === Connect WebSocket ===
@@ -972,6 +1080,15 @@ function _mountTerminal(termContainer, nozoom) {
   term.loadAddon(webLinksAddon);
 
   term.open(termContainer);
+
+  // Disable mobile soft keyboard autocorrect/autocomplete to reduce
+  // IME composition interference (Enter interpreted as delete, etc.)
+  if (term.textarea) {
+    term.textarea.setAttribute('autocapitalize', 'off');
+    term.textarea.setAttribute('autocomplete', 'off');
+    term.textarea.setAttribute('autocorrect', 'off');
+    term.textarea.setAttribute('spellcheck', 'false');
+  }
 
   // Use WebGL renderer for crisp box-drawing characters (tmux split borders)
   if (typeof WebglAddon !== 'undefined') {
