@@ -1,12 +1,12 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readdir, readFile } from 'node:fs/promises';
 
 const execFileAsync = promisify(execFile);
 
 const PORT_RANGE_MIN = 1024;
 const PORT_RANGE_MAX = 65535;
 const SS_TIMEOUT = 5000;
+const PS_TIMEOUT = 5000;
 
 /**
  * Parses `ss -tlnp` output into an array of { port, pid } objects.
@@ -42,55 +42,59 @@ export function parseSsOutput(output) {
 }
 
 /**
- * Walks /proc to find all descendant PIDs of the given PID.
+ * Builds a parent → children map from `ps -eo pid,ppid` output.
+ * Single subprocess call replaces per-process /proc reads (avoids FD leak).
  *
- * @param {number} pid - root PID to find descendants for
- * @returns {Promise<Set<number>>} set of all descendant PIDs
+ * @returns {Promise<Map<number, number[]>>} parent pid → child pids
  */
-export async function getDescendantPids(pid) {
-  const descendants = new Set();
+export async function buildProcessTree() {
+  const children = new Map();
 
   try {
-    const entries = await readdir('/proc');
-    // Build parent → children map
-    const children = new Map();
+    const { stdout } = await execFileAsync('ps', ['-eo', 'pid,ppid', '--no-headers'], {
+      timeout: PS_TIMEOUT,
+    });
 
-    for (const entry of entries) {
-      if (!/^\d+$/.test(entry)) continue;
+    for (const line of stdout.trim().split('\n')) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 2) continue;
 
-      try {
-        const statContent = await readFile(`/proc/${entry}/stat`, 'utf8');
-        // Format: pid (comm) state ppid ...
-        // comm may contain spaces and parentheses, so match from the end of closing paren
-        const statMatch = statContent.match(/^\d+ \(.*?\) \S+ (\d+)/);
-        if (!statMatch) continue;
+      const childPid = Number(parts[0]);
+      const parentPid = Number(parts[1]);
+      if (!Number.isFinite(childPid) || !Number.isFinite(parentPid)) continue;
 
-        const childPid = Number(entry);
-        const parentPid = Number(statMatch[1]);
-
-        if (!children.has(parentPid)) {
-          children.set(parentPid, []);
-        }
-        children.get(parentPid).push(childPid);
-      } catch {
-        // Process may have exited — skip
+      if (!children.has(parentPid)) {
+        children.set(parentPid, []);
       }
-    }
-
-    // BFS to collect all descendants
-    const queue = [pid];
-    while (queue.length > 0) {
-      const current = queue.shift();
-      const kids = children.get(current) || [];
-      for (const child of kids) {
-        if (!descendants.has(child)) {
-          descendants.add(child);
-          queue.push(child);
-        }
-      }
+      children.get(parentPid).push(childPid);
     }
   } catch {
-    // /proc not available or permission error — return empty set
+    // ps unavailable or failed
+  }
+
+  return children;
+}
+
+/**
+ * Finds all descendant PIDs of the given PID using a pre-built process tree.
+ *
+ * @param {number} pid - root PID to find descendants for
+ * @param {Map<number, number[]>} processTree - parent → children map
+ * @returns {Set<number>} set of all descendant PIDs
+ */
+export function getDescendantPids(pid, processTree) {
+  const descendants = new Set();
+  const queue = [pid];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const kids = processTree.get(current) || [];
+    for (const child of kids) {
+      if (!descendants.has(child)) {
+        descendants.add(child);
+        queue.push(child);
+      }
+    }
   }
 
   return descendants;
@@ -143,19 +147,11 @@ export async function scanPorts(panePids) {
 
   const allPorts = parseSsOutput(ssOutput);
 
-  // Gather all unique PIDs to look up descendants for
-  const uniquePids = new Set(panePids.values());
-  const descendantMap = new Map();
-
-  await Promise.all(
-    [...uniquePids].map(async (pid) => {
-      const descendants = await getDescendantPids(pid);
-      descendantMap.set(pid, descendants);
-    }),
-  );
+  // Build process tree once, reuse for all PIDs
+  const processTree = await buildProcessTree();
 
   for (const [paneId, pid] of panePids) {
-    const descendants = descendantMap.get(pid) || new Set();
+    const descendants = getDescendantPids(pid, processTree);
     result.set(paneId, filterPortsForPid(allPorts, pid, descendants));
   }
 
