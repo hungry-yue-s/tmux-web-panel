@@ -828,6 +828,11 @@ function _createFabPanel(container) {
       _sendTermData(k.send);
     }
     if (navigator.vibrate) navigator.vibrate(10);
+    // Prevent the browser from synthesizing a click event after this touchend.
+    // Without this, opening the drawer causes the backdrop (z-index 200) to
+    // appear over the button — the synthetic click then hits the backdrop,
+    // which immediately closes the drawer.
+    e.preventDefault();
   });
 
   // Desktop click
