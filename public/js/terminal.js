@@ -270,6 +270,7 @@ function _createFabPanel(container) {
       if (k.accent) btn.classList.add('accent-btn');
       if (k.wide) btn.classList.add('wide');
       if (k.send === '__voice__') btn.classList.add('voice-btn');
+      if (k.color) btn.classList.add('color-' + k.color);
       panelEl.appendChild(btn);
     });
   }
@@ -347,6 +348,370 @@ function _createFabPanel(container) {
   modalEl.addEventListener('click', function (e) {
     if (e.target === modalEl) modalEl.classList.remove('show');
   });
+
+  // -- Drawer --
+  var drawerCommands = _loadDrawerCommands();
+  var drawerTemplates = _loadDrawerTemplates();
+  var drawerOpen = false;
+
+  var backdropEl = document.createElement('div');
+  backdropEl.className = 'fab-drawer-backdrop';
+  container.appendChild(backdropEl);
+
+  var drawerEl = document.createElement('div');
+  drawerEl.className = 'fab-drawer';
+  container.appendChild(drawerEl);
+
+  // -- Drawer edit modal --
+  var drawerModalEl = document.createElement('div');
+  drawerModalEl.className = 'fab-drawer-modal-overlay';
+  drawerModalEl.innerHTML =
+    '<div class="fab-drawer-modal">' +
+    '<h3 class="drawer-modal-title"></h3>' +
+    '<label class="drawer-modal-label-1">\u663e\u793a\u540d\u79f0</label>' +
+    '<input type="text" class="drawer-modal-input-1">' +
+    '<label class="drawer-modal-label-2">\u53d1\u9001\u5185\u5bb9</label>' +
+    '<input type="text" class="drawer-modal-input-2">' +
+    '<div class="fab-drawer-modal-actions">' +
+    '<button class="fab-btn-cancel">\u53d6\u6d88</button>' +
+    '<button class="fab-btn-save">\u4fdd\u5b58</button>' +
+    '</div>' +
+    '</div>';
+  container.appendChild(drawerModalEl);
+
+  var dModalTitle = drawerModalEl.querySelector('.drawer-modal-title');
+  var dModalInput1 = drawerModalEl.querySelector('.drawer-modal-input-1');
+  var dModalLabel1 = drawerModalEl.querySelector('.drawer-modal-label-1');
+  var dModalInput2 = drawerModalEl.querySelector('.drawer-modal-input-2');
+  var dModalLabel2 = drawerModalEl.querySelector('.drawer-modal-label-2');
+  var dModalSaveFn = null;
+
+  drawerModalEl.querySelector('.fab-btn-cancel').addEventListener('click', function () {
+    drawerModalEl.classList.remove('show');
+  });
+
+  drawerModalEl.querySelector('.fab-btn-save').addEventListener('click', function () {
+    if (dModalSaveFn) dModalSaveFn();
+    drawerModalEl.classList.remove('show');
+  });
+
+  drawerModalEl.addEventListener('click', function (e) {
+    if (e.target === drawerModalEl) drawerModalEl.classList.remove('show');
+  });
+
+  function _showDrawerModal(title, label1, val1, label2, val2, saveFn) {
+    dModalTitle.textContent = title;
+    dModalLabel1.textContent = label1;
+    dModalInput1.value = val1 || '';
+    dModalLabel2.textContent = label2;
+    dModalInput2.value = val2 || '';
+    dModalSaveFn = saveFn;
+    drawerModalEl.classList.add('show');
+    setTimeout(function () { dModalInput1.focus(); }, 100);
+  }
+
+  function _handleDrawerBtn(send) {
+    if (send === '__upload__') {
+      fileInput.value = '';
+      fileInput.click();
+    } else {
+      _sendTermData(send);
+    }
+    if (navigator.vibrate) navigator.vibrate(10);
+    toggleDrawer(false);
+  }
+
+  function _attachRepeat(btn, send) {
+    var rTimer = null;
+    var rInterval = null;
+    btn.addEventListener('touchstart', function (e) {
+      e.stopPropagation();
+      rTimer = setTimeout(function () {
+        rInterval = setInterval(function () {
+          _sendTermData(send);
+          if (navigator.vibrate) navigator.vibrate(5);
+        }, 80);
+      }, 300);
+    }, { passive: true });
+    btn.addEventListener('touchend', function () {
+      clearTimeout(rTimer);
+      clearInterval(rInterval);
+      rTimer = null;
+      rInterval = null;
+      _sendTermData(send);
+      if (navigator.vibrate) navigator.vibrate(10);
+    });
+    btn.addEventListener('click', function () {
+      if (!('ontouchstart' in window)) {
+        _sendTermData(send);
+        toggleDrawer(false);
+      }
+    });
+  }
+
+  function _attachLongPress(el, fn) {
+    var lpTimer = null;
+    var lpFired = false;
+    el.addEventListener('touchstart', function () {
+      lpFired = false;
+      lpTimer = setTimeout(function () {
+        lpFired = true;
+        if (navigator.vibrate) navigator.vibrate(30);
+        fn();
+      }, 500);
+    }, { passive: true });
+    el.addEventListener('touchend', function (e) {
+      clearTimeout(lpTimer);
+      if (lpFired) { e.preventDefault(); e.stopPropagation(); }
+    });
+  }
+
+  function _createDrawerGroup(parent, label, editFn) {
+    var group = document.createElement('div');
+    group.className = 'fab-drawer-group';
+    var headerDiv = document.createElement('div');
+    headerDiv.className = 'fab-drawer-group-header';
+    var labelEl = document.createElement('span');
+    labelEl.className = 'fab-drawer-group-label';
+    labelEl.textContent = label;
+    headerDiv.appendChild(labelEl);
+    if (editFn) {
+      var editBtn = document.createElement('button');
+      editBtn.className = 'fab-drawer-group-edit';
+      editBtn.textContent = '\u270e \u7f16\u8f91';
+      editBtn.addEventListener('click', function (e) { e.stopPropagation(); editFn(); });
+      headerDiv.appendChild(editBtn);
+    }
+    group.appendChild(headerDiv);
+    parent.appendChild(group);
+    return group;
+  }
+
+  // -- Slash command customization --
+  function _addSlashCommand() {
+    _showDrawerModal(
+      '\u6dfb\u52a0 Slash Command',
+      '\u547d\u4ee4\u540d\u79f0', '',
+      '\u53d1\u9001\u5185\u5bb9', '',
+      function () {
+        var label = dModalInput1.value.trim();
+        var send = dModalInput2.value.trim();
+        if (!label) return;
+        if (!send) send = label + '\r';
+        drawerCommands.push({ label: label, send: _parseEscape(send) });
+        _saveDrawerCommands(drawerCommands);
+        renderDrawer();
+      }
+    );
+  }
+
+  function _editSlashCommands() {
+    var chips = drawerEl.querySelectorAll('.fab-drawer-chip:not(.add-chip)');
+    var isEditing = chips.length > 0 && chips[0].querySelector('.chip-delete');
+    if (isEditing) {
+      renderDrawer();
+      return;
+    }
+    chips.forEach(function (chip) {
+      var idx = +chip.dataset.idx;
+      var del = document.createElement('span');
+      del.className = 'chip-delete';
+      del.textContent = '\u00d7';
+      del.addEventListener('click', function (e) {
+        e.stopPropagation();
+        drawerCommands.splice(idx, 1);
+        _saveDrawerCommands(drawerCommands);
+        renderDrawer();
+      });
+      chip.appendChild(del);
+      chip.classList.add('editing');
+      chip.onclick = function (e) {
+        e.stopPropagation();
+        var cmd = drawerCommands[idx];
+        _showDrawerModal(
+          '\u7f16\u8f91 Slash Command',
+          '\u547d\u4ee4\u540d\u79f0', cmd.label,
+          '\u53d1\u9001\u5185\u5bb9', _displayEscape(cmd.send),
+          function () {
+            cmd.label = dModalInput1.value.trim() || cmd.label;
+            cmd.send = _parseEscape(dModalInput2.value.trim()) || cmd.send;
+            _saveDrawerCommands(drawerCommands);
+            renderDrawer();
+          }
+        );
+      };
+    });
+  }
+
+  // -- Template customization --
+  function _addTemplate() {
+    _showDrawerModal(
+      '\u6dfb\u52a0\u5feb\u6377\u6a21\u677f',
+      '\u6a21\u677f\u5185\u5bb9', '',
+      '\u53d1\u9001\u5185\u5bb9 (\u7559\u7a7a\u5219\u540c\u4e0a)', '',
+      function () {
+        var label = dModalInput1.value.trim();
+        if (!label) return;
+        var send = dModalInput2.value.trim();
+        if (!send) send = label + '\r';
+        drawerTemplates.push({ label: label, send: _parseEscape(send) });
+        _saveDrawerTemplates(drawerTemplates);
+        renderDrawer();
+      }
+    );
+  }
+
+  function _editTemplate(idx) {
+    var tpl = drawerTemplates[idx];
+    if (!tpl) return;
+    _showDrawerModal(
+      '\u7f16\u8f91\u6a21\u677f',
+      '\u6a21\u677f\u5185\u5bb9', tpl.label,
+      '\u53d1\u9001\u5185\u5bb9', _displayEscape(tpl.send),
+      function () {
+        var newLabel = dModalInput1.value.trim();
+        if (!newLabel) {
+          drawerTemplates.splice(idx, 1);
+        } else {
+          tpl.label = newLabel;
+          tpl.send = _parseEscape(dModalInput2.value.trim()) || tpl.send;
+        }
+        _saveDrawerTemplates(drawerTemplates);
+        renderDrawer();
+      }
+    );
+  }
+
+  // -- Render drawer content --
+  function renderDrawer() {
+    drawerEl.innerHTML = '';
+
+    // Header
+    var header = document.createElement('div');
+    header.className = 'fab-drawer-header';
+    header.innerHTML = '<span>\u5feb\u6377\u5de5\u5177</span>';
+    var closeBtn = document.createElement('button');
+    closeBtn.className = 'fab-drawer-close';
+    closeBtn.textContent = '\u2715';
+    closeBtn.addEventListener('click', function () { toggleDrawer(false); });
+    header.appendChild(closeBtn);
+    drawerEl.appendChild(header);
+
+    var body = document.createElement('div');
+    body.className = 'fab-drawer-body';
+    drawerEl.appendChild(body);
+
+    // Group 1: Quick Actions
+    var g1 = _createDrawerGroup(body, '\u5feb\u901f\u64cd\u4f5c');
+    var g1grid = document.createElement('div');
+    g1grid.className = 'fab-drawer-grid';
+    var quickKeys = [
+      { label: 'claude', send: 'claude\r', cls: 'accent-blue' },
+      { label: '\ud83d\udcce \u4e0a\u4f20', send: '__upload__' },
+      { label: 'Tab', send: '\x09' },
+      { label: 'C-d', send: '\x04' },
+    ];
+    quickKeys.forEach(function (k) {
+      var btn = document.createElement('button');
+      btn.className = 'fab-drawer-btn' + (k.cls ? ' ' + k.cls : '');
+      btn.textContent = k.label;
+      btn.addEventListener('click', function () { _handleDrawerBtn(k.send); });
+      g1grid.appendChild(btn);
+    });
+    g1.appendChild(g1grid);
+
+    // Group 2: Arrow Keys & Editing
+    var g2 = _createDrawerGroup(body, '\u65b9\u5411\u952e & \u7f16\u8f91');
+    var g2grid = document.createElement('div');
+    g2grid.className = 'fab-drawer-grid';
+    var arrowKeys = [
+      { label: '\u2191', send: '\x1b[A', repeat: true },
+      { label: '\u2193', send: '\x1b[B', repeat: true },
+      { label: '\u2190', send: '\x1b[D', repeat: true },
+      { label: '\u2192', send: '\x1b[C', repeat: true },
+      { label: 'C-a', send: '\x01' },
+      { label: 'C-e', send: '\x05' },
+      { label: 'C-w', send: '\x17' },
+      { label: 'C-l', send: '\x0c' },
+    ];
+    arrowKeys.forEach(function (k) {
+      var btn = document.createElement('button');
+      btn.className = 'fab-drawer-btn';
+      btn.textContent = k.label;
+      if (k.repeat) {
+        _attachRepeat(btn, k.send);
+      } else {
+        btn.addEventListener('click', function () { _handleDrawerBtn(k.send); });
+      }
+      g2grid.appendChild(btn);
+    });
+    g2.appendChild(g2grid);
+
+    // Group 3: Claude Code Shortcuts
+    var g3 = _createDrawerGroup(body, 'Claude Code \u5feb\u6377\u952e');
+    var g3grid = document.createElement('div');
+    g3grid.className = 'fab-drawer-grid-2col';
+    var ccKeys = [
+      { label: 'Alt+T \u601d\u8003', send: '\x1bt' },
+      { label: 'Ctrl+O \u8be6\u7ec6', send: '\x0f' },
+    ];
+    ccKeys.forEach(function (k) {
+      var btn = document.createElement('button');
+      btn.className = 'fab-drawer-btn accent-orange';
+      btn.textContent = k.label;
+      btn.addEventListener('click', function () { _handleDrawerBtn(k.send); });
+      g3grid.appendChild(btn);
+    });
+    g3.appendChild(g3grid);
+
+    // Group 4: Slash Commands
+    var g4 = _createDrawerGroup(body, 'Slash Commands', function () { _editSlashCommands(); });
+    var g4chips = document.createElement('div');
+    g4chips.className = 'fab-drawer-chips';
+    drawerCommands.forEach(function (cmd, i) {
+      var chip = document.createElement('button');
+      chip.className = 'fab-drawer-chip';
+      chip.textContent = cmd.label;
+      chip.dataset.idx = i;
+      chip.addEventListener('click', function () { _handleDrawerBtn(cmd.send); });
+      g4chips.appendChild(chip);
+    });
+    var addChip = document.createElement('button');
+    addChip.className = 'fab-drawer-chip add-chip';
+    addChip.textContent = '+ \u6dfb\u52a0';
+    addChip.addEventListener('click', function () { _addSlashCommand(); });
+    g4chips.appendChild(addChip);
+    g4.appendChild(g4chips);
+
+    // Group 5: Templates
+    var g5 = _createDrawerGroup(body, '\u5feb\u6377\u6a21\u677f');
+    var g5list = document.createElement('div');
+    g5list.className = 'fab-drawer-templates';
+    drawerTemplates.forEach(function (tpl, i) {
+      var item = document.createElement('div');
+      item.className = 'fab-drawer-template';
+      item.textContent = tpl.label;
+      item.dataset.idx = i;
+      item.addEventListener('click', function () { _handleDrawerBtn(tpl.send); });
+      _attachLongPress(item, function () { _editTemplate(i); });
+      g5list.appendChild(item);
+    });
+    var addTpl = document.createElement('div');
+    addTpl.className = 'fab-drawer-template add-template';
+    addTpl.textContent = '+ \u6dfb\u52a0\u81ea\u5b9a\u4e49\u6a21\u677f...';
+    addTpl.addEventListener('click', function () { _addTemplate(); });
+    g5list.appendChild(addTpl);
+    g5.appendChild(g5list);
+  }
+
+  function toggleDrawer(open) {
+    drawerOpen = typeof open === 'boolean' ? open : !drawerOpen;
+    if (drawerOpen) renderDrawer();
+    backdropEl.classList.toggle('open', drawerOpen);
+    drawerEl.classList.toggle('open', drawerOpen);
+  }
+
+  backdropEl.addEventListener('click', function () { toggleDrawer(false); });
 
   // -- Position panel --
   function positionPanel() {
@@ -457,6 +822,8 @@ function _createFabPanel(container) {
       fileInput.click();
     } else if (k.send === '__voice__') {
       _startVoice();
+    } else if (k.send === '__drawer__') {
+      toggleDrawer(true);
     } else {
       _sendTermData(k.send);
     }
@@ -472,6 +839,7 @@ function _createFabPanel(container) {
     if (!k) return;
     if (k.send === '__upload__') { fileInput.value = ''; fileInput.click(); }
     else if (k.send === '__voice__') { _startVoice(); }
+    else if (k.send === '__drawer__') { toggleDrawer(true); }
     else { _sendTermData(k.send); }
   });
 
@@ -485,7 +853,7 @@ function _createFabPanel(container) {
 
   // Close on outside tap
   function onOutsideTap(e) {
-    if (isOpen && !fabEl.contains(e.target) && !panelEl.contains(e.target) && !modalEl.contains(e.target)) {
+    if (isOpen && !fabEl.contains(e.target) && !panelEl.contains(e.target) && !modalEl.contains(e.target) && !drawerEl.contains(e.target) && !drawerModalEl.contains(e.target)) {
       togglePanel();
     }
   }
@@ -497,6 +865,9 @@ function _createFabPanel(container) {
     _stopVoice();
     document.removeEventListener('touchstart', onOutsideTap);
     document.removeEventListener('click', onOutsideTap);
+    if (backdropEl.parentNode) backdropEl.parentNode.removeChild(backdropEl);
+    if (drawerEl.parentNode) drawerEl.parentNode.removeChild(drawerEl);
+    if (drawerModalEl.parentNode) drawerModalEl.parentNode.removeChild(drawerModalEl);
   };
 }
 
