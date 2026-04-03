@@ -12,6 +12,7 @@ import {
   deleteToken,
   tokenAuth,
   wsTokenAuth,
+  startTokenReaper,
 } from './auth.js';
 import * as tmux from './tmux.js';
 import { TerminalManager } from './terminal.js';
@@ -214,6 +215,9 @@ server.on('upgrade', (req, socket, head) => {
 function shutdown(signal) {
   console.log(`\n${signal} received — shutting down...`);
 
+  // Stop token reaper
+  if (tokenReapTimer) clearInterval(tokenReapTimer);
+
   // Stop status monitor polling
   statusMonitor.stop();
 
@@ -223,6 +227,11 @@ function shutdown(signal) {
   // Close all WebSocket connections
   for (const client of wss.clients) {
     client.close(1001, 'Server shutting down');
+  }
+
+  // Close HTTP redirect server if running
+  if (httpRedirectServer) {
+    httpRedirectServer.close();
   }
 
   wss.close(() => {
@@ -246,6 +255,7 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 
 statusMonitor.start(config.pollInterval);
 terminalManager.startReaper();
+const tokenReapTimer = config.auth ? startTokenReaper(tokenMap) : null;
 
 server.listen(config.port, config.host, () => {
   const proto = config.tls ? 'https' : 'http';

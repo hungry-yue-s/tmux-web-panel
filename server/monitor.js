@@ -221,6 +221,11 @@ export class StatusMonitor {
 
   _broadcast(serialized) {
     for (const ws of this.subscribers) {
+      if (ws.readyState > 1) {
+        // CLOSING or CLOSED — remove stale subscriber
+        this.subscribers.delete(ws);
+        continue;
+      }
       this._send(ws, serialized);
     }
   }

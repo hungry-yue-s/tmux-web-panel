@@ -15,7 +15,7 @@ const REAP_INTERVAL_MS = 60_000;
 export class TerminalManager {
   /** @param {{ maxConnectionsPerPane?: number }} [options] */
   constructor(options = {}) {
-    /** @type {Map<string, { ws: import('ws').WebSocket, pty: import('node-pty').IPty, paneId: string, pingTimer: ReturnType<typeof setInterval> | null, alive: boolean }>} */
+    /** @type {Map<string, { ws: import('ws').WebSocket, pty: import('node-pty').IPty, paneId: string, pingTimer: ReturnType<typeof setInterval> | null, killTimer: ReturnType<typeof setTimeout> | null, dataDisposable: import('node-pty').IDisposable | null, alive: boolean }>} */
     this.connections = new Map();
 
     /** @type {Map<string, number>} paneId → active connection count */
@@ -114,6 +114,8 @@ export class TerminalManager {
       pty: term,
       paneId,
       pingTimer: null,
+      killTimer: null,
+      dataDisposable: null,
       alive: true,
     };
     this.connections.set(connectionId, conn);
@@ -121,7 +123,7 @@ export class TerminalManager {
 
     // PTY → WebSocket
     // Also intercept OSC 52 clipboard sequences from tmux
-    term.onData((data) => {
+    conn.dataDisposable = term.onData((data) => {
       if (ws.readyState !== ws.OPEN) return;
 
       // Detect OSC 52 sequence: \x1b]52;...;base64\x07 or \x1b]52;...;base64\x1b\\
@@ -138,10 +140,10 @@ export class TerminalManager {
         }
       }
 
-
-
-      ws.send(JSON.stringify({ type: 'output', data }));
-    });
+      // Strip OSC 52 sequences from terminal output to avoid rendering artifacts
+      const cleaned = data.replace(osc52Re, '');
+      ws.send(JSON.stringify({ type: 'output', data: cleaned }));
+    });  // disposable stored in conn.dataDisposable
 
     // PTY exit → close WebSocket + cleanup
     term.onExit(({ exitCode }) => {
@@ -258,7 +260,8 @@ export class TerminalManager {
       // Process group may not exist
     }
 
-    setTimeout(() => {
+    conn.killTimer = setTimeout(() => {
+      conn.killTimer = null;
       try {
         process.kill(-pid, 'SIGKILL');
       } catch {
@@ -286,6 +289,18 @@ export class TerminalManager {
     if (conn.pingTimer) {
       clearInterval(conn.pingTimer);
       conn.pingTimer = null;
+    }
+
+    // Clear SIGKILL timer
+    if (conn.killTimer) {
+      clearTimeout(conn.killTimer);
+      conn.killTimer = null;
+    }
+
+    // Dispose PTY data listener
+    if (conn.dataDisposable) {
+      conn.dataDisposable.dispose();
+      conn.dataDisposable = null;
     }
 
     // Decrement pane connection count

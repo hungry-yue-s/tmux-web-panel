@@ -8,6 +8,7 @@
 import { scryptSync, randomBytes, timingSafeEqual } from 'node:crypto';
 
 export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+const TOKEN_REAP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
 const KEY_LENGTH = 64;
 const SALT_LENGTH = 16;
@@ -131,4 +132,20 @@ export function wsTokenAuth(tokenMap, req) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const token = url.searchParams.get('token');
   return isValidToken(tokenMap, token);
+}
+
+/**
+ * Start a periodic reaper that removes expired tokens from the map.
+ * @param {Map} tokenMap
+ * @returns {ReturnType<typeof setInterval>} timer handle (for cleanup)
+ */
+export function startTokenReaper(tokenMap) {
+  return setInterval(() => {
+    const now = Date.now();
+    for (const [token, entry] of tokenMap) {
+      if (now >= entry.expiresAt) {
+        tokenMap.delete(token);
+      }
+    }
+  }, TOKEN_REAP_INTERVAL_MS);
 }
