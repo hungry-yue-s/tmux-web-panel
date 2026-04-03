@@ -1254,6 +1254,7 @@ function renderTerminal(container) {
     '<div class="terminal-header-pills"></div>' +
     '<span class="terminal-header-title"></span>' +
     '<div class="terminal-header-actions">' +
+    '<button class="btn terminal-refresh-btn" title="Refresh">&#10227;</button>' +
     '<div class="terminal-mode-toggle">' +
     '<button class="btn terminal-mode-opt' + (_terminalMode === 'tab' ? ' active' : '') + '" data-mode="tab" title="标签页模式">&#9723;</button>' +
     '<button class="btn terminal-mode-opt' + (_terminalMode === 'split' ? ' active' : '') + '" data-mode="split" title="分屏模式">&#8862;</button>' +
@@ -1316,6 +1317,12 @@ function renderTerminal(container) {
         showAlert({ title: '分割窗格失败', message: err.message });
       });
   }
+
+  view.querySelector('.terminal-refresh-btn').addEventListener('click', function () {
+    _sidebarSessionKey = '';
+    render();
+    updateSidebar();
+  });
 
   view.querySelector('.terminal-split-btn').addEventListener('click', function (e) {
     // Mobile: split directly (direction doesn't matter, each pane gets its own screen)

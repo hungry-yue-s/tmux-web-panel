@@ -1137,6 +1137,13 @@ body {
   font-size: 1rem;
 }
 
+.terminal-refresh-btn {
+  font-size: 1.2rem !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
 .terminal-font-btn {
   font-size: 0.75rem !important;
   padding: 4px 6px !important;
