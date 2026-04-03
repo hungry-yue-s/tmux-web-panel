@@ -1506,6 +1506,179 @@ function _mountTerminal(termContainer, nozoom) {
   overlay.className = 'terminal-touch-overlay';
   termContainer.appendChild(overlay);
 
+  // Long-press to select text: convert touch coordinates to terminal row/col,
+  // use term.select() to highlight word, allow drag to extend selection.
+  var longPress = { timer: null, active: false };
+  var sel = { anchorRow: 0, anchorCol: 0, dragging: false };
+  var LONG_PRESS_MS = 500;
+  var LONG_PRESS_MOVE_TOLERANCE = 10; // px
+
+  // Convert touch clientX/Y to terminal col/row
+  function _touchToCell(clientX, clientY) {
+    var screen = termContainer.querySelector('.xterm-screen');
+    if (!screen) return null;
+    var rect = screen.getBoundingClientRect();
+    var cellW = rect.width / term.cols;
+    var cellH = rect.height / term.rows;
+    var col = Math.floor((clientX - rect.left) / cellW);
+    var row = Math.floor((clientY - rect.top) / cellH);
+    col = Math.max(0, Math.min(term.cols - 1, col));
+    row = Math.max(0, Math.min(term.rows - 1, row));
+    return { col: col, row: row };
+  }
+
+  // Get line text from buffer at a viewport row
+  function _getLineText(viewportRow) {
+    var bufRow = term.buffer.active.viewportY + viewportRow;
+    var line = term.buffer.active.getLine(bufRow);
+    return line ? line.translateToString() : '';
+  }
+
+  // Find word boundaries at col in lineText
+  function _wordBounds(lineText, col) {
+    if (col >= lineText.length || /\s/.test(lineText[col])) {
+      // On whitespace — select single char
+      return { start: col, end: col + 1 };
+    }
+    var start = col, end = col;
+    while (start > 0 && /\S/.test(lineText[start - 1])) start--;
+    while (end < lineText.length && /\S/.test(lineText[end])) end++;
+    return { start: start, end: end };
+  }
+
+  function _enterSelectionMode(clientX, clientY) {
+    var cell = _touchToCell(clientX, clientY);
+    if (!cell) return;
+    longPress.active = true;
+    if (navigator.vibrate) navigator.vibrate(30);
+
+    // Select word at long-press position
+    var lineText = _getLineText(cell.row);
+    var bounds = _wordBounds(lineText, cell.col);
+    var bufRow = term.buffer.active.viewportY + cell.row;
+    term.select(bounds.start, bufRow, bounds.end - bounds.start);
+
+    sel.anchorRow = cell.row;
+    sel.anchorCol = cell.col;
+    sel.dragging = true;
+
+    _showCopyButton();
+    _updatePreview();
+  }
+
+  // Extend selection from anchor to current touch position (character-level,
+  // works across lines via xterm's select() length wrapping)
+  function _extendSelection(clientX, clientY) {
+    var cell = _touchToCell(clientX, clientY);
+    if (!cell) return;
+
+    // Determine start and end in viewport coordinates
+    var startRow, startCol, endRow, endCol;
+    if (cell.row < sel.anchorRow || (cell.row === sel.anchorRow && cell.col < sel.anchorCol)) {
+      sel.dragDirection = 'up';
+      startRow = cell.row; startCol = cell.col;
+      endRow = sel.anchorRow; endCol = sel.anchorCol;
+    } else {
+      sel.dragDirection = 'down';
+      startRow = sel.anchorRow; startCol = sel.anchorCol;
+      endRow = cell.row; endCol = cell.col;
+    }
+
+    // Snap start to word beginning, end to word end
+    var startLine = _getLineText(startRow);
+    var endLine = _getLineText(endRow);
+    var sBounds = _wordBounds(startLine, startCol);
+    var eBounds = _wordBounds(endLine, endCol);
+
+    var selCol = sBounds.start;
+    var selBufRow = term.buffer.active.viewportY + startRow;
+    // Total length = remaining chars on start line + full middle lines + chars on end line
+    var length;
+    if (startRow === endRow) {
+      length = eBounds.end - sBounds.start;
+    } else {
+      length = (term.cols - sBounds.start); // rest of start line
+      for (var r = startRow + 1; r < endRow; r++) length += term.cols;
+      length += eBounds.end; // end line
+    }
+    term.select(selCol, selBufRow, length);
+    _showCopyButton();
+    _updatePreview();
+  }
+
+  function _updatePreview() {
+    var text = term.getSelection();
+    if (!text) { _hidePreview(); return; }
+    var el = termContainer.querySelector('.term-sel-preview');
+    if (!el) {
+      el = document.createElement('textarea');
+      el.className = 'term-sel-preview';
+      el.spellcheck = false;
+      el.autocomplete = 'off';
+      // Stop touch events on preview from propagating to overlay
+      el.addEventListener('touchstart', function (ev) { ev.stopPropagation(); });
+      el.addEventListener('touchmove', function (ev) { ev.stopPropagation(); });
+      el.addEventListener('touchend', function (ev) { ev.stopPropagation(); });
+      termContainer.appendChild(el);
+    }
+    // Only update value while dragging; once user lifts finger they can edit freely
+    if (sel.dragging) {
+      el.value = text;
+      if (sel.dragDirection === 'up') {
+        el.scrollTop = 0;
+      } else {
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+  }
+
+  // Get the current preview text (user may have edited it)
+  function _getPreviewText() {
+    var el = termContainer.querySelector('.term-sel-preview');
+    return el ? el.value : '';
+  }
+
+  function _hidePreview() {
+    var el = termContainer.querySelector('.term-sel-preview');
+    if (el) el.remove();
+  }
+
+  function _exitSelectionMode() {
+    if (!longPress.active) return;
+    longPress.active = false;
+    sel.dragging = false;
+    _hideCopyButton();
+    _hidePreview();
+    term.clearSelection();
+  }
+
+  function _showCopyButton() {
+    if (!term.getSelection()) return;
+    var existing = termContainer.querySelector('.term-copy-btn');
+    if (existing) return;
+    var btn = document.createElement('button');
+    btn.className = 'term-copy-btn';
+    btn.textContent = 'Copy';
+    btn.addEventListener('touchend', function (ev) {
+      ev.stopPropagation();
+      ev.preventDefault();
+      var text = _getPreviewText() || term.getSelection();
+      if (text) _copyToClipboard(text);
+      term.clearSelection();
+      _showToast('Copied');
+      longPress.active = false;
+      sel.dragging = false;
+      _hideCopyButton();
+      _hidePreview();
+    });
+    termContainer.appendChild(btn);
+  }
+
+  function _hideCopyButton() {
+    var btn = termContainer.querySelector('.term-copy-btn');
+    if (btn) btn.remove();
+  }
+
   // Unified touch handler: vertical = tmux scroll, horizontal = swipe back
   var ts = {
     startX: 0, startY: 0, lastY: 0,
@@ -1533,6 +1706,7 @@ function _mountTerminal(termContainer, nozoom) {
   overlay.addEventListener('touchstart', function (e) {
     if (e.touches.length === 2) {
       // Start pinch-to-zoom
+      clearTimeout(longPress.timer);
       pinch.active = true;
       pinch.startDist = _pinchDist(e);
       pinch.startFontSize = term.options.fontSize || 14;
@@ -1555,10 +1729,40 @@ function _mountTerminal(termContainer, nozoom) {
         swipeIndicator.style.transition = 'none';
         swipeIndicator.style.opacity = '0';
       }
+
+      // Start long-press timer (only if not already in selection mode)
+      if (!longPress.active) {
+        var lpX = t.clientX, lpY = t.clientY;
+        clearTimeout(longPress.timer);
+        longPress.timer = setTimeout(function () {
+          if (!ts.moved) {
+            _enterSelectionMode(lpX, lpY);
+          }
+        }, LONG_PRESS_MS);
+      }
     }
   });
 
   overlay.addEventListener('touchmove', function (e) {
+    // In selection mode, drag to extend selection
+    if (longPress.active && sel.dragging && e.touches.length === 1) {
+      var dt = e.touches[0];
+      _extendSelection(dt.clientX, dt.clientY);
+      e.preventDefault();
+      return;
+    }
+
+    // Cancel long-press if finger moved too far
+    if (longPress.timer && e.touches.length === 1) {
+      var lt = e.touches[0];
+      var ldx = lt.clientX - ts.startX;
+      var ldy = lt.clientY - ts.startY;
+      if (Math.abs(ldx) > LONG_PRESS_MOVE_TOLERANCE || Math.abs(ldy) > LONG_PRESS_MOVE_TOLERANCE) {
+        clearTimeout(longPress.timer);
+        longPress.timer = null;
+      }
+    }
+
     // Pinch-to-zoom: adjust font size
     if (e.touches.length === 2 && pinch.active) {
       var dist = _pinchDist(e);
@@ -1621,6 +1825,21 @@ function _mountTerminal(termContainer, nozoom) {
   });
 
   overlay.addEventListener('touchend', function (e) {
+    clearTimeout(longPress.timer);
+    longPress.timer = null;
+
+    // In selection mode
+    if (longPress.active) {
+      if (sel.dragging) {
+        // Finger lifted after drag — stop dragging, keep selection visible
+        sel.dragging = false;
+      } else {
+        // Tap while selection is showing — exit selection mode
+        _exitSelectionMode();
+      }
+      return;
+    }
+
     if (pinch.active) {
       pinch.active = false;
       return;

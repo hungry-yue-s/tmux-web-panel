@@ -90,6 +90,21 @@ PORT=8080 AUTH=user:pass ./scripts/install-service.sh install
 - **Linux** — systemd user service (`~/.config/systemd/user/`), restarts on failure, enables lingering
 - **macOS** — launchd user agent (`~/Library/LaunchAgents/`), logs at `~/Library/Logs/tmux-web-panel/`
 
+## Mobile Text Selection
+
+Long-press on the terminal to select and copy text on mobile devices.
+
+| Gesture | Action |
+|---------|--------|
+| Long-press (500ms) | Select the word under your finger, vibration feedback |
+| Hold + drag | Extend selection character-by-character (works across lines) |
+| Release | Selection stays, editable preview panel appears at top |
+| Edit preview | Tap the preview panel to modify text before copying |
+| Copy button | Copies the (edited) preview content to clipboard |
+| Tap terminal | Dismiss selection and preview |
+
+The preview panel auto-scrolls to match drag direction: dragging down shows the tail, dragging up shows the head.
+
 ## Development
 
 ```bash

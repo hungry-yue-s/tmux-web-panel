@@ -1206,6 +1206,50 @@ body {
   50% { opacity: 0.2; }
 }
 
+/* Copy button shown after long-press text selection */
+.term-copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 20;
+  padding: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--accent-blue);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Selection preview floating panel (editable textarea) */
+.term-sel-preview {
+  position: absolute;
+  top: 40px;
+  left: 8px;
+  right: 8px;
+  z-index: 20;
+  max-height: 50%;
+  min-height: 8em;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-all;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  resize: none;
+  outline: none;
+  width: calc(100% - 16px);
+  box-sizing: border-box;
+}
+
 /* Hide overlay on desktop — mouse scroll works natively */
 @media (min-width: 768px) {
   .terminal-touch-overlay {
