@@ -606,7 +606,7 @@ function _createFabPanel(container) {
     var g1grid = document.createElement('div');
     g1grid.className = 'fab-drawer-grid';
     var quickKeys = [
-      { label: 'claude', send: 'claude\r', cls: 'accent-blue' },
+      { label: 'claude', send: 'claude --allow-dangerously-skip-permissions\r', cls: 'accent-blue' },
       { label: '\ud83d\udcce \u4e0a\u4f20', send: '__upload__' },
       { label: 'Tab', send: '\x09' },
       { label: 'C-d', send: '\x04' },
