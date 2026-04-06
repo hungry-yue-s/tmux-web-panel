@@ -401,7 +401,6 @@ var FilePreview = (function () {
 
     var _authHeaders = typeof Auth !== 'undefined' ? Auth.headers() : {};
     var _tokenQs = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
-    console.log('[FilePreview] openFile:', filePath, 'paneId:', paneId, 'authKeys:', Object.keys(_authHeaders), 'url:', '/api/files/info' + qs);
 
     fetch('/api/files/info' + qs, { headers: _authHeaders })
       .then(function (r) {
