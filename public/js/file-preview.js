@@ -163,7 +163,8 @@ var FilePreview = (function () {
       btn.textContent = 'Download';
       btn.addEventListener('click', function () {
         var a = document.createElement('a');
-        a.href = '/api/files/raw?path=' + encodeURIComponent(absPath);
+        var _tp = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
+        a.href = '/api/files/raw?path=' + encodeURIComponent(absPath) + (_tp ? '&' + _tp : '');
         a.download = '';
         document.body.appendChild(a);
         a.click();
@@ -277,11 +278,12 @@ var FilePreview = (function () {
       .then(function (md) {
         var html = md.render(content);
 
+        var _mdTp = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
         html = html.replace(
           /(<img\s+[^>]*src=")(?!https?:\/\/|data:|\/)([^"]+)(")/g,
           function (_, pre, src, post) {
             var absImgPath = baseDir + '/' + src;
-            return pre + '/api/files/raw?path=' + encodeURIComponent(absImgPath) + post;
+            return pre + '/api/files/raw?path=' + encodeURIComponent(absImgPath) + (_mdTp ? '&' + _mdTp : '') + post;
           }
         );
 
@@ -397,7 +399,10 @@ var FilePreview = (function () {
     var qs = '?path=' + encodeURIComponent(filePath);
     if (paneId) qs += '&paneId=' + encodeURIComponent(paneId);
 
-    fetch('/api/files/info' + qs)
+    var _authHeaders = typeof Auth !== 'undefined' ? Auth.headers() : {};
+    var _tokenQs = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
+
+    fetch('/api/files/info' + qs, { headers: _authHeaders })
       .then(function (r) { return r.json(); })
       .then(function (res) {
         if (!res.success) {
@@ -407,7 +412,8 @@ var FilePreview = (function () {
           return;
         }
         var info = res.data;
-        var rawUrl = '/api/files/raw?path=' + encodeURIComponent(info.absPath);
+        var rawUrl = '/api/files/raw?path=' + encodeURIComponent(info.absPath)
+          + (_tokenQs ? '&' + _tokenQs : '');
         var filename = info.absPath.split('/').pop();
 
         _currentFile = {
@@ -426,7 +432,7 @@ var FilePreview = (function () {
         } else if (info.isPdf) {
           _renderPdf(body, rawUrl);
         } else {
-          fetch('/api/files/content?path=' + encodeURIComponent(info.absPath))
+          fetch('/api/files/content?path=' + encodeURIComponent(info.absPath), { headers: _authHeaders })
             .then(function (r) { return r.json(); })
             .then(function (cr) {
               if (!cr.success) { _showError(body, cr.error, info.absPath); return; }

@@ -100,7 +100,9 @@ function parseBearerToken(header) {
  */
 export function tokenAuth(tokenMap) {
   return (req, res, next) => {
-    const token = parseBearerToken(req.headers.authorization);
+    // Support both Bearer header and ?token= query param (for img/iframe src URLs)
+    const token = parseBearerToken(req.headers.authorization)
+      || req.query.token || null;
 
     if (isValidToken(tokenMap, token)) {
       next();
