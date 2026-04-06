@@ -365,28 +365,72 @@ var FilePreview = (function () {
     return matches;
   }
 
+  // --- Wrapped line helpers ---
+
+  // Collect a logical line by merging wrapped buffer lines.
+  // Returns { text, startRow, rows } where startRow is the first
+  // buffer row index and rows is the count of physical rows merged.
+  function _getLogicalLine(buffer, bufRow) {
+    // Walk backward to find the start of this logical line
+    var startRow = bufRow;
+    while (startRow > 0) {
+      var prev = buffer.getLine(startRow);
+      if (!prev || !prev.isWrapped) break;
+      startRow--;
+    }
+    // Walk forward to collect all wrapped continuations
+    var text = '';
+    var row = startRow;
+    var totalRows = 0;
+    while (row < buffer.length) {
+      var ln = buffer.getLine(row);
+      if (!ln) break;
+      if (row > startRow && !ln.isWrapped) break;
+      text += ln.translateToString();
+      totalRows++;
+      row++;
+    }
+    return { text: text, startRow: startRow, rows: totalRows };
+  }
+
+  // Convert a column offset in the merged logical line back to
+  // { y (1-based lineNumber), x (1-based column) } in the terminal viewport.
+  function _logicalColToTermPos(startRow, col, cols) {
+    var rowOffset = Math.floor(col / cols);
+    var colInRow = col % cols;
+    return { y: startRow + rowOffset + 1, x: colInRow + 1 };
+  }
+
   // --- Link Provider ---
 
   function registerLinkProvider(term, paneId) {
     term.registerLinkProvider({
       provideLinks: function (lineNumber, callback) {
-        var line = term.buffer.active.getLine(lineNumber - 1);
-        if (!line) return callback(undefined);
-        var text = line.translateToString();
-        var found = _findLinks(text);
+        var bufRow = lineNumber - 1;
+        var buf = term.buffer.active;
+        var logical = _getLogicalLine(buf, bufRow);
+        var found = _findLinks(logical.text);
         if (found.length === 0) return callback(undefined);
 
+        var cols = term.cols;
         var links = found.map(function (f) {
+          var start = _logicalColToTermPos(logical.startRow, f.startCol, cols);
+          var end = _logicalColToTermPos(logical.startRow, f.endCol - 1, cols);
+          // Only return links that touch the requested lineNumber
+          // (xterm calls provideLinks per visible row)
           return {
             range: {
-              start: { x: f.startCol + 1, y: lineNumber },
-              end: { x: f.endCol + 1, y: lineNumber },
+              start: start,
+              end: { y: end.y, x: end.x + 1 },
             },
             text: f.text,
             activate: function () { openFile(f.text, paneId); },
           };
+        }).filter(function (link) {
+          return link.range.start.y <= lineNumber && link.range.end.y >= lineNumber;
         });
-        callback(links);
+
+        callback(links.length > 0 ? links : undefined);
       },
     });
   }
@@ -454,11 +498,21 @@ var FilePreview = (function () {
   }
 
   // Check if a column position in a line of text falls on a file path.
-  // Returns the path string if found, null otherwise.
-  function hitTest(lineText, col) {
-    var links = _findLinks(lineText);
+  // term and viewportRow are optional; when provided, uses logical line merging.
+  function hitTest(lineText, col, term, viewportRow) {
+    var text = lineText;
+    var adjustedCol = col;
+    if (term && viewportRow !== undefined) {
+      var bufRow = term.buffer.active.viewportY + viewportRow;
+      var logical = _getLogicalLine(term.buffer.active, bufRow);
+      text = logical.text;
+      // Adjust col: offset by how many rows before this one in the logical line
+      var rowsBeforeThis = bufRow - logical.startRow;
+      adjustedCol = rowsBeforeThis * term.cols + col;
+    }
+    var links = _findLinks(text);
     for (var i = 0; i < links.length; i++) {
-      if (col >= links[i].startCol && col < links[i].endCol) {
+      if (adjustedCol >= links[i].startCol && adjustedCol < links[i].endCol) {
         return links[i].text;
       }
     }

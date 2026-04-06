@@ -1939,7 +1939,7 @@ function _mountTerminal(termContainer, nozoom) {
         var tapCell = _touchToCell(tapTouch.clientX, tapTouch.clientY);
         if (tapCell) {
           var tapLine = _getLineText(tapCell.row);
-          var tapPath = FilePreview.hitTest(tapLine, tapCell.col);
+          var tapPath = FilePreview.hitTest(tapLine, tapCell.col, term, tapCell.row);
           if (tapPath) {
             FilePreview.openFile(tapPath, state.currentPane);
             return;
