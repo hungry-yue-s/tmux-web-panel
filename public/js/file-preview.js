@@ -422,5 +422,17 @@ var FilePreview = (function () {
       .catch(function (err) { _showError(body, err.message); });
   }
 
-  return { registerLinkProvider: registerLinkProvider, openFile: openFile, close: close };
+  // Check if a column position in a line of text falls on a file path.
+  // Returns the path string if found, null otherwise.
+  function hitTest(lineText, col) {
+    var links = _findLinks(lineText);
+    for (var i = 0; i < links.length; i++) {
+      if (col >= links[i].startCol && col < links[i].endCol) {
+        return links[i].text;
+      }
+    }
+    return null;
+  }
+
+  return { registerLinkProvider: registerLinkProvider, openFile: openFile, close: close, hitTest: hitTest };
 })();

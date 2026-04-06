@@ -1933,7 +1933,20 @@ function _mountTerminal(termContainer, nozoom) {
       return;
     }
     if (!ts.moved) {
-      // Tap: pass through to terminal
+      // Tap: check if tapped on a file path first
+      if (typeof FilePreview !== 'undefined') {
+        var tapTouch = e.changedTouches[0];
+        var tapCell = _touchToCell(tapTouch.clientX, tapTouch.clientY);
+        if (tapCell) {
+          var tapLine = _getLineText(tapCell.row);
+          var tapPath = FilePreview.hitTest(tapLine, tapCell.col);
+          if (tapPath) {
+            FilePreview.openFile(tapPath, state.currentPane);
+            return;
+          }
+        }
+      }
+      // No file path hit — pass through to terminal
       overlay.style.pointerEvents = 'none';
       var touch = e.changedTouches[0];
       var el = document.elementFromPoint(touch.clientX, touch.clientY);
