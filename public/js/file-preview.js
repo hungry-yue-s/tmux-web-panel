@@ -317,9 +317,12 @@ var FilePreview = (function () {
 
   var ABS_RE = /(^|[\s])(\/[^\s'")\]:;,>]+)/g;
   var REL_RE = /(^|[\s])(\.\.?\/[^\s'")\]:;,>]+)/g;
+  // Bare relative paths: word/word... containing at least one / (e.g. public/css/style.css)
+  var BARE_RE = /(^|[\s])([a-zA-Z0-9_\-][^\s'")\]:;,>]*\/[^\s'")\]:;,>]+)/g;
 
   function _findLinks(line) {
     var matches = [];
+    var seen = {}; // dedupe by startCol
     var m;
     ABS_RE.lastIndex = 0;
     while ((m = ABS_RE.exec(line)) !== null) {
@@ -329,6 +332,7 @@ var FilePreview = (function () {
       if (path.length < 2 || path === '/') continue;
       var startCol = m.index + m[1].length;
       matches.push({ text: path, startCol: startCol, endCol: startCol + path.length });
+      seen[startCol] = true;
     }
     REL_RE.lastIndex = 0;
     while ((m = REL_RE.exec(line)) !== null) {
@@ -337,7 +341,24 @@ var FilePreview = (function () {
       if (/:\/{2}[^\s]*$/.test(before2)) continue;
       if (path2.length < 3) continue;
       var startCol2 = m.index + m[1].length;
-      matches.push({ text: path2, startCol: startCol2, endCol: startCol2 + path2.length });
+      if (!seen[startCol2]) {
+        matches.push({ text: path2, startCol: startCol2, endCol: startCol2 + path2.length });
+        seen[startCol2] = true;
+      }
+    }
+    BARE_RE.lastIndex = 0;
+    while ((m = BARE_RE.exec(line)) !== null) {
+      var path3 = m[2].replace(/[.,;:)>\]]+$/, '');
+      var before3 = line.substring(0, m.index + m[1].length);
+      if (/:\/{2}[^\s]*$/.test(before3)) continue;
+      // Must contain at least one / after trimming
+      if (path3.indexOf('/') === -1) continue;
+      if (path3.length < 3) continue;
+      var startCol3 = m.index + m[1].length;
+      if (!seen[startCol3]) {
+        matches.push({ text: path3, startCol: startCol3, endCol: startCol3 + path3.length });
+        seen[startCol3] = true;
+      }
     }
     return matches;
   }
