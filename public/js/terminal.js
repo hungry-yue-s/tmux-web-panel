@@ -76,6 +76,13 @@ var _fabPresets = [
   { label: '\u7ee7\u7eed', send: '\u7ee7\u7eed\r' },
 ];
 
+var _drawerDefaultQuickKeys = [
+  { label: 'claude', send: 'claude --allow-dangerously-skip-permissions\r', cls: 'accent-blue' },
+  { label: '\ud83d\udcce \u4e0a\u4f20', send: '__upload__' },
+  { label: 'Tab', send: '\x09' },
+  { label: 'C-d', send: '\x04' },
+];
+
 var _drawerDefaultCommands = [
   { label: '/compact', send: '/compact\r' },
   { label: '/clear', send: '/clear\r' },
@@ -91,6 +98,18 @@ var _drawerDefaultTemplates = [
   { label: '\u8bf7\u89e3\u91ca\u8fd9\u6bb5\u4ee3\u7801\u7684\u4f5c\u7528', send: '\u8bf7\u89e3\u91ca\u8fd9\u6bb5\u4ee3\u7801\u7684\u4f5c\u7528\r' },
   { label: '\u8bb0\u5f55\u5de5\u4f5c\u65e5\u5fd7', send: '\u8bb0\u5f55\u5de5\u4f5c\u65e5\u5fd7\r' },
 ];
+
+function _loadDrawerQuickKeys() {
+  try {
+    var s = localStorage.getItem('fab-drawer-quickkeys');
+    if (s) return JSON.parse(s);
+  } catch (_e) { /* ignore */ }
+  return _drawerDefaultQuickKeys.map(function (k) { return Object.assign({}, k); });
+}
+
+function _saveDrawerQuickKeys(keys) {
+  localStorage.setItem('fab-drawer-quickkeys', JSON.stringify(keys));
+}
 
 function _loadDrawerCommands() {
   try {
@@ -350,8 +369,10 @@ function _createFabPanel(container) {
   });
 
   // -- Drawer --
+  var drawerQuickKeys = _loadDrawerQuickKeys();
   var drawerCommands = _loadDrawerCommands();
   var drawerTemplates = _loadDrawerTemplates();
+  var g1grid = null;
   var drawerOpen = false;
 
   var backdropEl = document.createElement('div');
@@ -487,6 +508,63 @@ function _createFabPanel(container) {
     return group;
   }
 
+  // -- Quick key customization --
+  function _addQuickKey() {
+    _showDrawerModal(
+      '\u6dfb\u52a0\u5feb\u6377\u952e',
+      '\u663e\u793a\u540d\u79f0', '',
+      '\u53d1\u9001\u5185\u5bb9', '',
+      function () {
+        var label = dModalInput1.value.trim();
+        var send = dModalInput2.value.trim();
+        if (!label) return;
+        if (!send) send = label + '\r';
+        drawerQuickKeys.push({ label: label, send: _parseEscape(send) });
+        _saveDrawerQuickKeys(drawerQuickKeys);
+        renderDrawer();
+      }
+    );
+  }
+
+  function _editQuickKeys() {
+    var btns = g1grid.querySelectorAll('.fab-drawer-btn:not(.add-chip)');
+    var isEditing = btns.length > 0 && btns[0].querySelector('.chip-delete');
+    if (isEditing) {
+      renderDrawer();
+      return;
+    }
+    btns.forEach(function (btn) {
+      var idx = +btn.dataset.idx;
+      if (isNaN(idx)) return;
+      var del = document.createElement('span');
+      del.className = 'chip-delete';
+      del.textContent = '\u00d7';
+      del.addEventListener('click', function (e) {
+        e.stopPropagation();
+        drawerQuickKeys.splice(idx, 1);
+        _saveDrawerQuickKeys(drawerQuickKeys);
+        renderDrawer();
+      });
+      btn.appendChild(del);
+      btn.classList.add('editing');
+      btn.onclick = function (e) {
+        e.stopPropagation();
+        var k = drawerQuickKeys[idx];
+        _showDrawerModal(
+          '\u7f16\u8f91\u5feb\u6377\u952e',
+          '\u663e\u793a\u540d\u79f0', k.label,
+          '\u53d1\u9001\u5185\u5bb9', _displayEscape(k.send),
+          function () {
+            k.label = dModalInput1.value.trim() || k.label;
+            k.send = _parseEscape(dModalInput2.value.trim()) || k.send;
+            _saveDrawerQuickKeys(drawerQuickKeys);
+            renderDrawer();
+          }
+        );
+      };
+    });
+  }
+
   // -- Slash command customization --
   function _addSlashCommand() {
     _showDrawerModal(
@@ -602,22 +680,22 @@ function _createFabPanel(container) {
     drawerEl.appendChild(body);
 
     // Group 1: Quick Actions
-    var g1 = _createDrawerGroup(body, '\u5feb\u901f\u64cd\u4f5c');
-    var g1grid = document.createElement('div');
+    var g1 = _createDrawerGroup(body, '\u5feb\u901f\u64cd\u4f5c', function () { _editQuickKeys(); });
+    g1grid = document.createElement('div');
     g1grid.className = 'fab-drawer-grid';
-    var quickKeys = [
-      { label: 'claude', send: 'claude --allow-dangerously-skip-permissions\r', cls: 'accent-blue' },
-      { label: '\ud83d\udcce \u4e0a\u4f20', send: '__upload__' },
-      { label: 'Tab', send: '\x09' },
-      { label: 'C-d', send: '\x04' },
-    ];
-    quickKeys.forEach(function (k) {
+    drawerQuickKeys.forEach(function (k, i) {
       var btn = document.createElement('button');
       btn.className = 'fab-drawer-btn' + (k.cls ? ' ' + k.cls : '');
       btn.textContent = k.label;
+      btn.dataset.idx = i;
       btn.addEventListener('click', function () { _handleDrawerBtn(k.send); });
       g1grid.appendChild(btn);
     });
+    var addKeyBtn = document.createElement('button');
+    addKeyBtn.className = 'fab-drawer-btn add-chip';
+    addKeyBtn.textContent = '+';
+    addKeyBtn.addEventListener('click', function () { _addQuickKey(); });
+    g1grid.appendChild(addKeyBtn);
     g1.appendChild(g1grid);
 
     // Group 2: Arrow Keys & Editing
@@ -1461,6 +1539,9 @@ function _mountTerminal(termContainer, nozoom) {
 
   term.loadAddon(fitAddon);
   term.loadAddon(webLinksAddon);
+  if (typeof FilePreview !== 'undefined') {
+    FilePreview.registerLinkProvider(term, state.currentPane);
+  }
 
   term.open(termContainer);
 

@@ -3253,3 +3253,102 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 .dh-recent-item {
   transition: background 0.12s;
 }
+
+/* --- File Preview Modal --- */
+@keyframes fpFadeIn { from { opacity: 0; } to { opacity: 1; } }
+.fp-overlay {
+  position: fixed; inset: 0; z-index: 10000;
+  background: rgba(0,0,0,0.6); display: flex;
+  align-items: center; justify-content: center;
+  animation: fpFadeIn 0.15s ease;
+}
+.fp-modal {
+  background: var(--bg-primary); border-radius: 10px;
+  width: 80vw; height: 70vh; display: flex; flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4); overflow: hidden;
+  transition: width 0.2s, height 0.2s;
+}
+.fp-modal.fp-maximized {
+  width: 100vw; height: 100vh; border-radius: 0;
+}
+.fp-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-bottom: 1px solid var(--border-subtle);
+  min-height: 40px; flex-shrink: 0;
+}
+.fp-title {
+  flex: 1; font-size: 0.85rem; font-family: 'JetBrains Mono', monospace;
+  color: var(--text-primary); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fp-actions { display: flex; gap: 4px; }
+.fp-btn {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; padding: 4px 8px; border-radius: 4px;
+  font-size: 1rem; line-height: 1; transition: background 0.15s, color 0.15s;
+}
+.fp-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.fp-btn:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 1px; }
+.fp-body {
+  flex: 1; overflow: auto; padding: 0; position: relative;
+  background: var(--bg-secondary);
+}
+.fp-loading {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; color: var(--text-muted); font-size: 0.9rem;
+}
+.fp-error {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; height: 100%; color: var(--accent-red);
+  font-size: 0.9rem; gap: 12px; padding: 20px; text-align: center;
+}
+.fp-error-download {
+  background: var(--accent-blue); color: #fff; border: none;
+  padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.85rem;
+}
+
+/* Code preview */
+.fp-code-wrap { height: 100%; overflow: auto; }
+.fp-code-wrap pre {
+  margin: 0; padding: 14px; font-size: 0.82rem; line-height: 1.5;
+  font-family: 'JetBrains Mono', monospace; tab-size: 4;
+}
+.fp-code-wrap .fp-line-numbers {
+  float: left; padding-right: 14px; border-right: 1px solid var(--border-subtle);
+  margin-right: 14px; text-align: right; color: var(--text-muted);
+  user-select: none; font-size: 0.82rem; line-height: 1.5;
+}
+
+/* Image preview */
+.fp-image-wrap {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; padding: 20px; overflow: auto;
+}
+.fp-image-wrap img {
+  max-width: 100%; max-height: 100%; object-fit: contain;
+  transition: transform 0.15s; cursor: zoom-in;
+}
+
+/* PDF preview */
+.fp-pdf-wrap { height: 100%; }
+.fp-pdf-wrap iframe { width: 100%; height: 100%; border: none; }
+
+/* Markdown preview */
+.fp-md-wrap {
+  padding: 20px 28px; font-size: 0.9rem; line-height: 1.7;
+  color: var(--text-primary); overflow: auto; height: 100%;
+}
+.fp-md-wrap h1, .fp-md-wrap h2, .fp-md-wrap h3 { margin: 1em 0 0.5em; }
+.fp-md-wrap h1 { font-size: 1.5rem; border-bottom: 1px solid var(--border-subtle); padding-bottom: 6px; }
+.fp-md-wrap h2 { font-size: 1.25rem; }
+.fp-md-wrap h3 { font-size: 1.1rem; }
+.fp-md-wrap pre { background: var(--bg-primary); border-radius: 6px; padding: 12px; overflow-x: auto; }
+.fp-md-wrap code { font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; }
+.fp-md-wrap :not(pre) > code { background: var(--bg-primary); padding: 2px 5px; border-radius: 3px; }
+.fp-md-wrap img { max-width: 100%; border-radius: 6px; }
+.fp-md-wrap table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+.fp-md-wrap th, .fp-md-wrap td { border: 1px solid var(--border-subtle); padding: 6px 10px; text-align: left; }
+.fp-md-wrap th { background: var(--bg-primary); }
+.fp-md-wrap blockquote { border-left: 3px solid var(--accent-blue); margin: 1em 0; padding: 4px 16px; color: var(--text-muted); }
+.fp-md-wrap a { color: var(--accent-blue); }
+.fp-md-wrap .katex-display { overflow-x: auto; padding: 4px 0; }

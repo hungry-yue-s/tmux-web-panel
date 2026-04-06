@@ -21,6 +21,7 @@ import sessionsRouter from './api/sessions.js';
 import windowsRouter from './api/windows.js';
 import { nestedPanesRouter, flatPanesRouter } from './api/panes.js';
 import { createUploadRouter } from './api/upload.js';
+import { createFilesRouter } from './api/files.js';
 
 // --- CLI Argument Parsing ---
 
@@ -148,6 +149,7 @@ app.use('/api/panes', flatPanesRouter);
 
 // File upload (uses /tmp — cleaned by OS on reboot)
 app.use('/api/upload', createUploadRouter('/tmp/tmux-web-panel-uploads'));
+app.use('/api/files', createFilesRouter());
 
 // --- HTTP(S) + WebSocket Server ---
 
