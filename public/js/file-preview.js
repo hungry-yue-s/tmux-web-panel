@@ -401,10 +401,15 @@ var FilePreview = (function () {
 
     var _authHeaders = typeof Auth !== 'undefined' ? Auth.headers() : {};
     var _tokenQs = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
+    console.log('[FilePreview] openFile:', filePath, 'paneId:', paneId, 'authKeys:', Object.keys(_authHeaders), 'url:', '/api/files/info' + qs);
 
     fetch('/api/files/info' + qs, { headers: _authHeaders })
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (r.status === 401) { close(); return null; }
+        return r.json();
+      })
       .then(function (res) {
+        if (!res) return;
         if (!res.success) {
           if (res.error === 'File not found') { close(); return; }
           var errorAbsPath = (res.data && res.data.absPath) ? res.data.absPath : null;
