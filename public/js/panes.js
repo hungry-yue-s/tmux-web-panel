@@ -97,7 +97,7 @@ function renderPanePills(container, panes, activePaneId, onPaneClick) {
   panes.forEach(function (p) {
     var pill = document.createElement('button');
     pill.className = 'pane-pill' + (p.id === activePaneId ? ' active' : '');
-    pill.textContent = 'P' + p.index + ' ' + (p.command || '');
+    pill.textContent = p.index;
     pill.setAttribute('data-pane-id', p.id);
 
     pill.addEventListener('click', function (e) {
