@@ -77,22 +77,29 @@ function getSizeLimit(info) {
 }
 
 async function validateFilePath(rawPath, allowedRoots) {
-  const resolved = resolve(rawPath);
-  let realPath;
-  try {
-    realPath = await realpath(resolved);
-  } catch {
-    return { error: 'File not found', status: 404 };
-  }
+  // Resolve the input path WITHOUT following symlinks.
+  // This is the "link path" — if it lives in allowedRoots, user has
+  // legitimate access to click it, even if the symlink target is elsewhere.
+  const linkPath = resolve(rawPath);
 
   const inAllowedRoot = allowedRoots.some(
-    (root) => realPath === root || realPath.startsWith(root + '/')
+    (root) => linkPath === root || linkPath.startsWith(root + '/')
   );
   if (!inAllowedRoot) {
     return { error: 'Access denied', status: 403 };
   }
 
-  if (SENSITIVE_PATTERNS.some((p) => p.test(realPath))) {
+  // Resolve symlinks for the actual file access. The target may live outside
+  // allowedRoots (that's the point of symlink support). Sensitive path
+  // blacklist still applies to both the link path and the real target.
+  let realPath;
+  try {
+    realPath = await realpath(linkPath);
+  } catch {
+    return { error: 'File not found', status: 404 };
+  }
+
+  if (SENSITIVE_PATTERNS.some((p) => p.test(linkPath) || p.test(realPath))) {
     return { error: 'Access denied', status: 403 };
   }
 
@@ -112,11 +119,14 @@ async function validateFilePath(rawPath, allowedRoots) {
     return {
       error: `File too large (${(fileStat.size / 1024 / 1024).toFixed(1)}MB, max ${limit / 1024 / 1024}MB)`,
       status: 413,
-      info: { ...info, absPath: realPath, size: fileStat.size },
+      info: { ...info, absPath: linkPath, size: fileStat.size },
     };
   }
 
-  return { ok: true, absPath: realPath, size: fileStat.size, info };
+  // Return the link path (not realPath) as absPath so subsequent calls
+  // (content/raw endpoints) use the same identifier. realpath is resolved
+  // again inside those endpoints.
+  return { ok: true, absPath: linkPath, size: fileStat.size, info };
 }
 
 async function getPaneCwd(paneId) {
