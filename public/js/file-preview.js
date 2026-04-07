@@ -322,7 +322,7 @@ var FilePreview = (function () {
   // Allowed preceding chars: whitespace, =, (, [, {, etc.
   // Disallowed: word chars (\w), -, :, /, . (which would mean we're in the
   // middle of something).
-  var NOT_PREFIX = "(?<![\\w\\-:\\/\\.])";
+  var NOT_PREFIX = "(?<![\\w\\-:\\/\\.~])";
 
   // Path body: exclude terminators and all CJK/full-width chars to prevent
   // paths from extending into Chinese text.
