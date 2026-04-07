@@ -47,7 +47,13 @@
       });
 
       var fitAddon = new FitAddon.FitAddon();
-      var webLinksAddon = new WebLinksAddon.WebLinksAddon();
+      // Custom URL regex: excludes CJK chars (default regex has this bug)
+      var _CJK = "\\u3000-\\u303f\\u4e00-\\u9fff\\uff00-\\uffef\\u2000-\\u206f";
+      var _urlRegex = new RegExp(
+        "(https?|HTTPS?):[/]{2}[^\\s\"'!*(){}|\\\\\\^<>`" + _CJK + "]*" +
+        "[^\\s\"':,.!?{}|\\\\\\^~\\[\\]`()<>" + _CJK + "]"
+      );
+      var webLinksAddon = new WebLinksAddon.WebLinksAddon(undefined, { urlRegex: _urlRegex });
 
       term.loadAddon(fitAddon);
       term.loadAddon(webLinksAddon);

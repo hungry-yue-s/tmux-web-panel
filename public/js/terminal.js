@@ -1535,7 +1535,15 @@ function _mountTerminal(termContainer, nozoom) {
   var paneRows = nozoom ? null : (currentPane ? currentPane.height : null);
   var term = createTerminalInstance(paneCols, paneRows);
   var fitAddon = new FitAddon.FitAddon();
-  var webLinksAddon = new WebLinksAddon.WebLinksAddon();
+  // Custom URL regex: same as WebLinksAddon default but excludes CJK
+  // characters and full-width punctuation, which the default regex
+  // incorrectly includes (causing URL highlight to extend into Chinese).
+  var _CJK = "\\u3000-\\u303f\\u4e00-\\u9fff\\uff00-\\uffef\\u2000-\\u206f";
+  var _urlRegex = new RegExp(
+    "(https?|HTTPS?):[/]{2}[^\\s\"'!*(){}|\\\\\\^<>`" + _CJK + "]*" +
+    "[^\\s\"':,.!?{}|\\\\\\^~\\[\\]`()<>" + _CJK + "]"
+  );
+  var webLinksAddon = new WebLinksAddon.WebLinksAddon(undefined, { urlRegex: _urlRegex });
 
   term.loadAddon(fitAddon);
   term.loadAddon(webLinksAddon);
