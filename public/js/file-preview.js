@@ -317,60 +317,63 @@ var FilePreview = (function () {
 
   // --- Path detection ---
 
-  // Path body: exclude whitespace, quotes, brackets, separators, AND all
-  // CJK characters, full-width punctuation, and common Unicode punctuation.
-  // This prevents paths from extending into Chinese text or full-width parens.
-  // Excluded ranges:
+  // A path must not be preceded by a "path-continuation" character that
+  // would indicate it's part of a larger token (like a URL or word).
+  // Allowed preceding chars: whitespace, =, (, [, {, etc.
+  // Disallowed: word chars (\w), -, :, /, . (which would mean we're in the
+  // middle of something).
+  var NOT_PREFIX = "(?<![\\w\\-:\\/\\.])";
+
+  // Path body: exclude terminators and all CJK/full-width chars to prevent
+  // paths from extending into Chinese text.
   //   \u3000-\u303f  CJK symbols and punctuation (。、「」 etc.)
   //   \u4e00-\u9fff  CJK Unified Ideographs
-  //   \uff00-\uffef  Halfwidth/fullwidth forms (（）! etc.)
+  //   \uff00-\uffef  Halfwidth/fullwidth forms (（）)
   //   \u2000-\u206f  General punctuation
-  var PATH_BODY = "[^\\s'\")\\]:;,>\\u3000-\\u303f\\u4e00-\\u9fff\\uff00-\\uffef\\u2000-\\u206f]";
-  var ABS_RE = new RegExp("(^|[\\s])(\\/" + PATH_BODY + "+)", "g");
-  var REL_RE = new RegExp("(^|[\\s])(\\.\\.?\\/" + PATH_BODY + "+)", "g");
-  // Bare relative paths: word/word... containing at least one / (e.g. public/css/style.css)
-  var BARE_RE = new RegExp("(^|[\\s])([a-zA-Z0-9_\\-]" + PATH_BODY + "*\\/" + PATH_BODY + "+)", "g");
+  // Also exclude =, ?, #, &, @ which commonly indicate URL query/params.
+  var PATH_BODY = "[^\\s'\"()\\[\\]{}<>:;,?#&@=\\u3000-\\u303f\\u4e00-\\u9fff\\uff00-\\uffef\\u2000-\\u206f]";
+
+  // Absolute: /path (preceded by non-path-char; handles "file=/path", "(/path" etc.)
+  var ABS_RE = new RegExp(NOT_PREFIX + "\\/" + PATH_BODY + "+(?:\\/" + PATH_BODY + "+)*", "g");
+  // Home: ~/path or ~user/path
+  var TILDE_RE = new RegExp(NOT_PREFIX + "~[a-zA-Z0-9_\\-]*\\/" + PATH_BODY + "+(?:\\/" + PATH_BODY + "+)*", "g");
+  // Dot relative: ./path or ../path
+  var REL_RE = new RegExp(NOT_PREFIX + "\\.\\.?\\/" + PATH_BODY + "+(?:\\/" + PATH_BODY + "+)*", "g");
+  // Bare relative: word/word/... (at least one slash segment)
+  var BARE_RE = new RegExp(NOT_PREFIX + "[a-zA-Z0-9_\\-]+(?:\\/" + PATH_BODY + "+)+", "g");
+
+  function _runRegex(line, re, minLen, matches, seen) {
+    re.lastIndex = 0;
+    var m;
+    while ((m = re.exec(line)) !== null) {
+      var raw = m[0];
+      // Strip trailing punctuation that shouldn't be part of the path
+      var trimmed = raw.replace(/[.,;:!?)>\]}]+$/, '');
+      if (trimmed.length < minLen) continue;
+      if (trimmed.indexOf('/') === -1) continue;
+      var startCol = m.index;
+      var endCol = startCol + trimmed.length;
+      if (seen[startCol]) continue;
+      // Check overlap with existing matches: skip if contained in one
+      var overlap = false;
+      for (var i = 0; i < matches.length; i++) {
+        var ex = matches[i];
+        if (startCol >= ex.startCol && endCol <= ex.endCol) { overlap = true; break; }
+      }
+      if (overlap) continue;
+      matches.push({ text: trimmed, startCol: startCol, endCol: endCol });
+      seen[startCol] = true;
+    }
+  }
 
   function _findLinks(line) {
     var matches = [];
-    var seen = {}; // dedupe by startCol
-    var m;
-    ABS_RE.lastIndex = 0;
-    while ((m = ABS_RE.exec(line)) !== null) {
-      var path = m[2].replace(/[.,;:)>\]]+$/, '');
-      var before = line.substring(0, m.index + m[1].length);
-      if (/:\/{2}[^\s]*$/.test(before)) continue;
-      if (path.length < 2 || path === '/') continue;
-      var startCol = m.index + m[1].length;
-      matches.push({ text: path, startCol: startCol, endCol: startCol + path.length });
-      seen[startCol] = true;
-    }
-    REL_RE.lastIndex = 0;
-    while ((m = REL_RE.exec(line)) !== null) {
-      var path2 = m[2].replace(/[.,;:)>\]]+$/, '');
-      var before2 = line.substring(0, m.index + m[1].length);
-      if (/:\/{2}[^\s]*$/.test(before2)) continue;
-      if (path2.length < 3) continue;
-      var startCol2 = m.index + m[1].length;
-      if (!seen[startCol2]) {
-        matches.push({ text: path2, startCol: startCol2, endCol: startCol2 + path2.length });
-        seen[startCol2] = true;
-      }
-    }
-    BARE_RE.lastIndex = 0;
-    while ((m = BARE_RE.exec(line)) !== null) {
-      var path3 = m[2].replace(/[.,;:)>\]]+$/, '');
-      var before3 = line.substring(0, m.index + m[1].length);
-      if (/:\/{2}[^\s]*$/.test(before3)) continue;
-      // Must contain at least one / after trimming
-      if (path3.indexOf('/') === -1) continue;
-      if (path3.length < 3) continue;
-      var startCol3 = m.index + m[1].length;
-      if (!seen[startCol3]) {
-        matches.push({ text: path3, startCol: startCol3, endCol: startCol3 + path3.length });
-        seen[startCol3] = true;
-      }
-    }
+    var seen = {};
+    // Order matters: more specific patterns first
+    _runRegex(line, ABS_RE, 2, matches, seen);
+    _runRegex(line, TILDE_RE, 3, matches, seen);
+    _runRegex(line, REL_RE, 3, matches, seen);
+    _runRegex(line, BARE_RE, 3, matches, seen);
     return matches;
   }
 

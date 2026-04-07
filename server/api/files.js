@@ -145,7 +145,13 @@ export function createFilesRouter(allowedRoots) {
       }
 
       let absPath = rawPath;
-      if (!rawPath.startsWith('/')) {
+      if (rawPath.startsWith('~')) {
+        // ~/foo → $HOME/foo, ~user/foo → /home/user/foo (basic support)
+        if (rawPath === '~' || rawPath.startsWith('~/')) {
+          absPath = homedir() + rawPath.slice(1);
+        }
+        // ~user/... not supported, leave as-is (will fail validation)
+      } else if (!rawPath.startsWith('/')) {
         const cwd = await getPaneCwd(paneId || '');
         absPath = resolve(cwd, rawPath);
       }
