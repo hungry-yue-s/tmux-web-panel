@@ -368,37 +368,53 @@ var FilePreview = (function () {
   // --- Wrapped line helpers ---
 
   // Collect a logical line by merging wrapped buffer lines.
-  // Returns { text, startRow, rows } where startRow is the first
-  // buffer row index and rows is the count of physical rows merged.
+  // Returns { text, startRow, rows } where rows is an array of
+  // { line, row, strStart, strLen } for each physical row.
   function _getLogicalLine(buffer, bufRow) {
-    // Walk backward to find the start of this logical line
     var startRow = bufRow;
     while (startRow > 0) {
       var prev = buffer.getLine(startRow);
       if (!prev || !prev.isWrapped) break;
       startRow--;
     }
-    // Walk forward to collect all wrapped continuations
     var text = '';
+    var rows = [];
     var row = startRow;
-    var totalRows = 0;
     while (row < buffer.length) {
       var ln = buffer.getLine(row);
       if (!ln) break;
       if (row > startRow && !ln.isWrapped) break;
-      text += ln.translateToString();
-      totalRows++;
+      var rowText = ln.translateToString(false);
+      rows.push({ line: ln, row: row, strStart: text.length, strLen: rowText.length });
+      text += rowText;
       row++;
     }
-    return { text: text, startRow: startRow, rows: totalRows };
+    return { text: text, startRow: startRow, rows: rows };
   }
 
-  // Convert a column offset in the merged logical line back to
-  // { y (1-based lineNumber), x (1-based column) } in the terminal viewport.
-  function _logicalColToTermPos(startRow, col, cols) {
-    var rowOffset = Math.floor(col / cols);
-    var colInRow = col % cols;
-    return { y: startRow + rowOffset + 1, x: colInRow + 1 };
+  // Convert a string offset in the merged logical line to { y (1-based
+  // lineNumber), x (1-based terminal column) }, correctly handling wide
+  // (CJK) characters by walking cells.
+  function _logicalStrOffsetToTermPos(rows, strOffset) {
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (strOffset < r.strStart + r.strLen || i === rows.length - 1) {
+        var strInRow = Math.max(0, Math.min(strOffset - r.strStart, r.strLen));
+        // Walk cells to find terminal column for strInRow-th character
+        var col = 0;
+        var chars = 0;
+        var lineLen = r.line.length;
+        while (chars < strInRow && col < lineLen) {
+          var cell = r.line.getCell(col);
+          var w = cell ? (cell.getWidth() || 1) : 1;
+          col += w;
+          chars++;
+        }
+        return { y: r.row + 1, x: col + 1 };
+      }
+    }
+    var last = rows[rows.length - 1];
+    return { y: last.row + 1, x: last.line.length + 1 };
   }
 
   // --- Link Provider ---
@@ -412,17 +428,11 @@ var FilePreview = (function () {
         var found = _findLinks(logical.text);
         if (found.length === 0) return callback(undefined);
 
-        var cols = term.cols;
         var links = found.map(function (f) {
-          var start = _logicalColToTermPos(logical.startRow, f.startCol, cols);
-          var end = _logicalColToTermPos(logical.startRow, f.endCol - 1, cols);
-          // Only return links that touch the requested lineNumber
-          // (xterm calls provideLinks per visible row)
+          var start = _logicalStrOffsetToTermPos(logical.rows, f.startCol);
+          var end = _logicalStrOffsetToTermPos(logical.rows, f.endCol);
           return {
-            range: {
-              start: start,
-              end: { y: end.y, x: end.x + 1 },
-            },
+            range: { start: start, end: { y: end.y, x: Math.max(end.x - 1, start.x) } },
             text: f.text,
             activate: function () { openFile(f.text, paneId); },
           };
@@ -497,23 +507,48 @@ var FilePreview = (function () {
       .catch(function (err) { _showError(body, err.message); });
   }
 
-  // Check if a column position in a line of text falls on a file path.
-  // term and viewportRow are optional; when provided, uses logical line merging.
+  // Convert a terminal (bufRow, termCol) position to a string offset in
+  // the merged logical line. Walks cells to skip wide-char placeholders.
+  function _termPosToLogicalStrOffset(logical, bufRow, termCol) {
+    for (var i = 0; i < logical.rows.length; i++) {
+      var r = logical.rows[i];
+      if (r.row !== bufRow) continue;
+      // Walk cells on this row up to termCol, counting characters
+      var col = 0;
+      var chars = 0;
+      var lineLen = r.line.length;
+      while (col < termCol && col < lineLen) {
+        var cell = r.line.getCell(col);
+        var w = cell ? (cell.getWidth() || 1) : 1;
+        col += w;
+        chars++;
+      }
+      return r.strStart + chars;
+    }
+    return -1;
+  }
+
+  // Check if a position falls on a file path.
+  // For mobile: pass term + viewportRow to enable wrapped line detection.
   function hitTest(lineText, col, term, viewportRow) {
-    var text = lineText;
-    var adjustedCol = col;
     if (term && viewportRow !== undefined) {
       var bufRow = term.buffer.active.viewportY + viewportRow;
       var logical = _getLogicalLine(term.buffer.active, bufRow);
-      text = logical.text;
-      // Adjust col: offset by how many rows before this one in the logical line
-      var rowsBeforeThis = bufRow - logical.startRow;
-      adjustedCol = rowsBeforeThis * term.cols + col;
+      var strOffset = _termPosToLogicalStrOffset(logical, bufRow, col);
+      if (strOffset < 0) return null;
+      var links = _findLinks(logical.text);
+      for (var i = 0; i < links.length; i++) {
+        if (strOffset >= links[i].startCol && strOffset < links[i].endCol) {
+          return links[i].text;
+        }
+      }
+      return null;
     }
-    var links = _findLinks(text);
-    for (var i = 0; i < links.length; i++) {
-      if (adjustedCol >= links[i].startCol && adjustedCol < links[i].endCol) {
-        return links[i].text;
+    // Fallback: single-line hit test
+    var simpleLinks = _findLinks(lineText);
+    for (var j = 0; j < simpleLinks.length; j++) {
+      if (col >= simpleLinks[j].startCol && col < simpleLinks[j].endCol) {
+        return simpleLinks[j].text;
       }
     }
     return null;
