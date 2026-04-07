@@ -341,16 +341,24 @@ var FilePreview = (function () {
   var REL_RE = new RegExp(NOT_PREFIX + "\\.\\.?\\/" + PATH_BODY + "+(?:\\/" + PATH_BODY + "+)*", "g");
   // Bare relative: word/word/... (at least one slash segment)
   var BARE_RE = new RegExp(NOT_PREFIX + "[a-zA-Z0-9_\\-]+(?:\\/" + PATH_BODY + "+)+", "g");
+  // Bare filename: name.ext where ext is 1-6 lowercase letters/digits
+  // (e.g. README.md, index.js, package.json). Starts with letter to avoid
+  // matching IPs (192.168...) and version numbers (1.0.0).
+  var BARE_FILE_RE = new RegExp(NOT_PREFIX + "[a-zA-Z][\\w\\-]*(?:\\.[\\w\\-]+)*\\.[a-z][a-z0-9]{0,5}(?![\\w\\-\\/.])", "g");
 
-  function _runRegex(line, re, minLen, matches, seen) {
+  function _runRegex(line, re, minLen, matches, seen, allowNoSlash) {
     re.lastIndex = 0;
     var m;
     while ((m = re.exec(line)) !== null) {
       var raw = m[0];
-      // Strip trailing punctuation that shouldn't be part of the path
-      var trimmed = raw.replace(/[.,;:!?)>\]}]+$/, '');
+      // For bare-file matches, don't strip trailing dots (they may be part
+      // of an extension); for path-style matches, strip common trailing
+      // punctuation that's likely sentence punctuation, not path content.
+      var trimmed = allowNoSlash
+        ? raw.replace(/[,;:!?)>\]}]+$/, '')
+        : raw.replace(/[.,;:!?)>\]}]+$/, '');
       if (trimmed.length < minLen) continue;
-      if (trimmed.indexOf('/') === -1) continue;
+      if (!allowNoSlash && trimmed.indexOf('/') === -1) continue;
       var startCol = m.index;
       var endCol = startCol + trimmed.length;
       if (seen[startCol]) continue;
@@ -374,6 +382,7 @@ var FilePreview = (function () {
     _runRegex(line, TILDE_RE, 3, matches, seen);
     _runRegex(line, REL_RE, 3, matches, seen);
     _runRegex(line, BARE_RE, 3, matches, seen);
+    _runRegex(line, BARE_FILE_RE, 3, matches, seen, true);
     return matches;
   }
 
