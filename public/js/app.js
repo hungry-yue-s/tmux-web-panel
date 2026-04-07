@@ -320,6 +320,9 @@ function render() {
     case 'more':
       renderMore(content);
       break;
+    case 'perf':
+      renderPerf(content);
+      break;
     case 'notifications':
       if (typeof NotificationPanel !== 'undefined') NotificationPanel.render();
       break;
@@ -367,6 +370,10 @@ function renderDesktopHome(container) {
     html += '</div>';
   }
 
+  html += '<div class="dh-divider"></div>';
+  html += '<div class="dh-section-label">机器与窗口性能</div>';
+  html += PerfPanel.renderSkeleton();
+
   html += '<div class="dh-tips">';
   html += '<span><span class="dh-tip-key">⌘K</span> 命令面板</span>';
   html += '<span><span class="dh-tip-key">右键</span> 操作菜单</span>';
@@ -375,6 +382,8 @@ function renderDesktopHome(container) {
   html += '</div>';
   html += '</div></div>';
   container.innerHTML = html;
+
+  PerfPanel.start();
 
   // Bind new session button
   var newSessionBtn = document.getElementById('dh-new-session');
@@ -447,6 +456,24 @@ function _relativeTimeShort(ts) {
 
 // renderTerminal is defined in terminal.js
 
+function renderPerf(container) {
+  var html = '<div class="perf-view">';
+  html += '<div class="perf-view-header">';
+  html += '<button class="perf-back-btn" id="perf-back">&larr; 返回</button>';
+  html += '<div class="perf-view-title">性能监控</div>';
+  html += '</div>';
+  html += PerfPanel.renderSkeleton();
+  html += '</div>';
+  container.innerHTML = html;
+
+  PerfPanel.start();
+
+  var backBtn = document.getElementById('perf-back');
+  if (backBtn) {
+    backBtn.addEventListener('click', function () { navigate('more'); });
+  }
+}
+
 function renderMore(container) {
   var isConnected = statusSocket.connected;
   var lastStatus = statusSocket.getLastStatus();
@@ -475,6 +502,14 @@ function renderMore(container) {
   html += '<span class="more-status-label">Host</span>';
   html += '<span class="more-status-value">' + escapeHtml(location.host) + '</span>';
   html += '</div>';
+  html += '</div>';
+  html += '</div>';
+
+  // Performance Monitor entry
+  html += '<div class="more-section">';
+  html += '<div class="more-section-title">Performance</div>';
+  html += '<div class="card more-status-card">';
+  html += '<button id="btn-open-perf" class="more-action-btn">📊 性能监控（机器与窗口）</button>';
   html += '</div>';
   html += '</div>';
 
@@ -543,6 +578,12 @@ function renderMore(container) {
   var logoutBtn = document.getElementById('btn-logout');
   if (logoutBtn) {
     logoutBtn.addEventListener('click', function () { Auth.logout(); });
+  }
+
+  // Bind perf entry
+  var perfBtn = document.getElementById('btn-open-perf');
+  if (perfBtn) {
+    perfBtn.addEventListener('click', function () { navigate('perf'); });
   }
 
   // Bind theme cards

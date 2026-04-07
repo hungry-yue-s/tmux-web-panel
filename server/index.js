@@ -22,6 +22,8 @@ import windowsRouter from './api/windows.js';
 import { nestedPanesRouter, flatPanesRouter } from './api/panes.js';
 import { createUploadRouter } from './api/upload.js';
 import { createFilesRouter } from './api/files.js';
+import systemStatsRouter from './api/system-stats.js';
+import windowStatsRouter from './api/window-stats.js';
 
 // --- CLI Argument Parsing ---
 
@@ -146,6 +148,8 @@ app.use('/api/sessions', sessionsRouter);
 app.use('/api/sessions/:name/windows', windowsRouter);
 app.use('/api/sessions/:name/windows/:index/panes', nestedPanesRouter);
 app.use('/api/panes', flatPanesRouter);
+app.use('/api/system-stats', systemStatsRouter);
+app.use('/api/window-stats', windowStatsRouter);
 
 // File upload (uses /tmp — cleaned by OS on reboot)
 app.use('/api/upload', createUploadRouter('/tmp/tmux-web-panel-uploads'));
