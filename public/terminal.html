@@ -121,9 +121,16 @@
         }
       });
 
-      // Auto-resize
+      // Auto-resize. Guard against ResizeObserver re-firing on selection-
+      // induced sub-tree layout changes: only send `resize` when cols/rows
+      // actually changed, otherwise tmux pushes a full redraw and the
+      // in-progress text selection gets cleared mid-drag.
+      var _lastCols = 0, _lastRows = 0;
       var resizeObserver = new ResizeObserver(function () {
         fitAddon.fit();
+        if (term.cols === _lastCols && term.rows === _lastRows) return;
+        _lastCols = term.cols;
+        _lastRows = term.rows;
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
         }
