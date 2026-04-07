@@ -317,10 +317,19 @@ var FilePreview = (function () {
 
   // --- Path detection ---
 
-  var ABS_RE = /(^|[\s])(\/[^\s'")\]:;,>]+)/g;
-  var REL_RE = /(^|[\s])(\.\.?\/[^\s'")\]:;,>]+)/g;
+  // Path body: exclude whitespace, quotes, brackets, separators, AND all
+  // CJK characters, full-width punctuation, and common Unicode punctuation.
+  // This prevents paths from extending into Chinese text or full-width parens.
+  // Excluded ranges:
+  //   \u3000-\u303f  CJK symbols and punctuation (。、「」 etc.)
+  //   \u4e00-\u9fff  CJK Unified Ideographs
+  //   \uff00-\uffef  Halfwidth/fullwidth forms (（）! etc.)
+  //   \u2000-\u206f  General punctuation
+  var PATH_BODY = "[^\\s'\")\\]:;,>\\u3000-\\u303f\\u4e00-\\u9fff\\uff00-\\uffef\\u2000-\\u206f]";
+  var ABS_RE = new RegExp("(^|[\\s])(\\/" + PATH_BODY + "+)", "g");
+  var REL_RE = new RegExp("(^|[\\s])(\\.\\.?\\/" + PATH_BODY + "+)", "g");
   // Bare relative paths: word/word... containing at least one / (e.g. public/css/style.css)
-  var BARE_RE = /(^|[\s])([a-zA-Z0-9_\-][^\s'")\]:;,>]*\/[^\s'")\]:;,>]+)/g;
+  var BARE_RE = new RegExp("(^|[\\s])([a-zA-Z0-9_\\-]" + PATH_BODY + "*\\/" + PATH_BODY + "+)", "g");
 
   function _findLinks(line) {
     var matches = [];
@@ -428,6 +437,10 @@ var FilePreview = (function () {
         var found = _findLinks(logical.text);
         if (found.length === 0) return callback(undefined);
 
+        if (window._FP_DEBUG) {
+          console.log('[FP] line', lineNumber, 'text=', JSON.stringify(logical.text), 'matches=', found);
+        }
+
         var links = found.map(function (f) {
           var start = _logicalStrOffsetToTermPos(logical.rows, f.startCol);
           var end = _logicalStrOffsetToTermPos(logical.rows, f.endCol);
@@ -439,6 +452,12 @@ var FilePreview = (function () {
         }).filter(function (link) {
           return link.range.start.y <= lineNumber && link.range.end.y >= lineNumber;
         });
+
+        if (window._FP_DEBUG && links.length > 0) {
+          console.log('[FP] returning links for line', lineNumber, links.map(function(l) {
+            return { text: l.text, range: l.range };
+          }));
+        }
 
         callback(links.length > 0 ? links : undefined);
       },
