@@ -3,6 +3,7 @@ import { createServer as createSecureServer } from 'node:https';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import {
@@ -153,7 +154,7 @@ app.use('/api/window-stats', windowStatsRouter);
 
 // File upload (uses /tmp — cleaned by OS on reboot)
 app.use('/api/upload', createUploadRouter('/tmp/tmux-web-panel-uploads'));
-app.use('/api/files', createFilesRouter());
+app.use('/api/files', createFilesRouter([homedir(), '/tmp']));
 
 // --- HTTP(S) + WebSocket Server ---
 
