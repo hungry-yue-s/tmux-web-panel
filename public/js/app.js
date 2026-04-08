@@ -340,46 +340,50 @@ function renderDesktopHome(container) {
   var pc = _getTotalPaneCount();
   var recent = _recentWindows.get();
 
-  var html = '<div class="desktop-home"><div class="desktop-home-inner">';
-  html += '<div class="dh-grid-stats">';
-  html += '<div class="dh-stat-card"><div class="dh-stat-card-num dh-blue">' + sc + '</div><div class="dh-stat-card-label">Sessions</div></div>';
-  html += '<div class="dh-stat-card"><div class="dh-stat-card-num dh-green">' + wc + '</div><div class="dh-stat-card-label">Windows</div></div>';
-  html += '<div class="dh-stat-card"><div class="dh-stat-card-num dh-purple">' + pc + '</div><div class="dh-stat-card-label">Panes</div></div>';
+  var html = '<div class="desktop-home"><div class="desktop-home-inner dh-layout">';
+
+  // === LEFT COLUMN: stats + actions + recent ===
+  html += '<aside class="dh-side">';
+  html += '<div class="dh-stats-row">';
+  html += '<div class="dh-stat-mini"><span class="dh-stat-mini-num dh-blue">' + sc + '</span><span class="dh-stat-mini-label">SESS</span></div>';
+  html += '<div class="dh-stat-mini"><span class="dh-stat-mini-num dh-green">' + wc + '</span><span class="dh-stat-mini-label">WIN</span></div>';
+  html += '<div class="dh-stat-mini"><span class="dh-stat-mini-num dh-purple">' + pc + '</span><span class="dh-stat-mini-label">PANE</span></div>';
   html += '</div>';
-  html += '<div class="dh-actions">';
+  html += '<div class="dh-actions dh-actions-side">';
   html += '<button class="dh-btn dh-btn-primary" id="dh-new-session">＋ Session</button>';
   html += '<button class="dh-btn dh-btn-secondary" id="dh-new-window">◫ Window</button>';
   html += '</div>';
 
-  if (recent.length > 0) {
-    html += '<div class="dh-divider"></div>';
-    html += '<div class="dh-section-label">最近访问</div>';
-    html += '<div class="dh-recent-list">';
+  html += '<div class="dh-section-label">最近访问</div>';
+  html += '<div class="dh-recent-list">';
+  if (recent.length === 0) {
+    html += '<div class="dh-recent-empty">暂无最近访问</div>';
+  } else {
     var colors = ['var(--accent-blue)', 'var(--accent-green)', 'var(--accent-purple)', 'var(--accent-yellow)'];
     recent.forEach(function (r, i) {
       var color = colors[i % colors.length];
       var timeStr = _relativeTimeShort(r.timestamp);
       html += '<div class="dh-recent-item" data-session="' + escapeHtml(r.session) + '" data-window-index="' + r.windowIndex + '">';
       html += '<div class="dh-recent-bar" style="background:' + color + '"></div>';
-      html += '<div class="dh-recent-body">';
-      html += '<div class="dh-recent-name">' + escapeHtml(r.session) + ' / ' + escapeHtml(r.windowName || 'window ' + r.windowIndex) + '</div>';
-      html += '</div>';
+      html += '<div class="dh-recent-body"><div class="dh-recent-name">' + escapeHtml(r.session) + ' / ' + escapeHtml(r.windowName || 'window ' + r.windowIndex) + '</div></div>';
       html += '<div class="dh-recent-time">' + timeStr + '</div>';
       html += '</div>';
     });
-    html += '</div>';
   }
+  html += '</div>';
 
-  html += '<div class="dh-divider"></div>';
-  html += '<div class="dh-section-label">机器与窗口性能</div>';
-  html += PerfPanel.renderSkeleton();
-
-  html += '<div class="dh-tips">';
+  html += '<div class="dh-tips dh-tips-side">';
   html += '<span><span class="dh-tip-key">⌘K</span> 命令面板</span>';
-  html += '<span><span class="dh-tip-key">右键</span> 操作菜单</span>';
-  html += '<span><span class="dh-tip-key">左滑</span> 移动端</span>';
+  html += '<span><span class="dh-tip-key">右键</span> 菜单</span>';
   html += '<span><span class="dh-tip-key">长按</span> 关闭</span>';
   html += '</div>';
+  html += '</aside>';
+
+  // === RIGHT COLUMN: perf panel ===
+  html += '<main class="dh-main">';
+  html += PerfPanel.renderSkeleton();
+  html += '</main>';
+
   html += '</div></div>';
   container.innerHTML = html;
 

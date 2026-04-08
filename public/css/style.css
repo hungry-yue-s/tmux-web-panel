@@ -1545,16 +1545,84 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 /* === Desktop Home === */
 
 .desktop-home {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
   height: 100%;
   min-height: 300px;
+  overflow: auto;
 }
 
 .desktop-home-inner {
   text-align: center;
 }
+.desktop-home-inner.dh-layout { text-align: left; }
+
+/* === New 2-column home layout === */
+.dh-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 16px;
+  text-align: left;
+  width: 100%;
+  padding: 14px 18px 18px;
+  align-items: start;
+  box-sizing: border-box;
+}
+.dh-side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.dh-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.dh-stats-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.dh-stat-mini {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.dh-stat-mini-num { font-size: 1.4rem; font-weight: 700; }
+.dh-stat-mini-label { font-size: 0.62rem; color: var(--text-muted); letter-spacing: 0.08em; }
+.dh-actions-side { display: flex; gap: 8px; }
+.dh-actions-side .dh-btn { flex: 1; }
+.dh-recent-empty { color: var(--text-muted); font-size: 0.75rem; padding: 8px 4px; }
+.dh-tips-side { flex-wrap: wrap; gap: 8px 12px; font-size: 0.68rem; margin-top: auto; padding-top: 8px; border-top: 1px solid var(--border-color); }
+
+@media (max-width: 900px) {
+  .dh-layout { grid-template-columns: 1fr; }
+}
+
+/* Portrait / tall viewports: put perf first full-width, recent below in grid */
+@media (max-aspect-ratio: 1/1) {
+  .dh-layout { grid-template-columns: 1fr; gap: 22px; }
+  .dh-side { order: 2; }
+  .dh-main { order: 1; }
+  .dh-stats-row { grid-template-columns: repeat(3, minmax(0,1fr)) auto auto; align-items: stretch; }
+  .dh-stats-row .dh-stat-mini { padding: 8px 14px; flex-direction: row; gap: 8px; align-items: baseline; }
+  .dh-stats-row .dh-stat-mini-num { font-size: 1.2rem; }
+  .dh-actions-side { display: contents; }
+  .dh-actions-side .dh-btn { padding: 8px 14px; font-size: 0.78rem; }
+  .dh-recent-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 6px 10px;
+  }
+  .dh-tips-side { border-top: none; padding-top: 0; margin-top: 0; }
+}
+
 
 .desktop-home-icon {
   font-size: 1.4rem;
@@ -3394,12 +3462,12 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 
 /* === Perf panel (D2 design) === */
 .pp-card {
-  max-width: 920px;
-  background: var(--bg-card);
-  border: 1px solid var(--bg-hover);
-  border-radius: 10px;
-  padding: 16px;
-  margin-bottom: 18px;
+  max-width: none;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  margin-bottom: 0;
 }
 .pp-loading { color: var(--text-muted); font-size: 0.9rem; padding: 12px 0; }
 .pp-header {
@@ -3450,6 +3518,22 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 }
 .pp-tm-cell { transition: opacity 0.15s; cursor: pointer; }
 .pp-tm-cell:hover { opacity: 0.85; }
+.pp-tot-sub { color: var(--text-muted); font-size: 0.7rem; font-weight: 400; margin-left: 2px; }
+.pp-membars { width: 100%; height: auto; display: block; margin-bottom: 12px; }
+.pp-mem-legend { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; font-size: 0.7rem; color: var(--text-secondary); }
+.pp-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.pp-swatch { display: inline-block; width: 12px; height: 10px; border-radius: 2px; }
+.pp-swatch-ram { background: #1f2335; border: 1px solid #7aa2f7; }
+.pp-swatch-swap { background: repeating-linear-gradient(45deg, rgba(122,162,247,0.25) 0 3px, rgba(122,162,247,0.7) 3px 5px); border: 1px solid #7aa2f7; }
+.pp-legend-hint { color: var(--text-muted); }
+.pp-dual { display: flex; gap: 12px; margin-bottom: 12px; }
+.pp-dual-col { flex: 1; min-width: 0; }
+.pp-dual-col .pp-treemap { height: 320px; margin-bottom: 0; }
+.pp-dual-title { color: var(--text-secondary); font-size: 0.7rem; margin-bottom: 4px; font-weight: 600; }
+@media (max-width: 600px) {
+  .pp-dual { flex-direction: column; }
+  .pp-dual-col .pp-treemap { height: 240px; }
+}
 
 .pp-strip-label {
   color: var(--text-secondary);
@@ -3459,7 +3543,7 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 }
 .pp-strip {
   width: 100%;
-  height: 100px;
+  height: 140px;
   display: block;
 }
 

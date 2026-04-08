@@ -3,6 +3,7 @@
 var PerfPanel = (function () {
   var POLL_MS = 2000;
   var HISTORY = 40; // ~80s
+  var MAX_ROWS = 15; // top N windows in bar chart; rest aggregated as "others"
   var METRICS = ['cpu', 'mem', 'io'];
   var METRIC_LABEL = { cpu: 'CPU', mem: '内存', io: 'IO' };
 
@@ -160,10 +161,13 @@ var PerfPanel = (function () {
     html += '<div class="pp-host">' + escapeHtml(t.hostname) + '</div>';
     html += '<div class="pp-meta">' + t.cpuCount + ' cores · load ' + t.load1.toFixed(2) + ' · up ' + fmtUptime(t.uptime) + '</div>';
     html += '<div class="pp-totals">';
-    html += '<span class="pp-tot"><span class="pp-tot-l">CPU</span><span class="pp-tot-v">' + t.windowCpuPercent.toFixed(0) + '%</span></span>';
-    html += '<span class="pp-tot"><span class="pp-tot-l">MEM</span><span class="pp-tot-v">' + fmtBytes(t.systemMemUsed) + '</span></span>';
+    var cpuMachinePct = t.cpuCount > 0 ? (t.windowCpuPercent / (t.cpuCount * 100)) * 100 : 0;
+    var memMachinePct = t.systemMemTotal > 0 ? (t.systemMemUsed / t.systemMemTotal) * 100 : 0;
+    var swapMachinePct = t.systemSwapTotal > 0 ? (t.systemSwapUsed / t.systemSwapTotal) * 100 : 0;
+    html += '<span class="pp-tot"><span class="pp-tot-l">CPU</span><span class="pp-tot-v">' + t.windowCpuPercent.toFixed(0) + '% <span class="pp-tot-sub">/ ' + (t.cpuCount * 100) + '% (' + cpuMachinePct.toFixed(0) + '%)</span></span></span>';
+    html += '<span class="pp-tot"><span class="pp-tot-l">MEM</span><span class="pp-tot-v">' + fmtBytes(t.systemMemUsed) + ' <span class="pp-tot-sub">/ ' + fmtBytes(t.systemMemTotal) + ' (' + memMachinePct.toFixed(0) + '%)</span></span></span>';
     if (t.systemSwapTotal > 0) {
-      html += '<span class="pp-tot"><span class="pp-tot-l">SWAP</span><span class="pp-tot-v">' + fmtBytes(t.systemSwapUsed) + '</span></span>';
+      html += '<span class="pp-tot"><span class="pp-tot-l">SWAP</span><span class="pp-tot-v">' + fmtBytes(t.systemSwapUsed) + ' <span class="pp-tot-sub">/ ' + fmtBytes(t.systemSwapTotal) + ' (' + swapMachinePct.toFixed(0) + '%)</span></span></span>';
     }
     html += '<span class="pp-tot"><span class="pp-tot-l">IO</span><span class="pp-tot-v">' + fmtBps(t.windowIoBps) + '</span></span>';
     html += '</div>';
@@ -176,49 +180,223 @@ var PerfPanel = (function () {
       html += '<button class="' + cls + '" data-metric="' + m + '">' + METRIC_LABEL[m] + '</button>';
     });
     html += '<span class="pp-tabs-spacer"></span>';
-    html += '<span class="pp-tabs-hint">面积 = ' + METRIC_LABEL[metric] + ' 占比</span>';
+    html += '<span class="pp-tabs-hint">面积 = ' + METRIC_LABEL[metric] + ' 占比 · 百分比 = 占机器总量</span>';
     html += '</div>';
 
-    // Treemap
-    var W = 880, H = 320;
-    html += '<svg class="pp-treemap" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">';
-    if (items.length === 0) {
-      html += '<rect width="' + W + '" height="' + H + '" fill="#16161e" rx="6"/>';
-      html += '<text x="' + (W / 2) + '" y="' + (H / 2) + '" text-anchor="middle" fill="#565f89" font-size="12">暂无活跃窗口数据</text>';
-    } else {
-      var rects = squarify(items, 0, 0, W, H);
+    // Machine-total denominator (so cell pct = "% of machine")
+    var machineTotal;
+    if (metric === 'cpu') machineTotal = t.cpuCount * 100;
+    else if (metric === 'mem') machineTotal = t.systemMemTotal;
+    else machineTotal = totalForMetric; // IO has no machine cap, fall back to windows sum
+
+    function drawTreemap(svgItems, W, H, denom, valueFmt, getSubExtra) {
+      var s = '<svg class="pp-treemap" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">';
+      if (svgItems.length === 0) {
+        s += '<rect width="' + W + '" height="' + H + '" fill="#16161e" rx="6"/>';
+        s += '<text x="' + (W / 2) + '" y="' + (H / 2) + '" text-anchor="middle" fill="#565f89" font-size="12">暂无数据</text>';
+        s += '</svg>';
+        return s;
+      }
+      var rects = squarify(svgItems, 0, 0, W, H);
       rects.forEach(function (r) {
         var it = r.item;
         var color = colorFor(it.key);
-        var pct = totalForMetric > 0 ? (it.value / totalForMetric) * 100 : 0;
+        var pct = denom > 0 ? (it.value / denom) * 100 : 0;
         var fontSize = Math.max(9, Math.min(28, Math.sqrt(r.w * r.h) / 6));
         var labelSize = Math.max(8, Math.min(13, fontSize * 0.42));
-        html += '<g class="pp-tm-cell">';
-        html += '<rect x="' + r.x + '" y="' + r.y + '" width="' + r.w + '" height="' + r.h + '" fill="#1f2335" stroke="' + color + '" stroke-width="1.2" rx="4"/>';
-        // accent stripe
-        html += '<rect x="' + r.x + '" y="' + r.y + '" width="3" height="' + r.h + '" fill="' + color + '" rx="2"/>';
+        s += '<g class="pp-tm-cell">';
+        s += '<rect x="' + r.x + '" y="' + r.y + '" width="' + r.w + '" height="' + r.h + '" fill="#1f2335" stroke="' + color + '" stroke-width="1.2" rx="4"/>';
+        s += '<rect x="' + r.x + '" y="' + r.y + '" width="3" height="' + r.h + '" fill="' + color + '" rx="2"/>';
         if (r.w > 60 && r.h > 30) {
-          html += '<text x="' + (r.x + 10) + '" y="' + (r.y + labelSize + 6) + '" fill="#c0caf5" font-size="' + labelSize + '" font-weight="600">' + escapeHtml(it.name) + '</text>';
-          html += '<text x="' + (r.x + 10) + '" y="' + (r.y + labelSize + 6 + fontSize + 2) + '" fill="#c0caf5" font-size="' + fontSize + '" font-weight="700">' + fmtMetric(it.value, metric) + '</text>';
+          s += '<text x="' + (r.x + 10) + '" y="' + (r.y + labelSize + 6) + '" fill="#c0caf5" font-size="' + labelSize + '" font-weight="600">' + escapeHtml(it.name) + '</text>';
+          s += '<text x="' + (r.x + 10) + '" y="' + (r.y + labelSize + 6 + fontSize + 2) + '" fill="#c0caf5" font-size="' + fontSize + '" font-weight="700">' + valueFmt(it.value) + '</text>';
           if (r.h > 70) {
-            var subTxt = pct.toFixed(1) + '% · ' + it.win.procCount + ' procs';
-            if (metric === 'mem' && it.win.swapBytes > 0) {
-              subTxt += ' · swap ' + fmtBytes(it.win.swapBytes);
-            }
-            html += '<text x="' + (r.x + 10) + '" y="' + (r.y + r.h - 8) + '" fill="#7d8590" font-size="9">' + subTxt + '</text>';
+            var subTxt = pct.toFixed(1) + '% of machine · ' + it.win.procCount + 'p';
+            if (getSubExtra) { var ex = getSubExtra(it); if (ex) subTxt += ' · ' + ex; }
+            s += '<text x="' + (r.x + 10) + '" y="' + (r.y + r.h - 8) + '" fill="#7d8590" font-size="9">' + subTxt + '</text>';
           }
         } else if (r.w > 30 && r.h > 18) {
-          html += '<text x="' + (r.x + 4) + '" y="' + (r.y + 12) + '" fill="#c0caf5" font-size="9">' + escapeHtml(it.name.split(' ')[0]) + '</text>';
+          s += '<text x="' + (r.x + 4) + '" y="' + (r.y + 12) + '" fill="#c0caf5" font-size="9">' + escapeHtml(it.name.split(' ')[0]) + '</text>';
         }
-        html += '<title>' + escapeHtml(it.name) + ' — ' + fmtMetric(it.value, metric) + ' (' + pct.toFixed(1) + '%)</title>';
-        html += '</g>';
+        s += '<title>' + escapeHtml(it.name) + ' — ' + valueFmt(it.value) + ' (' + pct.toFixed(1) + '% of machine)</title>';
+        s += '</g>';
       });
+      s += '</svg>';
+      return s;
     }
-    html += '</svg>';
+
+    // Use real container width so text stays at native px regardless of column size
+    var containerW = root.clientWidth || 880;
+    var W = Math.max(480, Math.floor(containerW - 4));
+    var H = 320;
+    if (metric === 'mem') {
+      // Horizontal bar chart: each row = one window, RAM + SWAP segments aligned to a common scale.
+      var memItems = windows
+        .map(function (w) {
+          return {
+            key: w.session + '|' + w.windowIndex,
+            name: w.session + ':' + w.windowIndex + (w.windowName && w.windowName !== String(w.windowIndex) ? ' ' + w.windowName : ''),
+            ram: w.memBytes,
+            swap: w.swapBytes,
+            total: w.memBytes + w.swapBytes,
+            win: w,
+          };
+        })
+        .filter(function (it) { return it.total > 1024 * 1024; })
+        .sort(function (a, b) { return b.total - a.total; });
+
+      // Cap to top N; aggregate rest
+      var memOthers = null;
+      if (memItems.length > MAX_ROWS) {
+        var rest = memItems.slice(MAX_ROWS);
+        memItems = memItems.slice(0, MAX_ROWS);
+        memOthers = {
+          count: rest.length,
+          ram: rest.reduce(function (a, it) { return a + it.ram; }, 0),
+          swap: rest.reduce(function (a, it) { return a + it.swap; }, 0),
+          total: rest.reduce(function (a, it) { return a + it.total; }, 0),
+        };
+      }
+
+      var ramUsedByWin = windows.reduce(function (a, w) { return a + w.memBytes; }, 0);
+      var swapUsedByWin = windows.reduce(function (a, w) { return a + w.swapBytes; }, 0);
+
+      html += '<div class="pp-mem-legend">';
+      html += '<span class="pp-legend-item"><span class="pp-swatch pp-swatch-ram"></span>RAM ' + fmtBytes(ramUsedByWin) + ' / ' + fmtBytes(t.systemMemTotal) + '</span>';
+      if (t.systemSwapTotal > 0) {
+        html += '<span class="pp-legend-item"><span class="pp-swatch pp-swatch-swap"></span>SWAP ' + fmtBytes(swapUsedByWin) + ' / ' + fmtBytes(t.systemSwapTotal) + '</span>';
+      }
+      html += '<span class="pp-legend-hint">条长 = RAM+SWAP，按 window 总占用排序</span>';
+      html += '</div>';
+
+      var rowH = 26;
+      var rowGap = 4;
+      var nameW = 170;
+      var pctW = 92;
+      var barW = W - nameW - pctW - 16;
+      var maxTotal = memItems.length > 0 ? memItems[0].total : 1;
+      var memDenom = t.systemMemTotal + t.systemSwapTotal;
+      var othersRows = memOthers ? 1 : 0;
+      var Hbar = Math.max(120, (memItems.length + othersRows) * (rowH + rowGap) + 8);
+
+      html += '<svg class="pp-membars" viewBox="0 0 ' + W + ' ' + Hbar + '">';
+      html += '<defs><pattern id="pp-swap-hatch" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">' +
+              '<rect width="6" height="6" fill="#7aa2f7" fill-opacity="0.18"/>' +
+              '<line x1="0" y1="0" x2="0" y2="6" stroke="#7aa2f7" stroke-width="2" stroke-opacity="0.6"/>' +
+              '</pattern></defs>';
+      if (memItems.length === 0) {
+        html += '<rect width="' + W + '" height="' + Hbar + '" fill="#16161e" rx="6"/>';
+        html += '<text x="' + (W / 2) + '" y="' + (Hbar / 2) + '" text-anchor="middle" fill="#565f89" font-size="12">暂无数据</text>';
+      } else {
+        memItems.forEach(function (it, i) {
+          var y = 4 + i * (rowH + rowGap);
+          var color = colorFor(it.key);
+          var ramW = (it.ram / maxTotal) * barW;
+          var swW = (it.swap / maxTotal) * barW;
+          var pct = memDenom > 0 ? (it.total / memDenom) * 100 : 0;
+          // Track background
+          html += '<rect x="' + nameW + '" y="' + y + '" width="' + barW + '" height="' + rowH + '" fill="#16161e" rx="3"/>';
+          // RAM segment (solid)
+          if (ramW > 0.5) {
+            html += '<rect x="' + nameW + '" y="' + y + '" width="' + ramW + '" height="' + rowH + '" fill="' + color + '" fill-opacity="0.85" rx="3"/>';
+          }
+          // SWAP segment (hatched, butted against RAM)
+          if (swW > 0.5) {
+            html += '<rect x="' + (nameW + ramW) + '" y="' + y + '" width="' + swW + '" height="' + rowH + '" fill="url(#pp-swap-hatch)" stroke="#7aa2f7" stroke-width="0.8" stroke-opacity="0.5"/>';
+          }
+          // Window name (left)
+          html += '<text x="8" y="' + (y + rowH / 2 + 4) + '" fill="#c0caf5" font-size="12" font-weight="600">' + escapeHtml(it.name.length > 24 ? it.name.slice(0, 23) + '…' : it.name) + '</text>';
+          // RAM label inside its segment (or to the right if too narrow)
+          var ramTxt = fmtBytes(it.ram);
+          if (ramW > 54) {
+            html += '<text x="' + (nameW + 6) + '" y="' + (y + rowH / 2 + 4) + '" fill="#1a1b26" font-size="11" font-weight="700">' + ramTxt + '</text>';
+          }
+          // SWAP label inside its segment (or skip if tiny)
+          if (it.swap > 0) {
+            var swTxt = fmtBytes(it.swap);
+            if (swW > 50) {
+              html += '<text x="' + (nameW + ramW + swW / 2) + '" y="' + (y + rowH / 2 + 4) + '" text-anchor="middle" fill="#c0caf5" font-size="11" font-weight="700">' + swTxt + '</text>';
+            } else if (swW > 20) {
+              html += '<text x="' + (nameW + ramW + swW + 4) + '" y="' + (y + rowH / 2 + 4) + '" fill="#7aa2f7" font-size="10" font-weight="600">' + swTxt + '</text>';
+            }
+          }
+          // Right column: total + machine percent
+          html += '<text x="' + (W - 6) + '" y="' + (y + rowH / 2 + 4) + '" text-anchor="end" fill="#c0caf5" font-size="11" font-weight="700">' + fmtBytes(it.total) + ' <tspan fill="#7d8590" font-weight="400">· ' + pct.toFixed(1) + '%</tspan></text>';
+          html += '<title>' + escapeHtml(it.name) + ' — RAM ' + ramTxt + ' + SWAP ' + fmtBytes(it.swap) + ' = ' + fmtBytes(it.total) + ' (' + pct.toFixed(1) + '% of machine)</title>';
+        });
+        if (memOthers) {
+          var y2 = 4 + memItems.length * (rowH + rowGap);
+          var ramW2 = (memOthers.ram / maxTotal) * barW;
+          var swW2 = (memOthers.swap / maxTotal) * barW;
+          var pct2 = memDenom > 0 ? (memOthers.total / memDenom) * 100 : 0;
+          html += '<rect x="' + nameW + '" y="' + y2 + '" width="' + barW + '" height="' + rowH + '" fill="#16161e" rx="3"/>';
+          if (ramW2 > 0.5) html += '<rect x="' + nameW + '" y="' + y2 + '" width="' + ramW2 + '" height="' + rowH + '" fill="#565f89" fill-opacity="0.6" rx="3"/>';
+          if (swW2 > 0.5) html += '<rect x="' + (nameW + ramW2) + '" y="' + y2 + '" width="' + swW2 + '" height="' + rowH + '" fill="url(#pp-swap-hatch)" stroke="#7aa2f7" stroke-width="0.8" stroke-opacity="0.5"/>';
+          html += '<text x="8" y="' + (y2 + rowH / 2 + 4) + '" fill="#7d8590" font-size="11" font-style="italic">其余 ' + memOthers.count + ' 个 window</text>';
+          html += '<text x="' + (W - 6) + '" y="' + (y2 + rowH / 2 + 4) + '" text-anchor="end" fill="#c0caf5" font-size="11" font-weight="700">' + fmtBytes(memOthers.total) + ' <tspan fill="#7d8590" font-weight="400">· ' + pct2.toFixed(1) + '%</tspan></text>';
+        }
+      }
+      html += '</svg>';
+    } else {
+      // Horizontal bar chart for CPU / IO — same layout grammar as MEM.
+      var barItems = items.slice(); // already sorted desc, filtered
+      var otherAgg = null;
+      if (barItems.length > MAX_ROWS) {
+        var restCpu = barItems.slice(MAX_ROWS);
+        barItems = barItems.slice(0, MAX_ROWS);
+        otherAgg = {
+          count: restCpu.length,
+          value: restCpu.reduce(function (a, it) { return a + it.value; }, 0),
+          procCount: restCpu.reduce(function (a, it) { return a + it.win.procCount; }, 0),
+        };
+      }
+      var rowH2 = 26, rowGap2 = 4, nameW2 = 170, pctW2 = 92;
+      var barW2 = W - nameW2 - pctW2 - 16;
+      var maxV = barItems.length > 0 ? barItems[0].value : 1;
+      var Hbar2 = Math.max(120, (barItems.length + (otherAgg ? 1 : 0)) * (rowH2 + rowGap2) + 8);
+      var fmtFn = function (v) { return fmtMetric(v, metric); };
+
+      html += '<div class="pp-mem-legend"><span class="pp-legend-hint">条长 = ' + METRIC_LABEL[metric] + '，按 window 占用排序 · 百分比 = 占机器总量</span></div>';
+      html += '<svg class="pp-membars" viewBox="0 0 ' + W + ' ' + Hbar2 + '">';
+      if (barItems.length === 0) {
+        html += '<rect width="' + W + '" height="' + Hbar2 + '" fill="#16161e" rx="6"/>';
+        html += '<text x="' + (W / 2) + '" y="' + (Hbar2 / 2) + '" text-anchor="middle" fill="#565f89" font-size="12">暂无活跃窗口数据</text>';
+      } else {
+        barItems.forEach(function (it, i) {
+          var y = 4 + i * (rowH2 + rowGap2);
+          var color = colorFor(it.key);
+          var bw = (it.value / maxV) * barW2;
+          var pct = machineTotal > 0 ? (it.value / machineTotal) * 100 : 0;
+          html += '<rect x="' + nameW2 + '" y="' + y + '" width="' + barW2 + '" height="' + rowH2 + '" fill="#16161e" rx="3"/>';
+          if (bw > 0.5) {
+            html += '<rect x="' + nameW2 + '" y="' + y + '" width="' + bw + '" height="' + rowH2 + '" fill="' + color + '" fill-opacity="0.85" rx="3"/>';
+          }
+          html += '<text x="8" y="' + (y + rowH2 / 2 + 4) + '" fill="#c0caf5" font-size="12" font-weight="600">' + escapeHtml(it.name.length > 24 ? it.name.slice(0, 23) + '…' : it.name) + '</text>';
+          var vTxt = fmtFn(it.value);
+          if (bw > 60) {
+            html += '<text x="' + (nameW2 + 6) + '" y="' + (y + rowH2 / 2 + 4) + '" fill="#1a1b26" font-size="11" font-weight="700">' + vTxt + '</text>';
+          } else {
+            html += '<text x="' + (nameW2 + bw + 4) + '" y="' + (y + rowH2 / 2 + 4) + '" fill="#c0caf5" font-size="11" font-weight="700">' + vTxt + '</text>';
+          }
+          html += '<text x="' + (W - 6) + '" y="' + (y + rowH2 / 2 + 4) + '" text-anchor="end" fill="#7d8590" font-size="11">' + pct.toFixed(1) + '% · ' + it.win.procCount + 'p</text>';
+          html += '<title>' + escapeHtml(it.name) + ' — ' + vTxt + ' (' + pct.toFixed(1) + '% of machine)</title>';
+        });
+        if (otherAgg) {
+          var oy = 4 + barItems.length * (rowH2 + rowGap2);
+          var obw = (otherAgg.value / maxV) * barW2;
+          var opct = machineTotal > 0 ? (otherAgg.value / machineTotal) * 100 : 0;
+          html += '<rect x="' + nameW2 + '" y="' + oy + '" width="' + barW2 + '" height="' + rowH2 + '" fill="#16161e" rx="3"/>';
+          if (obw > 0.5) html += '<rect x="' + nameW2 + '" y="' + oy + '" width="' + obw + '" height="' + rowH2 + '" fill="#565f89" fill-opacity="0.6" rx="3"/>';
+          html += '<text x="8" y="' + (oy + rowH2 / 2 + 4) + '" fill="#7d8590" font-size="11" font-style="italic">其余 ' + otherAgg.count + ' 个 window</text>';
+          html += '<text x="' + (W - 6) + '" y="' + (oy + rowH2 / 2 + 4) + '" text-anchor="end" fill="#7d8590" font-size="11">' + opct.toFixed(1) + '% · ' + otherAgg.procCount + 'p</text>';
+        }
+      }
+      html += '</svg>';
+    }
 
     // History strip — 100% stacked area for current metric
     html += '<div class="pp-strip-label">最近 ' + (HISTORY * POLL_MS / 1000) + 's · 占比演化</div>';
-    html += renderHistoryStrip(W, 100, metric);
+    html += renderHistoryStrip(W, 140, metric);
 
     root.innerHTML = html;
 

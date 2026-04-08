@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Home Redesign Mockup</title>
+<link rel="stylesheet" href="/css/style.css?v=mock">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700;9..144,900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  /* All colors consume theme CSS vars — auto-follows all 9 themes */
+  html, body { margin: 0; padding: 0; background: var(--bg-primary); color: var(--text-primary); font-family: system-ui, sans-serif; }
+  body { padding: clamp(18px, 2.2vw, 36px) clamp(22px, 3vw, 52px) 80px; }
+
+  /* Theme picker */
+  .theme-picker {
+    position: fixed; top: 16px; right: 20px; z-index: 99;
+    display: flex; gap: 6px; padding: 6px 8px;
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace; font-size: 0.68rem;
+  }
+  .theme-picker select {
+    background: var(--bg-deep); color: var(--text-primary);
+    border: 1px solid var(--border-subtle); padding: 4px 8px;
+    font-family: inherit; font-size: inherit; cursor: pointer;
+  }
+
+  /* === HERO === */
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(260px, auto) 1fr;
+    gap: clamp(22px, 3vw, 56px);
+    align-items: end;
+    padding-bottom: 22px;
+    border-bottom: 1px solid var(--border);
+  }
+  .hero-eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .hero-host-name {
+    margin: 4px 0 6px;
+    font-family: 'Fraunces', Georgia, serif;
+    font-weight: 900;
+    font-size: clamp(2.4rem, 4.6vw, 4rem);
+    line-height: 0.9;
+    letter-spacing: -0.025em;
+    color: var(--text-primary);
+    font-variation-settings: "opsz" 144;
+  }
+  .hero-host-name em {
+    font-style: italic;
+    font-weight: 500;
+    color: var(--accent-blue);
+  }
+  .hero-host-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.76rem;
+    color: var(--text-secondary);
+  }
+  .hero-host-meta b { color: var(--accent-yellow); font-weight: 600; }
+
+  .hero-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: clamp(12px, 2vw, 28px);
+  }
+  .stat {
+    display: flex; flex-direction: column; gap: 2px;
+    border-left: 1px solid var(--border);
+    padding-left: 14px;
+  }
+  .stat-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.62rem; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--text-muted);
+  }
+  .stat-num {
+    font-family: 'Fraunces', Georgia, serif;
+    font-weight: 700;
+    font-size: clamp(1.7rem, 2.9vw, 2.5rem);
+    letter-spacing: -0.02em;
+    line-height: 1;
+    font-variation-settings: "opsz" 144;
+  }
+  .stat-num small { font-size: 0.55em; font-weight: 500; color: var(--text-muted); margin-left: 2px; }
+  .stat-sub { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; color: var(--text-muted); }
+  .stat-cpu  .stat-num { color: var(--accent-yellow); }
+  .stat-mem  .stat-num { color: var(--accent-blue); }
+  .stat-swap .stat-num { color: var(--accent-purple); }
+  .stat-io   .stat-num { color: var(--accent-green); }
+
+  /* === MAIN GRID === */
+  .main {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: clamp(22px, 2.4vw, 40px);
+    margin-top: clamp(22px, 3vw, 36px);
+  }
+
+  .side { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+  .side-actions { display: flex; gap: 10px; }
+  .btn {
+    flex: 1; background: transparent;
+    border: 1px solid var(--border); color: var(--text-primary);
+    padding: 10px 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.76rem; letter-spacing: 0.04em; cursor: pointer;
+    transition: border-color 200ms, color 200ms, background 200ms;
+  }
+  .btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+  .btn-primary {
+    background: var(--accent-green); color: var(--bg-primary); border-color: var(--accent-green);
+    font-weight: 600;
+  }
+  .btn-primary:hover { background: transparent; color: var(--accent-green); }
+
+  .section-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.62rem; letter-spacing: 0.2em;
+    text-transform: uppercase; color: var(--text-muted);
+    display: flex; align-items: baseline; gap: 12px;
+    margin-bottom: 10px;
+  }
+  .section-label::after {
+    content: ''; flex: 1; height: 1px; background: var(--border-subtle);
+  }
+
+  .recent { display: flex; flex-direction: column; }
+  .recent-row {
+    display: grid; grid-template-columns: 1fr auto;
+    align-items: baseline; padding: 10px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    cursor: pointer;
+    transition: padding 180ms ease, color 180ms;
+  }
+  .recent-row:last-child { border-bottom: none; }
+  .recent-row:hover { padding-left: 6px; }
+  .recent-row:hover .recent-name { color: var(--accent-blue); }
+  .recent-name {
+    font-size: 0.88rem; color: var(--text-primary);
+    display: flex; gap: 10px; align-items: baseline;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    transition: color 180ms;
+  }
+  .recent-idx { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: var(--text-muted); }
+  .recent-time { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: var(--text-muted); }
+
+  .shortcuts {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem; color: var(--text-muted); line-height: 1.9;
+  }
+  .shortcuts b { color: var(--text-secondary); font-weight: 600; }
+
+  /* === PERF === */
+  .perf { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .perf-tabs {
+    display: flex; align-items: stretch;
+    border-bottom: 1px solid var(--border);
+  }
+  .perf-tab {
+    background: transparent; border: none; color: var(--text-muted);
+    padding: 10px 20px 12px; margin-bottom: -1px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.76rem; letter-spacing: 0.1em; text-transform: uppercase;
+    cursor: pointer; border-bottom: 2px solid transparent;
+    transition: color 180ms, border-color 180ms;
+  }
+  .perf-tab:hover { color: var(--text-secondary); }
+  .perf-tab.is-active { color: var(--accent-blue); border-bottom-color: var(--accent-blue); }
+  .perf-tabs-hint {
+    margin-left: auto; align-self: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.66rem; color: var(--text-muted);
+    padding-bottom: 8px;
+  }
+
+  .legend {
+    display: flex; gap: 20px; align-items: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem; color: var(--text-secondary);
+  }
+  .swatch { display: inline-block; width: 14px; height: 10px; vertical-align: middle; margin-right: 6px; }
+  .swatch-ram { background: var(--accent-blue); }
+  .swatch-swap {
+    background-image: repeating-linear-gradient(45deg, transparent 0 3px, var(--accent-purple) 3px 5px);
+    background-color: transparent;
+    border: 1px solid var(--accent-purple);
+  }
+
+  /* bar table */
+  .bars {
+    display: grid;
+    grid-template-columns: minmax(160px, 200px) 1fr 150px;
+    gap: 8px 16px;
+    align-items: center;
+  }
+  .bar-name {
+    font-size: 0.86rem; color: var(--text-primary);
+    display: flex; gap: 10px; align-items: baseline;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .bar-name .idx { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; color: var(--text-muted); }
+  .bar-track {
+    position: relative; height: 22px;
+    background: var(--bg-deep);
+    border: 1px solid var(--border-subtle);
+  }
+  .bar-fill {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    background: var(--accent-blue);
+    display: flex; align-items: center; padding: 0 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem; font-weight: 600;
+    color: var(--bg-primary);
+  }
+  .bar-swap {
+    position: absolute; top: 0; bottom: 0;
+    background-image: repeating-linear-gradient(45deg, transparent 0 3px, var(--accent-purple) 3px 5px);
+    background-color: transparent;
+    border-left: 1px solid var(--accent-purple);
+    display: flex; align-items: center; padding: 0 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem; font-weight: 600;
+    color: var(--text-primary);
+  }
+  .bar-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.76rem; color: var(--text-secondary);
+    text-align: right; display: flex; justify-content: flex-end; gap: 12px;
+  }
+  .bar-meta .pct { color: var(--text-muted); }
+
+  .history {
+    margin-top: 22px; padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .history svg { width: 100%; height: 90px; display: block; background: var(--bg-deep); border: 1px solid var(--border-subtle); }
+
+  @media (max-width: 900px) {
+    .main { grid-template-columns: 1fr; }
+    .hero { grid-template-columns: 1fr; align-items: start; }
+    .hero-stats { grid-template-columns: repeat(2, 1fr); }
+    .bars { grid-template-columns: 130px 1fr 110px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="theme-picker">
+  <select id="theme-select"></select>
+</div>
+
+<header class="hero">
+  <div class="hero-host">
+    <div class="hero-eyebrow">tmux · web · panel</div>
+    <h1 class="hero-host-name">yuebiao<em>-pc</em></h1>
+    <div class="hero-host-meta">20 cores · load <b>4.93</b> · up 11d 19h · 33 windows · 84 panes</div>
+  </div>
+  <div class="hero-stats">
+    <div class="stat stat-cpu">
+      <span class="stat-label">CPU</span>
+      <span class="stat-num">34<small>%</small></span>
+      <span class="stat-sub">/ 2000% machine</span>
+    </div>
+    <div class="stat stat-mem">
+      <span class="stat-label">RAM</span>
+      <span class="stat-num">21<small>GB</small></span>
+      <span class="stat-sub">/ 63GB · 33%</span>
+    </div>
+    <div class="stat stat-swap">
+      <span class="stat-label">SWAP</span>
+      <span class="stat-num">49<small>GB</small></span>
+      <span class="stat-sub">/ 72GB · 68%</span>
+    </div>
+    <div class="stat stat-io">
+      <span class="stat-label">I/O</span>
+      <span class="stat-num">2.0<small>KB/s</small></span>
+      <span class="stat-sub">disk read+write</span>
+    </div>
+  </div>
+</header>
+
+<section class="main">
+  <aside class="side">
+    <div class="side-actions">
+      <button class="btn btn-primary">＋ Session</button>
+      <button class="btn">◫ Window</button>
+    </div>
+
+    <div>
+      <div class="section-label">最近访问</div>
+      <div class="recent">
+        <div class="recent-row"><div class="recent-name"><span class="recent-idx">3:11</span>web scrcpy</div><div class="recent-time">2m</div></div>
+        <div class="recent-row"><div class="recent-name"><span class="recent-idx">3:26</span>Tmux Panel</div><div class="recent-time">4m</div></div>
+        <div class="recent-row"><div class="recent-name"><span class="recent-idx">3:36</span>南岭游戏崩溃</div><div class="recent-time">5m</div></div>
+        <div class="recent-row"><div class="recent-name"><span class="recent-idx">3:27</span>西山问题</div><div class="recent-time">7m</div></div>
+        <div class="recent-row"><div class="recent-name"><span class="recent-idx">3:15</span>browser</div><div class="recent-time">9m</div></div>
+        <div class="recent-row"><div class="recent-name"><span class="recent-idx">3:2</span>claude</div><div class="recent-time">10m</div></div>
+        <div class="recent-row"><div class="recent-name"><span class="recent-idx">3:43</span>实例迁移</div><div class="recent-time">11m</div></div>
+        <div class="recent-row"><div class="recent-name"><span class="recent-idx">3:23</span>cbs</div><div class="recent-time">14m</div></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">快捷</div>
+      <div class="shortcuts">
+        <div><b>⌘K</b>　命令面板</div>
+        <div><b>右键</b>　操作菜单</div>
+        <div><b>长按</b>　关闭</div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="perf">
+    <div class="perf-tabs">
+      <button class="perf-tab is-active">内存</button>
+      <button class="perf-tab">CPU</button>
+      <button class="perf-tab">I/O</button>
+      <span class="perf-tabs-hint">条长 = RAM + SWAP · 百分比 = 占机器总量</span>
+    </div>
+
+    <div class="legend">
+      <span><span class="swatch swatch-ram"></span>RAM 16GB / 63GB</span>
+      <span><span class="swatch swatch-swap"></span>SWAP 16GB / 72GB</span>
+    </div>
+
+    <div class="bars">
+      <div class="bar-name"><span class="idx">3:40</span>东方异常</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:18%;">1.7GB</div>
+        <div class="bar-swap" style="left:18%; width:14%;">1.4GB</div>
+      </div>
+      <div class="bar-meta"><span>3.1GB</span><span class="pct">2.3%</span></div>
+
+      <div class="bar-name"><span class="idx">3:30</span>南岭风控点修复</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:16%;">1.5GB</div>
+        <div class="bar-swap" style="left:16%; width:16%;">1.5GB</div>
+      </div>
+      <div class="bar-meta"><span>3.0GB</span><span class="pct">2.2%</span></div>
+
+      <div class="bar-name"><span class="idx">3:15</span>browser</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:20%;">1.9GB</div>
+        <div class="bar-swap" style="left:20%; width:11%;">1.1GB</div>
+      </div>
+      <div class="bar-meta"><span>3.0GB</span><span class="pct">2.2%</span></div>
+
+      <div class="bar-name"><span class="idx">3:14</span>东方异常</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:14%;">1.3GB</div>
+        <div class="bar-swap" style="left:14%; width:14%;">1.3GB</div>
+      </div>
+      <div class="bar-meta"><span>2.6GB</span><span class="pct">1.9%</span></div>
+
+      <div class="bar-name"><span class="idx">3:26</span>Tmux Panel</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:15%;">1.4GB</div>
+        <div class="bar-swap" style="left:15%; width:8%;">762MB</div>
+      </div>
+      <div class="bar-meta"><span>2.1GB</span><span class="pct">1.6%</span></div>
+
+      <div class="bar-name"><span class="idx">3:12</span>arm cloud analyzer</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:12%;">1.1GB</div>
+        <div class="bar-swap" style="left:12%; width:11%;">1.0GB</div>
+      </div>
+      <div class="bar-meta"><span>2.1GB</span><span class="pct">1.6%</span></div>
+
+      <div class="bar-name"><span class="idx">3:7</span>基石升级镜像失败</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:9%;">820MB</div>
+        <div class="bar-swap" style="left:9%; width:7%;">650MB</div>
+      </div>
+      <div class="bar-meta"><span>1.4GB</span><span class="pct">1.0%</span></div>
+
+      <div class="bar-name"><span class="idx">3:43</span>实例迁移</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:7%;">680MB</div>
+        <div class="bar-swap" style="left:7%; width:5%;">480MB</div>
+      </div>
+      <div class="bar-meta"><span>1.1GB</span><span class="pct">0.8%</span></div>
+    </div>
+
+    <div class="history">
+      <div class="section-label">最近 80s · 占比演化</div>
+      <svg viewBox="0 0 800 90" preserveAspectRatio="none">
+        <path d="M0,30 L80,28 L160,32 L240,26 L320,30 L400,28 L480,34 L560,30 L640,28 L720,32 L800,30 L800,90 L0,90 Z" fill="var(--accent-blue)" opacity="0.55"/>
+        <path d="M0,55 L80,52 L160,58 L240,50 L320,54 L400,52 L480,60 L560,55 L640,52 L720,58 L800,54 L800,90 L0,90 Z" fill="var(--accent-yellow)" opacity="0.55"/>
+        <path d="M0,72 L80,70 L160,74 L240,68 L320,72 L400,70 L480,76 L560,72 L640,70 L720,74 L800,72 L800,90 L0,90 Z" fill="var(--accent-red)" opacity="0.55"/>
+      </svg>
+    </div>
+  </main>
+</section>
+
+<script src="/js/theme.js?v=mock"></script>
+<script>
+  // Populate picker
+  var sel = document.getElementById('theme-select');
+  var list = Theme.list();
+  list.forEach(function (t) {
+    var o = document.createElement('option');
+    o.value = t.id; o.textContent = t.name;
+    if (t.id === Theme.getCurrent()) o.selected = true;
+    sel.appendChild(o);
+  });
+  sel.addEventListener('change', function () { Theme.apply(sel.value); });
+</script>
+
+</body>
+</html>
