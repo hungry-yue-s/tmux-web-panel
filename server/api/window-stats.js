@@ -2,8 +2,22 @@
 
 import { Router } from 'express';
 import os from 'node:os';
+import { readFile } from 'node:fs/promises';
 import * as tmux from '../tmux.js';
 import { sampleTree, pruneStaleSamples, cpuCount } from '../proc-stats.js';
+
+async function readSystemSwap() {
+  try {
+    const buf = await readFile('/proc/meminfo', 'utf8');
+    const t = buf.match(/^SwapTotal:\s+(\d+)\s+kB/m);
+    const f = buf.match(/^SwapFree:\s+(\d+)\s+kB/m);
+    const total = t ? Number(t[1]) * 1024 : 0;
+    const free = f ? Number(f[1]) * 1024 : 0;
+    return { total, used: Math.max(0, total - free) };
+  } catch {
+    return { total: 0, used: 0 };
+  }
+}
 
 const router = Router();
 
@@ -35,10 +49,11 @@ router.get('/', async (_req, res) => {
     const windowStats = await Promise.all(
       Array.from(windowMap.values()).map(async (w) => {
         const samples = await Promise.all(w.paneRoots.map((pid) => sampleTree(pid)));
-        let cpu = 0, mem = 0, io = 0, procs = 0;
+        let cpu = 0, mem = 0, swap = 0, io = 0, procs = 0;
         for (const s of samples) {
           cpu += s.cpuPercent;
           mem += s.memBytes;
+          swap += s.swapBytes;
           io += s.ioBps;
           procs += s.procCount;
         }
@@ -48,6 +63,7 @@ router.get('/', async (_req, res) => {
           windowName: w.windowName,
           cpuPercent: cpu,
           memBytes: mem,
+          swapBytes: swap,
           ioBps: io,
           procCount: procs,
         };
@@ -57,8 +73,10 @@ router.get('/', async (_req, res) => {
     // Total / system
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
+    const sysSwap = await readSystemSwap();
     const sumCpu = windowStats.reduce((a, w) => a + w.cpuPercent, 0);
     const sumMem = windowStats.reduce((a, w) => a + w.memBytes, 0);
+    const sumSwap = windowStats.reduce((a, w) => a + w.swapBytes, 0);
     const sumIo = windowStats.reduce((a, w) => a + w.ioBps, 0);
 
     // Prune old PID samples (>30s untouched → process likely gone)
@@ -71,9 +89,12 @@ router.get('/', async (_req, res) => {
         total: {
           windowCpuPercent: sumCpu,
           windowMemBytes: sumMem,
+          windowSwapBytes: sumSwap,
           windowIoBps: sumIo,
           systemMemTotal: totalMem,
           systemMemUsed: totalMem - freeMem,
+          systemSwapTotal: sysSwap.total,
+          systemSwapUsed: sysSwap.used,
           cpuCount,
           hostname: os.hostname(),
           uptime: os.uptime(),

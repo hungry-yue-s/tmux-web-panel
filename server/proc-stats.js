@@ -24,8 +24,9 @@ async function readStat(pid) {
 
 async function readStatus(pid) {
   const buf = await readFile(`/proc/${pid}/status`, 'utf8');
-  const m = buf.match(/^VmRSS:\s+(\d+)\s+kB/m);
-  return { rssKb: m ? Number(m[1]) : 0 };
+  const r = buf.match(/^VmRSS:\s+(\d+)\s+kB/m);
+  const s = buf.match(/^VmSwap:\s+(\d+)\s+kB/m);
+  return { rssKb: r ? Number(r[1]) : 0, swapKb: s ? Number(s[1]) : 0 };
 }
 
 async function readIo(pid) {
@@ -91,7 +92,7 @@ async function samplePid(pid, now) {
       ioBps = ioDelta / dtSec;
     }
   }
-  return { cpuPercent, rssKb: status.rssKb, ioBps };
+  return { cpuPercent, rssKb: status.rssKb, swapKb: status.swapKb, ioBps };
 }
 
 // Aggregate stats for a process tree rooted at rootPid.
@@ -99,15 +100,22 @@ export async function sampleTree(rootPid) {
   const pids = await collectPids(rootPid);
   const now = Date.now();
   const samples = await Promise.all(pids.map((pid) => samplePid(pid, now)));
-  let cpu = 0, rss = 0, io = 0, count = 0;
+  let cpu = 0, rss = 0, swap = 0, io = 0, count = 0;
   for (const s of samples) {
     if (!s) continue;
     cpu += s.cpuPercent;
     rss += s.rssKb;
+    swap += s.swapKb;
     io += s.ioBps;
     count++;
   }
-  return { cpuPercent: cpu, memBytes: rss * 1024, ioBps: io, procCount: count };
+  return {
+    cpuPercent: cpu,
+    memBytes: rss * 1024,
+    swapBytes: swap * 1024,
+    ioBps: io,
+    procCount: count,
+  };
 }
 
 // Garbage-collect _prev entries that weren't touched in the last N polls.

@@ -162,6 +162,9 @@ var PerfPanel = (function () {
     html += '<div class="pp-totals">';
     html += '<span class="pp-tot"><span class="pp-tot-l">CPU</span><span class="pp-tot-v">' + t.windowCpuPercent.toFixed(0) + '%</span></span>';
     html += '<span class="pp-tot"><span class="pp-tot-l">MEM</span><span class="pp-tot-v">' + fmtBytes(t.systemMemUsed) + '</span></span>';
+    if (t.systemSwapTotal > 0) {
+      html += '<span class="pp-tot"><span class="pp-tot-l">SWAP</span><span class="pp-tot-v">' + fmtBytes(t.systemSwapUsed) + '</span></span>';
+    }
     html += '<span class="pp-tot"><span class="pp-tot-l">IO</span><span class="pp-tot-v">' + fmtBps(t.windowIoBps) + '</span></span>';
     html += '</div>';
     html += '</div>';
@@ -198,7 +201,11 @@ var PerfPanel = (function () {
           html += '<text x="' + (r.x + 10) + '" y="' + (r.y + labelSize + 6) + '" fill="#c0caf5" font-size="' + labelSize + '" font-weight="600">' + escapeHtml(it.name) + '</text>';
           html += '<text x="' + (r.x + 10) + '" y="' + (r.y + labelSize + 6 + fontSize + 2) + '" fill="#c0caf5" font-size="' + fontSize + '" font-weight="700">' + fmtMetric(it.value, metric) + '</text>';
           if (r.h > 70) {
-            html += '<text x="' + (r.x + 10) + '" y="' + (r.y + r.h - 8) + '" fill="#7d8590" font-size="9">' + pct.toFixed(1) + '% · ' + it.win.procCount + ' procs</text>';
+            var subTxt = pct.toFixed(1) + '% · ' + it.win.procCount + ' procs';
+            if (metric === 'mem' && it.win.swapBytes > 0) {
+              subTxt += ' · swap ' + fmtBytes(it.win.swapBytes);
+            }
+            html += '<text x="' + (r.x + 10) + '" y="' + (r.y + r.h - 8) + '" fill="#7d8590" font-size="9">' + subTxt + '</text>';
           }
         } else if (r.w > 30 && r.h > 18) {
           html += '<text x="' + (r.x + 4) + '" y="' + (r.y + 12) + '" fill="#c0caf5" font-size="9">' + escapeHtml(it.name.split(' ')[0]) + '</text>';
