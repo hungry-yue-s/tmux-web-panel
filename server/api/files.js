@@ -51,6 +51,31 @@ const LANG_MAP = {
   '.proto': 'protobuf', '.tf': 'hcl',
 };
 
+// Language detection by full filename (for extensionless files)
+const BASENAME_MAP = {
+  'Makefile': 'makefile', 'makefile': 'makefile', 'GNUmakefile': 'makefile',
+  'Dockerfile': 'dockerfile',
+  'Vagrantfile': 'ruby', 'Rakefile': 'ruby', 'Gemfile': 'ruby',
+  'Jenkinsfile': 'groovy', 'Justfile': 'makefile',
+  'CMakeLists.txt': 'cmake',
+  '.bashrc': 'bash', '.bash_profile': 'bash', '.bash_aliases': 'bash',
+  '.zshrc': 'bash', '.zshenv': 'bash', '.zprofile': 'bash',
+  '.profile': 'bash', '.bash_logout': 'bash',
+  '.vimrc': 'vim', '.gvimrc': 'vim',
+  '.gitconfig': 'ini', '.gitmodules': 'ini',
+  '.editorconfig': 'ini', '.npmrc': 'ini',
+  '.prettierrc': 'json', '.eslintrc': 'json', '.babelrc': 'json',
+};
+
+// Shebang → hljs language
+const SHEBANG_MAP = {
+  'bash': 'bash', 'sh': 'bash', 'zsh': 'bash', 'fish': 'shell',
+  'python': 'python', 'python3': 'python',
+  'node': 'javascript', 'nodejs': 'javascript', 'deno': 'typescript',
+  'ruby': 'ruby', 'perl': 'perl', 'php': 'php', 'lua': 'lua',
+  'Rscript': 'r', 'awk': 'awk', 'sed': 'bash',
+};
+
 const MIME_MAP = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp',
@@ -61,13 +86,26 @@ const MIME_MAP = {
 
 function getFileInfo(filePath) {
   const ext = extname(filePath).toLowerCase();
+  const base = basename(filePath);
   const mimeType = MIME_MAP[ext] || 'text/plain';
   const isImage = mimeType.startsWith('image/');
   const isPdf = mimeType === 'application/pdf';
   const isMarkdown = mimeType === 'text/markdown';
   const isText = !isImage && !isPdf;
-  const language = LANG_MAP[ext] || null;
+  const language = LANG_MAP[ext] || BASENAME_MAP[base] || null;
   return { mimeType, isText, isImage, isPdf, isMarkdown, language };
+}
+
+// Detect language from shebang line (e.g. #!/usr/bin/env python3)
+function detectShebangLanguage(content) {
+  if (!content.startsWith('#!')) return null;
+  const firstLine = content.slice(0, content.indexOf('\n'));
+  // #!/usr/bin/env python3 → python3
+  // #!/bin/bash → bash
+  const match = firstLine.match(/(?:\/env\s+|\/)([\w.-]+)\s*$/);
+  if (!match) return null;
+  const cmd = match[1].replace(/[\d.]+$/, ''); // python3 → python
+  return SHEBANG_MAP[cmd] || SHEBANG_MAP[match[1]] || null;
 }
 
 function getSizeLimit(info) {
@@ -203,11 +241,12 @@ export function createFilesRouter(allowedRoots) {
       }
 
       const content = await readFile(result.absPath, 'utf-8');
+      const language = result.info.language || detectShebangLanguage(content);
       res.json({
         success: true,
         data: {
           content,
-          language: result.info.language,
+          language,
           mimeType: result.info.mimeType,
           isMarkdown: result.info.isMarkdown,
         },
@@ -240,6 +279,24 @@ export function createFilesRouter(allowedRoots) {
       createReadStream(result.absPath).pipe(res);
     } catch (err) {
       res.status(500).json({ success: false, data: null, error: err.message });
+    }
+  });
+
+  // Read tmux paste buffer and clean it into a file path
+  router.get('/tmux-buffer', async (_req, res) => {
+    try {
+      const { stdout } = await execFileAsync('tmux', ['show-buffer'], { timeout: 3000 });
+      const raw = stdout.trim();
+      if (!raw) {
+        return res.json({ success: true, data: { raw: '', path: '' }, error: null });
+      }
+      // Join lines, trim whitespace per line, strip :line:col suffix
+      let path = raw.split('\n').map((l) => l.trim()).filter(Boolean).join('');
+      path = path.replace(/:\d+(?::\d+)?$/, '');
+      path = path.replace(/\(\d+(?:,\d+)?\)$/, '');
+      res.json({ success: true, data: { raw, path }, error: null });
+    } catch {
+      res.json({ success: true, data: { raw: '', path: '' }, error: null });
     }
   });
 

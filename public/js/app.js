@@ -1653,6 +1653,13 @@ document.addEventListener('keydown', function (e) {
     e.preventDefault();
     if (typeof CommandPalette !== 'undefined') CommandPalette.open();
   }
+  // Ctrl+Shift+O: open file from tmux paste buffer
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'O') {
+    e.preventDefault();
+    if (typeof FilePreview !== 'undefined' && state.currentPane) {
+      FilePreview.openFromBuffer(state.currentPane);
+    }
+  }
 });
 
 if (document.readyState === 'loading') {

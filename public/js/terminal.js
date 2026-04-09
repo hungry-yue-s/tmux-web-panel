@@ -1340,6 +1340,7 @@ function renderTerminal(container) {
     '<button class="btn terminal-font-btn" data-dir="-1" title="Smaller font">A&#8722;</button>' +
     '<button class="btn terminal-font-btn" data-dir="1" title="Larger font">A&#43;</button>' +
     '<button class="btn terminal-split-btn" title="Split pane">&#10010;</button>' +
+    '<button class="btn terminal-open-buf-btn" title="Open file from tmux buffer (Ctrl+Shift+O)">&#128194;</button>' +
     '<button class="btn terminal-popout-btn" title="Pop out">&#8599;</button>' +
     '<button class="btn terminal-fullscreen-btn" title="Fullscreen">&#9634;</button>' +
     '</div>' +
@@ -1450,6 +1451,13 @@ function renderTerminal(container) {
       // Re-render terminal view
       renderTerminal(container);
     });
+  });
+
+  // Open file from tmux paste buffer
+  view.querySelector('.terminal-open-buf-btn').addEventListener('click', function () {
+    if (typeof FilePreview !== 'undefined' && state.currentPane) {
+      FilePreview.openFromBuffer(state.currentPane);
+    }
   });
 
   // Pop-out button

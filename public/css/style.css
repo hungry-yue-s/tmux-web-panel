@@ -3421,6 +3421,7 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 .fp-md-wrap a { color: var(--accent-blue); }
 .fp-md-wrap .katex-display { overflow-x: auto; padding: 4px 0; }
 
+
 /* === System stats panel (home view) === */
 .ss-card {
   max-width: 720px;

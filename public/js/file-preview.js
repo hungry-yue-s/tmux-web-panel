@@ -438,6 +438,27 @@ var FilePreview = (function () {
     return { y: last.row + 1, x: last.line.length + 1 };
   }
 
+  // --- Open from tmux paste buffer ---
+
+  function _cleanBufferText(text) {
+    // Join wrapped/indented lines, strip :line:col suffix
+    var cleaned = text.split('\n').map(function (l) { return l.trim(); }).filter(Boolean).join('');
+    cleaned = cleaned.replace(/:\d+(?::\d+)?$/, '');
+    cleaned = cleaned.replace(/\(\d+(?:,\d+)?\)$/, '');
+    return cleaned;
+  }
+
+  function openFromBuffer(paneId) {
+    var _authHeaders = typeof Auth !== 'undefined' ? Auth.headers() : {};
+    fetch('/api/files/tmux-buffer', { headers: _authHeaders })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res.success || !res.data.path) return;
+        openFile(res.data.path, paneId);
+      })
+      .catch(function () { /* ignore */ });
+  }
+
   // --- Link Provider ---
 
   function registerLinkProvider(term, paneId) {
@@ -585,5 +606,5 @@ var FilePreview = (function () {
     return null;
   }
 
-  return { registerLinkProvider: registerLinkProvider, openFile: openFile, close: close, hitTest: hitTest };
+  return { registerLinkProvider: registerLinkProvider, openFile: openFile, openFromBuffer: openFromBuffer, close: close, hitTest: hitTest };
 })();
