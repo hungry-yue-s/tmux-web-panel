@@ -324,14 +324,14 @@ var FilePreview = (function () {
   // middle of something).
   var NOT_PREFIX = "(?<![\\w\\-:\\/\\.~])";
 
-  // Path body: exclude terminators and all CJK/full-width chars to prevent
-  // paths from extending into Chinese text.
+  // Path body: exclude terminators and CJK punctuation/full-width chars.
+  // CJK Unified Ideographs (\u4e00-\u9fff) are ALLOWED because paths on
+  // CJK systems commonly contain Chinese characters (e.g. ~/文档/...).
   //   \u3000-\u303f  CJK symbols and punctuation (。、「」 etc.)
-  //   \u4e00-\u9fff  CJK Unified Ideographs
-  //   \uff00-\uffef  Halfwidth/fullwidth forms (（）)
+  //   \uff00-\uffef  Halfwidth/fullwidth forms (（）,，。)
   //   \u2000-\u206f  General punctuation
   // Also exclude =, ?, #, &, @ which commonly indicate URL query/params.
-  var PATH_BODY = "[^\\s'\"()\\[\\]{}<>:;,?#&@=\\u3000-\\u303f\\u4e00-\\u9fff\\uff00-\\uffef\\u2000-\\u206f]";
+  var PATH_BODY = "[^\\s'\"()\\[\\]{}<>:;,?#&@=\\u3000-\\u303f\\uff00-\\uffef\\u2000-\\u206f]";
 
   // Absolute: /path (preceded by non-path-char; handles "file=/path", "(/path" etc.)
   var ABS_RE = new RegExp(NOT_PREFIX + "\\/" + PATH_BODY + "+(?:\\/" + PATH_BODY + "+)*", "g");
@@ -357,6 +357,9 @@ var FilePreview = (function () {
       var trimmed = allowNoSlash
         ? raw.replace(/[,;:!?)>\]}]+$/, '')
         : raw.replace(/[.,;:!?)>\]}]+$/, '');
+      // Strip trailing CJK chars that leak past a file extension
+      // e.g. "file.txt然后继续" → "file.txt"
+      trimmed = trimmed.replace(/(\.[a-zA-Z][a-zA-Z0-9]{0,5})[\u4e00-\u9fff]+$/, '$1');
       if (trimmed.length < minLen) continue;
       if (!allowNoSlash && trimmed.indexOf('/') === -1) continue;
       var startCol = m.index;
