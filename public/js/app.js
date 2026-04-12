@@ -1660,6 +1660,13 @@ document.addEventListener('keydown', function (e) {
       FilePreview.openFromBuffer(state.currentPane);
     }
   }
+  // Ctrl+L: toggle layout picker (terminal view only)
+  if ((e.ctrlKey || e.metaKey) && e.key === 'l' && !e.shiftKey && !e.altKey) {
+    if (state.currentTab === 'terminal' && state.currentSession && state.currentWindow) {
+      e.preventDefault();
+      if (typeof LayoutPicker !== 'undefined') LayoutPicker.toggle();
+    }
+  }
 });
 
 if (document.readyState === 'loading') {

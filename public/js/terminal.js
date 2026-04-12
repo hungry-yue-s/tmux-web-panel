@@ -725,6 +725,20 @@ function _createFabPanel(container) {
     });
     g2.appendChild(g2grid);
 
+    // Group: Layout
+    var gLayout = _createDrawerGroup(body, '布局');
+    var gLayoutGrid = document.createElement('div');
+    gLayoutGrid.className = 'fab-drawer-grid';
+    var layoutBtn = document.createElement('button');
+    layoutBtn.className = 'fab-drawer-btn';
+    layoutBtn.textContent = '⊞ 布局';
+    layoutBtn.addEventListener('click', function () {
+      toggleDrawer(false);
+      if (typeof LayoutPicker !== 'undefined') LayoutPicker.open();
+    });
+    gLayoutGrid.appendChild(layoutBtn);
+    gLayout.appendChild(gLayoutGrid);
+
     // Group 3: Claude Code Shortcuts
     var g3 = _createDrawerGroup(body, 'Claude Code \u5feb\u6377\u952e');
     var g3grid = document.createElement('div');
