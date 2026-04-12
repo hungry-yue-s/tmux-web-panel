@@ -280,6 +280,34 @@ export async function sendKeys(paneId, command) {
   await tmuxExec(['send-keys', '-t', paneId, command, 'Enter']);
 }
 
+export async function selectLayout(session, window, layout) {
+  requireValidSessionName(session);
+  requireValidWindowIndex(window);
+  const validLayouts = ['even-horizontal', 'even-vertical', 'main-horizontal', 'main-vertical', 'tiled'];
+  if (!validLayouts.includes(layout)) {
+    throw new Error(`Invalid layout: ${layout}`);
+  }
+  await tmuxExec(['select-layout', '-t', `${session}:${window}`, layout]);
+}
+
+export async function resizePane(paneId, direction, amount) {
+  requireValidPaneId(paneId);
+  const validDirs = ['U', 'D', 'L', 'R'];
+  if (!validDirs.includes(direction)) {
+    throw new Error(`Invalid direction: ${direction}`);
+  }
+  if (!Number.isInteger(amount) || amount < 1) {
+    throw new Error(`Invalid amount: ${amount}`);
+  }
+  await tmuxExec(['resize-pane', '-t', paneId, `-${direction}`, String(amount)]);
+}
+
+export async function swapPane(srcPaneId, dstPaneId) {
+  requireValidPaneId(srcPaneId);
+  requireValidPaneId(dstPaneId);
+  await tmuxExec(['swap-pane', '-s', srcPaneId, '-t', dstPaneId]);
+}
+
 export async function capturePane(paneId) {
   requireValidPaneId(paneId);
   const stdout = await tmuxExec([
