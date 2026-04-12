@@ -89,4 +89,42 @@ router.delete('/:index', async (req, res) => {
   }
 });
 
+// GET /api/sessions/:name/windows/:index/layout
+router.get('/:index/layout', async (req, res) => {
+  try {
+    const { name: session, index } = req.params;
+    const windows = await tmux.listWindows(session);
+    const win = windows.find(w => String(w.index) === String(index));
+    if (!win) {
+      return res.status(404).json({ success: false, data: null, error: 'Window not found' });
+    }
+    res.json({
+      success: true,
+      data: { session, index, width: win.width, height: win.height },
+      error: null,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, data: null, error: err.message });
+  }
+});
+
+// POST /api/sessions/:name/windows/:index/layout
+router.post('/:index/layout', async (req, res) => {
+  try {
+    const { name: session, index } = req.params;
+    const { layout } = req.body ?? {};
+    if (!layout || typeof layout !== 'string') {
+      return res.status(400).json({ success: false, data: null, error: 'Missing or invalid "layout"' });
+    }
+    await tmux.selectLayout(session, index, layout);
+    res.json({
+      success: true,
+      data: { session, index, layout },
+      error: null,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, data: null, error: err.message });
+  }
+});
+
 export default router;

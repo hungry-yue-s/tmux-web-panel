@@ -151,4 +151,42 @@ flatPanesRouter.get('/:paneId/capture', async (req, res) => {
   }
 });
 
+// POST /api/panes/:paneId/swap
+flatPanesRouter.post('/:paneId/swap', async (req, res) => {
+  try {
+    const { paneId } = req.params;
+    const { target } = req.body ?? {};
+    if (!target || typeof target !== 'string') {
+      return res.status(400).json({ success: false, data: null, error: 'Missing or invalid "target"' });
+    }
+    await tmux.swapPane(paneId, target);
+    res.json({
+      success: true,
+      data: { source: paneId, target },
+      error: null,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, data: null, error: err.message });
+  }
+});
+
+// POST /api/panes/:paneId/resize
+flatPanesRouter.post('/:paneId/resize', async (req, res) => {
+  try {
+    const { paneId } = req.params;
+    const { direction, amount } = req.body ?? {};
+    if (!direction || !amount) {
+      return res.status(400).json({ success: false, data: null, error: 'Missing "direction" or "amount"' });
+    }
+    await tmux.resizePane(paneId, direction, Number(amount));
+    res.json({
+      success: true,
+      data: { paneId, direction, amount: Number(amount) },
+      error: null,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, data: null, error: err.message });
+  }
+});
+
 export { nestedPanesRouter, flatPanesRouter };
