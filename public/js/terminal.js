@@ -725,20 +725,6 @@ function _createFabPanel(container) {
     });
     g2.appendChild(g2grid);
 
-    // Group: Layout
-    var gLayout = _createDrawerGroup(body, '布局');
-    var gLayoutGrid = document.createElement('div');
-    gLayoutGrid.className = 'fab-drawer-grid';
-    var layoutBtn = document.createElement('button');
-    layoutBtn.className = 'fab-drawer-btn';
-    layoutBtn.textContent = '⊞ 布局';
-    layoutBtn.addEventListener('click', function () {
-      toggleDrawer(false);
-      if (typeof LayoutPicker !== 'undefined') LayoutPicker.open();
-    });
-    gLayoutGrid.appendChild(layoutBtn);
-    gLayout.appendChild(gLayoutGrid);
-
     // Group 3: Claude Code Shortcuts
     var g3 = _createDrawerGroup(body, 'Claude Code \u5feb\u6377\u952e');
     var g3grid = document.createElement('div');
@@ -1299,6 +1285,27 @@ function connectTerminalWs(paneId, term, nozoom) {
   term.onData(function (data) {
     if (ws.readyState !== WebSocket.OPEN) return;
     if (_suppressMouseMove && _sgrMoveRe.test(data)) return;
+
+    // --- IME composition guard ---
+    // During active composition, suppress onData — intermediate text is
+    // managed by the IME, not meant for the terminal.
+    if (term._imeComposing) return;
+
+    // After compositionend, xterm's CompositionHelper fires onData with the
+    // final composed text. Allow that first send, suppress duplicates.
+    if (term._imeGuardUntil && Date.now() < term._imeGuardUntil) {
+      // Enter that confirmed the IME candidate — not a real terminal Enter
+      if (data === '\r') return;
+      // First onData with composed text: let it through (xterm's legitimate send)
+      if (!term._imeSentOnce && term._imeLastComposed && data === term._imeLastComposed) {
+        term._imeSentOnce = true;
+        // fall through to ws.send
+      } else if (term._imeSentOnce && term._imeLastComposed && data === term._imeLastComposed) {
+        // Duplicate — suppress
+        return;
+      }
+    }
+
     ws.send(JSON.stringify({ type: 'input', data: data }));
   });
 
@@ -1354,6 +1361,7 @@ function renderTerminal(container) {
     '<button class="btn terminal-font-btn" data-dir="-1" title="Smaller font">A&#8722;</button>' +
     '<button class="btn terminal-font-btn" data-dir="1" title="Larger font">A&#43;</button>' +
     '<button class="btn terminal-split-btn" title="Split pane">&#10010;</button>' +
+    '<button class="btn terminal-layout-btn" title="Layout picker (Ctrl+L)">&#8862;&#8901;</button>' +
     '<button class="btn terminal-open-buf-btn" title="Open file from tmux buffer (Ctrl+Shift+O)">&#128194;</button>' +
     '<button class="btn terminal-popout-btn" title="Pop out">&#8599;</button>' +
     '<button class="btn terminal-fullscreen-btn" title="Fullscreen">&#9634;</button>' +
@@ -1415,6 +1423,11 @@ function renderTerminal(container) {
     _sidebarSessionKey = '';
     render();
     updateSidebar();
+  });
+
+  // Layout picker button
+  view.querySelector('.terminal-layout-btn').addEventListener('click', function () {
+    if (typeof LayoutPicker !== 'undefined') LayoutPicker.toggle();
   });
 
   view.querySelector('.terminal-split-btn').addEventListener('click', function (e) {
@@ -1582,6 +1595,65 @@ function _mountTerminal(termContainer, nozoom) {
     term.textarea.setAttribute('autocomplete', 'off');
     term.textarea.setAttribute('autocorrect', 'off');
     term.textarea.setAttribute('spellcheck', 'false');
+    // Hint mobile keyboard that Enter means "send", not "newline"
+    term.textarea.setAttribute('enterkeyhint', 'send');
+
+    // --- Mobile CJK IME composition fix ---
+    // xterm.js CompositionHelper (xtermjs/xterm.js#3600, #2403, #5108) has
+    // known issues with mobile CJK IMEs (WeChat, Sogou, GBoard CJK):
+    //   1. Enter confirms candidate but xterm also sends \r
+    //   2. Composed text fires onData multiple times (duplicate input events)
+    //   3. After compositionend, textarea retains text causing re-send
+    //
+    // Strategy: let xterm's CompositionHelper handle the first send of
+    // composed text via its internal triggerDataEvent. We only add a guard
+    // layer in onData to catch mobile-specific duplicates.
+    // Ref: CodeMirror uses 200-400ms flush delay for Chrome Android.
+    var _isAndroid = /Android/i.test(navigator.userAgent);
+    var _imeGuardMs = _isAndroid ? 300 : 150;
+
+    term._imeComposing = false;
+    term._imeGuardUntil = 0;
+    term._imeSentOnce = false;    // first onData after compositionend allowed
+    term._imeLastComposed = null; // text from compositionend for dedup
+
+    term.textarea.addEventListener('compositionstart', function () {
+      term._imeComposing = true;
+      term._imeSentOnce = false;
+      term._imeLastComposed = null;
+    });
+
+    term.textarea.addEventListener('compositionend', function (e) {
+      term._imeComposing = false;
+      term._imeLastComposed = e.data || '';
+      term._imeSentOnce = false;
+      // Guard window: longer on Android (GBoard fires contradictory events)
+      term._imeGuardUntil = Date.now() + _imeGuardMs;
+      // Clear textarea AFTER xterm's CompositionHelper reads it.
+      // xterm uses setTimeout(0) in _finalizeComposition; we wait longer.
+      var ta = term.textarea;
+      if (ta) {
+        setTimeout(function () { ta.value = ''; }, 120);
+      }
+    });
+
+    // During composition, block Enter from reaching xterm as \r.
+    // Enter is for IME candidate confirmation, not terminal input.
+    // Use both stopPropagation (prevent xterm handler) and preventDefault
+    // (prevent default \r insertion on some mobile browsers).
+    // Backspace: only stopPropagation (IME needs it for candidate editing,
+    // but xterm shouldn't process it as terminal backspace).
+    term.textarea.addEventListener('keydown', function (e) {
+      // Use spec-standard isComposing (more reliable than manual tracking)
+      var composing = term._imeComposing || e.isComposing;
+      if (!composing) return;
+      if (e.key === 'Enter' || e.keyCode === 13) {
+        e.stopPropagation();
+        e.preventDefault();
+      } else if (e.key === 'Backspace' || e.keyCode === 8) {
+        e.stopPropagation();
+      }
+    }, true); // capture phase — before xterm's handler
   }
 
   // Use WebGL renderer for crisp box-drawing characters (tmux split borders)
