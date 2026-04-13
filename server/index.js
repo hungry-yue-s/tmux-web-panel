@@ -14,6 +14,7 @@ import {
   tokenAuth,
   wsTokenAuth,
   startTokenReaper,
+  initTokenPersistence,
 } from './auth.js';
 import * as tmux from './tmux.js';
 import { TerminalManager } from './terminal.js';
@@ -83,18 +84,22 @@ if (config.auth) {
   authSalt = hashed.salt;
   authHash = hashed.hash;
 
+  // Restore persisted tokens (survives restarts)
+  const tokenFile = join(homedir(), '.config', 'tmux-web-panel', 'tokens.json');
+  initTokenPersistence(tokenMap, tokenFile);
+
   // --- Public auth routes (no token required) ---
 
   app.post('/api/auth/login', (req, res) => {
-    const { username, password } = req.body || {};
+    const { username, password, trusted } = req.body || {};
 
     if (
       username === authUser &&
       password &&
       verifyPassword(password, authSalt, authHash)
     ) {
-      const token = createToken(tokenMap);
-      res.json({ success: true, data: { token }, error: null });
+      const token = createToken(tokenMap, { trusted: !!trusted });
+      res.json({ success: true, data: { token, trusted: !!trusted }, error: null });
       return;
     }
 

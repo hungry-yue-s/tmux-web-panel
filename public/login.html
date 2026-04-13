@@ -98,6 +98,22 @@
       text-align: center;
     }
     .login-error.visible { display: block; }
+    .login-trust {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      font-size: 0.85rem;
+      color: var(--text-muted, #565f89);
+      cursor: pointer;
+      user-select: none;
+    }
+    .login-trust input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent-blue, #7aa2f7);
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -114,6 +130,9 @@
           <label for="password">Password</label>
           <input type="password" id="password" name="password" autocomplete="current-password" required>
         </div>
+        <label class="login-trust">
+          <input type="checkbox" id="trusted"> Trust this device
+        </label>
         <button type="submit" class="login-btn" id="login-btn">Sign In</button>
       </form>
       <div class="login-error" id="login-error"></div>
@@ -148,11 +167,12 @@
 
         var username = document.getElementById('username').value;
         var password = document.getElementById('password').value;
+        var trusted = document.getElementById('trusted').checked;
 
         fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: username, password: password }),
+          body: JSON.stringify({ username: username, password: password, trusted: trusted }),
         })
           .then(function (res) { return res.json(); })
           .then(function (data) {

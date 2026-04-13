@@ -6,9 +6,12 @@
  */
 
 import { scryptSync, randomBytes, timingSafeEqual } from 'node:crypto';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const TOKEN_REAP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+const PERSIST_DEBOUNCE_MS = 2000;
 
 const KEY_LENGTH = 64;
 const SALT_LENGTH = 16;
@@ -42,12 +45,15 @@ export function verifyPassword(password, salt, hash) {
 /**
  * Create a new session token and store it in the map.
  * @param {Map} tokenMap
+ * @param {object} [options]
+ * @param {boolean} [options.trusted] - If true, token never expires.
  * @returns {string} hex-encoded token
  */
-export function createToken(tokenMap) {
+export function createToken(tokenMap, { trusted = false } = {}) {
   const token = randomBytes(TOKEN_LENGTH).toString('hex');
   tokenMap.set(token, {
-    expiresAt: Date.now() + SESSION_TTL_MS,
+    expiresAt: trusted ? null : Date.now() + SESSION_TTL_MS,
+    trusted,
   });
   return token;
 }
@@ -63,6 +69,7 @@ export function deleteToken(tokenMap, token) {
 
 /**
  * Validate a token: exists and not expired.
+ * Trusted tokens (expiresAt === null) never expire.
  * Removes expired tokens as a side effect.
  * @param {Map} tokenMap
  * @param {string} token
@@ -71,7 +78,7 @@ export function deleteToken(tokenMap, token) {
 function isValidToken(tokenMap, token) {
   if (!token || !tokenMap.has(token)) return false;
   const entry = tokenMap.get(token);
-  if (Date.now() >= entry.expiresAt) {
+  if (entry.expiresAt !== null && Date.now() >= entry.expiresAt) {
     tokenMap.delete(token);
     return false;
   }
@@ -138,6 +145,7 @@ export function wsTokenAuth(tokenMap, req) {
 
 /**
  * Start a periodic reaper that removes expired tokens from the map.
+ * Trusted tokens (expiresAt === null) are never reaped.
  * @param {Map} tokenMap
  * @returns {ReturnType<typeof setInterval>} timer handle (for cleanup)
  */
@@ -145,9 +153,75 @@ export function startTokenReaper(tokenMap) {
   return setInterval(() => {
     const now = Date.now();
     for (const [token, entry] of tokenMap) {
-      if (now >= entry.expiresAt) {
+      if (entry.expiresAt !== null && now >= entry.expiresAt) {
         tokenMap.delete(token);
       }
     }
   }, TOKEN_REAP_INTERVAL_MS);
+}
+
+// --- Token Persistence ---
+
+let _persistPath = null;
+let _persistTimer = null;
+
+/**
+ * Initialise file-backed persistence for the token map.
+ * Call once at startup — loads existing tokens from disk and installs
+ * a debounced writer so every mutation is eventually flushed.
+ *
+ * @param {Map} tokenMap
+ * @param {string} filePath - absolute path to the JSON file
+ */
+export function initTokenPersistence(tokenMap, filePath) {
+  _persistPath = filePath;
+
+  // Load from disk
+  try {
+    const raw = readFileSync(filePath, 'utf8');
+    const entries = JSON.parse(raw);
+    const now = Date.now();
+    for (const [token, entry] of entries) {
+      // Skip non-trusted tokens that have expired while the server was down
+      if (entry.expiresAt !== null && now >= entry.expiresAt) continue;
+      tokenMap.set(token, entry);
+    }
+  } catch (_e) {
+    // File doesn't exist yet or is corrupt — start fresh
+  }
+
+  // Wrap mutating methods to trigger persistence
+  const origSet = tokenMap.set.bind(tokenMap);
+  const origDelete = tokenMap.delete.bind(tokenMap);
+
+  tokenMap.set = function (k, v) {
+    const result = origSet(k, v);
+    schedulePersist(tokenMap);
+    return result;
+  };
+  tokenMap.delete = function (k) {
+    const result = origDelete(k);
+    schedulePersist(tokenMap);
+    return result;
+  };
+}
+
+function schedulePersist(tokenMap) {
+  if (!_persistPath) return;
+  if (_persistTimer) clearTimeout(_persistTimer);
+  _persistTimer = setTimeout(() => {
+    _persistTimer = null;
+    persistNow(tokenMap);
+  }, PERSIST_DEBOUNCE_MS);
+}
+
+function persistNow(tokenMap) {
+  if (!_persistPath) return;
+  try {
+    mkdirSync(dirname(_persistPath), { recursive: true });
+    const entries = [...tokenMap.entries()];
+    writeFileSync(_persistPath, JSON.stringify(entries), 'utf8');
+  } catch (_e) {
+    // Best-effort — log nothing to avoid noise
+  }
 }
