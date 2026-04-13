@@ -308,10 +308,10 @@ export async function swapPane(srcPaneId, dstPaneId) {
   await tmuxExec(['swap-pane', '-s', srcPaneId, '-t', dstPaneId]);
 }
 
-export async function capturePane(paneId) {
+export async function capturePane(paneId, { escape = false } = {}) {
   requireValidPaneId(paneId);
-  const stdout = await tmuxExec([
-    'capture-pane', '-t', paneId, '-p',
-  ]);
+  const args = ['capture-pane', '-t', paneId, '-p'];
+  if (escape) args.splice(2, 0, '-e');
+  const stdout = await tmuxExec(args);
   return stdout;
 }

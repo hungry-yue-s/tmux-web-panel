@@ -136,7 +136,7 @@ flatPanesRouter.post('/:paneId/select', async (req, res) => {
 flatPanesRouter.get('/:paneId/capture', async (req, res) => {
   try {
     const { paneId } = req.params;
-    const content = await tmux.capturePane(paneId);
+    const content = await tmux.capturePane(paneId, { escape: req.query.escape === '1' });
     res.json({
       success: true,
       data: { paneId, content },

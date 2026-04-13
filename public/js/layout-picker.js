@@ -247,7 +247,7 @@ var LayoutPicker = (function () {
 
   function fetchAllCaptures() {
     var requests = panes.map(function (p) {
-      return api.get('/api/panes/' + encodeURIComponent(p.id) + '/capture')
+      return api.get('/api/panes/' + encodeURIComponent(p.id) + '/capture?escape=1')
         .then(function (r) {
           if (r.success && r.data) {
             paneContents[p.id] = r.data.content || '';
@@ -260,11 +260,80 @@ var LayoutPicker = (function () {
     });
   }
 
+  // ANSI escape → HTML converter (supports colors, bold, dim, italic, underline, reverse)
+  var ANSI_COLORS = [
+    '#000','#c00','#0a0','#a50','#00a','#a0a','#0aa','#aaa',  // 0-7
+    '#555','#f55','#5f5','#ff5','#55f','#f5f','#5ff','#fff',  // 8-15
+  ];
+  function ansiToHTML(text) {
+    var out = '';
+    var fg = '', bg = '', bold = false, dim = false, italic = false, underline = false;
+    var i = 0, len = text.length;
+    while (i < len) {
+      if (text.charCodeAt(i) === 0x1b && text.charAt(i + 1) === '[') {
+        // Parse CSI sequence
+        var j = i + 2;
+        while (j < len && text.charAt(j) !== 'm' && j - i < 20) j++;
+        if (text.charAt(j) === 'm') {
+          var codes = text.substring(i + 2, j).split(';');
+          for (var ci = 0; ci < codes.length; ci++) {
+            var c = parseInt(codes[ci]) || 0;
+            if (c === 0) { fg = ''; bg = ''; bold = false; dim = false; italic = false; underline = false; }
+            else if (c === 1) bold = true;
+            else if (c === 2) dim = true;
+            else if (c === 3) italic = true;
+            else if (c === 4) underline = true;
+            else if (c === 22) { bold = false; dim = false; }
+            else if (c === 23) italic = false;
+            else if (c === 24) underline = false;
+            else if (c >= 30 && c <= 37) fg = ANSI_COLORS[c - 30 + (bold ? 8 : 0)];
+            else if (c === 39) fg = '';
+            else if (c >= 40 && c <= 47) bg = ANSI_COLORS[c - 40];
+            else if (c === 49) bg = '';
+            else if (c >= 90 && c <= 97) fg = ANSI_COLORS[c - 90 + 8];
+            else if (c >= 100 && c <= 107) bg = ANSI_COLORS[c - 100 + 8];
+            else if (c === 38 && codes[ci + 1] === '5') {
+              fg = xterm256(parseInt(codes[ci + 2]) || 0); ci += 2;
+            }
+            else if (c === 48 && codes[ci + 1] === '5') {
+              bg = xterm256(parseInt(codes[ci + 2]) || 0); ci += 2;
+            }
+          }
+          i = j + 1;
+          continue;
+        }
+      }
+      // Regular character — apply current style
+      var ch = text.charAt(i);
+      if (ch === '<') ch = '&lt;';
+      else if (ch === '>') ch = '&gt;';
+      else if (ch === '&') ch = '&amp;';
+      var style = '';
+      if (fg) style += 'color:' + fg + ';';
+      if (bg) style += 'background:' + bg + ';';
+      if (bold) style += 'font-weight:700;';
+      if (dim) style += 'opacity:0.6;';
+      if (italic) style += 'font-style:italic;';
+      if (underline) style += 'text-decoration:underline;';
+      if (style) out += '<span style="' + style + '">' + ch + '</span>';
+      else out += ch;
+      i++;
+    }
+    return out;
+  }
+  function xterm256(n) {
+    if (n < 16) return ANSI_COLORS[n];
+    if (n >= 232) { var g = (n - 232) * 10 + 8; return 'rgb(' + g + ',' + g + ',' + g + ')'; }
+    n -= 16;
+    var r = Math.floor(n / 36) * 51, g = Math.floor((n % 36) / 6) * 51, b = (n % 6) * 51;
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+
   function updatePaneContentDOM() {
     panes.forEach(function (p, i) {
       var el = previewWindow.querySelector('.lp-preview-pane[data-idx="' + i + '"] .lp-pane-content');
       if (el && paneContents[p.id]) {
-        el.textContent = paneContents[p.id];
+        el.innerHTML = ansiToHTML(paneContents[p.id]);
       }
     });
   }
