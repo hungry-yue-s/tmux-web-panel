@@ -74,7 +74,7 @@ var LayoutPicker = (function () {
       '.lp-preview-pane.selected{border-color:var(--accent-orange,#ff9e64);}',
 
       // Pane header
-      '.lp-pane-header{display:flex;align-items:center;gap:4px;padding:3px 6px;background:rgba(41,46,66,0.8);border-bottom:1px solid var(--border-color,#3b4261);font-size:10px;flex-shrink:0;}',
+      '.lp-pane-header{display:flex;align-items:center;gap:4px;padding:3px 6px;background:color-mix(in srgb, var(--bg-hover,#292e42) 80%, transparent);border-bottom:1px solid var(--border-color,#3b4261);font-size:10px;flex-shrink:0;}',
       '.lp-pane-idx{font-weight:700;color:var(--accent-blue,#7aa2f7);min-width:14px;}',
       '.lp-preview-pane.main-pane .lp-pane-idx{color:var(--accent-green,#9ece6a);}',
       '.lp-pane-cmd{color:var(--text-muted,#565f89);}',
@@ -87,7 +87,7 @@ var LayoutPicker = (function () {
 
       // Resize handles
       '.lp-resize-handle{position:absolute;z-index:5;background:transparent;transition:background 0.15s;}',
-      '.lp-resize-handle:hover,.lp-resize-handle.active{background:rgba(122,162,247,0.4);}',
+      '.lp-resize-handle:hover,.lp-resize-handle.active{background:color-mix(in srgb, var(--accent-blue,#7aa2f7) 40%, transparent);}',
       '.lp-resize-handle.horizontal{cursor:row-resize;}',
       '.lp-resize-handle.vertical{cursor:col-resize;}',
       '.lp-resize-handle::after{content:"";position:absolute;border-radius:2px;background:var(--accent-blue,#7aa2f7);opacity:0;transition:opacity 0.15s;}',
@@ -101,7 +101,7 @@ var LayoutPicker = (function () {
       '.lp-size-tooltip{position:fixed;pointer-events:none;z-index:1000;background:var(--bg-hover,#292e42);border:1px solid var(--accent-blue,#7aa2f7);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--accent-blue,#7aa2f7);display:none;white-space:nowrap;}',
 
       // Swap hint
-      '.lp-swap-hint{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);background:rgba(41,46,66,0.9);border:1px solid var(--border-color,#3b4261);border-radius:6px;padding:4px 12px;font-size:10px;color:var(--accent-orange,#ff9e64);z-index:10;white-space:nowrap;}',
+      '.lp-swap-hint{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);background:color-mix(in srgb, var(--bg-hover,#292e42) 90%, transparent);border:1px solid var(--border-color,#3b4261);border-radius:6px;padding:4px 12px;font-size:10px;color:var(--accent-orange,#ff9e64);z-index:10;white-space:nowrap;}',
 
       // Responsive
       '@media (max-width:480px){',
