@@ -325,10 +325,19 @@ var LayoutPicker = (function () {
         h = '<div class="lp-mi"><div class="p m" style="flex:2"></div>';
         if (n > 1) { h += '<div class="sc">'; for (var i = 1; i < n; i++) h += '<div class="p"></div>'; h += '</div>'; }
         h += '</div>'; break;
-      case 'tiled':
-        var cols = Math.ceil(Math.sqrt(n)); h = '<div class="lp-mi t">'; var idx = 0;
-        while (idx < n) { h += '<div class="sr">'; for (var c = 0; c < cols && idx < n; c++, idx++) h += '<div class="p"></div>'; h += '</div>'; }
+      case 'tiled': {
+        // tmux tiled: always 2 columns, rows = ceil(n/2), last row may be single full-width
+        var cols = n >= 2 ? 2 : 1;
+        var rows = Math.ceil(n / cols);
+        h = '<div class="lp-mi t">'; var idx = 0;
+        for (var r = 0; r < rows; r++) {
+          var rowItems = Math.min(cols, n - idx);
+          h += '<div class="sr">';
+          for (var c = 0; c < rowItems; c++, idx++) h += '<div class="p"></div>';
+          h += '</div>';
+        }
         h += '</div>'; break;
+      }
     }
     return h;
   }
