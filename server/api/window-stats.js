@@ -3,8 +3,12 @@
 import { Router } from 'express';
 import os from 'node:os';
 import { readFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import * as tmux from '../tmux.js';
 import { sampleTree, pruneStaleSamples, cpuCount } from '../proc-stats.js';
+
+const execFileAsync = promisify(execFile);
 
 async function readSystemSwap() {
   try {
@@ -16,6 +20,46 @@ async function readSystemSwap() {
     return { total, used: Math.max(0, total - free) };
   } catch {
     return { total: 0, used: 0 };
+  }
+}
+
+// Filesystem types to exclude from disk stats
+const EXCLUDED_FS = new Set([
+  'tmpfs', 'devtmpfs', 'sysfs', 'proc', 'devpts', 'securityfs',
+  'cgroup', 'cgroup2', 'pstore', 'debugfs', 'hugetlbfs', 'mqueue',
+  'configfs', 'fusectl', 'tracefs', 'bpf', 'efivarfs', 'autofs',
+  'overlay', 'squashfs', 'nsfs', 'binfmt_misc',
+]);
+
+async function readDiskStats() {
+  try {
+    const { stdout } = await execFileAsync('df', [
+      '-B1', '--output=source,fstype,size,used,avail,pcent,target',
+    ]);
+    const lines = stdout.trim().split('\n').slice(1); // skip header
+    const disks = [];
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 7) continue;
+      const [source, fstype, size, used, avail, pcent, ...mountParts] = parts;
+      const mount = mountParts.join(' ');
+      if (EXCLUDED_FS.has(fstype)) continue;
+      if (source.startsWith('/dev/loop')) continue;
+      const total = Number(size);
+      if (total <= 0) continue;
+      disks.push({
+        device: source,
+        fstype,
+        mount,
+        total,
+        used: Number(used),
+        avail: Number(avail),
+        percent: parseFloat(pcent),
+      });
+    }
+    return disks;
+  } catch {
+    return [];
   }
 }
 
@@ -73,7 +117,7 @@ router.get('/', async (_req, res) => {
     // Total / system
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
-    const sysSwap = await readSystemSwap();
+    const [sysSwap, disks] = await Promise.all([readSystemSwap(), readDiskStats()]);
     const sumCpu = windowStats.reduce((a, w) => a + w.cpuPercent, 0);
     const sumMem = windowStats.reduce((a, w) => a + w.memBytes, 0);
     const sumSwap = windowStats.reduce((a, w) => a + w.swapBytes, 0);
@@ -86,6 +130,7 @@ router.get('/', async (_req, res) => {
       success: true,
       data: {
         windows: windowStats,
+        disks,
         total: {
           windowCpuPercent: sumCpu,
           windowMemBytes: sumMem,

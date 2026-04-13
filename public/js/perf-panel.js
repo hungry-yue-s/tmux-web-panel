@@ -4,8 +4,8 @@ var PerfPanel = (function () {
   var POLL_MS = 2000;
   var HISTORY = 40; // ~80s
   var MAX_ROWS = 15; // top N windows in bar chart; rest aggregated as "others"
-  var METRICS = ['cpu', 'mem', 'io'];
-  var METRIC_LABEL = { cpu: 'CPU', mem: '内存', io: 'IO' };
+  var METRICS = ['cpu', 'mem', 'io', 'disk'];
+  var METRIC_LABEL = { cpu: 'CPU', mem: '内存', io: 'IO', disk: '磁盘' };
 
   var timer = null;
   var state = {
@@ -170,6 +170,15 @@ var PerfPanel = (function () {
       html += '<span class="pp-tot"><span class="pp-tot-l">SWAP</span><span class="pp-tot-v">' + fmtBytes(t.systemSwapUsed) + ' <span class="pp-tot-sub">/ ' + fmtBytes(t.systemSwapTotal) + ' (' + swapMachinePct.toFixed(0) + '%)</span></span></span>';
     }
     html += '<span class="pp-tot"><span class="pp-tot-l">IO</span><span class="pp-tot-v">' + fmtBps(t.windowIoBps) + '</span></span>';
+    // Disk summary in header
+    var diskArr = snap.disks || [];
+    if (diskArr.length > 0) {
+      var rootDisk = diskArr.find(function (d) { return d.mount === '/'; });
+      if (rootDisk) {
+        var rootPct = rootDisk.total > 0 ? (rootDisk.used / rootDisk.total) * 100 : 0;
+        html += '<span class="pp-tot"><span class="pp-tot-l">DISK /</span><span class="pp-tot-v">' + fmtBytes(rootDisk.used) + ' <span class="pp-tot-sub">/ ' + fmtBytes(rootDisk.total) + ' (' + rootPct.toFixed(0) + '%)</span></span></span>';
+      }
+    }
     html += '</div>';
     html += '</div>';
 
@@ -180,7 +189,11 @@ var PerfPanel = (function () {
       html += '<button class="' + cls + '" data-metric="' + m + '">' + METRIC_LABEL[m] + '</button>';
     });
     html += '<span class="pp-tabs-spacer"></span>';
-    html += '<span class="pp-tabs-hint">面积 = ' + METRIC_LABEL[metric] + ' 占比 · 百分比 = 占机器总量</span>';
+    if (metric === 'disk') {
+      html += '<span class="pp-tabs-hint">各分区磁盘使用情况</span>';
+    } else {
+      html += '<span class="pp-tabs-hint">面积 = ' + METRIC_LABEL[metric] + ' 占比 · 百分比 = 占机器总量</span>';
+    }
     html += '</div>';
 
     // Machine-total denominator (so cell pct = "% of machine")
@@ -337,7 +350,7 @@ var PerfPanel = (function () {
         }
       }
       html += '</svg>';
-    } else {
+    } else if (metric === 'cpu' || metric === 'io') {
       // Horizontal bar chart for CPU / IO — same layout grammar as MEM.
       var barItems = items.slice(); // already sorted desc, filtered
       var otherAgg = null;
@@ -394,9 +407,70 @@ var PerfPanel = (function () {
       html += '</svg>';
     }
 
-    // History strip — 100% stacked area for current metric
-    html += '<div class="pp-strip-label">最近 ' + (HISTORY * POLL_MS / 1000) + 's · 占比演化</div>';
-    html += renderHistoryStrip(W, 140, metric);
+    if (metric === 'disk') {
+      // Disk usage horizontal bar chart
+      var disks = (snap.disks || []).slice();
+      // Color palette for disk bars based on usage severity
+      function diskColor(pct) {
+        if (pct >= 95) return '#f7768e'; // red — critical
+        if (pct >= 80) return '#e0af68'; // yellow — warning
+        return '#9ece6a'; // green — ok
+      }
+      function diskBarLabel(d) {
+        var short = d.mount;
+        if (short.length > 30) short = '…' + short.slice(-29);
+        return short;
+      }
+
+      var diskRowH = 26, diskRowGap = 4, diskNameW = 200, diskPctW = 120;
+      var diskBarW = W - diskNameW - diskPctW - 16;
+      var diskHbar = Math.max(120, disks.length * (diskRowH + diskRowGap) + 8);
+
+      html += '<div class="pp-mem-legend">';
+      var totalDiskUsed = disks.reduce(function (a, d) { return a + d.used; }, 0);
+      var totalDiskSize = disks.reduce(function (a, d) { return a + d.total; }, 0);
+      html += '<span class="pp-legend-item"><span class="pp-swatch" style="background:#9ece6a"></span>&lt;80%</span>';
+      html += '<span class="pp-legend-item"><span class="pp-swatch" style="background:#e0af68"></span>80-95%</span>';
+      html += '<span class="pp-legend-item"><span class="pp-swatch" style="background:#f7768e"></span>&gt;95%</span>';
+      html += '<span class="pp-legend-hint">已用 ' + fmtBytes(totalDiskUsed) + ' / ' + fmtBytes(totalDiskSize) + ' (' + disks.length + ' 个分区)</span>';
+      html += '</div>';
+
+      html += '<svg class="pp-membars" viewBox="0 0 ' + W + ' ' + diskHbar + '">';
+      if (disks.length === 0) {
+        html += '<rect width="' + W + '" height="' + diskHbar + '" fill="#16161e" rx="6"/>';
+        html += '<text x="' + (W / 2) + '" y="' + (diskHbar / 2) + '" text-anchor="middle" fill="#565f89" font-size="12">暂无磁盘数据</text>';
+      } else {
+        disks.forEach(function (d, i) {
+          var y = 4 + i * (diskRowH + diskRowGap);
+          var pct = d.total > 0 ? (d.used / d.total) * 100 : 0;
+          var color = diskColor(pct);
+          var bw = (pct / 100) * diskBarW;
+          // Track background
+          html += '<rect x="' + diskNameW + '" y="' + y + '" width="' + diskBarW + '" height="' + diskRowH + '" fill="#16161e" rx="3"/>';
+          // Used segment
+          if (bw > 0.5) {
+            html += '<rect x="' + diskNameW + '" y="' + y + '" width="' + bw + '" height="' + diskRowH + '" fill="' + color + '" fill-opacity="0.85" rx="3"/>';
+          }
+          // Mount point name
+          html += '<text x="8" y="' + (y + diskRowH / 2 + 4) + '" fill="#c0caf5" font-size="12" font-weight="600">' + escapeHtml(diskBarLabel(d)) + '</text>';
+          // Used amount inside bar
+          var usedTxt = fmtBytes(d.used);
+          if (bw > 60) {
+            html += '<text x="' + (diskNameW + 6) + '" y="' + (y + diskRowH / 2 + 4) + '" fill="#1a1b26" font-size="11" font-weight="700">' + usedTxt + '</text>';
+          }
+          // Right: total + percent
+          html += '<text x="' + (W - 6) + '" y="' + (y + diskRowH / 2 + 4) + '" text-anchor="end" fill="#c0caf5" font-size="11" font-weight="700">' + fmtBytes(d.used) + ' / ' + fmtBytes(d.total) + ' <tspan fill="' + color + '" font-weight="600">' + pct.toFixed(0) + '%</tspan></text>';
+          html += '<title>' + escapeHtml(d.device + ' → ' + d.mount) + ' (' + d.fstype + ') — ' + fmtBytes(d.used) + ' / ' + fmtBytes(d.total) + ' (' + pct.toFixed(1) + '%)</title>';
+        });
+      }
+      html += '</svg>';
+    }
+
+    // History strip — 100% stacked area for current metric (skip for disk — it's point-in-time)
+    if (metric !== 'disk') {
+      html += '<div class="pp-strip-label">最近 ' + (HISTORY * POLL_MS / 1000) + 's · 占比演化</div>';
+      html += renderHistoryStrip(W, 140, metric);
+    }
 
     root.innerHTML = html;
 
