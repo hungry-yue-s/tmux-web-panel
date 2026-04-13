@@ -1356,12 +1356,11 @@ function renderTerminal(container) {
     '<button class="btn terminal-refresh-btn" title="Refresh">&#10227;</button>' +
     '<div class="terminal-mode-toggle">' +
     '<button class="btn terminal-mode-opt' + (_terminalMode === 'tab' ? ' active' : '') + '" data-mode="tab" title="标签页模式">&#9723;</button>' +
-    '<button class="btn terminal-mode-opt' + (_terminalMode === 'split' ? ' active' : '') + '" data-mode="split" title="分屏模式">&#8862;</button>' +
+    '<button class="btn terminal-mode-opt' + (_terminalMode === 'split' ? ' active' : '') + '" data-mode="split" title="分屏模式 · 再点一次打开布局选择器">&#8862;</button>' +
     '</div>' +
     '<button class="btn terminal-font-btn" data-dir="-1" title="Smaller font">A&#8722;</button>' +
     '<button class="btn terminal-font-btn" data-dir="1" title="Larger font">A&#43;</button>' +
     '<button class="btn terminal-split-btn" title="Split pane">&#10010;</button>' +
-    '<button class="btn terminal-layout-btn" title="Layout picker (Ctrl+L)">&#8862;&#8901;</button>' +
     '<button class="btn terminal-open-buf-btn" title="Open file from tmux buffer (Ctrl+Shift+O)">&#128194;</button>' +
     '<button class="btn terminal-popout-btn" title="Pop out">&#8599;</button>' +
     '<button class="btn terminal-fullscreen-btn" title="Fullscreen">&#9634;</button>' +
@@ -1425,10 +1424,7 @@ function renderTerminal(container) {
     updateSidebar();
   });
 
-  // Layout picker button
-  view.querySelector('.terminal-layout-btn').addEventListener('click', function () {
-    if (typeof LayoutPicker !== 'undefined') LayoutPicker.toggle();
-  });
+
 
   view.querySelector('.terminal-split-btn').addEventListener('click', function (e) {
     // Mobile: split directly (direction doesn't matter, each pane gets its own screen)
@@ -1468,14 +1464,19 @@ function renderTerminal(container) {
     }, 0);
   });
 
-  // Mode toggle (tab / split)
+  // Mode toggle: click to switch mode; if already in split mode, open layout picker
   view.querySelectorAll('.terminal-mode-opt').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var mode = btn.getAttribute('data-mode');
-      if (mode === _terminalMode) return;
+      if (mode === _terminalMode) {
+        // Already in this mode — split button opens layout picker
+        if (mode === 'split' && typeof LayoutPicker !== 'undefined') {
+          LayoutPicker.open();
+        }
+        return;
+      }
       _terminalMode = mode;
       try { localStorage.setItem('tmux_terminal_mode', mode); } catch (_e) {}
-      // Re-render terminal view
       renderTerminal(container);
     });
   });
