@@ -631,9 +631,11 @@ var LayoutPicker = (function () {
   }
 
   function sendResizeDeltas(rects, localScaleX, localScaleY) {
-    // Compare current pixel rects to original pane geometry to determine resize amounts
-    // For each pane, compute delta in cols/rows from original
+    // Only resize the FIRST pane that changed in each axis.
+    // tmux resize-pane automatically adjusts adjacent panes,
+    // so sending resize for both sides would cancel out or double.
     var resizeOps = [];
+    var didResizeH = false, didResizeV = false;
 
     panes.forEach(function (p, i) {
       var newCols = Math.round(rects[i].w / localScaleX);
@@ -641,8 +643,8 @@ var LayoutPicker = (function () {
       var dCols = newCols - p.width;
       var dRows = newRows - p.height;
 
-      // Resize horizontally
-      if (dCols !== 0) {
+      if (dCols !== 0 && !didResizeH) {
+        didResizeH = true;
         resizeOps.push(
           api.post('/api/panes/' + encodeURIComponent(p.id) + '/resize', {
             direction: dCols > 0 ? 'R' : 'L',
@@ -650,8 +652,8 @@ var LayoutPicker = (function () {
           })
         );
       }
-      // Resize vertically
-      if (dRows !== 0) {
+      if (dRows !== 0 && !didResizeV) {
+        didResizeV = true;
         resizeOps.push(
           api.post('/api/panes/' + encodeURIComponent(p.id) + '/resize', {
             direction: dRows > 0 ? 'D' : 'U',
@@ -667,7 +669,6 @@ var LayoutPicker = (function () {
     Promise.all(resizeOps)
       .then(function () {
         if (typeof _showToast === 'function') _showToast('Resized', 1200);
-        // Re-fetch to get actual geometry after tmux adjusts
         return fetchData();
       })
       .then(function () {
