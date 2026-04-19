@@ -67,8 +67,8 @@ body {
 #app {
   display: flex;
   flex-direction: column;
-  height: 100dvh;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -1518,6 +1518,7 @@ body.terminal-fullscreen #sidebar {
 
 body.terminal-fullscreen #main-layout {
   height: 100vh !important;
+  height: 100dvh !important;
 }
 
 body.terminal-fullscreen #content {
@@ -1531,6 +1532,7 @@ body.terminal-fullscreen .terminal-pane-switcher {
 
 body.terminal-fullscreen .terminal-view {
   height: 100vh;
+  height: 100dvh;
 }
 
 body.terminal-fullscreen .terminal-container {
@@ -1942,8 +1944,8 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   /* Hide topbar when terminal is active — full immersion */
   body.terminal-active {
     overflow: hidden;
-    height: 100dvh;
     height: 100vh;
+    height: 100dvh;
   }
 
   body.terminal-active #topbar {
@@ -2155,6 +2157,10 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 
 .fab-tool:active {
   transform: scale(0.92);
+}
+
+.fab-tool.hidden-by-drawer {
+  display: none;
 }
 
 .fab-tool.open {
@@ -2421,10 +2427,13 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   left: 0;
   right: 0;
   bottom: 0;
-  max-height: 70vh;
+  height: 40vh;
+  height: 40dvh;
+  max-height: 40vh;
+  max-height: 40dvh;
   background: var(--bg-card);
   border-top: 1px solid var(--border);
-  border-radius: 16px 16px 0 0;
+  border-radius: 0;
   z-index: 201;
   transform: translateY(100%);
   transition: transform 0.25s ease;
@@ -2433,27 +2442,35 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   overflow: hidden;
 }
 
+/* Soft-keyboard mode: when drawer is open, shrink terminal-view so
+   terminal-container re-fits above the drawer instead of being covered.
+   Use dvh so padding matches the drawer's actual height on mobile (URL
+   bar shown/hidden shrinks vh unexpectedly; dvh adapts). */
+.terminal-view.drawer-pushed {
+  padding-bottom: 40vh;
+  padding-bottom: 40dvh;
+  transition: padding-bottom 0.25s ease;
+}
+
 .fab-drawer.open {
   transform: translateY(0);
 }
 
 .fab-drawer-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border);
+  padding: 4px 8px 0;
   flex-shrink: 0;
 }
 
 .fab-drawer-header span:first-child {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
+  display: none;
 }
 
 .fab-drawer-close {
   font-size: 18px;
+  line-height: 1;
   color: var(--text-muted);
   cursor: pointer;
   padding: 4px 8px;
@@ -2463,10 +2480,129 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 }
 
 .fab-drawer-body {
-  padding: 16px;
+  padding: 8px 12px 16px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   flex: 1;
+}
+
+/* --- Drawer Tab bar --- */
+
+.fab-drawer-tabbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  overflow-x: auto;
+  flex-shrink: 0;
+  -webkit-overflow-scrolling: touch;
+}
+.fab-drawer-tabbar::-webkit-scrollbar { display: none; }
+.fab-drawer-tabbar .fab-drawer-kbd-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+.fab-drawer-tabbar .fab-drawer-kbd-btn:active {
+  color: var(--accent-yellow);
+}
+.fab-drawer-tabbar .fab-drawer-close {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.fab-drawer-tab {
+  appearance: none;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+.fab-drawer-tab.active {
+  color: var(--accent-yellow);
+  border-bottom-color: var(--accent-yellow);
+}
+
+/* --- T-shape arrow pad (常用 Tab) --- */
+
+.fab-arrow-pad-wrap {
+  display: flex;
+  justify-content: center;
+  margin: 14px 0 6px;
+}
+.fab-arrow-pad-t {
+  display: grid;
+  grid-template-columns: repeat(3, 56px);
+  grid-template-rows: repeat(2, 44px);
+  gap: 5px;
+}
+.fab-arrow-cell {
+  padding: 0;
+}
+.fab-arrow-cell.primary {
+  font-size: 17px;
+  font-weight: 700;
+}
+.fab-arrow-cell.aux {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+}
+
+/* --- Dashed + button for adding ctrl keys --- */
+
+.fab-drawer-add-btn {
+  background: transparent !important;
+  border: 1px dashed var(--border) !important;
+  color: var(--text-muted) !important;
+  font-size: 20px;
+}
+.fab-drawer-add-btn:active {
+  color: var(--accent-yellow) !important;
+  border-color: var(--accent-yellow) !important;
+}
+
+/* --- Preset chips row in drawer modal --- */
+
+.drawer-modal-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.drawer-modal-preset {
+  appearance: none;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: 'Menlo', monospace;
+  cursor: pointer;
+}
+.drawer-modal-preset:active {
+  background: var(--accent-yellow);
+  color: var(--bg-primary);
+  border-color: var(--accent-yellow);
 }
 
 /* --- Drawer Group --- */
@@ -2556,6 +2692,50 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 .fab-drawer-btn.accent-orange:active {
   background: #f6a623;
   color: var(--bg-primary);
+}
+
+/* --- FAB keys inside the drawer (migrated from the old popup panel) --- */
+
+.fab-drawer-btn.fabkey.accent-btn {
+  background: var(--accent-blue);
+  color: var(--bg-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.fab-drawer-btn.fabkey.accent-btn:active {
+  background: color-mix(in srgb, var(--accent-blue) 80%, white);
+}
+
+.fab-drawer-btn.fabkey.color-green {
+  background: color-mix(in srgb, #48bb78 20%, var(--bg-hover));
+  color: #48bb78;
+  border: 1px solid color-mix(in srgb, #48bb78 30%, transparent);
+}
+
+.fab-drawer-btn.fabkey.color-green:active {
+  background: #48bb78;
+  color: var(--bg-primary);
+}
+
+.fab-drawer-btn.fabkey.color-red {
+  background: color-mix(in srgb, #fc8181 15%, var(--bg-hover));
+  color: #fc8181;
+  border: 1px solid color-mix(in srgb, #fc8181 25%, transparent);
+}
+
+.fab-drawer-btn.fabkey.color-red:active {
+  background: #fc8181;
+  color: var(--bg-primary);
+}
+
+.fab-drawer-btn.fabkey.wide {
+  grid-column: span 2;
+}
+
+.fab-drawer-btn.fabkey.voice-btn.recording {
+  background: #e53e3e;
+  color: #fff;
+  animation: voice-pulse 1s ease-in-out infinite;
 }
 
 /* --- Drawer Slash Command Chips --- */
