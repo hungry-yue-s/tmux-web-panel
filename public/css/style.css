@@ -2182,104 +2182,6 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   to { transform: rotate(360deg); }
 }
 
-/* --- FAB Panel --- */
-
-.fab-panel {
-  position: fixed;
-  z-index: 99;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 8px;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-  opacity: 0;
-  transform: scale(0.8) translateY(10px);
-  pointer-events: none;
-  transition: opacity 0.2s, transform 0.2s;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-}
-
-.fab-panel.open {
-  opacity: 1;
-  transform: scale(1) translateY(0);
-  pointer-events: auto;
-}
-
-.fab-panel button {
-  height: 44px;
-  min-width: 44px;
-  border: none;
-  border-radius: 8px;
-  background: var(--bg-hover);
-  color: var(--text-primary);
-  font-size: 13px;
-  font-family: 'Menlo', 'Courier New', monospace;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  -webkit-tap-highlight-color: transparent;
-  transition: background 0.15s;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.fab-panel button:active {
-  background: var(--accent-blue);
-  color: var(--bg-primary);
-}
-
-.fab-panel button.accent-btn {
-  background: var(--accent-blue);
-  color: var(--bg-primary);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-.fab-panel button.accent-btn:active {
-  background: color-mix(in srgb, var(--accent-blue) 80%, white);
-}
-
-.fab-panel button.voice-btn.recording {
-  background: #e53e3e;
-  color: #fff;
-  animation: voice-pulse 1s ease-in-out infinite;
-}
-
-@keyframes voice-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(229, 62, 62, 0.5); }
-  50% { box-shadow: 0 0 0 8px rgba(229, 62, 62, 0); }
-}
-
-.fab-panel button.wide {
-  grid-column: span 2;
-}
-
-/* --- FAB Button Color Variants --- */
-
-.fab-panel button.color-green {
-  background: color-mix(in srgb, #48bb78 20%, var(--bg-hover));
-  color: #48bb78;
-  border: 1px solid color-mix(in srgb, #48bb78 30%, transparent);
-}
-
-.fab-panel button.color-green:active {
-  background: #48bb78;
-  color: var(--bg-primary);
-}
-
-.fab-panel button.color-red {
-  background: color-mix(in srgb, #fc8181 15%, var(--bg-hover));
-  color: #fc8181;
-  border: 1px solid color-mix(in srgb, #fc8181 25%, transparent);
-}
-
-.fab-panel button.color-red:active {
-  background: #fc8181;
-  color: var(--bg-primary);
-}
-
 /* --- FAB Customization Modal --- */
 
 .fab-modal-overlay {
@@ -2454,18 +2356,6 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 
 .fab-drawer.open {
   transform: translateY(0);
-}
-
-.fab-drawer-header {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  padding: 4px 8px 0;
-  flex-shrink: 0;
-}
-
-.fab-drawer-header span:first-child {
-  display: none;
 }
 
 .fab-drawer-close {
@@ -2730,12 +2620,6 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 
 .fab-drawer-btn.fabkey.wide {
   grid-column: span 2;
-}
-
-.fab-drawer-btn.fabkey.voice-btn.recording {
-  background: #e53e3e;
-  color: #fff;
-  animation: voice-pulse 1s ease-in-out infinite;
 }
 
 /* --- Drawer Slash Command Chips --- */

@@ -241,11 +241,7 @@ function _sendTermData(data) {
 
 function _createFabPanel(container) {
   var keys = _loadFabKeys();
-  var isOpen = false;
   var editingIdx = -1;
-  var longPressTimer = null;
-  var longPressed = false;
-  var repeatTimer = null;
 
   // -- File input for upload --
   var fileInput = document.createElement('input');
@@ -279,86 +275,6 @@ function _createFabPanel(container) {
         fabEl.classList.remove('uploading');
       });
   });
-
-  // -- Voice input (Web Speech API) --
-  var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  var voiceRecognition = null;
-  var voiceActive = false;
-
-  function _startVoice() {
-    if (!SpeechRecognition) {
-      _showToast('浏览器不支持语音输入', 2000);
-      return;
-    }
-    if (voiceActive) {
-      _stopVoice();
-      return;
-    }
-    voiceRecognition = new SpeechRecognition();
-    voiceRecognition.lang = 'en-US';
-    voiceRecognition.continuous = true;
-    voiceRecognition.interimResults = true;
-
-    voiceRecognition.onstart = function () {
-      voiceActive = true;
-      document.querySelectorAll('.voice-btn').forEach(function (b) { b.classList.add('recording'); });
-      if (navigator.vibrate) navigator.vibrate(30);
-    };
-
-    voiceRecognition.onresult = function (event) {
-      var last = event.results[event.results.length - 1];
-      if (last.isFinal) {
-        var text = last[0].transcript.trim();
-        if (text) {
-          _sendTermData(text);
-          _showToast('语音: ' + text, 1500);
-        }
-      }
-    };
-
-    voiceRecognition.onerror = function (event) {
-      console.error('SpeechRecognition error:', event.error, event);
-      if (event.error !== 'aborted' && event.error !== 'no-speech') {
-        _showToast('语音错误: ' + event.error, 3000);
-      }
-      _stopVoice();
-    };
-
-    voiceRecognition.onend = function () {
-      _stopVoice();
-    };
-
-    voiceRecognition.start();
-  }
-
-  function _stopVoice() {
-    voiceActive = false;
-    if (voiceRecognition) {
-      try { voiceRecognition.abort(); } catch (_e) { /* ignore */ }
-      voiceRecognition = null;
-    }
-    document.querySelectorAll('.voice-btn').forEach(function (b) { b.classList.remove('recording'); });
-  }
-
-  // -- Panel element --
-  var panelEl = document.createElement('div');
-  panelEl.className = 'fab-panel';
-  container.appendChild(panelEl);
-
-  function renderButtons() {
-    panelEl.innerHTML = '';
-    keys.forEach(function (k, i) {
-      var btn = document.createElement('button');
-      btn.textContent = k.label;
-      btn.dataset.idx = i;
-      if (k.accent) btn.classList.add('accent-btn');
-      if (k.wide) btn.classList.add('wide');
-      if (k.send === '__voice__') btn.classList.add('voice-btn');
-      if (k.color) btn.classList.add('color-' + k.color);
-      panelEl.appendChild(btn);
-    });
-  }
-  renderButtons();
 
   // -- FAB button --
   var fabEl = document.createElement('div');
@@ -416,7 +332,6 @@ function _createFabPanel(container) {
     keys[editingIdx].label = editLabel.value || '?';
     keys[editingIdx].send = _parseEscape(editSend.value);
     _saveFabKeys(keys);
-    renderButtons();
     if (drawerOpen) renderDrawer();
     modalEl.classList.remove('show');
   });
@@ -425,7 +340,6 @@ function _createFabPanel(container) {
     if (editingIdx >= 0 && _fabDefaultKeys[editingIdx]) {
       keys[editingIdx] = Object.assign({}, _fabDefaultKeys[editingIdx]);
       _saveFabKeys(keys);
-      renderButtons();
       if (drawerOpen) renderDrawer();
     }
     modalEl.classList.remove('show');
@@ -1108,28 +1022,7 @@ function _createFabPanel(container) {
   }
   document.addEventListener('focusin', _onTerminalFocus);
 
-  // -- Position panel --
-  function positionPanel() {
-    var rect = fabEl.getBoundingClientRect();
-    var pw = panelEl.offsetWidth || 200;
-    var ph = panelEl.offsetHeight || 200;
-    var left = rect.left + rect.width / 2 - pw / 2;
-    var top = rect.top - ph - 10;
-    if (left < 8) left = 8;
-    if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
-    if (top < 8) top = rect.bottom + 10;
-    panelEl.style.left = left + 'px';
-    panelEl.style.top = top + 'px';
-  }
-
-  function togglePanel() {
-    isOpen = !isOpen;
-    fabEl.classList.toggle('open', isOpen);
-    panelEl.classList.toggle('open', isOpen);
-    if (isOpen) positionPanel();
-  }
-
-  // -- FAB drag --
+  // -- FAB drag + tap-to-open-drawer --
   var dragStartX, dragStartY, fabStartX, fabStartY, dragMoved;
 
   fabEl.addEventListener('touchstart', function (e) {
@@ -1150,7 +1043,6 @@ function _createFabPanel(container) {
     var ny = Math.max(0, Math.min(window.innerHeight - 48, fabStartY + dy));
     fabEl.style.left = nx + 'px'; fabEl.style.top = ny + 'px';
     fabEl.style.right = 'auto'; fabEl.style.bottom = 'auto';
-    if (isOpen) positionPanel();
   }, { passive: true });
 
   fabEl.addEventListener('touchend', function () {
@@ -1174,98 +1066,8 @@ function _createFabPanel(container) {
     }
   } catch (_e) { /* ignore */ }
 
-  // -- Panel button tap & long-press --
-  panelEl.addEventListener('touchstart', function (e) {
-    var btn = e.target.closest('button');
-    if (!btn) return;
-    var idx = +btn.dataset.idx;
-    longPressed = false;
-
-    longPressTimer = setTimeout(function () {
-      longPressed = true;
-      if (navigator.vibrate) navigator.vibrate(30);
-      openEditor(idx);
-    }, 500);
-
-    var k = keys[idx];
-    if (k && k.repeat) {
-      repeatTimer = setTimeout(function () {
-        repeatTimer = setInterval(function () {
-          if (longPressed) return;
-          _sendTermData(k.send);
-          if (navigator.vibrate) navigator.vibrate(5);
-        }, 80);
-      }, 300);
-    }
-  }, { passive: true });
-
-  panelEl.addEventListener('touchend', function (e) {
-    clearTimeout(longPressTimer);
-    clearTimeout(repeatTimer);
-    clearInterval(repeatTimer);
-    longPressTimer = null;
-    repeatTimer = null;
-    if (longPressed) { longPressed = false; return; }
-
-    var btn = e.target.closest('button');
-    if (!btn) return;
-    var k = keys[+btn.dataset.idx];
-    if (!k) return;
-
-    if (k.send === '__upload__') {
-      fileInput.value = '';
-      fileInput.click();
-    } else if (k.send === '__voice__') {
-      _startVoice();
-    } else if (k.send === '__drawer__') {
-      if (isOpen) togglePanel();
-      toggleDrawer(true);
-    } else {
-      _sendTermData(k.send);
-    }
-    if (navigator.vibrate) navigator.vibrate(10);
-    // Prevent the browser from synthesizing a click event after this touchend.
-    // Without this, opening the drawer causes the backdrop (z-index 200) to
-    // appear over the button — the synthetic click then hits the backdrop,
-    // which immediately closes the drawer.
-    e.preventDefault();
-  });
-
-  // Desktop click
-  panelEl.addEventListener('click', function (e) {
-    if ('ontouchstart' in window) return;
-    var btn = e.target.closest('button');
-    if (!btn) return;
-    var k = keys[+btn.dataset.idx];
-    if (!k) return;
-    if (k.send === '__upload__') { fileInput.value = ''; fileInput.click(); }
-    else if (k.send === '__voice__') { _startVoice(); }
-    else if (k.send === '__drawer__') { if (isOpen) togglePanel(); toggleDrawer(true); }
-    else { _sendTermData(k.send); }
-  });
-
-  // Desktop right-click to customize
-  panelEl.addEventListener('contextmenu', function (e) {
-    e.preventDefault();
-    var btn = e.target.closest('button');
-    if (!btn) return;
-    openEditor(+btn.dataset.idx);
-  });
-
-  // Close on outside tap
-  function onOutsideTap(e) {
-    if (isOpen && !fabEl.contains(e.target) && !panelEl.contains(e.target) && !modalEl.contains(e.target) && !drawerEl.contains(e.target) && !drawerModalEl.contains(e.target)) {
-      togglePanel();
-    }
-  }
-  document.addEventListener('touchstart', onOutsideTap, { passive: true });
-  document.addEventListener('click', onOutsideTap);
-
   // Return cleanup function
   return function () {
-    _stopVoice();
-    document.removeEventListener('touchstart', onOutsideTap);
-    document.removeEventListener('click', onOutsideTap);
     document.removeEventListener('focusin', _onTerminalFocus);
     if (backdropEl.parentNode) backdropEl.parentNode.removeChild(backdropEl);
     if (drawerEl.parentNode) drawerEl.parentNode.removeChild(drawerEl);
@@ -2433,7 +2235,6 @@ function _mountTerminal(termContainer, nozoom) {
       var vvHeight = window.visualViewport.height;
       // Only intervene when keyboard is likely open (viewport shrunk > 100px)
       var fabTool = document.querySelector('.fab-tool');
-      var fabPanel = document.querySelector('.fab-panel');
       if (initialVpHeight - vvHeight > 100) {
         var header = termContainer.closest('.terminal-view')
           ? termContainer.closest('.terminal-view').querySelector('.terminal-header')
@@ -2475,19 +2276,6 @@ function _mountTerminal(termContainer, nozoom) {
             fabTool.style.bottom = '';
           }
         }
-      }
-      // Reposition panel if open
-      if (fabPanel && fabPanel.classList.contains('open') && fabTool) {
-        var rect = fabTool.getBoundingClientRect();
-        var pw = fabPanel.offsetWidth || 200;
-        var ph = fabPanel.offsetHeight || 200;
-        var left = rect.left + rect.width / 2 - pw / 2;
-        var top = rect.top - ph - 10;
-        if (left < 8) left = 8;
-        if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
-        if (top < 8) top = rect.bottom + 10;
-        fabPanel.style.left = left + 'px';
-        fabPanel.style.top = top + 'px';
       }
       fitAddon.fit();
       if (ws.readyState === WebSocket.OPEN) {
