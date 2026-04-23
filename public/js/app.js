@@ -1331,6 +1331,10 @@ class StatusSocket {
       self._currentDelay = self._reconnectDelay;
       self.connected = true;
       updateTopbarDot(true);
+      // Fetch server-side notifications on connect/reconnect
+      if (typeof NotificationPanel !== 'undefined' && NotificationPanel.refresh) {
+        NotificationPanel.refresh();
+      }
       if (typeof self.onStatusChange === 'function') {
         self.onStatusChange();
       }
@@ -1339,6 +1343,24 @@ class StatusSocket {
     this._ws.onmessage = function (event) {
       try {
         var data = JSON.parse(event.data);
+        if (data && data.type === 'notifications') {
+          // Server-pushed notifications — forward to NotificationPanel
+          if (typeof NotificationPanel !== 'undefined' && NotificationPanel.handleServerPush) {
+            NotificationPanel.handleServerPush(data.data);
+          }
+          return;
+        }
+        if (data && data.type === 'pane-cmd') {
+          // Scene auto-switch: match command to scene and update drawer
+          if (typeof FabScene !== 'undefined' && typeof window._fabDrawerInstance !== 'undefined') {
+            var scenes = FabScene.loadScenes();
+            var sceneId = FabScene.matchScene(data.cmd, scenes);
+            if (window._fabDrawerInstance) {
+              window._fabDrawerInstance.setScene(sceneId);
+            }
+          }
+          return;
+        }
         self._handleStatusUpdate(data);
       } catch (_e) {
         // Ignore parse errors

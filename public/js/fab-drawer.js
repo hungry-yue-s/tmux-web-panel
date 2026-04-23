@@ -496,11 +496,13 @@
     // Initial render
     rerender();
 
-    return {
+    var api = {
       setScene: setScene,
       getState: function () { return state; },
       rerender: rerender,
     };
+    global._fabDrawerInstance = api;
+    return api;
   }
 
   /* ── First-run discovery + baseline heat seeding ─────────────── */
