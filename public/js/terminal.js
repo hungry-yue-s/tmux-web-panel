@@ -43,206 +43,14 @@ function _showToast(message, duration) {
 
 // === FAB Tool Panel ===
 
-var _fabDefaultKeys = [
-  { label: 'Esc',    send: '\x1b' },
-  { label: 'C-c',    send: '\x03' },
-  { label: 'y',      send: 'y\r', color: 'green' },
-  { label: 'n',      send: 'n\r', color: 'red' },
-  { label: '\u7ee7\u7eed', send: '\u7ee7\u7eed\r', accent: true },
-  { label: '\u21b5',  send: '\r' },
-  { label: 'S-Tab',  send: '\x1b[Z' },
-];
-
-var _drawerDefaultCtrlKeys = [
-  { label: 'Tab', send: '\x09' },
-  { label: 'Esc', send: '\x1b' },
-  { label: 'C-c', send: '\x03' },
-  { label: 'C-d', send: '\x04' },
-  { label: 'C-z', send: '\x1a' },
-  { label: 'C-l', send: '\x0c' },
-  { label: 'C-a', send: '\x01' },
-  { label: 'C-e', send: '\x05' },
-  { label: 'C-r', send: '\x12' },
-  { label: 'C-w', send: '\x17' },
-];
-
-var _drawerDefaultSymbols = [
-  { label: '~', send: '~' },
-  { label: '|', send: '|' },
-  { label: '/', send: '/' },
-];
-
-var _ctrlPresets = [
-  { label: 'C-x', send: '\x18' },
-  { label: 'C-y', send: '\x19' },
-  { label: 'C-u', send: '\x15' },
-  { label: 'C-k', send: '\x0b' },
-  { label: 'C-n', send: '\x0e' },
-  { label: 'C-p', send: '\x10' },
-  { label: 'C-b', send: '\x02' },
-  { label: 'C-s', send: '\x13' },
-  { label: 'C-f', send: '\x06' },
-  { label: 'C-g', send: '\x07' },
-  { label: 'C-t', send: '\x14' },
-  { label: 'C-h', send: '\x08' },
-  { label: 'M-.', send: '\x1b.' },
-  { label: 'M-b', send: '\x1bb' },
-  { label: 'M-f', send: '\x1bf' },
-];
-
-var _fabPresets = [
-  { label: 'Tab',  send: '\x09' },
-  { label: 'Esc',  send: '\x1b' },
-  { label: 'C-c',  send: '\x03' },
-  { label: 'C-d',  send: '\x04' },
-  { label: 'C-z',  send: '\x1a' },
-  { label: 'C-l',  send: '\x0c' },
-  { label: 'C-a',  send: '\x01' },
-  { label: 'C-e',  send: '\x05' },
-  { label: 'C-r',  send: '\x12' },
-  { label: 'C-w',  send: '\x17' },
-  { label: '\u2191', send: '\x1b[A' },
-  { label: '\u2193', send: '\x1b[B' },
-  { label: '\u2190', send: '\x1b[D' },
-  { label: '\u2192', send: '\x1b[C' },
-  { label: '~',    send: '~' },
-  { label: '|',    send: '|' },
-  { label: '/',    send: '/' },
-  { label: '\u7ee7\u7eed', send: '\u7ee7\u7eed\r' },
-];
-
-var _drawerDefaultQuickKeys = [
-  { label: 'claude', send: 'claude --allow-dangerously-skip-permissions\r', cls: 'accent-blue' },
-  { label: '\ud83d\udcce \u4e0a\u4f20', send: '__upload__' },
-  { label: 'Tab', send: '\x09' },
-  { label: 'C-d', send: '\x04' },
-];
-
-var _drawerDefaultCommands = [
-  { label: '/compact', send: '/compact\r' },
-  { label: '/clear', send: '/clear\r' },
-  { label: '/help', send: '/help\r' },
-  { label: '/commit', send: '/commit\r' },
-  { label: '/review-pr', send: '/review-pr\r' },
-  { label: '/work-log', send: '/work-log\r' },
-  { label: '/deploy-android-container', send: '/deploy-android-container\r' },
-];
-
-var _drawerDefaultTemplates = [
-  { label: '\u8bf7\u68c0\u67e5\u5e76\u4fee\u590d\u5f53\u524d\u7684\u9519\u8bef', send: '\u8bf7\u68c0\u67e5\u5e76\u4fee\u590d\u5f53\u524d\u7684\u9519\u8bef\r' },
-  { label: '\u8bf7\u89e3\u91ca\u8fd9\u6bb5\u4ee3\u7801\u7684\u4f5c\u7528', send: '\u8bf7\u89e3\u91ca\u8fd9\u6bb5\u4ee3\u7801\u7684\u4f5c\u7528\r' },
-  { label: '\u8bb0\u5f55\u5de5\u4f5c\u65e5\u5fd7', send: '\u8bb0\u5f55\u5de5\u4f5c\u65e5\u5fd7\r' },
-];
-
-function _loadDrawerQuickKeys() {
-  try {
-    var s = localStorage.getItem('fab-drawer-quickkeys');
-    if (s) return JSON.parse(s);
-  } catch (_e) { /* ignore */ }
-  return _drawerDefaultQuickKeys.map(function (k) { return Object.assign({}, k); });
-}
-
-function _saveDrawerQuickKeys(keys) {
-  localStorage.setItem('fab-drawer-quickkeys', JSON.stringify(keys));
-}
-
-function _loadDrawerCommands() {
-  try {
-    var s = localStorage.getItem('fab-drawer-commands');
-    if (s) return JSON.parse(s);
-  } catch (_e) { /* ignore */ }
-  return _drawerDefaultCommands.map(function (c) { return Object.assign({}, c); });
-}
-
-function _saveDrawerCommands(cmds) {
-  localStorage.setItem('fab-drawer-commands', JSON.stringify(cmds));
-}
-
-function _loadDrawerTemplates() {
-  try {
-    var s = localStorage.getItem('fab-drawer-templates');
-    if (s) return JSON.parse(s);
-  } catch (_e) { /* ignore */ }
-  return _drawerDefaultTemplates.map(function (t) { return Object.assign({}, t); });
-}
-
-function _saveDrawerTemplates(tpls) {
-  localStorage.setItem('fab-drawer-templates', JSON.stringify(tpls));
-}
-
-function _loadFabKeys() {
-  try {
-    var s = localStorage.getItem('fab-keys');
-    if (s) {
-      var arr = JSON.parse(s);
-      // Back-compat: drop legacy entries (__drawer__ and __voice__).
-      return arr.filter(function (k) {
-        return k && k.send !== '__drawer__' && k.send !== '__voice__';
-      });
-    }
-  } catch (_e) { /* ignore */ }
-  return _fabDefaultKeys.map(function (k) { return Object.assign({}, k); });
-}
-
-function _loadDrawerCtrlKeys() {
-  try {
-    var s = localStorage.getItem('fab-drawer-ctrlkeys');
-    if (s) {
-      var a = JSON.parse(s);
-      if (Array.isArray(a) && a.length) return a;
-    }
-  } catch (_e) { /* ignore */ }
-  return _drawerDefaultCtrlKeys.map(function (k) { return Object.assign({}, k); });
-}
-
-function _saveDrawerCtrlKeys(arr) {
-  localStorage.setItem('fab-drawer-ctrlkeys', JSON.stringify(arr));
-}
-
-function _loadActiveTab() {
-  try {
-    var s = localStorage.getItem('fab-drawer-active-tab');
-    if (s) return s;
-  } catch (_e) { /* ignore */ }
-  return 'common';
-}
-
-function _saveActiveTab(t) {
-  try { localStorage.setItem('fab-drawer-active-tab', t); } catch (_e) {}
-}
-
-function _saveFabKeys(keys) {
-  localStorage.setItem('fab-keys', JSON.stringify(keys));
-}
-
-function _displayEscape(s) {
-  return s
-    .replace(/\x1b/g, '\\x1b')
-    .replace(/\x09/g, '\\x09')
-    .replace(/[\x01-\x1a]/g, function (c) {
-      return '\\x' + ('0' + c.charCodeAt(0).toString(16)).slice(-2);
-    })
-    .replace(/\r/g, '\\r')
-    .replace(/\n/g, '\\n');
-}
-
-function _parseEscape(s) {
-  return s
-    .replace(/\\x([0-9a-fA-F]{2})/g, function (_, h) { return String.fromCharCode(parseInt(h, 16)); })
-    .replace(/\\r/g, '\r')
-    .replace(/\\n/g, '\n');
-}
-
 function _sendTermData(data) {
   if (terminalState.ws && terminalState.ws.readyState === WebSocket.OPEN) {
     terminalState.ws.send(JSON.stringify({ type: 'input', data: data }));
   }
 }
 
-function _createFabPanel(container) {
-  var keys = _loadFabKeys();
-  var editingIdx = -1;
 
+function _createFabPanel(container) {
   // -- File input for upload --
   var fileInput = document.createElement('input');
   fileInput.type = 'file';
@@ -266,10 +74,10 @@ function _createFabPanel(container) {
       })
       .then(function (result) {
         _copyToClipboard(result.data.path);
-        _showToast('\u8def\u5f84\u5df2\u590d\u5236: ' + result.data.path);
+        _showToast('路径已复制: ' + result.data.path);
       })
       .catch(function (err) {
-        _showToast('\u4e0a\u4f20\u5931\u8d25: ' + err.message, 3000);
+        _showToast('上传失败: ' + err.message, 3000);
       })
       .finally(function () {
         fabEl.classList.remove('uploading');
@@ -282,721 +90,65 @@ function _createFabPanel(container) {
   fabEl.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>';
   container.appendChild(fabEl);
 
-  // -- Modal for customization --
-  var modalEl = document.createElement('div');
-  modalEl.className = 'fab-modal-overlay';
-  modalEl.innerHTML =
-    '<div class="fab-modal">' +
-    '<h3>\u81ea\u5b9a\u4e49\u6309\u952e</h3>' +
-    '<div class="fab-presets"><label>\u5feb\u901f\u9009\u62e9</label><div class="fab-presets-grid"></div></div>' +
-    '<label>\u663e\u793a\u540d\u79f0</label>' +
-    '<input type="text" class="fab-edit-label" placeholder="\u6309\u94ae\u4e0a\u663e\u793a\u7684\u6587\u5b57">' +
-    '<label>\u53d1\u9001\u5185\u5bb9</label>' +
-    '<input type="text" class="fab-edit-send" placeholder="\u53d1\u9001\u7684\u6587\u672c\u6216\u8f6c\u4e49\u5e8f\u5217">' +
-    '<div class="fab-edit-hint">\\x03=C-c, \\x1b=Esc, \\r=\u56de\u8f66, \u6216\u4efb\u610f\u6587\u672c</div>' +
-    '<div class="fab-modal-actions">' +
-    '<button class="fab-btn-cancel">\u53d6\u6d88</button>' +
-    '<button class="fab-btn-save">\u4fdd\u5b58</button>' +
-    '</div>' +
-    '<div class="fab-modal-reset"><button class="fab-btn-reset">\u6062\u590d\u9ed8\u8ba4</button></div>' +
-    '</div>';
-  container.appendChild(modalEl);
-
-  var editLabel = modalEl.querySelector('.fab-edit-label');
-  var editSend = modalEl.querySelector('.fab-edit-send');
-  var presetsGrid = modalEl.querySelector('.fab-presets-grid');
-
-  _fabPresets.forEach(function (p) {
-    var btn = document.createElement('button');
-    btn.textContent = p.label;
-    btn.addEventListener('click', function () {
-      editLabel.value = p.label;
-      editSend.value = _displayEscape(p.send);
-    });
-    presetsGrid.appendChild(btn);
-  });
-
-  function openEditor(idx) {
-    editingIdx = idx;
-    editLabel.value = keys[idx].label;
-    editSend.value = _displayEscape(keys[idx].send);
-    modalEl.classList.add('show');
-  }
-
-  modalEl.querySelector('.fab-btn-cancel').addEventListener('click', function () {
-    modalEl.classList.remove('show');
-  });
-
-  modalEl.querySelector('.fab-btn-save').addEventListener('click', function () {
-    if (editingIdx < 0) return;
-    keys[editingIdx].label = editLabel.value || '?';
-    keys[editingIdx].send = _parseEscape(editSend.value);
-    _saveFabKeys(keys);
-    if (drawerOpen) renderDrawer();
-    modalEl.classList.remove('show');
-  });
-
-  modalEl.querySelector('.fab-btn-reset').addEventListener('click', function () {
-    if (editingIdx >= 0 && _fabDefaultKeys[editingIdx]) {
-      keys[editingIdx] = Object.assign({}, _fabDefaultKeys[editingIdx]);
-      _saveFabKeys(keys);
-      if (drawerOpen) renderDrawer();
-    }
-    modalEl.classList.remove('show');
-  });
-
-  modalEl.addEventListener('click', function (e) {
-    if (e.target === modalEl) modalEl.classList.remove('show');
-  });
-
-  // -- Drawer --
-  var drawerQuickKeys = _loadDrawerQuickKeys();
-  var drawerCommands = _loadDrawerCommands();
-  var drawerTemplates = _loadDrawerTemplates();
-  var drawerCtrlKeys = _loadDrawerCtrlKeys();
-  var activeTab = _loadActiveTab();
-  var g1grid = null;
-  var drawerOpen = false;
-
-  var backdropEl = document.createElement('div');
-  backdropEl.className = 'fab-drawer-backdrop';
-  container.appendChild(backdropEl);
-
-  var drawerEl = document.createElement('div');
-  drawerEl.className = 'fab-drawer';
-  container.appendChild(drawerEl);
-
-  // -- Drawer edit modal --
-  var drawerModalEl = document.createElement('div');
-  drawerModalEl.className = 'fab-drawer-modal-overlay';
-  drawerModalEl.innerHTML =
-    '<div class="fab-drawer-modal">' +
-    '<h3 class="drawer-modal-title"></h3>' +
-    '<div class="drawer-modal-presets" style="display:none"></div>' +
-    '<label class="drawer-modal-label-1">\u663e\u793a\u540d\u79f0</label>' +
-    '<input type="text" class="drawer-modal-input-1">' +
-    '<label class="drawer-modal-label-2">\u53d1\u9001\u5185\u5bb9</label>' +
-    '<input type="text" class="drawer-modal-input-2">' +
-    '<div class="fab-drawer-modal-actions">' +
-    '<button class="fab-btn-cancel">\u53d6\u6d88</button>' +
-    '<button class="fab-btn-save">\u4fdd\u5b58</button>' +
-    '</div>' +
-    '</div>';
-  container.appendChild(drawerModalEl);
-
-  var dModalTitle = drawerModalEl.querySelector('.drawer-modal-title');
-  var dModalPresets = drawerModalEl.querySelector('.drawer-modal-presets');
-  var dModalInput1 = drawerModalEl.querySelector('.drawer-modal-input-1');
-  var dModalLabel1 = drawerModalEl.querySelector('.drawer-modal-label-1');
-  var dModalInput2 = drawerModalEl.querySelector('.drawer-modal-input-2');
-  var dModalLabel2 = drawerModalEl.querySelector('.drawer-modal-label-2');
-  var dModalSaveFn = null;
-
-  drawerModalEl.querySelector('.fab-btn-cancel').addEventListener('click', function () {
-    drawerModalEl.classList.remove('show');
-  });
-
-  drawerModalEl.querySelector('.fab-btn-save').addEventListener('click', function () {
-    if (dModalSaveFn) dModalSaveFn();
-    drawerModalEl.classList.remove('show');
-  });
-
-  drawerModalEl.addEventListener('click', function (e) {
-    if (e.target === drawerModalEl) drawerModalEl.classList.remove('show');
-  });
-
-  function _showDrawerModal(title, label1, val1, label2, val2, saveFn, presets) {
-    dModalTitle.textContent = title;
-    dModalLabel1.textContent = label1;
-    dModalInput1.value = val1 || '';
-    dModalLabel2.textContent = label2;
-    dModalInput2.value = val2 || '';
-    dModalSaveFn = saveFn;
-    dModalPresets.innerHTML = '';
-    if (presets && presets.length) {
-      presets.forEach(function (p) {
-        var chip = document.createElement('button');
-        chip.className = 'drawer-modal-preset';
-        chip.type = 'button';
-        chip.textContent = p.label;
-        chip.addEventListener('click', function () {
-          dModalInput1.value = p.label;
-          dModalInput2.value = _displayEscape(p.send);
-        });
-        dModalPresets.appendChild(chip);
-      });
-      dModalPresets.style.display = '';
-    } else {
-      dModalPresets.style.display = 'none';
-    }
-    drawerModalEl.classList.add('show');
-    setTimeout(function () { dModalInput1.focus(); }, 100);
-  }
-
-  function _handleDrawerBtn(send) {
-    if (send === '__upload__') {
-      fileInput.value = '';
-      fileInput.click();
-    } else {
-      _sendTermData(send);
-    }
-    if (navigator.vibrate) navigator.vibrate(10);
-    // Drawer stays open (soft-keyboard behavior) — user closes with × or backdrop.
-  }
-
-  function _attachRepeat(btn, send) {
-    var rTimer = null;
-    var rInterval = null;
-    btn.addEventListener('touchstart', function (e) {
-      e.stopPropagation();
-      rTimer = setTimeout(function () {
-        rInterval = setInterval(function () {
-          _sendTermData(send);
-          if (navigator.vibrate) navigator.vibrate(5);
-        }, 80);
-      }, 300);
-    }, { passive: true });
-    btn.addEventListener('touchend', function () {
-      clearTimeout(rTimer);
-      clearInterval(rInterval);
-      rTimer = null;
-      rInterval = null;
-      _sendTermData(send);
-      if (navigator.vibrate) navigator.vibrate(10);
-    });
-    btn.addEventListener('click', function () {
-      if (!('ontouchstart' in window)) {
-        _sendTermData(send);
-      }
-    });
-  }
-
-  function _attachLongPress(el, fn) {
-    var lpTimer = null;
-    var lpFired = false;
-    el.addEventListener('touchstart', function () {
-      lpFired = false;
-      lpTimer = setTimeout(function () {
-        lpFired = true;
-        if (navigator.vibrate) navigator.vibrate(30);
-        fn();
-      }, 500);
-    }, { passive: true });
-    el.addEventListener('touchend', function (e) {
-      clearTimeout(lpTimer);
-      if (lpFired) { e.preventDefault(); e.stopPropagation(); }
-    });
-  }
-
-  function _dispatchFabKey(k) {
-    if (k.send === '__upload__') {
-      fileInput.value = '';
-      fileInput.click();
-    } else {
-      _sendTermData(k.send);
-      if (navigator.vibrate) navigator.vibrate(10);
-    }
-    // Drawer stays open — press again or × to close.
-  }
-
-  function _renderFabKeysGroup(parent) {
-    // Flat grid — no section wrapper. "悬浮按键" label was legacy from the old popup panel.
-    var grid = document.createElement('div');
-    grid.className = 'fab-drawer-grid fab-drawer-fabkeys';
-    keys.forEach(function (k, i) {
-      var btn = document.createElement('button');
-      btn.className = 'fab-drawer-btn fabkey';
-      if (k.accent) btn.classList.add('accent-btn');
-      if (k.wide) btn.classList.add('wide');
-      if (k.color) btn.classList.add('color-' + k.color);
-      btn.textContent = k.label;
-      btn.dataset.idx = i;
-
-      var lpTimer = null, lpFired = false;
-      btn.addEventListener('touchstart', function () {
-        lpFired = false;
-        lpTimer = setTimeout(function () {
-          lpFired = true;
-          if (navigator.vibrate) navigator.vibrate(30);
-          openEditor(i);
-        }, 500);
-      }, { passive: true });
-      btn.addEventListener('touchend', function (e) {
-        clearTimeout(lpTimer);
-        if (lpFired) { e.preventDefault(); e.stopPropagation(); return; }
-        _dispatchFabKey(k);
-        e.preventDefault();
-      });
-      btn.addEventListener('click', function () {
-        if (!('ontouchstart' in window)) _dispatchFabKey(k);
-      });
-      btn.addEventListener('contextmenu', function (e) {
-        e.preventDefault();
-        openEditor(i);
-      });
-      grid.appendChild(btn);
-    });
-    parent.appendChild(grid);
-  }
-
-  function _createDrawerGroup(parent, label, editFn) {
-    var group = document.createElement('div');
-    group.className = 'fab-drawer-group';
-    var headerDiv = document.createElement('div');
-    headerDiv.className = 'fab-drawer-group-header';
-    var labelEl = document.createElement('span');
-    labelEl.className = 'fab-drawer-group-label';
-    labelEl.textContent = label;
-    headerDiv.appendChild(labelEl);
-    if (editFn) {
-      var editBtn = document.createElement('button');
-      editBtn.className = 'fab-drawer-group-edit';
-      editBtn.textContent = '\u270e \u7f16\u8f91';
-      editBtn.addEventListener('click', function (e) { e.stopPropagation(); editFn(); });
-      headerDiv.appendChild(editBtn);
-    }
-    group.appendChild(headerDiv);
-    parent.appendChild(group);
-    return group;
-  }
-
-  // -- Quick key customization --
-  function _addQuickKey() {
-    _showDrawerModal(
-      '\u6dfb\u52a0\u5feb\u6377\u952e',
-      '\u663e\u793a\u540d\u79f0', '',
-      '\u53d1\u9001\u5185\u5bb9', '',
-      function () {
-        var label = dModalInput1.value.trim();
-        var send = dModalInput2.value.trim();
-        if (!label) return;
-        if (!send) send = label + '\r';
-        drawerQuickKeys.push({ label: label, send: _parseEscape(send) });
-        _saveDrawerQuickKeys(drawerQuickKeys);
-        renderDrawer();
-      }
-    );
-  }
-
-  function _editQuickKeys() {
-    var btns = g1grid.querySelectorAll('.fab-drawer-btn:not(.add-chip)');
-    var isEditing = btns.length > 0 && btns[0].querySelector('.chip-delete');
-    if (isEditing) {
-      renderDrawer();
-      return;
-    }
-    btns.forEach(function (btn) {
-      var idx = +btn.dataset.idx;
-      if (isNaN(idx)) return;
-      var del = document.createElement('span');
-      del.className = 'chip-delete';
-      del.textContent = '\u00d7';
-      del.addEventListener('click', function (e) {
-        e.stopPropagation();
-        drawerQuickKeys.splice(idx, 1);
-        _saveDrawerQuickKeys(drawerQuickKeys);
-        renderDrawer();
-      });
-      btn.appendChild(del);
-      btn.classList.add('editing');
-      btn.onclick = function (e) {
-        e.stopPropagation();
-        var k = drawerQuickKeys[idx];
-        _showDrawerModal(
-          '\u7f16\u8f91\u5feb\u6377\u952e',
-          '\u663e\u793a\u540d\u79f0', k.label,
-          '\u53d1\u9001\u5185\u5bb9', _displayEscape(k.send),
-          function () {
-            k.label = dModalInput1.value.trim() || k.label;
-            k.send = _parseEscape(dModalInput2.value.trim()) || k.send;
-            _saveDrawerQuickKeys(drawerQuickKeys);
-            renderDrawer();
-          }
-        );
-      };
-    });
-  }
-
-  // -- Slash command customization --
-  function _addSlashCommand() {
-    _showDrawerModal(
-      '\u6dfb\u52a0 Slash Command',
-      '\u547d\u4ee4\u540d\u79f0', '',
-      '\u53d1\u9001\u5185\u5bb9', '',
-      function () {
-        var label = dModalInput1.value.trim();
-        var send = dModalInput2.value.trim();
-        if (!label) return;
-        if (!send) send = label + '\r';
-        drawerCommands.push({ label: label, send: _parseEscape(send) });
-        _saveDrawerCommands(drawerCommands);
-        renderDrawer();
-      }
-    );
-  }
-
-  function _editSlashCommands() {
-    var chips = drawerEl.querySelectorAll('.fab-drawer-chip:not(.add-chip)');
-    var isEditing = chips.length > 0 && chips[0].querySelector('.chip-delete');
-    if (isEditing) {
-      renderDrawer();
-      return;
-    }
-    chips.forEach(function (chip) {
-      var idx = +chip.dataset.idx;
-      var del = document.createElement('span');
-      del.className = 'chip-delete';
-      del.textContent = '\u00d7';
-      del.addEventListener('click', function (e) {
-        e.stopPropagation();
-        drawerCommands.splice(idx, 1);
-        _saveDrawerCommands(drawerCommands);
-        renderDrawer();
-      });
-      chip.appendChild(del);
-      chip.classList.add('editing');
-      chip.onclick = function (e) {
-        e.stopPropagation();
-        var cmd = drawerCommands[idx];
-        _showDrawerModal(
-          '\u7f16\u8f91 Slash Command',
-          '\u547d\u4ee4\u540d\u79f0', cmd.label,
-          '\u53d1\u9001\u5185\u5bb9', _displayEscape(cmd.send),
-          function () {
-            cmd.label = dModalInput1.value.trim() || cmd.label;
-            cmd.send = _parseEscape(dModalInput2.value.trim()) || cmd.send;
-            _saveDrawerCommands(drawerCommands);
-            renderDrawer();
-          }
-        );
-      };
-    });
-  }
-
-  // -- Template customization --
-  function _addTemplate() {
-    _showDrawerModal(
-      '\u6dfb\u52a0\u5feb\u6377\u6a21\u677f',
-      '\u6a21\u677f\u5185\u5bb9', '',
-      '\u53d1\u9001\u5185\u5bb9 (\u7559\u7a7a\u5219\u540c\u4e0a)', '',
-      function () {
-        var label = dModalInput1.value.trim();
-        if (!label) return;
-        var send = dModalInput2.value.trim();
-        if (!send) send = label + '\r';
-        drawerTemplates.push({ label: label, send: _parseEscape(send) });
-        _saveDrawerTemplates(drawerTemplates);
-        renderDrawer();
-      }
-    );
-  }
-
-  function _editTemplate(idx) {
-    var tpl = drawerTemplates[idx];
-    if (!tpl) return;
-    _showDrawerModal(
-      '\u7f16\u8f91\u6a21\u677f',
-      '\u6a21\u677f\u5185\u5bb9', tpl.label,
-      '\u53d1\u9001\u5185\u5bb9', _displayEscape(tpl.send),
-      function () {
-        var newLabel = dModalInput1.value.trim();
-        if (!newLabel) {
-          drawerTemplates.splice(idx, 1);
-        } else {
-          tpl.label = newLabel;
-          tpl.send = _parseEscape(dModalInput2.value.trim()) || tpl.send;
-        }
-        _saveDrawerTemplates(drawerTemplates);
-        renderDrawer();
-      }
-    );
-  }
-
-  // -- T-shape arrow pad (Esc ↑ ↵ / ← ↓ →) --
-  function _buildArrowPadT() {
-    var wrap = document.createElement('div');
-    wrap.className = 'fab-arrow-pad-wrap';
-    var pad = document.createElement('div');
-    pad.className = 'fab-arrow-pad fab-arrow-pad-t';
-
-    var cells = [
-      { label: 'Esc',    send: '\x1b',     role: 'aux' },
-      { label: '\u2191', send: '\x1b[A',   role: 'primary', repeat: true },
-      { label: '\u21b5', send: '\r',       role: 'aux' },
-      { label: '\u2190', send: '\x1b[D',   role: 'primary', repeat: true },
-      { label: '\u2193', send: '\x1b[B',   role: 'primary', repeat: true },
-      { label: '\u2192', send: '\x1b[C',   role: 'primary', repeat: true },
-    ];
-
-    cells.forEach(function (c) {
-      var btn = document.createElement('button');
-      btn.className = 'fab-drawer-btn fab-arrow-cell ' + c.role;
-      btn.textContent = c.label;
-      if (c.repeat) {
-        _attachRepeat(btn, c.send);
-      } else {
-        btn.addEventListener('click', function () { _handleDrawerBtn(c.send); });
-      }
-      pad.appendChild(btn);
-    });
-    wrap.appendChild(pad);
-    return wrap;
-  }
-
-  // -- Ctrl-key button with right-click / long-press delete --
-  function _mkCtrlBtn(k, idx) {
-    var btn = document.createElement('button');
-    btn.className = 'fab-drawer-btn';
-    btn.textContent = k.label;
-    btn.dataset.idx = idx;
-
-    var lpTimer = null, lpFired = false;
-    btn.addEventListener('touchstart', function () {
-      lpFired = false;
-      lpTimer = setTimeout(function () {
-        lpFired = true;
-        if (navigator.vibrate) navigator.vibrate(30);
-        _confirmDeleteCtrl(k, idx);
-      }, 500);
-    }, { passive: true });
-    btn.addEventListener('touchend', function (e) {
-      clearTimeout(lpTimer);
-      if (lpFired) { e.preventDefault(); e.stopPropagation(); return; }
-      _handleDrawerBtn(k.send);
-      e.preventDefault();
-    });
-    btn.addEventListener('click', function () {
-      if (!('ontouchstart' in window)) _handleDrawerBtn(k.send);
-    });
-    btn.addEventListener('contextmenu', function (e) {
-      e.preventDefault();
-      _confirmDeleteCtrl(k, idx);
-    });
-    return btn;
-  }
-
-  function _confirmDeleteCtrl(k, idx) {
-    if (window.confirm('\u5220\u9664\u7ec4\u5408\u952e\u300c' + k.label + '\u300d?')) {
-      drawerCtrlKeys.splice(idx, 1);
-      _saveDrawerCtrlKeys(drawerCtrlKeys);
-      renderDrawer();
-    }
-  }
-
-  function _addCtrlKey() {
-    _showDrawerModal(
-      '\u6dfb\u52a0\u7ec4\u5408\u952e',
-      '\u663e\u793a\u6807\u7b7e', '',
-      '\u53d1\u9001\u5185\u5bb9 (\\xNN)', '',
-      function () {
-        var label = dModalInput1.value.trim();
-        var sendRaw = dModalInput2.value;
-        if (!label || !sendRaw) return;
-        if (drawerCtrlKeys.some(function (kk) { return kk.label === label; })) {
-          _showToast('\u6807\u7b7e\u300c' + label + '\u300d\u5df2\u5b58\u5728');
-          return;
-        }
-        drawerCtrlKeys.push({ label: label, send: _parseEscape(sendRaw) });
-        _saveDrawerCtrlKeys(drawerCtrlKeys);
-        renderDrawer();
-      },
-      _ctrlPresets
-    );
-  }
-
-  // -- Render drawer content (Tab-based) --
-  function renderDrawer() {
-    drawerEl.innerHTML = '';
-
-    // Tab bar (with close × at the right end — saves a row)
-    var TABS = [
-      { key: 'common', name: '\u5e38\u7528' },
-      { key: 'keys',   name: '\u6309\u952e' },
-      { key: 'claude', name: 'Claude' },
-      { key: 'slash',  name: 'Slash' },
-      { key: 'tpl',    name: '\u6a21\u677f' },
-    ];
-    if (!TABS.some(function (t) { return t.key === activeTab; })) activeTab = 'common';
-
-    var tabbar = document.createElement('div');
-    tabbar.className = 'fab-drawer-tabbar';
-    TABS.forEach(function (t) {
-      var tb = document.createElement('button');
-      tb.className = 'fab-drawer-tab' + (t.key === activeTab ? ' active' : '');
-      tb.textContent = t.name;
-      tb.addEventListener('click', function () {
-        activeTab = t.key;
-        _saveActiveTab(activeTab);
-        renderDrawer();
-      });
-      tabbar.appendChild(tb);
-    });
-    // ⌨ switch-to-soft-keyboard button (mutually exclusive with drawer)
-    var kbdBtn = document.createElement('button');
-    kbdBtn.className = 'fab-drawer-kbd-btn';
-    kbdBtn.title = '\u5207\u6362\u5230\u7cfb\u7edf\u8f6f\u952e\u76d8';
-    kbdBtn.innerHTML =
-      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-      '<rect x="2" y="6" width="20" height="12" rx="2"/>' +
-      '<line x1="6" y1="10" x2="6" y2="10"/>' +
-      '<line x1="10" y1="10" x2="10" y2="10"/>' +
-      '<line x1="14" y1="10" x2="14" y2="10"/>' +
-      '<line x1="18" y1="10" x2="18" y2="10"/>' +
-      '<line x1="6" y1="14" x2="18" y2="14"/>' +
-      '</svg>';
-    function _switchToSoftKeyboard() {
-      // focus() must happen in the user-gesture context for mobile browsers
-      // to open the soft keyboard. Do it BEFORE closing the drawer.
-      if (terminalState.term) {
-        try { terminalState.term.focus(); } catch (_e) { /* ignore */ }
-      }
-      toggleDrawer(false);
-    }
-    kbdBtn.addEventListener('touchend', function (e) {
-      e.preventDefault();
-      _switchToSoftKeyboard();
-    });
-    kbdBtn.addEventListener('click', function () {
-      if (!('ontouchstart' in window)) _switchToSoftKeyboard();
-    });
-    tabbar.appendChild(kbdBtn);
-
-    var closeBtn = document.createElement('button');
-    closeBtn.className = 'fab-drawer-close';
-    closeBtn.textContent = '\u2715';
-    closeBtn.addEventListener('click', function () { toggleDrawer(false); });
-    tabbar.appendChild(closeBtn);
-    drawerEl.appendChild(tabbar);
-
-    var body = document.createElement('div');
-    body.className = 'fab-drawer-body';
-    drawerEl.appendChild(body);
-
-    if (activeTab === 'common') {
-      // 常用: fabKeys + T-pad + quickKeys
-      _renderFabKeysGroup(body);
-      body.appendChild(_buildArrowPadT());
-      var gq = _createDrawerGroup(body, '\u5feb\u901f\u64cd\u4f5c', function () { _editQuickKeys(); });
-      g1grid = document.createElement('div');
-      g1grid.className = 'fab-drawer-grid';
-      drawerQuickKeys.forEach(function (k, i) {
-        var btn = document.createElement('button');
-        btn.className = 'fab-drawer-btn' + (k.cls ? ' ' + k.cls : '');
-        btn.textContent = k.label;
-        btn.dataset.idx = i;
-        btn.addEventListener('click', function () { _handleDrawerBtn(k.send); });
-        g1grid.appendChild(btn);
-      });
-      var addKeyBtn = document.createElement('button');
-      addKeyBtn.className = 'fab-drawer-btn add-chip';
-      addKeyBtn.textContent = '+';
-      addKeyBtn.addEventListener('click', function () { _addQuickKey(); });
-      g1grid.appendChild(addKeyBtn);
-      gq.appendChild(g1grid);
-    } else if (activeTab === 'keys') {
-      // 按键: 动态组合键 + 符号
-      var gc = _createDrawerGroup(body, '\u63a7\u5236\u952e', null);
-      var gcGrid = document.createElement('div');
-      gcGrid.className = 'fab-drawer-grid';
-      drawerCtrlKeys.forEach(function (k, i) { gcGrid.appendChild(_mkCtrlBtn(k, i)); });
-      var addCtrl = document.createElement('button');
-      addCtrl.className = 'fab-drawer-btn fab-drawer-add-btn';
-      addCtrl.textContent = '+';
-      addCtrl.title = '\u6dfb\u52a0\u7ec4\u5408\u952e';
-      addCtrl.addEventListener('click', function () { _addCtrlKey(); });
-      gcGrid.appendChild(addCtrl);
-      gc.appendChild(gcGrid);
-
-      var gs = _createDrawerGroup(body, '\u7b26\u53f7', null);
-      var gsGrid = document.createElement('div');
-      gsGrid.className = 'fab-drawer-grid';
-      _drawerDefaultSymbols.forEach(function (k) {
-        var btn = document.createElement('button');
-        btn.className = 'fab-drawer-btn';
-        btn.textContent = k.label;
-        btn.addEventListener('click', function () { _handleDrawerBtn(k.send); });
-        gsGrid.appendChild(btn);
-      });
-      gs.appendChild(gsGrid);
-    } else if (activeTab === 'claude') {
-      var g3 = _createDrawerGroup(body, 'Claude Code \u5feb\u6377\u952e');
-      var g3grid = document.createElement('div');
-      g3grid.className = 'fab-drawer-grid-2col';
-      var ccKeys = [
-        { label: 'Alt+T \u601d\u8003', send: '\x1bt' },
-        { label: 'Ctrl+O \u8be6\u7ec6', send: '\x0f' },
-      ];
-      ccKeys.forEach(function (k) {
-        var btn = document.createElement('button');
-        btn.className = 'fab-drawer-btn accent-orange';
-        btn.textContent = k.label;
-        btn.addEventListener('click', function () { _handleDrawerBtn(k.send); });
-        g3grid.appendChild(btn);
-      });
-      g3.appendChild(g3grid);
-    } else if (activeTab === 'slash') {
-      var g4 = _createDrawerGroup(body, 'Slash Commands', function () { _editSlashCommands(); });
-      var g4chips = document.createElement('div');
-      g4chips.className = 'fab-drawer-chips';
-      drawerCommands.forEach(function (cmd, i) {
-        var chip = document.createElement('button');
-        chip.className = 'fab-drawer-chip';
-        chip.textContent = cmd.label;
-        chip.dataset.idx = i;
-        chip.addEventListener('click', function () { _handleDrawerBtn(cmd.send); });
-        g4chips.appendChild(chip);
-      });
-      var addChip = document.createElement('button');
-      addChip.className = 'fab-drawer-chip add-chip';
-      addChip.textContent = '+ \u6dfb\u52a0';
-      addChip.addEventListener('click', function () { _addSlashCommand(); });
-      g4chips.appendChild(addChip);
-      g4.appendChild(g4chips);
-    } else if (activeTab === 'tpl') {
-      var g5 = _createDrawerGroup(body, '\u5feb\u6377\u6a21\u677f');
-      var g5list = document.createElement('div');
-      g5list.className = 'fab-drawer-templates';
-      drawerTemplates.forEach(function (tpl, i) {
-        var item = document.createElement('div');
-        item.className = 'fab-drawer-template';
-        item.textContent = tpl.label;
-        item.dataset.idx = i;
-        item.addEventListener('click', function () { _handleDrawerBtn(tpl.send); });
-        _attachLongPress(item, function () { _editTemplate(i); });
-        g5list.appendChild(item);
-      });
-      var addTpl = document.createElement('div');
-      addTpl.className = 'fab-drawer-template add-template';
-      addTpl.textContent = '+ \u6dfb\u52a0\u81ea\u5b9a\u4e49\u6a21\u677f...';
-      addTpl.addEventListener('click', function () { _addTemplate(); });
-      g5list.appendChild(addTpl);
-      g5.appendChild(g5list);
-    }
-  }
+  // -- Scene-aware drawer (FabDrawer) --
+  var fabDrawerApi = null;
+  var drawerVisible = false;
+  var drawerMountEl = null;
 
   function toggleDrawer(open) {
-    drawerOpen = typeof open === 'boolean' ? open : !drawerOpen;
-    if (drawerOpen) {
-      // Mutually exclusive with soft keyboard: blurring the xterm textarea
-      // collapses the system keyboard on mobile before we slide the drawer up.
+    var willOpen = typeof open === 'boolean' ? open : !drawerVisible;
+
+    if (willOpen) {
+      // Mutually exclusive with soft keyboard: blur xterm textarea to
+      // collapse the system keyboard before sliding the drawer up.
       if (document.activeElement && document.activeElement.blur) {
         try { document.activeElement.blur(); } catch (_e) { /* ignore */ }
       }
-      renderDrawer();
     }
-    drawerEl.classList.toggle('open', drawerOpen);
-    // Hide the FAB itself while the drawer is open — it's no longer needed.
-    fabEl.classList.toggle('hidden-by-drawer', drawerOpen);
 
-    // Soft-keyboard mode: push .terminal-view up so terminal re-fits above
-    // the drawer instead of being covered. `container` here is .terminal-view.
+    if (!drawerMountEl) {
+      drawerMountEl = document.createElement('div');
+      drawerMountEl.className = 'fab-drawer-mount';
+      container.appendChild(drawerMountEl);
+    }
+
+    if (!fabDrawerApi && window.FabDrawer) {
+      // Run migration on first mount
+      if (window.FabMigrate) window.FabMigrate.runOnce();
+
+      fabDrawerApi = window.FabDrawer.mount(drawerMountEl, {
+        sendKey: function (seq) {
+          if (seq === '__upload__') {
+            fileInput.value = '';
+            fileInput.click();
+          } else {
+            _sendTermData(seq);
+          }
+        },
+        onKeyboard: function () {
+          if (terminalState.term) {
+            try { terminalState.term.focus(); } catch (_e) { /* ignore */ }
+          }
+          toggleDrawer(false);
+        },
+        onClose: function () { toggleDrawer(false); },
+      });
+    }
+
+    drawerMountEl.classList.toggle('open', willOpen);
+    drawerVisible = willOpen;
+
+    // Hide the FAB itself while the drawer is open
+    fabEl.classList.toggle('hidden-by-drawer', willOpen);
+
+    // Push .terminal-view up so the terminal re-fits above the drawer
     var tv = container.classList && container.classList.contains('terminal-view')
       ? container
       : (container.closest ? container.closest('.terminal-view') : null);
-    if (tv) tv.classList.toggle('drawer-pushed', drawerOpen);
+    if (tv) tv.classList.toggle('drawer-pushed', willOpen);
 
-    // Re-fit xterm after layout settles (0.25s CSS transition), then tell
-    // tmux about the new cols/rows so the pane redraws at the right size.
+    // Re-fit xterm after CSS transition settles (0.25s), then tell tmux
+    // about the new cols/rows so the pane redraws at the right size.
     setTimeout(function () {
       if (terminalState.fitAddon) {
         try { terminalState.fitAddon.fit(); } catch (_e) { /* ignore */ }
@@ -1008,13 +160,11 @@ function _createFabPanel(container) {
     }, 270);
   }
 
-  backdropEl.addEventListener('click', function () { toggleDrawer(false); });
-
   // Auto-close drawer when the user taps the terminal: the tap focuses
   // xterm's hidden textarea (triggering the system soft keyboard) — mutually
   // exclusive with the drawer, so collapse it back to the FAB state.
   function _onTerminalFocus(e) {
-    if (!drawerOpen) return;
+    if (!drawerVisible) return;
     var t = e.target;
     if (t && t.classList && t.classList.contains('xterm-helper-textarea')) {
       toggleDrawer(false);
@@ -1069,9 +219,9 @@ function _createFabPanel(container) {
   // Return cleanup function
   return function () {
     document.removeEventListener('focusin', _onTerminalFocus);
-    if (backdropEl.parentNode) backdropEl.parentNode.removeChild(backdropEl);
-    if (drawerEl.parentNode) drawerEl.parentNode.removeChild(drawerEl);
-    if (drawerModalEl.parentNode) drawerModalEl.parentNode.removeChild(drawerModalEl);
+    if (drawerMountEl && drawerMountEl.parentNode) {
+      drawerMountEl.parentNode.removeChild(drawerMountEl);
+    }
   };
 }
 

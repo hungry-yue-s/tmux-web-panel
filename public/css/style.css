@@ -3926,3 +3926,28 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   background: var(--accent-blue); color: var(--bg-primary);
   border-color: var(--accent-blue); font-weight: 600;
 }
+
+/* === FabDrawer mount container (slides up from bottom) === */
+.fab-drawer-mount {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  height: 40vh;
+  z-index: 201;
+  transform: translateY(100%);
+  transition: transform 0.25s ease;
+  pointer-events: none;
+}
+.fab-drawer-mount.open {
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.fab-drawer-mount > .fab-drawer {
+  pointer-events: auto;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  border-radius: 16px 16px 0 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
