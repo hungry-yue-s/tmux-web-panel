@@ -50,6 +50,9 @@ const BUILTIN_SCENES = [
         { id: 'dollar', label: '$',   send: '$' },
       ],
       commands: [
+        { id: 'claude',     label: 'claude',     send: 'claude\r' },
+        { id: 'lazygit',    label: 'lazygit',    send: 'lazygit\r' },
+        { id: 'vim',        label: 'vim',        send: 'vim ' },
         { id: 'ls',         label: 'ls',         send: 'ls\r' },
         { id: 'git-status', label: 'git status', send: 'git status\r' },
         { id: 'cd-up',      label: 'cd ..',      send: 'cd ..\r' },
@@ -57,7 +60,6 @@ const BUILTIN_SCENES = [
         { id: 'clear',      label: 'clear',      send: 'clear\r' },
         { id: 'history',    label: 'history',    send: 'history\r' },
         { id: 'exit',       label: 'exit',       send: 'exit\r' },
-        { id: 'whoami',     label: 'whoami',     send: 'whoami\r' },
       ],
       templates: [
         { id: 'tpl-git-log',  label: 'git log --oneline -20',       send: 'git log --oneline -20\r' },
