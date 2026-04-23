@@ -169,13 +169,19 @@
         }, [s.icon + ' ' + s.name + (isCurrent ? ' ● 当前' : '')]));
       });
 
-      // Add scene entry point (wired in Task 12)
+      // Add scene entry point
       overrideEl.appendChild(h('div', {
         class: 'mitem add',
         onclick: function () {
           state.overrideMenuOpen = false;
           renderOverride();
-          // Scene form will be wired in Task 12
+          showSceneForm(null, function (def) {
+            global.FabScene.addScene(def);
+            state.scenes = global.FabScene.loadScenes();
+            state.currentScene = def.id;
+            state.currentTab = 0;
+            rerender();
+          });
         },
       }, ['＋ 添加新场景']));
     }
@@ -190,6 +196,100 @@
       state.overrideMenuOpen = false;
       renderOverride();
     });
+
+    /* ── Scene form (add / edit) ─────────────────────────────────── */
+
+    function showSceneForm(existingScene, onSave) {
+      var overlay = h('div', { class: 'fab-form-overlay show' });
+      var modal = h('div', { class: 'fab-form-modal' });
+
+      var nameInput = h('input', { type: 'text', value: existingScene ? existingScene.name : '', placeholder: '场景名称' });
+      var iconInput = h('input', { type: 'text', value: existingScene ? existingScene.icon : '🔧', placeholder: '图标 (emoji)' });
+      var detectInput = h('input', { type: 'text', value: existingScene ? (existingScene.detect || []).join(',') : '', placeholder: '进程名，逗号分隔 (如 python,ipython)' });
+
+      var fixtureSel = h('select');
+      var fixtureOpts = [
+        { value: 'terminal-set', label: '终端套（方向+Tab+C-c）' },
+        { value: 'vim-set', label: 'Vim 套（Esc+方向+:w）' },
+        { value: 'claude-set', label: 'Claude 套（方向+Alt+T）' },
+        { value: 'arrow-only', label: '纯方向键' },
+        { value: 'none', label: '无' },
+      ];
+      fixtureOpts.forEach(function (opt) {
+        fixtureSel.appendChild(h('option', { value: opt.value }, [opt.label]));
+      });
+
+      var inheritSel = h('select');
+      var inheritOpts = [
+        { value: 'terminal', label: '终端' },
+        { value: 'claude', label: 'Claude' },
+        { value: 'vim', label: 'Vim' },
+        { value: 'lazygit', label: 'Lazygit' },
+        { value: 'empty', label: '空白' },
+      ];
+      inheritOpts.forEach(function (opt) {
+        inheritSel.appendChild(h('option', { value: opt.value }, [opt.label]));
+      });
+
+      function close() { overlay.remove(); }
+
+      var cancelBtn = h('button', { class: 'fab-form-btn cancel', onclick: close }, ['取消']);
+      var saveBtn = h('button', { class: 'fab-form-btn save', onclick: function () {
+        var name = nameInput.value.trim();
+        if (!name) { nameInput.focus(); return; }
+        var def = {
+          id: existingScene ? existingScene.id : ('custom-' + Date.now()),
+          name: name,
+          icon: iconInput.value.trim() || '🔧',
+          detect: detectInput.value.split(',').map(function(s) { return s.trim(); }).filter(Boolean),
+          fixtures: getFixtureTemplate(fixtureSel.value),
+          tabs: [
+            { key: 'common', name: '常用' },
+            { key: 'keys', name: '按键' },
+            { key: 'cmd', name: '命令' },
+            { key: 'tpl', name: '模板' },
+          ],
+          defaultItems: getInheritedItems(inheritSel.value),
+        };
+        onSave(def);
+        close();
+      }}, ['保存']);
+
+      modal.appendChild(h('h3', {}, [existingScene ? '编辑场景' : '添加场景']));
+      modal.appendChild(h('label', {}, ['场景名']));
+      modal.appendChild(nameInput);
+      modal.appendChild(h('label', {}, ['图标']));
+      modal.appendChild(iconInput);
+      modal.appendChild(h('label', {}, ['识别进程名（逗号分隔）']));
+      modal.appendChild(detectInput);
+      modal.appendChild(h('label', {}, ['Fixture 模板']));
+      modal.appendChild(fixtureSel);
+      modal.appendChild(h('label', {}, ['继承布局自']));
+      modal.appendChild(inheritSel);
+      modal.appendChild(h('div', { class: 'fab-form-actions' }, [cancelBtn, saveBtn]));
+
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      setTimeout(function () { nameInput.focus(); }, 100);
+    }
+
+    function getFixtureTemplate(kind) {
+      var pad = { type: 'arrow-pad' };
+      if (kind === 'terminal-set') return [pad, { id: 'tab', label: 'Tab', send: '\t' }, { id: 'c-c', label: 'C-c', send: '\x03', color: 'red' }];
+      if (kind === 'vim-set') return [{ id: 'esc-big', label: 'Esc', send: '\x1b', color: 'red', size: 'wide' }, pad, { id: 'colon-w', label: ':w', send: ':w\r' }];
+      if (kind === 'claude-set') return [pad, { id: 'alt-t', label: 'Alt+T', send: '\x1bt', color: 'orange' }, { id: 'c-o', label: 'Ctrl+O', send: '\x0f', color: 'orange' }];
+      if (kind === 'arrow-only') return [pad];
+      return [];
+    }
+
+    function getInheritedItems(sourceId) {
+      if (sourceId === 'empty') return { common: [], keys: [], cmd: [], tpl: [] };
+      var builtins = global.FabScene ? global.FabScene.getBuiltinScenes() : [];
+      for (var i = 0; i < builtins.length; i++) {
+        if (builtins[i].id === sourceId) return JSON.parse(JSON.stringify(builtins[i].defaultItems));
+      }
+      return { common: [], keys: [], cmd: [], tpl: [] };
+    }
 
     /* ── Body content ─────────────────────────────────────────────── */
 
