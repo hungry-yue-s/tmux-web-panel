@@ -149,6 +149,10 @@ const BUILTIN_SCENES = [
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
+const LS_KEY = 'fab-scenes-v1';
+
+const BUILTIN_IDS = new Set(BUILTIN_SCENES.map(s => s.id));
+
 /**
  * Returns a deep clone of all builtin scenes to prevent accidental mutation.
  * @returns {Array<Object>}
@@ -157,13 +161,119 @@ function getBuiltinScenes() {
   return JSON.parse(JSON.stringify(BUILTIN_SCENES));
 }
 
+/**
+ * Reads custom scenes from localStorage.
+ * @returns {Array<Object>}
+ */
+function _readCustomScenes() {
+  try {
+    const raw = (typeof localStorage !== 'undefined') && localStorage.getItem(LS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * Writes custom scenes array to localStorage.
+ * @param {Array<Object>} customs
+ */
+function _writeCustomScenes(customs) {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem(LS_KEY, JSON.stringify(customs));
+  }
+}
+
+/**
+ * Loads all scenes: builtins merged with custom overrides.
+ * Custom scenes override builtins with the same id.
+ * @returns {Array<Object>}
+ */
+function loadScenes() {
+  const builtins = getBuiltinScenes();
+  const customs = _readCustomScenes();
+
+  // Build a map from builtins, then overlay customs (custom wins on id conflict)
+  const map = new Map(builtins.map(s => [s.id, s]));
+  for (const c of customs) {
+    map.set(c.id, c);
+  }
+
+  return Array.from(map.values());
+}
+
+/**
+ * Adds a custom scene to localStorage persistence.
+ * @param {Object} def - Scene definition (id and name required)
+ * @throws {Error} if id or name is missing
+ */
+function addScene(def) {
+  if (!def || !def.id) {
+    throw new Error('Scene id is required');
+  }
+  if (!def.name) {
+    throw new Error('Scene name is required');
+  }
+
+  const customs = _readCustomScenes();
+  const newScene = Object.assign({}, def, {
+    builtin: false,
+    createdAt: Date.now(),
+  });
+
+  // Replace existing custom with same id, or append
+  const idx = customs.findIndex(s => s.id === newScene.id);
+  const updated = idx >= 0
+    ? [...customs.slice(0, idx), newScene, ...customs.slice(idx + 1)]
+    : [...customs, newScene];
+
+  _writeCustomScenes(updated);
+}
+
+/**
+ * Deletes a custom scene from localStorage.
+ * @param {string} id - Scene id to delete
+ * @throws {Error} if the scene is a builtin
+ */
+function deleteScene(id) {
+  if (BUILTIN_IDS.has(id)) {
+    throw new Error(`Cannot delete builtin scene: ${id}`);
+  }
+
+  const customs = _readCustomScenes();
+  _writeCustomScenes(customs.filter(s => s.id !== id));
+}
+
+/**
+ * Finds the best matching scene id for a given command string.
+ * Scenes are sorted by createdAt descending so newer custom scenes win on conflict.
+ * @param {string} cmd - Command string to match against scene detect patterns
+ * @param {Array<Object>} scenes - Scenes to search (from loadScenes())
+ * @returns {string} Matched scene id, or 'terminal' as fallback
+ */
+function matchScene(cmd, scenes) {
+  // Sort by createdAt descending so newer (custom) scenes are checked first
+  const sorted = [...scenes].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+  for (const s of sorted) {
+    if (!s.detect || s.detect.length === 0) continue;
+    for (const pat of s.detect) {
+      if (cmd.includes(pat)) {
+        return s.id;
+      }
+    }
+  }
+
+  return 'terminal';
+}
+
 // ─── Browser global exposure (IIFE guards against re-execution) ──────────────
 (function exposeBrowserGlobal() {
   const target = typeof window !== 'undefined' ? window : null;
   if (target && !target.FabScene) {
-    target.FabScene = { getBuiltinScenes };
+    target.FabScene = { getBuiltinScenes, loadScenes, addScene, deleteScene, matchScene };
   }
 })();
 
 // ─── ESM named exports (for vitest / Node ESM imports) ───────────────────────
-export { getBuiltinScenes };
+export { getBuiltinScenes, loadScenes, addScene, deleteScene, matchScene };
