@@ -41,6 +41,8 @@ const BUILTIN_SCENES = [
         { id: 'ctrl-k', label: 'C-k', send: '\x0b' },
         { id: 'ctrl-d', label: 'C-d', send: '\x04' },
         { id: 'ctrl-z', label: 'C-z', send: '\x1a' },
+        { id: 'alt-t',  label: 'Alt+T 思考', send: '\x1bt' },
+        { id: 'ctrl-o', label: 'Ctrl+O 详细', send: '\x0f' },
         { id: 'pipe',   label: '|',   send: '|' },
         { id: 'and',    label: '&&',  send: '&&' },
         { id: 'gt',     label: '>',   send: '>' },
