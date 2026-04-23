@@ -58,6 +58,9 @@
   function mount(container, options) {
     options = options || {};
 
+    seedBuiltinFallbackHeat();
+    runDiscoveryIfNeeded();
+
     var state = {
       currentScene: 'terminal',
       currentTab: 0,
@@ -498,6 +501,71 @@
       getState: function () { return state; },
       rerender: rerender,
     };
+  }
+
+  /* ── First-run discovery + baseline heat seeding ─────────────── */
+
+  var DISCOVER_MARK_KEY = 'fab-discover-v1';
+
+  function runDiscoveryIfNeeded() {
+    if (localStorage.getItem(DISCOVER_MARK_KEY)) return;
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/api/scene/discover', true);
+    xhr.onload = function () {
+      if (xhr.status !== 200) return;
+      try {
+        var data = JSON.parse(xhr.responseText);
+        applyDiscovery(data);
+        localStorage.setItem(DISCOVER_MARK_KEY, JSON.stringify({ at: Date.now() }));
+      } catch (_e) { /* silent */ }
+    };
+    xhr.onerror = function () { /* silent */ };
+    xhr.send();
+  }
+
+  function applyDiscovery(data) {
+    // Terminal — top full commands become heat seeds
+    var termCmds = (data.terminal && data.terminal.topFullCommands) || [];
+    termCmds.slice(0, 8).forEach(function (entry, rank) {
+      var id = 'disc-' + slugify(entry.command);
+      if (global.FabHeat) global.FabHeat.seedHeat('terminal', id, Math.max(8, 20 - rank * 1.5));
+    });
+
+    // Claude — slash commands
+    var claudeCmds = (data.claude && data.claude.slashCommands) || [];
+    claudeCmds.slice(0, 8).forEach(function (cmd, rank) {
+      var id = 'disc-' + slugify(cmd.id);
+      if (global.FabHeat) global.FabHeat.seedHeat('claude', id, Math.max(8, 20 - rank * 1.5));
+    });
+
+    // Vim — custom keymaps
+    var vimKeys = (data.vim && data.vim.customKeymaps) || [];
+    vimKeys.slice(0, 8).forEach(function (k, rank) {
+      var id = 'disc-' + slugify(k.key);
+      if (global.FabHeat) global.FabHeat.seedHeat('vim', id, Math.max(8, 20 - rank * 1.5));
+    });
+    // Lazygit — user is typically default; skip injection
+  }
+
+  function slugify(s) {
+    return String(s).replace(/[^a-zA-Z0-9]/g, '-').slice(0, 24);
+  }
+
+  function seedBuiltinFallbackHeat() {
+    var seededKey = 'fab-builtin-seeded-v1';
+    if (localStorage.getItem(seededKey)) return;
+    if (!global.FabScene || !global.FabHeat) return;
+    var scenes = global.FabScene.getBuiltinScenes();
+    scenes.forEach(function (scene) {
+      var tabKeys = Object.keys(scene.defaultItems || {});
+      for (var i = 0; i < tabKeys.length; i++) {
+        var items = scene.defaultItems[tabKeys[i]] || [];
+        items.forEach(function (item) {
+          global.FabHeat.seedHeat(scene.id, item.id, 10);
+        });
+      }
+    });
+    localStorage.setItem(seededKey, '1');
   }
 
   global.FabDrawer = { mount: mount };
