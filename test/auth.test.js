@@ -96,6 +96,7 @@ describe('tokenAuth middleware', () => {
   function mockReq(headers = {}, accept) {
     return {
       headers: { ...headers, accept: accept || 'application/json' },
+      query: {},
     };
   }
 

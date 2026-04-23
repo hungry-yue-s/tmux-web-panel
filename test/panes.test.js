@@ -122,11 +122,11 @@ describe('renderPanePills', () => {
     expect(pills[1].classList.contains('active')).toBe(false);
   });
 
-  it('shows pane index and command in pill text', () => {
+  it('shows pane index in pill text', () => {
     dom.window.renderPanePills(container, samplePanes, null, null);
     const pills = container.querySelectorAll('.pane-pill');
-    expect(pills[0].textContent).toBe('P0 zsh');
-    expect(pills[1].textContent).toBe('P1 vim');
+    expect(pills[0].textContent).toBe('0');
+    expect(pills[1].textContent).toBe('1');
   });
 
   it('calls onPaneClick with correct pane id', () => {
