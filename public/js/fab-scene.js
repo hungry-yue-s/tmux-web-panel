@@ -50,7 +50,7 @@ const BUILTIN_SCENES = [
         { id: 'dollar', label: '$',   send: '$' },
       ],
       commands: [
-        { id: 'claude',     label: 'claude',     send: 'claude\r' },
+        { id: 'claude',     label: 'claude',     send: 'claude --dangerously-skip-permissions\r' },
         { id: 'lazygit',    label: 'lazygit',    send: 'lazygit\r' },
         { id: 'vim',        label: 'vim',        send: 'vim ' },
         { id: 'ls',         label: 'ls',         send: 'ls\r' },
