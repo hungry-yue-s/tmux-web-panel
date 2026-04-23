@@ -2558,6 +2558,7 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
   -webkit-user-select: none;
@@ -3838,4 +3839,57 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 @keyframes fab-scene-swap {
   0% { opacity: 0; transform: translateY(8px); }
   100% { opacity: 1; transform: none; }
+}
+
+/* === Fixture + Heat rendering === */
+.fab-section { margin-bottom: 14px; }
+.fab-section:last-child { margin-bottom: 0; }
+.fab-section-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px;
+  color: var(--text-muted); opacity: 0.7; margin-bottom: 7px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.fab-section-label .meta {
+  color: var(--accent-orange); font-weight: 600;
+  letter-spacing: 0.3px; text-transform: none; font-size: 9px;
+}
+.fab-section-label .tag-fix {
+  display: inline-block; padding: 1px 6px; border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-purple) 20%, transparent);
+  color: var(--accent-purple); font-size: 9px; font-weight: 700; margin-right: 6px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.fab-section-label .tag-heat {
+  display: inline-block; padding: 1px 6px; border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-orange) 20%, transparent);
+  color: var(--accent-orange); font-size: 9px; font-weight: 700; margin-right: 6px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+
+.fab-fixture-wrap {
+  background: color-mix(in srgb, var(--accent-purple) 5%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--accent-purple) 25%, transparent);
+  border-radius: 8px; padding: 8px;
+}
+.fab-fixture-wide {
+  grid-column: 1 / -1; height: 48px; font-size: 14px;
+}
+
+.fab-arrow-pad {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+  margin-bottom: 6px;
+}
+
+.fab-heat-badge {
+  position: absolute; top: -5px; right: -5px;
+  background: var(--accent-orange); color: var(--bg-primary);
+  font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 8px;
+  min-width: 14px; text-align: center; font-family: 'Menlo', monospace;
+  line-height: 1.4;
+}
+.fab-heat-badge.dim { background: var(--text-muted); color: var(--bg-card); }
+
+.fab-empty-hint {
+  grid-column: 1 / -1; text-align: center; padding: 20px;
+  color: var(--text-muted); font-size: 12px;
 }

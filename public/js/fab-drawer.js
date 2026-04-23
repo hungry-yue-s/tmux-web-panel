@@ -193,6 +193,157 @@
 
     /* ── Body content ─────────────────────────────────────────────── */
 
+    function renderSection(title, meta, contentEl) {
+      var sec = h('div', { class: 'fab-section' });
+      var lbl = h('div', {
+        class: 'fab-section-label',
+        html: '<span>' + title + '</span>' + (meta ? '<span class="meta">' + meta + '</span>' : ''),
+      });
+      sec.appendChild(lbl);
+      sec.appendChild(contentEl);
+      return sec;
+    }
+
+    function renderArrowPad() {
+      var pad = h('div', { class: 'fab-arrow-pad' });
+      var cells = [
+        { label: 'Esc', send: '\x1b' }, { label: '↑', send: '\x1b[A' }, { label: '↵', send: '\r' },
+        { label: '←', send: '\x1b[D' }, { label: '↓', send: '\x1b[B' }, { label: '→', send: '\x1b[C' },
+      ];
+      cells.forEach(function (c) {
+        var b = h('button', {
+          class: 'fab-drawer-btn',
+          onclick: function () {
+            state.sendKey(c.send);
+            if (navigator.vibrate) navigator.vibrate(10);
+          },
+        }, [c.label]);
+        // Long press repeat for arrow keys
+        if (c.label === '↑' || c.label === '↓' || c.label === '←' || c.label === '→') {
+          var rTimer = null;
+          var rInterval = null;
+          b.addEventListener('touchstart', function (e) {
+            e.stopPropagation();
+            rTimer = setTimeout(function () {
+              rInterval = setInterval(function () {
+                state.sendKey(c.send);
+                if (navigator.vibrate) navigator.vibrate(5);
+              }, 80);
+            }, 300);
+          }, { passive: true });
+          b.addEventListener('touchend', function () {
+            clearTimeout(rTimer);
+            clearInterval(rInterval);
+          });
+        }
+        pad.appendChild(b);
+      });
+      return pad;
+    }
+
+    function renderFixtureItem(f) {
+      var cls = 'fab-drawer-btn';
+      if (f.color) cls += ' ' + f.color;
+      if (f.size === 'wide') cls += ' fab-fixture-wide';
+      var b = h('button', {
+        class: cls,
+        onclick: function () {
+          if (f.send != null) {
+            state.sendKey(f.send);
+            if (navigator.vibrate) navigator.vibrate(10);
+          }
+          if (f.id && global.FabHeat) global.FabHeat.touch(state.currentScene, f.id);
+        },
+      }, [f.label]);
+      return b;
+    }
+
+    function renderHeatBtn(item) {
+      var scoreVal = global.FabHeat ? global.FabHeat.score(state.currentScene, item.id) : 0;
+      var b = h('button', {
+        class: 'fab-drawer-btn',
+        onclick: function () {
+          state.sendKey(item.send);
+          if (navigator.vibrate) navigator.vibrate(10);
+          if (global.FabHeat) global.FabHeat.touch(state.currentScene, item.id);
+        },
+      }, [item.label]);
+      if (scoreVal >= 1) {
+        var badgeCls = 'fab-heat-badge' + (scoreVal < 5 ? ' dim' : '');
+        b.appendChild(h('span', { class: badgeCls }, [String(Math.round(scoreVal))]));
+      }
+      return b;
+    }
+
+    function getAllItems(scene) {
+      var all = [];
+      var seen = {};
+      var tabKeys = Object.keys(scene.defaultItems || {});
+      for (var i = 0; i < tabKeys.length; i++) {
+        var items = scene.defaultItems[tabKeys[i]] || [];
+        for (var j = 0; j < items.length; j++) {
+          if (!seen[items[j].id]) {
+            seen[items[j].id] = true;
+            all.push(items[j]);
+          }
+        }
+      }
+      return all;
+    }
+
+    function renderCommonTab(scene) {
+      var frag = document.createDocumentFragment();
+
+      // --- Fixture block ---
+      var fxWrap = h('div', { class: 'fab-fixture-wrap' });
+      var fxGrid = h('div', { class: 'fab-drawer-grid' });
+      var hasArrow = false;
+      scene.fixtures.forEach(function (f) {
+        if (f.type === 'arrow-pad') {
+          if (!hasArrow) { fxWrap.appendChild(renderArrowPad()); hasArrow = true; }
+        } else {
+          fxGrid.appendChild(renderFixtureItem(f));
+        }
+      });
+      if (fxGrid.children.length > 0) fxWrap.appendChild(fxGrid);
+      frag.appendChild(renderSection('<span class="tag-fix">固定</span>场景装置', '不参与热度', fxWrap));
+
+      // --- Heat Top 8 ---
+      var fixtureIds = {};
+      scene.fixtures.forEach(function (f) { if (f.id) fixtureIds[f.id] = true; });
+      var allItems = getAllItems(scene).filter(function (it) { return !fixtureIds[it.id]; });
+      var top8 = global.FabHeat
+        ? global.FabHeat.topN(state.currentScene, allItems, 8)
+        : allItems.slice(0, 8);
+
+      var heatGrid = h('div', { class: 'fab-drawer-grid' });
+      top8.forEach(function (item) { heatGrid.appendChild(renderHeatBtn(item)); });
+      frag.appendChild(renderSection('<span class="tag-heat">热度</span>Top 8 混排', '14 天半衰期', heatGrid));
+
+      return frag;
+    }
+
+    function renderOtherTab(scene, tabKey) {
+      var items = (scene.defaultItems && scene.defaultItems[tabKey]) || [];
+      // Sort by heat
+      if (global.FabHeat) {
+        items = global.FabHeat.topN(state.currentScene, items, items.length);
+      }
+      var grid = h('div', { class: 'fab-drawer-grid' });
+      items.forEach(function (item) { grid.appendChild(renderHeatBtn(item)); });
+      if (items.length === 0) {
+        grid.appendChild(h('div', { class: 'fab-empty-hint' }, ['此 Tab 暂无条目']));
+      }
+      var tabLabel = tabKey;
+      var s = getScene();
+      if (s) {
+        for (var i = 0; i < s.tabs.length; i++) {
+          if (s.tabs[i].key === tabKey) { tabLabel = s.tabs[i].name; break; }
+        }
+      }
+      return renderSection(tabLabel, null, grid);
+    }
+
     function renderBody() {
       bodyEl.innerHTML = '';
       // Reset swap animation
@@ -200,15 +351,16 @@
       void bodyEl.offsetWidth; // reflow to restart animation
       bodyEl.style.animation = '';
 
-      // Placeholder — Task 11 will implement full heat-sorted button rendering
-      bodyEl.appendChild(h('div', {
-        style: {
-          padding: '20px',
-          textAlign: 'center',
-          color: 'var(--text-muted)',
-          fontSize: '13px',
-        },
-      }, ['Loading...']));
+      var scene = getScene();
+      if (!scene) return;
+      var tab = scene.tabs[state.currentTab];
+      if (!tab) return;
+
+      if (tab.key === 'common') {
+        bodyEl.appendChild(renderCommonTab(scene));
+      } else {
+        bodyEl.appendChild(renderOtherTab(scene, tab.key));
+      }
     }
 
     /* ── Full re-render ───────────────────────────────────────────── */
