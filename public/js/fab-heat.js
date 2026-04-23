@@ -215,5 +215,3 @@ function clearScene(sceneId) {
   }
 })();
 
-// ─── ESM named exports (for vitest / Node ESM imports) ───────────────────────
-export { score, touch, seedHeat, initHeatForNew, topN, clearScene, _resetCache };

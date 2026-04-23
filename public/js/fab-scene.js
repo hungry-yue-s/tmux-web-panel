@@ -275,5 +275,3 @@ function matchScene(cmd, scenes) {
   }
 })();
 
-// ─── ESM named exports (for vitest / Node ESM imports) ───────────────────────
-export { getBuiltinScenes, loadScenes, addScene, deleteScene, matchScene };

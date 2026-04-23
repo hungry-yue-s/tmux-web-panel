@@ -86,5 +86,3 @@
   global.FabMigrate = exports;
 })(typeof window !== 'undefined' ? window : globalThis);
 
-// ─── ESM named exports (for vitest / Node ESM imports) ───────────────────────
-export function runOnce() { return globalThis.FabMigrate.runOnce(); }

@@ -6,7 +6,8 @@ globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.localStorage = dom.window.localStorage;
 
-const scene = await import('../public/js/fab-scene.js');
+await import('../public/js/fab-scene.js');
+const scene = window.FabScene;
 
 describe('fab-scene builtin scenes', () => {
   beforeEach(() => localStorage.clear());

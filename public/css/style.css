@@ -3950,4 +3950,11 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   height: 100%;
   overflow: hidden;
   position: relative;
+  transform: none;
+  z-index: auto;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  max-height: none;
+  transition: none;
 }
