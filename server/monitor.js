@@ -5,13 +5,18 @@ const SHELL_COMMANDS = new Set(['zsh', 'bash', 'fish', 'sh', 'dash', 'ksh', 'csh
 const PORT_CACHE_TTL_MS = 10_000;
 
 export class StatusMonitor {
-  constructor() {
+  /**
+   * @param {{ notificationStore?: import('./notifications.js').NotificationStore }} [options]
+   */
+  constructor(options = {}) {
     this.subscribers = new Set();
     this.previousState = null;
     this.interval = null;
     this._previousCommands = new Map();
     this._previousBellFlags = new Map();
     this._portCache = new Map(); // paneId → { pid, ports, timestamp }
+    this._lastPaneCmds = new Map(); // paneId → cmd (for pane-cmd broadcasts)
+    this._notificationStore = options.notificationStore || null;
   }
 
   start(intervalMs) {
@@ -111,6 +116,26 @@ export class StatusMonitor {
         }
       }
 
+      // Broadcast pane-cmd on any foreground process change
+      const currentPaneCmds = new Map();
+      for (const session of sessionsWithWindows) {
+        for (const pc of (session._paneCommands || [])) {
+          currentPaneCmds.set(pc.paneId, pc.command);
+        }
+      }
+      const hasBaseline = this._lastPaneCmds.size > 0;
+      if (hasBaseline) {
+        for (const [paneId, cmd] of currentPaneCmds) {
+          if (this._lastPaneCmds.get(paneId) !== cmd) {
+            this._broadcast(JSON.stringify({ type: 'pane-cmd', paneId, cmd }));
+          }
+        }
+        for (const paneId of this._lastPaneCmds.keys()) {
+          if (!currentPaneCmds.has(paneId)) this._lastPaneCmds.delete(paneId);
+        }
+      }
+      this._lastPaneCmds = currentPaneCmds;
+
       // Detect completions (using already-fetched paneCommands)
       const { completedWindows, completedPanes } = await this._detectCompletions(sessionsWithWindows);
 
@@ -130,6 +155,28 @@ export class StatusMonitor {
         if (hasCompletions) {
           statusMessage.data.completedWindows = completedWindows;
           statusMessage.data.completedPanes = completedPanes;
+
+          // Persist notifications server-side and broadcast them
+          if (this._notificationStore) {
+            const added = [];
+            for (const cw of completedWindows) {
+              // Resolve window name from session data
+              const sess = sessionsForPayload.find((s) => s.name === cw.session);
+              const win = sess && sess.windowDetails
+                ? sess.windowDetails.find((w) => w.index === cw.windowIndex)
+                : null;
+              const n = this._notificationStore.add({
+                session: cw.session,
+                windowIndex: cw.windowIndex,
+                windowName: win ? (win.name || '') : '',
+                prevCommand: cw.prevCommand,
+              });
+              added.push(n);
+            }
+            if (added.length > 0) {
+              this._broadcast(JSON.stringify({ type: 'notifications', data: added }));
+            }
+          }
         }
         this._broadcast(JSON.stringify(statusMessage));
       }

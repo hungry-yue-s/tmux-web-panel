@@ -1331,6 +1331,10 @@ class StatusSocket {
       self._currentDelay = self._reconnectDelay;
       self.connected = true;
       updateTopbarDot(true);
+      // Fetch server-side notifications on connect/reconnect
+      if (typeof NotificationPanel !== 'undefined' && NotificationPanel.refresh) {
+        NotificationPanel.refresh();
+      }
       if (typeof self.onStatusChange === 'function') {
         self.onStatusChange();
       }
@@ -1339,6 +1343,27 @@ class StatusSocket {
     this._ws.onmessage = function (event) {
       try {
         var data = JSON.parse(event.data);
+        if (data && data.type === 'notifications') {
+          // Server-pushed notifications — forward to NotificationPanel
+          if (typeof NotificationPanel !== 'undefined' && NotificationPanel.handleServerPush) {
+            NotificationPanel.handleServerPush(data.data);
+          }
+          return;
+        }
+        if (data && data.type === 'pane-cmd') {
+          if (typeof FabScene !== 'undefined') {
+            var scenes = FabScene.loadScenes();
+            var sceneId = FabScene.matchScene(data.cmd, scenes);
+            // Store for drawer mount (pane-cmd may arrive before drawer exists)
+            if (!window._paneSceneMap) window._paneSceneMap = {};
+            window._paneSceneMap[data.paneId] = sceneId;
+            // Update drawer if already mounted
+            if (window._fabDrawerInstance) {
+              window._fabDrawerInstance.setScene(sceneId);
+            }
+          }
+          return;
+        }
         self._handleStatusUpdate(data);
       } catch (_e) {
         // Ignore parse errors
@@ -1378,6 +1403,22 @@ class StatusSocket {
 
     if (data && data.sessions !== undefined) {
       state.sessions = data.sessions;
+
+      // Build pane scene map from status data (pane-cmd only fires on change,
+      // but status arrives every poll with current commands for all panes)
+      if (typeof FabScene !== 'undefined') {
+        if (!window._paneSceneMap) window._paneSceneMap = {};
+        var allScenes = FabScene.loadScenes();
+        data.sessions.forEach(function (s) {
+          (s.windowDetails || []).forEach(function (w) {
+            (w.panes || []).forEach(function (p) {
+              if (p.id && p.command) {
+                window._paneSceneMap[p.id] = FabScene.matchScene(p.command, allScenes);
+              }
+            });
+          });
+        });
+      }
 
       var sessionCount = Array.isArray(data.sessions) ? data.sessions.length : 0;
       var windowCount = Array.isArray(data.sessions)

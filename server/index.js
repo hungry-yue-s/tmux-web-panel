@@ -26,6 +26,9 @@ import { createUploadRouter } from './api/upload.js';
 import { createFilesRouter } from './api/files.js';
 import systemStatsRouter from './api/system-stats.js';
 import windowStatsRouter from './api/window-stats.js';
+import { NotificationStore } from './notifications.js';
+import { createNotificationsRouter } from './api/notifications.js';
+import { createSceneDiscoverRouter } from './api/scene-discover.js';
 
 // --- CLI Argument Parsing ---
 
@@ -149,6 +152,12 @@ app.get('/api/status', async (_req, res) => {
   }
 });
 
+// --- Notification Store (must be initialized before mounting routes) ---
+
+const notificationStore = new NotificationStore(
+  join(homedir(), '.config', 'tmux-web-panel', 'notifications.json'),
+);
+
 // Mount API routes
 app.use('/api/sessions', sessionsRouter);
 app.use('/api/sessions/:name/windows', windowsRouter);
@@ -156,6 +165,8 @@ app.use('/api/sessions/:name/windows/:index/panes', nestedPanesRouter);
 app.use('/api/panes', flatPanesRouter);
 app.use('/api/system-stats', systemStatsRouter);
 app.use('/api/window-stats', windowStatsRouter);
+app.use('/api/notifications', createNotificationsRouter(notificationStore));
+app.use('/api/scene/discover', createSceneDiscoverRouter());
 
 // File upload (uses /tmp — cleaned by OS on reboot)
 app.use('/api/upload', createUploadRouter('/tmp/tmux-web-panel-uploads'));
@@ -179,7 +190,7 @@ const terminalManager = new TerminalManager({
   maxConnectionsPerPane: config.maxConnections,
 });
 
-const statusMonitor = new StatusMonitor();
+const statusMonitor = new StatusMonitor({ notificationStore });
 
 server.on('upgrade', (req, socket, head) => {
   const proto = config.tls ? 'https' : 'http';
@@ -233,6 +244,9 @@ function shutdown(signal) {
   // Stop status monitor polling
   statusMonitor.stop();
 
+  // Stop notification reaper
+  notificationStore.stopReaper();
+
   // Destroy all terminal PTY connections
   terminalManager.destroyAll();
 
@@ -267,6 +281,7 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 
 statusMonitor.start(config.pollInterval);
 terminalManager.startReaper();
+notificationStore.startReaper();
 const tokenReapTimer = config.auth ? startTokenReaper(tokenMap) : null;
 
 server.listen(config.port, config.host, () => {

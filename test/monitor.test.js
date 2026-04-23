@@ -277,9 +277,12 @@ describe('StatusMonitor', () => {
       tmux.listPaneCommands.mockResolvedValue(paneCommandsWith('zsh'));
       await monitor.poll();
 
-      expect(ws.send).toHaveBeenCalledTimes(1);
-      const msg = JSON.parse(ws.send.mock.calls[0][0]);
-      expect(msg.data.completedWindows).toEqual([
+      // pane-cmd messages may also be sent; filter for the status message
+      const statusMsg = ws.send.mock.calls
+        .map(c => JSON.parse(c[0]))
+        .find(m => m.type === 'status');
+      expect(statusMsg).toBeDefined();
+      expect(statusMsg.data.completedWindows).toEqual([
         { session: 'main', windowIndex: 0, prevCommand: 'node', source: 'command' },
       ]);
     });
@@ -382,8 +385,11 @@ describe('StatusMonitor', () => {
       ]);
       await monitor.poll();
 
-      expect(ws.send).toHaveBeenCalledTimes(1);
-      const msg = JSON.parse(ws.send.mock.calls[0][0]);
+      // pane-cmd messages may also be sent; filter for the status message
+      const msg = ws.send.mock.calls
+        .map(c => JSON.parse(c[0]))
+        .find(m => m.type === 'status');
+      expect(msg).toBeDefined();
 
       // completedWindows deduplicates by window — window 0 appears once, window 1 once
       expect(msg.data.completedWindows).toHaveLength(2);
@@ -428,6 +434,59 @@ describe('StatusMonitor', () => {
       expect(msg.type).toBe('status');
       // The broadcast still happens (not an error)
       expect(msg.data.sessions).toHaveLength(2);
+    });
+  });
+
+  describe('pane-cmd broadcasts', () => {
+    it('broadcasts pane-cmd when pane command changes', async () => {
+      tmux.listSessions.mockResolvedValue([{ name: 'main', windows: 1 }]);
+      tmux.listWindows.mockResolvedValue([{ index: 0, name: 'bash', active: true, bell: false }]);
+      tmux.listPaneCommands.mockResolvedValue([
+        { windowIndex: 0, paneId: '%0', command: 'bash', path: '/', pid: 111 },
+      ]);
+
+      const ws = createMockWs();
+      monitor.subscribe(ws);
+
+      // First poll — establishes baseline
+      await monitor.poll();
+
+      // Change the pane command from bash to claude
+      tmux.listPaneCommands.mockResolvedValue([
+        { windowIndex: 0, paneId: '%0', command: 'claude', path: '/', pid: 222 },
+      ]);
+
+      // Second poll — should detect change
+      await monitor.poll();
+
+      const paneCmdMsgs = ws.send.mock.calls
+        .map(c => JSON.parse(c[0]))
+        .filter(m => m.type === 'pane-cmd');
+      expect(paneCmdMsgs.length).toBe(1);
+      expect(paneCmdMsgs[0].paneId).toBe('%0');
+      expect(paneCmdMsgs[0].cmd).toBe('claude');
+    });
+
+    it('does not broadcast when command stays the same', async () => {
+      tmux.listSessions.mockResolvedValue([{ name: 'main', windows: 1 }]);
+      tmux.listWindows.mockResolvedValue([{ index: 0, name: 'bash', active: true, bell: false }]);
+      tmux.listPaneCommands.mockResolvedValue([
+        { windowIndex: 0, paneId: '%0', command: 'bash', path: '/', pid: 111 },
+      ]);
+
+      const ws = createMockWs();
+      monitor.subscribe(ws);
+
+      await monitor.poll();
+      ws.send.mockClear();
+
+      // Same command on second poll
+      await monitor.poll();
+
+      const paneCmdMsgs = ws.send.mock.calls
+        .map(c => JSON.parse(c[0]))
+        .filter(m => m.type === 'pane-cmd');
+      expect(paneCmdMsgs.length).toBe(0);
     });
   });
 });
