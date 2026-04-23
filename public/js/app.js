@@ -1351,10 +1351,13 @@ class StatusSocket {
           return;
         }
         if (data && data.type === 'pane-cmd') {
-          // Scene auto-switch: match command to scene and update drawer
-          if (typeof FabScene !== 'undefined' && typeof window._fabDrawerInstance !== 'undefined') {
+          if (typeof FabScene !== 'undefined') {
             var scenes = FabScene.loadScenes();
             var sceneId = FabScene.matchScene(data.cmd, scenes);
+            // Store for drawer mount (pane-cmd may arrive before drawer exists)
+            if (!window._paneSceneMap) window._paneSceneMap = {};
+            window._paneSceneMap[data.paneId] = sceneId;
+            // Update drawer if already mounted
             if (window._fabDrawerInstance) {
               window._fabDrawerInstance.setScene(sceneId);
             }
@@ -1400,6 +1403,22 @@ class StatusSocket {
 
     if (data && data.sessions !== undefined) {
       state.sessions = data.sessions;
+
+      // Build pane scene map from status data (pane-cmd only fires on change,
+      // but status arrives every poll with current commands for all panes)
+      if (typeof FabScene !== 'undefined') {
+        if (!window._paneSceneMap) window._paneSceneMap = {};
+        var allScenes = FabScene.loadScenes();
+        data.sessions.forEach(function (s) {
+          (s.windowDetails || []).forEach(function (w) {
+            (w.panes || []).forEach(function (p) {
+              if (p.id && p.command) {
+                window._paneSceneMap[p.id] = FabScene.matchScene(p.command, allScenes);
+              }
+            });
+          });
+        });
+      }
 
       var sessionCount = Array.isArray(data.sessions) ? data.sessions.length : 0;
       var windowCount = Array.isArray(data.sessions)

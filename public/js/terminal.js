@@ -133,6 +133,12 @@ function _createFabPanel(container) {
         },
         onClose: function () { toggleDrawer(false); },
       });
+
+      // Set initial scene from pre-existing pane-cmd data
+      var curPane = state.currentPane;
+      if (curPane && window._paneSceneMap && window._paneSceneMap[curPane]) {
+        fabDrawerApi.setScene(window._paneSceneMap[curPane]);
+      }
     }
 
     drawerMountEl.classList.toggle('open', willOpen);
