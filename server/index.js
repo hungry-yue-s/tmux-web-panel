@@ -29,6 +29,7 @@ import windowStatsRouter from './api/window-stats.js';
 import { NotificationStore } from './notifications.js';
 import { createNotificationsRouter } from './api/notifications.js';
 import { createSceneDiscoverRouter } from './api/scene-discover.js';
+import createClaudeUsageRouter from './api/claude-usage.js';
 
 // --- CLI Argument Parsing ---
 
@@ -171,6 +172,7 @@ app.use('/api/scene/discover', createSceneDiscoverRouter());
 // File upload (uses /tmp — cleaned by OS on reboot)
 app.use('/api/upload', createUploadRouter('/tmp/tmux-web-panel-uploads'));
 app.use('/api/files', createFilesRouter([homedir(), '/tmp']));
+app.use('/api/claude-usage', createClaudeUsageRouter());
 
 // --- HTTP(S) + WebSocket Server ---
 
