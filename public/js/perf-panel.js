@@ -120,6 +120,13 @@ var PerfPanel = (function () {
   }
 
   // === Claude Usage helpers ===
+  var PRICING = {
+    'claude-opus-4-7': { input: 5.0, output: 25.0 },
+    'claude-opus-4-6': { input: 5.0, output: 25.0 },
+    'claude-sonnet-4-6': { input: 3.0, output: 15.0 },
+    'claude-sonnet-4-5-20250929': { input: 3.0, output: 15.0 },
+    'claude-haiku-4-5': { input: 1.0, output: 5.0 },
+  };
   var TOOL_COLORS = {
     Bash: '#7aa2f7', Read: '#7dcfff', Edit: '#bb9af7', Write: '#9ece6a',
     Agent: '#f6a623', Grep: '#e0af68', Glob: '#f7768e', Skill: '#73daca',
@@ -327,49 +334,55 @@ var PerfPanel = (function () {
       html += '</div>';
     }
 
-    // Token table: use dailyModelTokens + modelUsage for per-model breakdown
+    // Token table: dailyModelTokens only has total per model per day (no input/output/cache split)
     var dmt = (d.dailyModelTokens || []).slice().reverse().slice(0, 7);
     if (dmt.length > 0) {
-      html += '<div class="cu-card" style="margin-top:8px;overflow-x:auto"><div class="cu-card-label">每日 Token 明细</div>';
+      function estimateModelDayCost(model, tokens) {
+        var p = PRICING[model] || { input: 3.0, output: 15.0 };
+        return tokens * ((p.input + p.output) / 2) / 1e6;
+      }
+      html += '<div class="cu-card" style="margin-top:8px"><div class="cu-card-label">每日 Token 明细</div>';
       html += '<table class="cu-token-table"><thead><tr>';
-      html += '<th class="col-date">日期</th><th>模型</th><th class="col-num">Input</th><th class="col-num">Output</th>';
-      html += '<th class="col-num">Cache Create</th><th class="col-num">Cache Read</th>';
-      html += '<th class="col-num col-total">Total</th>';
+      html += '<th class="col-date">日期</th><th>模型</th>';
+      html += '<th class="col-num col-total">Tokens</th>';
+      html += '<th class="col-num col-cost">Cost</th>';
       html += '</tr></thead><tbody>';
-      var monthTotal = 0;
+      var weekTotal = 0, weekCost = 0;
       dmt.forEach(function (day, di) {
         var tbm = day.tokensByModel || {};
-        var mods = Object.keys(tbm);
+        var mods = Object.keys(tbm).sort(function (a, b) { return (tbm[b] || 0) - (tbm[a] || 0); });
         var isAlt = di % 2 === 1;
         var altCls = isAlt ? ' class="row-alt"' : '';
         if (mods.length === 0) return;
+        var dayCost = 0;
+        mods.forEach(function (m) { dayCost += estimateModelDayCost(m, tbm[m] || 0); });
+        weekCost += dayCost;
         mods.forEach(function (m, mi) {
+          var tokens = tbm[m] || 0;
+          weekTotal += tokens;
           html += '<tr' + altCls + '>';
           if (mi === 0) html += '<td class="col-date" rowspan="' + mods.length + '">' + day.date.slice(5) + '</td>';
           html += '<td><span class="cu-model-tag ' + modelTagClass(m) + '">' + escapeHtml(modelShortName(m)) + '</span></td>';
-          var mUsage = mu[m] || {};
-          var perModelTotal = tbm[m] || 0;
-          monthTotal += perModelTotal;
-          html += '<td class="col-num">' + fmtTokens(mUsage.inputTokens ? Math.round(mUsage.inputTokens / (dmt.length || 1)) : 0) + '</td>';
-          html += '<td class="col-num">' + fmtTokens(mUsage.outputTokens ? Math.round(mUsage.outputTokens / (dmt.length || 1)) : 0) + '</td>';
-          html += '<td class="col-num">' + fmtTokens(mUsage.cacheCreationInputTokens ? Math.round(mUsage.cacheCreationInputTokens / (dmt.length || 1)) : 0) + '</td>';
-          html += '<td class="col-num">' + fmtTokens(mUsage.cacheReadInputTokens ? Math.round(mUsage.cacheReadInputTokens / (dmt.length || 1)) : 0) + '</td>';
-          html += '<td class="col-num col-total">' + fmtTokens(perModelTotal) + '</td>';
+          html += '<td class="col-num col-total">' + fmtTokens(tokens) + '</td>';
+          if (mi === 0) html += '<td class="col-num col-cost" rowspan="' + mods.length + '">$' + dayCost.toFixed(2) + '</td>';
           html += '</tr>';
         });
       });
       html += '</tbody><tfoot>';
-      var weekTotal = dmt.reduce(function (a, day) {
-        return a + Object.values(day.tokensByModel || {}).reduce(function (b, v) { return b + v; }, 0);
-      }, 0);
       html += '<tr><td class="col-date" colspan="2" style="text-align:right;font-weight:600">7日合计</td>';
-      html += '<td class="col-num" colspan="4"></td><td class="col-num col-total">' + fmtTokens(weekTotal) + '</td></tr>';
+      html += '<td class="col-num col-total">' + fmtTokens(weekTotal) + '</td>';
+      html += '<td class="col-num col-cost">$' + weekCost.toFixed(2) + '</td></tr>';
       var allTokens = (d.dailyModelTokens || []).reduce(function (a, day) {
         return a + Object.values(day.tokensByModel || {}).reduce(function (b, v) { return b + v; }, 0);
       }, 0);
+      var allCost = 0;
+      (d.dailyModelTokens || []).forEach(function (day) {
+        Object.entries(day.tokensByModel || {}).forEach(function (e) { allCost += estimateModelDayCost(e[0], e[1]); });
+      });
       var currentMonth = new Date().getMonth() + 1;
       html += '<tr><td class="col-date" colspan="2" style="text-align:right;font-weight:600;color:var(--text-muted)">' + currentMonth + '月合计</td>';
-      html += '<td class="col-num" colspan="4"></td><td class="col-num col-total">' + fmtTokens(allTokens) + '</td></tr>';
+      html += '<td class="col-num col-total">' + fmtTokens(allTokens) + '</td>';
+      html += '<td class="col-num col-cost" style="color:var(--text-muted)">$' + allCost.toFixed(2) + '</td></tr>';
       html += '</tfoot></table></div>';
     }
 
