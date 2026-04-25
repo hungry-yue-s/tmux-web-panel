@@ -4061,3 +4061,10 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   .cu-meter-label { width: 70px; }
   .cu-meter-reset, .cu-extra-nums { margin-left: 78px; }
 }
+
+.fab-add-btn {
+  border: 1px dashed color-mix(in srgb, var(--accent-green) 40%, transparent) !important;
+  background: transparent !important;
+  color: var(--accent-green) !important;
+  font-size: 18px !important;
+}

@@ -426,6 +426,88 @@
       return frag;
     }
 
+    function showAddItemForm(sceneId, tabKey, onDone) {
+      var overlay = h('div', { class: 'fab-form-overlay show' });
+      var modal = h('div', { class: 'fab-form-modal' });
+      var labelInput = h('input', { type: 'text', placeholder: '显示名称（如 /pua:p9）' });
+      var sendInput = h('input', { type: 'text', placeholder: '发送内容（留空则同名称+回车）' });
+      var hint = h('div', { style: { fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' } },
+        ['\\x03=C-c  \\x1b=Esc  \\r=回车  或任意文本']);
+
+      function close() { overlay.remove(); }
+      function parseEsc(s) {
+        return s.replace(/\\x([0-9a-fA-F]{2})/g, function (_, hex) {
+          return String.fromCharCode(parseInt(hex, 16));
+        }).replace(/\\r/g, '\r').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+      }
+
+      var cancelBtn = h('button', { class: 'fab-form-btn cancel', onclick: close }, ['取消']);
+      var saveBtn = h('button', { class: 'fab-form-btn save', onclick: function () {
+        var label = labelInput.value.trim();
+        if (!label) { labelInput.focus(); return; }
+        var send = sendInput.value.trim();
+        if (!send) send = label + '\r';
+        else send = parseEsc(send);
+        var id = 'user-' + Date.now() + '-' + label.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10);
+        addItemToScene(sceneId, tabKey, { id: id, label: label, send: send });
+        close();
+        if (onDone) onDone();
+      }}, ['保存']);
+
+      modal.appendChild(h('h3', {}, ['添加快捷项']));
+      modal.appendChild(h('label', {}, ['显示名称']));
+      modal.appendChild(labelInput);
+      modal.appendChild(h('label', {}, ['发送内容']));
+      modal.appendChild(sendInput);
+      modal.appendChild(hint);
+      modal.appendChild(h('div', { class: 'fab-form-actions' }, [cancelBtn, saveBtn]));
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      setTimeout(function () { labelInput.focus(); }, 100);
+    }
+
+    function addItemToScene(sceneId, tabKey, item) {
+      // Persist into custom scene override
+      var customs = [];
+      try { var raw = localStorage.getItem('fab-scenes-v1'); if (raw) customs = JSON.parse(raw); } catch (_e) {}
+      var target = null;
+      for (var i = 0; i < customs.length; i++) {
+        if (customs[i].id === sceneId) { target = customs[i]; break; }
+      }
+      if (!target) {
+        // Clone builtin to make it customizable
+        var builtins = global.FabScene.getBuiltinScenes();
+        for (var bi = 0; bi < builtins.length; bi++) {
+          if (builtins[bi].id === sceneId) { target = JSON.parse(JSON.stringify(builtins[bi])); break; }
+        }
+        if (!target) return;
+        target.builtin = false;
+        customs.push(target);
+      }
+      if (!target.defaultItems) target.defaultItems = {};
+      if (!target.defaultItems[tabKey]) target.defaultItems[tabKey] = [];
+      target.defaultItems[tabKey].push(item);
+      localStorage.setItem('fab-scenes-v1', JSON.stringify(customs));
+      // Seed initial heat
+      if (global.FabHeat) global.FabHeat.seedHeat(sceneId, item.id, 10);
+      // Refresh scenes in state
+      state.scenes = global.FabScene.loadScenes();
+    }
+
+    function removeItemFromScene(sceneId, tabKey, itemId) {
+      var customs = [];
+      try { var raw = localStorage.getItem('fab-scenes-v1'); if (raw) customs = JSON.parse(raw); } catch (_e) {}
+      var target = null;
+      for (var i = 0; i < customs.length; i++) {
+        if (customs[i].id === sceneId) { target = customs[i]; break; }
+      }
+      if (!target) return;
+      if (!target.defaultItems || !target.defaultItems[tabKey]) return;
+      target.defaultItems[tabKey] = target.defaultItems[tabKey].filter(function (it) { return it.id !== itemId; });
+      localStorage.setItem('fab-scenes-v1', JSON.stringify(customs));
+      state.scenes = global.FabScene.loadScenes();
+    }
+
     function renderOtherTab(scene, tabKey) {
       var items = (scene.defaultItems && scene.defaultItems[tabKey]) || [];
       // Sort by heat
@@ -433,10 +515,41 @@
         items = global.FabHeat.topN(state.currentScene, items, items.length);
       }
       var grid = h('div', { class: 'fab-drawer-grid' });
-      items.forEach(function (item) { grid.appendChild(renderHeatBtn(item)); });
-      if (items.length === 0) {
-        grid.appendChild(h('div', { class: 'fab-empty-hint' }, ['此 Tab 暂无条目']));
-      }
+      items.forEach(function (item) {
+        var btn = renderHeatBtn(item);
+        // Long press to delete
+        var lpTimer = null, lpFired = false;
+        btn.addEventListener('touchstart', function () {
+          lpFired = false;
+          lpTimer = setTimeout(function () {
+            lpFired = true;
+            if (navigator.vibrate) navigator.vibrate(30);
+            if (confirm('删除「' + item.label + '」？')) {
+              removeItemFromScene(state.currentScene, tabKey, item.id);
+              rerender();
+            }
+          }, 600);
+        }, { passive: true });
+        btn.addEventListener('touchend', function (e) {
+          clearTimeout(lpTimer);
+          if (lpFired) { e.preventDefault(); e.stopPropagation(); }
+        });
+        btn.addEventListener('contextmenu', function (e) {
+          e.preventDefault();
+          if (confirm('删除「' + item.label + '」？')) {
+            removeItemFromScene(state.currentScene, tabKey, item.id);
+            rerender();
+          }
+        });
+        grid.appendChild(btn);
+      });
+
+      // Add button
+      var addBtn = h('button', { class: 'fab-drawer-btn fab-add-btn', onclick: function () {
+        showAddItemForm(state.currentScene, tabKey, function () { rerender(); });
+      }}, ['+']);
+      grid.appendChild(addBtn);
+
       var tabLabel = tabKey;
       var s = getScene();
       if (s) {
