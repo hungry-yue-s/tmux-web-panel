@@ -91,6 +91,10 @@ async function readSessionsMeta() {
     let totalLinesAdded = 0;
     let totalLinesRemoved = 0;
     let totalCommits = 0;
+    let totalMessages = 0;
+    const dailyMap = {};
+    const hourCounts = {};
+    let firstDate = null;
 
     for (const s of sessions) {
       if (s.tool_counts) {
@@ -101,9 +105,37 @@ async function readSessionsMeta() {
       totalLinesAdded += s.lines_added || 0;
       totalLinesRemoved += s.lines_removed || 0;
       totalCommits += s.git_commits || 0;
+      totalMessages += (s.user_message_count || 0) + (s.assistant_message_count || 0);
+
+      // Build daily activity from session dates
+      const date = s.start_time ? s.start_time.slice(0, 10) : null;
+      if (date) {
+        if (!firstDate || date < firstDate) firstDate = date;
+        if (!dailyMap[date]) dailyMap[date] = { date, sessions: 0, messages: 0, tokens: 0, lines_added: 0, lines_removed: 0, commits: 0 };
+        const day = dailyMap[date];
+        day.sessions += 1;
+        day.messages += (s.user_message_count || 0) + (s.assistant_message_count || 0);
+        day.tokens += (s.input_tokens || 0) + (s.output_tokens || 0);
+        day.lines_added += s.lines_added || 0;
+        day.lines_removed += s.lines_removed || 0;
+        day.commits += s.git_commits || 0;
+      }
+
+      // Build hour counts from message_hours
+      if (Array.isArray(s.message_hours)) {
+        for (const h of s.message_hours) {
+          hourCounts[String(h)] = (hourCounts[String(h)] || 0) + 1;
+        }
+      }
     }
 
-    const result = { recent, aggregatedTools, totalLinesAdded, totalLinesRemoved, totalCommits };
+    const dailyActivity = Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date));
+
+    const result = {
+      recent, aggregatedTools, totalLinesAdded, totalLinesRemoved, totalCommits,
+      totalSessions: sessions.length, totalMessages, firstDate,
+      dailyActivity, hourCounts,
+    };
     sessionsCache.set(result);
     return result;
   } catch {
@@ -188,13 +220,12 @@ export default function createRouter() {
           utilization,
           modelUsage,
           estimatedCost,
-          dailyActivity:    stats?.dailyActivity || [],
-          dailyModelTokens: stats?.dailyModelTokens || [],
-          hourCounts:       stats?.hourCounts || {},
+          dailyActivity:    sessionData.dailyActivity,
+          hourCounts:       sessionData.hourCounts,
           aggregate: {
-            totalSessions:    stats?.totalSessions || 0,
-            totalMessages:    stats?.totalMessages || 0,
-            firstSessionDate: stats?.firstSessionDate || null,
+            totalSessions:    sessionData.totalSessions,
+            totalMessages:    sessionData.totalMessages,
+            firstSessionDate: sessionData.firstDate,
           },
           recentSessions:   sessionData.recent,
           aggregatedTools:  sessionData.aggregatedTools,

@@ -86,6 +86,9 @@ function makeFakeSession(id, startTime) {
     first_prompt: 'test prompt',
     tool_counts: { Bash: 10, Read: 5 },
     languages: { JavaScript: 3 },
+    user_message_count: 5,
+    assistant_message_count: 8,
+    message_hours: [15, 15, 16],
   };
 }
 
@@ -166,20 +169,21 @@ describe('GET /api/claude-usage', () => {
     // Estimated cost > 0
     expect(data.estimatedCost).toBeGreaterThan(0);
 
-    // Daily activity
+    // Daily activity (built from session-meta, not stats-cache)
     expect(data.dailyActivity).toHaveLength(1);
     expect(data.dailyActivity[0].date).toBe('2026-04-20');
+    expect(data.dailyActivity[0].sessions).toBe(2);
+    expect(data.dailyActivity[0].messages).toBe(26); // (5+8)*2
+    expect(data.dailyActivity[0].tokens).toBe(3000); // (500+1000)*2
 
-    // Daily model tokens
-    expect(data.dailyModelTokens).toHaveLength(1);
+    // Hour counts (built from session-meta message_hours)
+    expect(data.hourCounts['15']).toBe(4); // 2 sessions × 2 entries at hour 15
+    expect(data.hourCounts['16']).toBe(2); // 2 sessions × 1 entry at hour 16
 
-    // Hour counts
-    expect(data.hourCounts['15']).toBe(5);
-
-    // Aggregate
-    expect(data.aggregate.totalSessions).toBe(10);
-    expect(data.aggregate.totalMessages).toBe(200);
-    expect(data.aggregate.firstSessionDate).toBe('2026-04-01T00:00:00.000Z');
+    // Aggregate (built from session-meta)
+    expect(data.aggregate.totalSessions).toBe(2);
+    expect(data.aggregate.totalMessages).toBe(26);
+    expect(data.aggregate.firstSessionDate).toBe('2026-04-20');
 
     // Recent sessions (sorted by start_time desc)
     expect(data.recentSessions).toHaveLength(2);
@@ -262,7 +266,7 @@ describe('GET /api/claude-usage', () => {
     expect(data.modelUsage['claude-opus-4-6']).toBeDefined();
     expect(data.estimatedCost).toBeGreaterThan(0);
     expect(data.dailyActivity).toHaveLength(1);
-    expect(data.aggregate.totalSessions).toBe(10);
+    expect(data.aggregate.totalSessions).toBe(1);
     expect(data.recentSessions).toHaveLength(1);
     expect(data.aggregatedTools.Bash).toBe(10);
     expect(data.totalLinesAdded).toBe(20);
