@@ -341,7 +341,9 @@ var PerfPanel = (function () {
     if (ccDaily && ccDaily.length > 0) {
       var recentCc = ccDaily.slice().reverse().slice(0, 14);
       html += '<div class="cu-card" style="margin-top:8px"><div class="cu-card-label">每日 Token 明细</div>';
-      html += '<table class="cu-token-table"><thead><tr>';
+      html += '<table class="cu-token-table">';
+      html += '<colgroup><col class="col-w-date"><col class="col-w-model"><col class="col-w-num"><col class="col-w-num"><col class="col-w-num"><col class="col-w-cost"></colgroup>';
+      html += '<thead><tr>';
       html += '<th class="col-date">日期</th><th>模型</th>';
       html += '<th class="col-num">Input</th><th class="col-num">Output</th>';
       html += '<th class="col-num col-total">Total</th>';

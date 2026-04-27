@@ -4014,9 +4014,13 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 .cu-trend-legend-item { display: flex; align-items: center; gap: 3px; font-size: 0.6rem; color: var(--text-muted); }
 .cu-trend-legend-dot { width: 6px; height: 6px; border-radius: 50%; }
 
-.cu-token-table { width: 100%; border-collapse: collapse; font-size: 0.68rem; font-family: monospace; }
+.cu-token-table { width: 100%; border-collapse: collapse; font-size: 0.68rem; font-family: monospace; table-layout: fixed; }
+.cu-token-table col.col-w-date { width: 10%; }
+.cu-token-table col.col-w-model { width: 18%; }
+.cu-token-table col.col-w-num { width: 15%; }
+.cu-token-table col.col-w-cost { width: 12%; }
 .cu-token-table th { color: var(--text-muted); font-weight: 600; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
-.cu-token-table td { padding: 5px 8px; border-bottom: 1px solid var(--border-subtle); vertical-align: middle; }
+.cu-token-table td { padding: 5px 8px; border-bottom: 1px solid var(--border-subtle); vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
 .cu-token-table .col-date { text-align: left; color: var(--text-secondary); font-weight: 600; font-family: inherit; white-space: nowrap; }
 .cu-token-table th.col-date { text-align: left; }
 .cu-token-table .col-num { text-align: right; color: var(--text-primary); }
