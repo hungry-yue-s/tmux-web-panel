@@ -184,11 +184,11 @@ var PerfPanel = (function () {
       if (d.subscription.rateLimitTier) html += '<span class="cu-plan-tier">' + escapeHtml(d.subscription.rateLimitTier) + '</span>';
       html += '</div>';
       if (u.extra_usage && u.extra_usage.is_enabled) {
-        var cents = u.extra_usage.used_credits || 0;
-        var limit = u.extra_usage.monthly_limit || 0;
+        var euCredits = u.extra_usage.used_credits || 0;
+        var euLimitCents = u.extra_usage.monthly_limit || 0;
         html += '<div style="display:flex;align-items:center;gap:6px">';
         html += '<span class="cu-extra-badge">Extra Usage</span>';
-        html += '<span class="cu-extra-text">$' + (cents / 100).toFixed(0) + ' / $' + (limit / 100).toFixed(0) + '</span>';
+        html += '<span class="cu-extra-text">$' + Math.round(euCredits) + ' / $' + Math.round(euLimitCents / 100) + '</span>';
         html += '</div>';
       }
       html += '</div>';
@@ -218,7 +218,7 @@ var PerfPanel = (function () {
 
       if (u.extra_usage && u.extra_usage.is_enabled) {
         var euPct = Math.floor((u.extra_usage.utilization || 0) * 100);
-        var euUsed = ((u.extra_usage.used_credits || 0) / 100).toFixed(2);
+        var euUsed = (u.extra_usage.used_credits || 0).toFixed(2);
         var euLimit = ((u.extra_usage.monthly_limit || 0) / 100).toFixed(2);
         html += '<div class="cu-extra-meter">';
         html += '<div class="cu-meter"><span class="cu-meter-label">Extra 本月</span>';
