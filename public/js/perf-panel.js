@@ -335,70 +335,72 @@ var PerfPanel = (function () {
     }
 
     // Daily token table from session-meta aggregation
-    // Compute weighted average cost-per-token from modelUsage for daily cost estimation
-    var avgCostPerToken = 0;
-    if (grandTotal > 0 && d.estimatedCost) avgCostPerToken = d.estimatedCost / grandTotal;
-
-    var daily = d.dailyActivity || [];
-    var recentDays = daily.slice().reverse().slice(0, 14);
-    if (recentDays.length > 0) {
-      html += '<div class="cu-card" style="margin-top:8px"><div class="cu-card-label">每日明细</div>';
+    // Daily token table — use ccusageDaily (accurate) if available, else session-meta (input+output only)
+    var ccDaily = d.ccusageDaily;
+    var ccTotals = d.ccusageTotals;
+    if (ccDaily && ccDaily.length > 0) {
+      var recentCc = ccDaily.slice().reverse().slice(0, 14);
+      html += '<div class="cu-card" style="margin-top:8px"><div class="cu-card-label">每日 Token 明细</div>';
       html += '<table class="cu-token-table"><thead><tr>';
-      html += '<th class="col-date">日期</th>';
-      html += '<th class="col-num">会话</th><th class="col-num">消息</th>';
-      html += '<th class="col-num col-total">Tokens</th>';
+      html += '<th class="col-date">日期</th><th>模型</th>';
+      html += '<th class="col-num">Input</th><th class="col-num">Output</th>';
+      html += '<th class="col-num col-total">Total</th>';
       html += '<th class="col-num col-cost">Cost</th>';
-      html += '<th class="col-num" style="color:var(--accent-green)">+行</th>';
-      html += '<th class="col-num" style="color:var(--accent-red)">-行</th>';
-      html += '<th class="col-num" style="color:var(--accent-purple)">Commits</th>';
       html += '</tr></thead><tbody>';
-      var weekTokens = 0, weekAdded = 0, weekRemoved = 0, weekCommits = 0, weekSessions = 0, weekMessages = 0;
-      recentDays.forEach(function (day, di) {
+      var weekCost = 0, weekTokens = 0;
+      recentCc.forEach(function (day, di) {
         var isAlt = di % 2 === 1;
-        var dayCost = (day.tokens * avgCostPerToken).toFixed(2);
-        html += '<tr' + (isAlt ? ' class="row-alt"' : '') + '>';
-        html += '<td class="col-date">' + day.date.slice(5) + '</td>';
-        html += '<td class="col-num">' + day.sessions + '</td>';
-        html += '<td class="col-num">' + day.messages + '</td>';
-        html += '<td class="col-num col-total">' + fmtTokens(day.tokens) + '</td>';
-        html += '<td class="col-num col-cost">$' + dayCost + '</td>';
-        html += '<td class="col-num" style="color:var(--accent-green)">+' + (day.lines_added || 0) + '</td>';
-        html += '<td class="col-num" style="color:var(--accent-red)">-' + (day.lines_removed || 0) + '</td>';
-        html += '<td class="col-num" style="color:var(--accent-purple)">' + (day.commits || 0) + '</td>';
-        html += '</tr>';
-        if (di < 7) {
-          weekTokens += day.tokens; weekAdded += day.lines_added || 0;
-          weekRemoved += day.lines_removed || 0; weekCommits += day.commits || 0;
-          weekSessions += day.sessions; weekMessages += day.messages;
-        }
+        var altCls = isAlt ? ' class="row-alt"' : '';
+        var bk = day.modelBreakdowns || [];
+        var rowCount = Math.max(1, bk.length);
+        bk.forEach(function (mb, mi) {
+          html += '<tr' + altCls + '>';
+          if (mi === 0) html += '<td class="col-date" rowspan="' + rowCount + '">' + day.date.slice(5) + '</td>';
+          var mName = (mb.modelName || '').replace(/^claude-/, '').replace(/-\d{8}$/, '');
+          html += '<td><span class="cu-model-tag ' + modelTagClass(mb.modelName || '') + '">' + escapeHtml(mName) + '</span></td>';
+          html += '<td class="col-num">' + fmtTokens(mb.inputTokens || 0) + '</td>';
+          html += '<td class="col-num">' + fmtTokens(mb.outputTokens || 0) + '</td>';
+          var mbTotal = (mb.inputTokens || 0) + (mb.outputTokens || 0) + (mb.cacheCreationTokens || 0) + (mb.cacheReadTokens || 0);
+          html += '<td class="col-num col-total">' + fmtTokens(mbTotal) + '</td>';
+          if (mi === 0) html += '<td class="col-num col-cost" rowspan="' + rowCount + '">$' + (day.totalCost || 0).toFixed(2) + '</td>';
+          html += '</tr>';
+        });
+        if (di < 7) { weekCost += day.totalCost || 0; weekTokens += day.totalTokens || 0; }
       });
       html += '</tbody><tfoot>';
-      var weekCost = (weekTokens * avgCostPerToken).toFixed(2);
-      html += '<tr><td class="col-date" style="text-align:right;font-weight:600">7日合计</td>';
-      html += '<td class="col-num">' + weekSessions + '</td><td class="col-num">' + weekMessages + '</td>';
+      html += '<tr><td class="col-date" colspan="2" style="text-align:right;font-weight:600">7日合计</td>';
+      html += '<td class="col-num" colspan="2"></td>';
       html += '<td class="col-num col-total">' + fmtTokens(weekTokens) + '</td>';
-      html += '<td class="col-num col-cost">$' + weekCost + '</td>';
-      html += '<td class="col-num" style="color:var(--accent-green)">+' + weekAdded + '</td>';
-      html += '<td class="col-num" style="color:var(--accent-red)">-' + weekRemoved + '</td>';
-      html += '<td class="col-num" style="color:var(--accent-purple)">' + weekCommits + '</td>';
-      html += '</tr>';
-      var allTokens = daily.reduce(function (a, d2) { return a + d2.tokens; }, 0);
-      var allCost = (allTokens * avgCostPerToken).toFixed(2);
-      var allAdded = daily.reduce(function (a, d2) { return a + (d2.lines_added || 0); }, 0);
-      var allRemoved = daily.reduce(function (a, d2) { return a + (d2.lines_removed || 0); }, 0);
-      var allCommits2 = daily.reduce(function (a, d2) { return a + (d2.commits || 0); }, 0);
-      var allSessions = daily.reduce(function (a, d2) { return a + d2.sessions; }, 0);
-      var allMessages = daily.reduce(function (a, d2) { return a + d2.messages; }, 0);
-      var currentMonth = new Date().getMonth() + 1;
-      html += '<tr><td class="col-date" style="text-align:right;font-weight:600;color:var(--text-muted)">' + currentMonth + '月合计</td>';
-      html += '<td class="col-num" style="color:var(--text-muted)">' + allSessions + '</td>';
-      html += '<td class="col-num" style="color:var(--text-muted)">' + allMessages + '</td>';
-      html += '<td class="col-num col-total">' + fmtTokens(allTokens) + '</td>';
-      html += '<td class="col-num col-cost" style="color:var(--text-muted)">$' + allCost + '</td>';
-      html += '<td class="col-num" style="color:var(--text-muted)">+' + allAdded + '</td>';
-      html += '<td class="col-num" style="color:var(--text-muted)">-' + allRemoved + '</td>';
-      html += '<td class="col-num" style="color:var(--text-muted)">' + allCommits2 + '</td>';
-      html += '</tr></tfoot></table></div>';
+      html += '<td class="col-num col-cost">$' + weekCost.toFixed(2) + '</td></tr>';
+      if (ccTotals) {
+        var currentMonth = new Date().getMonth() + 1;
+        html += '<tr><td class="col-date" colspan="2" style="text-align:right;font-weight:600;color:var(--text-muted)">' + currentMonth + '月合计</td>';
+        html += '<td class="col-num" colspan="2"></td>';
+        html += '<td class="col-num col-total">' + fmtTokens(ccTotals.totalTokens || 0) + '</td>';
+        html += '<td class="col-num col-cost" style="color:var(--text-muted)">$' + (ccTotals.totalCost || 0).toFixed(2) + '</td></tr>';
+      }
+      html += '</tfoot></table></div>';
+    } else {
+      // Fallback: session-meta daily (no cache tokens, no model split)
+      var daily = d.dailyActivity || [];
+      var recentDays = daily.slice().reverse().slice(0, 14);
+      if (recentDays.length > 0) {
+        html += '<div class="cu-card" style="margin-top:8px"><div class="cu-card-label">每日明细（仅 Input+Output）</div>';
+        html += '<table class="cu-token-table"><thead><tr>';
+        html += '<th class="col-date">日期</th>';
+        html += '<th class="col-num">会话</th><th class="col-num">消息</th>';
+        html += '<th class="col-num col-total">Tokens</th>';
+        html += '</tr></thead><tbody>';
+        recentDays.forEach(function (day, di) {
+          html += '<tr' + (di % 2 === 1 ? ' class="row-alt"' : '') + '>';
+          html += '<td class="col-date">' + day.date.slice(5) + '</td>';
+          html += '<td class="col-num">' + day.sessions + '</td>';
+          html += '<td class="col-num">' + day.messages + '</td>';
+          html += '<td class="col-num col-total">' + fmtTokens(day.tokens) + '</td>';
+          html += '</tr>';
+        });
+        html += '</tbody></table></div>';
+      }
     }
 
     // === Tier 4: Patterns ===

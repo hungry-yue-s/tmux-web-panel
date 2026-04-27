@@ -112,6 +112,14 @@ describe('GET /api/claude-usage', () => {
       readdir: mockReaddir,
     }));
 
+    // Mock child_process for ccusage
+    vi.doMock('node:child_process', () => ({
+      execFile: (_cmd, _args, _opts, cb) => {
+        if (cb) cb(new Error('not available'), '', '');
+        return {};
+      },
+    }));
+
     // Set up global.fetch mock
     mockFetch = vi.fn();
     global.fetch = mockFetch;

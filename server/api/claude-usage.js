@@ -4,8 +4,12 @@
 
 import { Router } from 'express';
 import { readFile, readdir } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+const execFileAsync = promisify(execFile);
 
 // ── Pricing per 1M tokens ────────────────────────────────────────────
 
@@ -32,6 +36,7 @@ function createCache(ttlMs) {
 const utilizationCache = createCache(5 * 60 * 1000);   // 5 min
 const statsCache        = createCache(60 * 1000);       // 60 s
 const sessionsCache     = createCache(60 * 1000);       // 60 s
+const ccusageCache      = createCache(10 * 60 * 1000);  // 10 min (slow command)
 
 // ── File readers ─────────────────────────────────────────────────────
 
@@ -185,6 +190,31 @@ function estimateCost(modelUsage) {
   return Math.round(total * 100) / 100;
 }
 
+// ── ccusage daily data ───────────────────────────────────────────────
+
+let ccusageRunning = false;
+
+async function readCcusageDaily() {
+  const cached = ccusageCache.get();
+  if (cached) return cached;
+  if (ccusageRunning) return null;
+  ccusageRunning = true;
+  try {
+    const { stdout } = await execFileAsync('npx', ['ccusage', 'daily', '--json', '--offline'], {
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+    const jsonStr = stdout.replace(/^\[ccusage[^\n]*\n/gm, '');
+    const parsed = JSON.parse(jsonStr);
+    ccusageCache.set(parsed);
+    return parsed;
+  } catch {
+    return null;
+  } finally {
+    ccusageRunning = false;
+  }
+}
+
 // ── Router factory ───────────────────────────────────────────────────
 
 export default function createRouter() {
@@ -200,11 +230,12 @@ export default function createRouter() {
 
       const oauth = creds.claudeAiOauth;
 
-      // Parallel data fetching
-      const [utilization, stats, sessionData] = await Promise.all([
+      // Parallel data fetching (ccusage is slow, don't block on it)
+      const [utilization, stats, sessionData, ccusage] = await Promise.all([
         fetchUtilization(oauth.accessToken),
         readStatsCache(),
         readSessionsMeta(),
+        readCcusageDaily(),
       ]);
 
       const modelUsage    = stats?.modelUsage || {};
@@ -220,6 +251,8 @@ export default function createRouter() {
           utilization,
           modelUsage,
           estimatedCost,
+          ccusageDaily:     ccusage?.daily || null,
+          ccusageTotals:    ccusage?.totals || null,
           dailyActivity:    sessionData.dailyActivity,
           hourCounts:       sessionData.hourCounts,
           aggregate: {
