@@ -194,27 +194,39 @@ var PerfPanel = (function () {
       html += '</div>';
       html += '<div class="cu-meters">';
 
-      function renderMeter(label, obj) {
+      var WINDOW_DURATIONS = { 'five_hour': 5 * 3600000, 'seven_day': 7 * 86400000 };
+
+      function renderMeter(label, obj, windowKey) {
         if (!obj) return '';
         var pct = Math.floor(obj.utilization);
         var cls = meterColorClass(pct);
+        var timePct = 0;
+        var remain = 0;
+        if (obj.resets_at) {
+          remain = Math.max(0, new Date(obj.resets_at) - Date.now());
+          var totalMs = WINDOW_DURATIONS[windowKey] || 0;
+          if (totalMs > 0) timePct = Math.min(100, Math.max(0, ((totalMs - remain) / totalMs) * 100));
+        }
         var s = '<div class="cu-meter">';
         s += '<span class="cu-meter-label">' + label + '</span>';
-        s += '<div class="cu-meter-track"><div class="cu-meter-fill ' + cls + '" style="width:' + pct + '%"></div></div>';
+        s += '<div class="cu-meter-track">';
+        s += '<div class="cu-meter-fill ' + cls + '" style="width:' + pct + '%"></div>';
+        if (timePct > 0) s += '<div class="cu-meter-time" style="left:' + timePct.toFixed(1) + '%"></div>';
+        s += '</div>';
         s += '<span class="cu-meter-val">' + pct + '%</span>';
         s += '</div>';
         if (obj.resets_at) {
-          var remain = Math.max(0, new Date(obj.resets_at) - Date.now());
           var rh = Math.floor(remain / 3600000);
           var rm = Math.floor((remain % 3600000) / 60000);
-          s += '<div class="cu-meter-reset">重置于 ' + obj.resets_at.replace('T', ' ').slice(0, 16) + ' UTC（剩余 ' + rh + 'h ' + rm + 'm）</div>';
+          var status = pct > timePct ? ' · 超前' : ' · 健康';
+          s += '<div class="cu-meter-reset">重置于 ' + obj.resets_at.replace('T', ' ').slice(0, 16) + ' UTC（剩余 ' + rh + 'h ' + rm + 'm）' + status + '</div>';
         }
         return s;
       }
 
-      html += renderMeter('5h 窗口', u.five_hour);
-      html += renderMeter('7d 总量', u.seven_day);
-      html += renderMeter('7d Sonnet', u.seven_day_sonnet);
+      html += renderMeter('5h 窗口', u.five_hour, 'five_hour');
+      html += renderMeter('7d 总量', u.seven_day, 'seven_day');
+      html += renderMeter('7d Sonnet', u.seven_day_sonnet, 'seven_day');
 
       if (u.extra_usage && u.extra_usage.is_enabled) {
         var euPct = Math.floor((u.extra_usage.utilization || 0) * 100);

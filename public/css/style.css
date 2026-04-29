@@ -3975,8 +3975,9 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 .cu-meters { display: flex; flex-direction: column; gap: 8px; }
 .cu-meter { display: flex; align-items: center; gap: 8px; }
 .cu-meter-label { font-size: 0.7rem; color: var(--text-secondary); width: 90px; text-align: right; flex-shrink: 0; }
-.cu-meter-track { flex: 1; height: 16px; background: var(--bg-card); border-radius: 3px; overflow: hidden; }
+.cu-meter-track { flex: 1; height: 16px; background: var(--bg-card); border-radius: 3px; overflow: hidden; position: relative; }
 .cu-meter-fill { height: 100%; border-radius: 3px; transition: width 0.8s ease; }
+.cu-meter-time { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--text-primary); opacity: 0.7; border-radius: 1px; }
 .cu-meter-fill.green { background: var(--accent-green); }
 .cu-meter-fill.yellow { background: var(--accent-yellow); }
 .cu-meter-fill.red { background: var(--accent-red); }
