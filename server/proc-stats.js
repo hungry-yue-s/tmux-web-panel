@@ -1,7 +1,7 @@
 // Per-process stats from /proc — CPU, memory, IO with delta sampling.
 // Stateless reads + a stateful Map of previous samples for delta calculation.
 
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import os from 'node:os';
 
 const CLK_TCK = 100; // Linux default; SC_CLK_TCK
@@ -124,6 +124,67 @@ export function pruneStaleSamples(maxAgeMs) {
   for (const [pid, v] of _prev) {
     if (v.ts < cutoff) _prev.delete(pid);
   }
+}
+
+async function readComm(pid) {
+  try {
+    const buf = await readFile(`/proc/${pid}/comm`, 'utf8');
+    return buf.trim();
+  } catch {
+    return null;
+  }
+}
+
+async function listAllPids() {
+  try {
+    const entries = await readdir('/proc');
+    const pids = [];
+    for (const e of entries) {
+      if (e.length > 0 && e.charCodeAt(0) >= 48 && e.charCodeAt(0) <= 57) {
+        const n = Number(e);
+        if (Number.isInteger(n)) pids.push(n);
+      }
+    }
+    return pids;
+  } catch {
+    return [];
+  }
+}
+
+// Sample every PID NOT in `excludePids`, group by command name (comm).
+// Returns array of { comm, cpuPercent, memBytes, swapBytes, ioBps, procCount }.
+export async function sampleNonTmuxByComm(excludePids) {
+  const exclude = excludePids instanceof Set ? excludePids : new Set(excludePids);
+  const allPids = await listAllPids();
+  const targets = allPids.filter((p) => !exclude.has(p));
+  const now = Date.now();
+  const items = await Promise.all(
+    targets.map(async (pid) => {
+      const [sample, comm] = await Promise.all([
+        samplePid(pid, now).catch(() => null),
+        readComm(pid),
+      ]);
+      return { pid, comm, sample };
+    }),
+  );
+  const byComm = new Map();
+  for (const it of items) {
+    if (!it.sample || !it.comm) continue;
+    let g = byComm.get(it.comm);
+    if (!g) {
+      g = { comm: it.comm, cpuPercent: 0, memBytes: 0, swapBytes: 0, ioBps: 0, procCount: 0 };
+      byComm.set(it.comm, g);
+    }
+    g.cpuPercent += it.sample.cpuPercent;
+    g.memBytes += it.sample.rssKb * 1024;
+    g.swapBytes += it.sample.swapKb * 1024;
+    g.ioBps += it.sample.ioBps;
+    g.procCount += 1;
+  }
+  // Drop near-zero noise to keep payload small
+  return Array.from(byComm.values()).filter(
+    (g) => g.cpuPercent > 0.05 || g.memBytes > 4 * 1024 * 1024 || g.ioBps > 0 || g.swapBytes > 0,
+  );
 }
 
 export const cpuCount = CPU_COUNT;

@@ -59,6 +59,7 @@ After=network.target
 Type=simple
 WorkingDirectory=${PROJECT_DIR}
 ExecStart=${NODE_BIN} server/index.js
+KillMode=process
 Restart=always
 RestartSec=3
 $(echo -e "$env_lines")

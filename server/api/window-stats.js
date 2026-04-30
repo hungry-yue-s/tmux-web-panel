@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as tmux from '../tmux.js';
-import { sampleTree, pruneStaleSamples, cpuCount } from '../proc-stats.js';
+import { sampleTree, pruneStaleSamples, cpuCount, collectPids, sampleNonTmuxByComm } from '../proc-stats.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -114,10 +114,23 @@ router.get('/', async (_req, res) => {
       }),
     );
 
+    // Collect every tmux-owned PID (full process trees) to exclude from "external" sampling
+    const tmuxPids = new Set();
+    for (const w of windowMap.values()) {
+      for (const root of w.paneRoots) {
+        const pids = await collectPids(root);
+        pids.forEach((p) => tmuxPids.add(p));
+      }
+    }
+
     // Total / system
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
-    const [sysSwap, disks] = await Promise.all([readSystemSwap(), readDiskStats()]);
+    const [sysSwap, disks, external] = await Promise.all([
+      readSystemSwap(),
+      readDiskStats(),
+      sampleNonTmuxByComm(tmuxPids),
+    ]);
     const sumCpu = windowStats.reduce((a, w) => a + w.cpuPercent, 0);
     const sumMem = windowStats.reduce((a, w) => a + w.memBytes, 0);
     const sumSwap = windowStats.reduce((a, w) => a + w.swapBytes, 0);
@@ -130,6 +143,7 @@ router.get('/', async (_req, res) => {
       success: true,
       data: {
         windows: windowStats,
+        external,
         disks,
         total: {
           windowCpuPercent: sumCpu,
