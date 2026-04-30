@@ -148,14 +148,36 @@ var FilePreview = (function () {
     }
   }
 
+  // Fetch authenticated bytes from the page's origin and trigger a local
+  // Blob download. Avoids handing the URL to the system download manager
+  // (which on Android/iOS doesn't share the browser's TLS-trust nor cookies,
+  // and fails with "请检查互联网连接状况" on self-signed certs).
+  function _blobDownload(url, filename) {
+    var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
+    return fetch(url, { headers: headers, credentials: 'same-origin' })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.blob();
+      })
+      .then(function (blob) {
+        var blobUrl = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = filename || 'download';
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 60000);
+      });
+  }
+
   function _download() {
     if (!_currentFile || _currentFile.isDirectory) return;
-    var a = document.createElement('a');
-    a.href = _currentFile.rawUrl;
-    a.download = _currentFile.filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    _blobDownload(_currentFile.rawUrl, _currentFile.filename)
+      .catch(function (err) {
+        alert('下载失败: ' + (err && err.message ? err.message : err));
+      });
   }
 
   function close() {
@@ -178,13 +200,13 @@ var FilePreview = (function () {
       btn.className = 'fp-error-download';
       btn.textContent = 'Download';
       btn.addEventListener('click', function () {
-        var a = document.createElement('a');
         var _tp = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
-        a.href = '/api/files/raw?path=' + encodeURIComponent(absPath) + (_tp ? '&' + _tp : '');
-        a.download = '';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+        var url = '/api/files/raw?path=' + encodeURIComponent(absPath)
+          + (_tp ? '&' + _tp : '');
+        var filename = absPath.split('/').pop();
+        _blobDownload(url, filename).catch(function (err) {
+          alert('下载失败: ' + (err && err.message ? err.message : err));
+        });
       });
       wrap.appendChild(btn);
     }

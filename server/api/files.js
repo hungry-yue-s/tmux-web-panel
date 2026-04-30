@@ -395,7 +395,7 @@ export function createFilesRouter(allowedRoots) {
 
   router.get('/raw', async (req, res) => {
     try {
-      const { path: rawPath } = req.query;
+      const { path: rawPath, download } = req.query;
       if (!rawPath) {
         return res.status(400).json({ success: false, data: null, error: 'Missing path parameter' });
       }
@@ -406,9 +406,16 @@ export function createFilesRouter(allowedRoots) {
       }
 
       const filename = basename(result.absPath);
+      const disposition = download ? 'attachment' : 'inline';
+      // RFC 5987: ASCII-safe filename in `filename=`, full UTF-8 in `filename*=`
+      const asciiName = filename.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '\\"');
+      const utf8Name = encodeURIComponent(filename);
       res.setHeader('Content-Type', result.info.mimeType);
       res.setHeader('Content-Length', result.size);
-      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      res.setHeader(
+        'Content-Disposition',
+        `${disposition}; filename="${asciiName}"; filename*=UTF-8''${utf8Name}`,
+      );
       if (result.info.mimeType === 'image/svg+xml') {
         res.setHeader('Content-Security-Policy', 'sandbox');
       }
