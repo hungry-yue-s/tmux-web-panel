@@ -5,6 +5,8 @@ var FilePreview = (function () {
   var _overlay = null;
   var _maximized = false;
   var _currentFile = null;
+  var _currentPaneId = null;
+  var _dirContext = null; // parent dir abs path, set when a file is opened from the dir browser
 
   // --- Lazy loading ---
   var _loaded = {};
@@ -74,6 +76,15 @@ var FilePreview = (function () {
     var actions = document.createElement('div');
     actions.className = 'fp-actions';
 
+    var btnBack = _btn('\u2190', 'Back to parent directory', function () {
+      if (_dirContext) {
+        var parent = _dirContext;
+        _dirContext = null;
+        openFile(parent, _currentPaneId);
+      }
+    });
+    btnBack.className += ' fp-btn-back';
+
     var btnMaximize = _btn('\u2610', 'Maximize', function () {
       _maximized = !_maximized;
       modal.classList.toggle('fp-maximized', _maximized);
@@ -81,13 +92,16 @@ var FilePreview = (function () {
       btnMaximize.setAttribute('aria-label', _maximized ? 'Restore' : 'Maximize');
     });
     var btnNewTab = _btn('\u2197', 'Open in new tab', function () { _openNewTab(); });
+    btnNewTab.className += ' fp-btn-file-only';
     var btnDownload = _btn('\u2B07', 'Download', function () { _download(); });
+    btnDownload.className += ' fp-btn-file-only';
     var btnClose = _btn('\u2715', 'Close', close);
 
     actions.appendChild(btnMaximize);
     actions.appendChild(btnNewTab);
     actions.appendChild(btnDownload);
     actions.appendChild(btnClose);
+    header.appendChild(btnBack);
     header.appendChild(titleEl);
     header.appendChild(actions);
 
@@ -125,7 +139,7 @@ var FilePreview = (function () {
   }
 
   function _openNewTab() {
-    if (!_currentFile) return;
+    if (!_currentFile || _currentFile.isDirectory) return;
     if (_currentFile.isText || _currentFile.isMarkdown) {
       var blob = new Blob([_currentFile.rawContent || ''], { type: 'text/plain' });
       window.open(URL.createObjectURL(blob), '_blank');
@@ -135,7 +149,7 @@ var FilePreview = (function () {
   }
 
   function _download() {
-    if (!_currentFile) return;
+    if (!_currentFile || _currentFile.isDirectory) return;
     var a = document.createElement('a');
     a.href = _currentFile.rawUrl;
     a.download = _currentFile.filename;
@@ -148,6 +162,8 @@ var FilePreview = (function () {
     if (_overlay) { _overlay.remove(); _overlay = null; }
     _maximized = false;
     _currentFile = null;
+    _dirContext = null;
+    _currentPaneId = null;
   }
 
   function _showError(body, message, absPath) {
@@ -502,7 +518,9 @@ var FilePreview = (function () {
 
   // --- Open File ---
 
-  function openFile(filePath, paneId) {
+  function openFile(filePath, paneId, _keepDirContext) {
+    _currentPaneId = paneId || _currentPaneId;
+    if (!_keepDirContext) _dirContext = null;
     var body = _createModal(filePath);
 
     var qs = '?path=' + encodeURIComponent(filePath);
@@ -519,12 +537,20 @@ var FilePreview = (function () {
       .then(function (res) {
         if (!res) return;
         if (!res.success) {
-          if (res.error === 'File not found') { close(); return; }
+          if (res.error === 'File not found' || res.error === 'Path not found') { close(); return; }
           var errorAbsPath = (res.data && res.data.absPath) ? res.data.absPath : null;
           _showError(body, res.error, errorAbsPath);
           return;
         }
         var info = res.data;
+
+        if (info.isDirectory) {
+          _currentFile = { absPath: info.absPath, isDirectory: true };
+          _applyMode('dir');
+          _renderDirectory(body, info.absPath);
+          return;
+        }
+
         var rawUrl = '/api/files/raw?path=' + encodeURIComponent(info.absPath)
           + (_tokenQs ? '&' + _tokenQs : '');
         var filename = info.absPath.split('/').pop();
@@ -539,6 +565,7 @@ var FilePreview = (function () {
           isMarkdown: info.isMarkdown,
           rawContent: null,
         };
+        _applyMode('file');
 
         if (info.isImage) {
           _renderImage(body, rawUrl);
@@ -558,6 +585,217 @@ var FilePreview = (function () {
             })
             .catch(function (err) { _showError(body, err.message); });
         }
+      })
+      .catch(function (err) { _showError(body, err.message); });
+  }
+
+  function _applyMode(mode) {
+    if (!_overlay) return;
+    _overlay.classList.toggle('fp-mode-dir', mode === 'dir');
+    _overlay.classList.toggle('fp-has-back', !!_dirContext);
+  }
+
+  // --- Directory browser ---
+
+  function _fmtSize(n) {
+    if (!n && n !== 0) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+    return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  }
+
+  function _fmtMtime(ms) {
+    if (!ms) return '';
+    var diff = Date.now() - ms;
+    if (diff < 60000) return 'just now';
+    if (diff < 3600000) return Math.floor(diff / 60000) + ' min ago';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + ' h ago';
+    if (diff < 7 * 86400000) return Math.floor(diff / 86400000) + ' d ago';
+    var d = new Date(ms);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function _iconFor(entry) {
+    if (entry.type === 'dir' || entry.targetType === 'dir') return '📁'; // 📁
+    if (entry.type === 'symlink' && entry.targetType === 'broken') return '⚠️'; // ⚠️
+    return '📄'; // 📄
+  }
+
+  function _navDir(body, dirPath) {
+    _renderDirectory(body, dirPath);
+  }
+
+  function _renderDirectory(body, dirPath) {
+    body.innerHTML = '<div class="fp-loading">Loading directory…</div>';
+    var _authHeaders = typeof Auth !== 'undefined' ? Auth.headers() : {};
+    var qs = '?path=' + encodeURIComponent(dirPath);
+    if (_currentPaneId) qs += '&paneId=' + encodeURIComponent(_currentPaneId);
+
+    fetch('/api/files/list' + qs, { headers: _authHeaders })
+      .then(function (r) {
+        if (r.status === 401) { close(); return null; }
+        return r.json();
+      })
+      .then(function (res) {
+        if (!res) return;
+        if (!res.success) {
+          _showError(body, res.error, dirPath);
+          return;
+        }
+        var data = res.data;
+        if (_currentFile) _currentFile.absPath = data.absPath;
+        // Back button in dir mode goes to the parent of the currently-shown dir.
+        _dirContext = data.parent || null;
+        _applyMode('dir');
+
+        if (_overlay) {
+          var titleEl = _overlay.querySelector('.fp-title');
+          if (titleEl) {
+            titleEl.textContent = data.absPath;
+            titleEl.title = data.absPath;
+          }
+        }
+
+        var wrap = document.createElement('div');
+        wrap.className = 'fp-dir-wrap';
+
+        // Breadcrumb
+        var crumb = document.createElement('div');
+        crumb.className = 'fp-dir-crumb';
+        var segs = data.absPath.split('/').filter(Boolean);
+        var rootLink = document.createElement('a');
+        rootLink.className = 'fp-dir-crumb-seg';
+        rootLink.textContent = '/';
+        rootLink.href = '#';
+        rootLink.addEventListener('click', function (e) {
+          e.preventDefault();
+          _navDir(body, '/');
+        });
+        crumb.appendChild(rootLink);
+        var accum = '';
+        segs.forEach(function (seg, i) {
+          accum += '/' + seg;
+          var sep = document.createElement('span');
+          sep.className = 'fp-dir-crumb-sep';
+          sep.textContent = '/';
+          var el;
+          if (i === segs.length - 1) {
+            el = document.createElement('span');
+            el.className = 'fp-dir-crumb-seg fp-dir-crumb-current';
+            el.textContent = seg;
+          } else {
+            el = document.createElement('a');
+            el.className = 'fp-dir-crumb-seg';
+            el.textContent = seg;
+            el.href = '#';
+            var target = accum;
+            el.addEventListener('click', function (e) {
+              e.preventDefault();
+              _navDir(body, target);
+            });
+          }
+          crumb.appendChild(sep);
+          crumb.appendChild(el);
+        });
+        wrap.appendChild(crumb);
+
+        // List
+        var list = document.createElement('div');
+        list.className = 'fp-dir-list';
+
+        if (data.parent) {
+          var upRow = document.createElement('div');
+          upRow.className = 'fp-dir-row fp-dir-parent';
+          upRow.tabIndex = 0;
+          upRow.innerHTML = '<span class="fp-dir-icon">↰</span>'
+            + '<span class="fp-dir-name">..</span>'
+            + '<span class="fp-dir-size"></span>'
+            + '<span class="fp-dir-mtime"></span>';
+          var parentPath = data.parent;
+          upRow.addEventListener('click', function () { _navDir(body, parentPath); });
+          upRow.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _navDir(body, parentPath); }
+          });
+          list.appendChild(upRow);
+        }
+
+        if (data.entries.length === 0) {
+          var empty = document.createElement('div');
+          empty.className = 'fp-dir-empty';
+          empty.textContent = '(empty directory)';
+          list.appendChild(empty);
+        }
+
+        data.entries.forEach(function (entry) {
+          var row = document.createElement('div');
+          row.className = 'fp-dir-row';
+          if (entry.isHidden) row.className += ' fp-dir-hidden';
+          if (entry.unreadable) row.className += ' fp-dir-unreadable';
+          var isDir = entry.type === 'dir' || entry.targetType === 'dir';
+          if (isDir) row.className += ' fp-dir-isdir';
+          row.tabIndex = 0;
+
+          var fullPath = (data.absPath === '/' ? '' : data.absPath) + '/' + entry.name;
+
+          var icon = document.createElement('span');
+          icon.className = 'fp-dir-icon';
+          icon.textContent = _iconFor(entry);
+
+          var name = document.createElement('span');
+          name.className = 'fp-dir-name';
+          var nameText = entry.name;
+          if (entry.type === 'symlink') {
+            var suffix = entry.targetType === 'broken'
+              ? ' → (broken)'
+              : ' → ' + (entry.targetType === 'dir' ? 'dir' : 'file');
+            nameText += suffix;
+          }
+          name.textContent = nameText;
+          name.title = fullPath;
+
+          var size = document.createElement('span');
+          size.className = 'fp-dir-size';
+          size.textContent = isDir ? '' : _fmtSize(entry.size);
+
+          var mtime = document.createElement('span');
+          mtime.className = 'fp-dir-mtime';
+          mtime.textContent = _fmtMtime(entry.mtime);
+
+          row.appendChild(icon);
+          row.appendChild(name);
+          row.appendChild(size);
+          row.appendChild(mtime);
+
+          var activate = function () {
+            if (entry.unreadable) return;
+            if (isDir) {
+              _navDir(body, fullPath);
+            } else {
+              // Remember the parent dir so the back button returns here
+              _dirContext = data.absPath;
+              openFile(fullPath, _currentPaneId, true);
+            }
+          };
+          row.addEventListener('click', activate);
+          row.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); }
+          });
+
+          list.appendChild(row);
+        });
+
+        wrap.appendChild(list);
+
+        if (data.truncated) {
+          var warn = document.createElement('div');
+          warn.className = 'fp-dir-truncated';
+          warn.textContent = 'Showing first ' + data.entries.length + ' of ' + data.totalCount + ' entries';
+          wrap.appendChild(warn);
+        }
+
+        body.innerHTML = '';
+        body.appendChild(wrap);
       })
       .catch(function (err) { _showError(body, err.message); });
   }

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { resolve, extname, basename } from 'node:path';
-import { stat, realpath, readFile } from 'node:fs/promises';
+import { stat, lstat, realpath, readFile, readdir } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
@@ -114,10 +114,10 @@ function getSizeLimit(info) {
   return SIZE_LIMITS.text;
 }
 
-async function validateFilePath(rawPath, allowedRoots) {
-  // Resolve the input path WITHOUT following symlinks.
-  // This is the "link path" — if it lives in allowedRoots, user has
-  // legitimate access to click it, even if the symlink target is elsewhere.
+// Resolve a raw path to its link/real form and run shared access checks
+// (allowedRoots + sensitive patterns). Returns { linkPath, realPath, stat }
+// on success, or an error shape the callers forward verbatim.
+async function resolveTarget(rawPath, allowedRoots) {
   const linkPath = resolve(rawPath);
 
   const inAllowedRoot = allowedRoots.some(
@@ -127,14 +127,11 @@ async function validateFilePath(rawPath, allowedRoots) {
     return { error: 'Access denied', status: 403 };
   }
 
-  // Resolve symlinks for the actual file access. The target may live outside
-  // allowedRoots (that's the point of symlink support). Sensitive path
-  // blacklist still applies to both the link path and the real target.
   let realPath;
   try {
     realPath = await realpath(linkPath);
   } catch {
-    return { error: 'File not found', status: 404 };
+    return { error: 'Path not found', status: 404 };
   }
 
   if (SENSITIVE_PATTERNS.some((p) => p.test(linkPath) || p.test(realPath))) {
@@ -145,26 +142,64 @@ async function validateFilePath(rawPath, allowedRoots) {
   try {
     fileStat = await stat(realPath);
   } catch {
-    return { error: 'File not found', status: 404 };
+    return { error: 'Path not found', status: 404 };
   }
-  if (!fileStat.isFile()) {
+  return { linkPath, realPath, stat: fileStat };
+}
+
+async function validateFilePath(rawPath, allowedRoots) {
+  const t = await resolveTarget(rawPath, allowedRoots);
+  if (t.error) return t;
+  if (!t.stat.isFile()) {
     return { error: 'Not a regular file', status: 400 };
   }
 
-  const info = getFileInfo(realPath);
+  const info = getFileInfo(t.realPath);
   const limit = getSizeLimit(info);
-  if (fileStat.size > limit) {
+  if (t.stat.size > limit) {
     return {
-      error: `File too large (${(fileStat.size / 1024 / 1024).toFixed(1)}MB, max ${limit / 1024 / 1024}MB)`,
+      error: `File too large (${(t.stat.size / 1024 / 1024).toFixed(1)}MB, max ${limit / 1024 / 1024}MB)`,
       status: 413,
-      info: { ...info, absPath: linkPath, size: fileStat.size },
+      info: { ...info, absPath: t.linkPath, size: t.stat.size },
     };
   }
 
   // Return the link path (not realPath) as absPath so subsequent calls
   // (content/raw endpoints) use the same identifier. realpath is resolved
   // again inside those endpoints.
-  return { ok: true, absPath: linkPath, size: fileStat.size, info };
+  return { ok: true, absPath: t.linkPath, size: t.stat.size, info };
+}
+
+async function validateDirPath(rawPath, allowedRoots) {
+  const t = await resolveTarget(rawPath, allowedRoots);
+  if (t.error) return t;
+  if (!t.stat.isDirectory()) {
+    return { error: 'Not a directory', status: 400 };
+  }
+  return { ok: true, absPath: t.linkPath, realPath: t.realPath };
+}
+
+function parentWithinRoots(absPath, roots) {
+  if (absPath === '/') return null;
+  const parent = absPath.replace(/\/[^/]+$/, '') || '/';
+  const inRoot = roots.some(
+    (root) => parent === root || parent.startsWith(root + '/')
+  );
+  return inRoot ? parent : null;
+}
+
+async function resolveInputPath(rawPath, paneId) {
+  if (rawPath.startsWith('~')) {
+    if (rawPath === '~' || rawPath.startsWith('~/')) {
+      return homedir() + rawPath.slice(1);
+    }
+    return rawPath;
+  }
+  if (!rawPath.startsWith('/')) {
+    const cwd = await getPaneCwd(paneId || '');
+    return resolve(cwd, rawPath);
+  }
+  return rawPath;
 }
 
 async function getPaneCwd(paneId) {
@@ -192,30 +227,131 @@ export function createFilesRouter(allowedRoots) {
         return res.status(400).json({ success: false, data: null, error: 'Missing path parameter' });
       }
 
-      let absPath = rawPath;
-      if (rawPath.startsWith('~')) {
-        // ~/foo → $HOME/foo, ~user/foo → /home/user/foo (basic support)
-        if (rawPath === '~' || rawPath.startsWith('~/')) {
-          absPath = homedir() + rawPath.slice(1);
-        }
-        // ~user/... not supported, leave as-is (will fail validation)
-      } else if (!rawPath.startsWith('/')) {
-        const cwd = await getPaneCwd(paneId || '');
-        absPath = resolve(cwd, rawPath);
+      const absPath = await resolveInputPath(rawPath, paneId);
+
+      const target = await resolveTarget(absPath, roots);
+      if (target.error) {
+        return res.status(target.status).json({ success: false, data: null, error: target.error });
       }
 
-      const result = await validateFilePath(absPath, roots);
-      if (result.error) {
-        const data = result.info || null;
-        return res.status(result.status).json({ success: false, data, error: result.error });
+      if (target.stat.isDirectory()) {
+        return res.json({
+          success: true,
+          data: { absPath: target.linkPath, isDirectory: true },
+          error: null,
+        });
+      }
+
+      if (!target.stat.isFile()) {
+        return res.status(400).json({ success: false, data: null, error: 'Not a regular file' });
+      }
+
+      const info = getFileInfo(target.realPath);
+      const limit = getSizeLimit(info);
+      if (target.stat.size > limit) {
+        return res.status(413).json({
+          success: false,
+          data: { ...info, absPath: target.linkPath, size: target.stat.size },
+          error: `File too large (${(target.stat.size / 1024 / 1024).toFixed(1)}MB, max ${limit / 1024 / 1024}MB)`,
+        });
       }
 
       res.json({
         success: true,
         data: {
+          absPath: target.linkPath,
+          size: target.stat.size,
+          ...info,
+        },
+        error: null,
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, data: null, error: err.message });
+    }
+  });
+
+  router.get('/list', async (req, res) => {
+    try {
+      const { path: rawPath, paneId } = req.query;
+      if (!rawPath) {
+        return res.status(400).json({ success: false, data: null, error: 'Missing path parameter' });
+      }
+
+      const absPath = await resolveInputPath(rawPath, paneId);
+      const result = await validateDirPath(absPath, roots);
+      if (result.error) {
+        return res.status(result.status).json({ success: false, data: null, error: result.error });
+      }
+
+      const MAX_ENTRIES = 2000;
+      let names;
+      try {
+        names = await readdir(result.realPath);
+      } catch (err) {
+        return res.status(500).json({ success: false, data: null, error: 'Cannot read directory: ' + err.message });
+      }
+      const truncated = names.length > MAX_ENTRIES;
+      const limited = truncated ? names.slice(0, MAX_ENTRIES) : names;
+
+      const entries = await Promise.all(limited.map(async (name) => {
+        const entryPath = result.realPath + '/' + name;
+        try {
+          const ls = await lstat(entryPath);
+          let type = 'other';
+          let size = 0;
+          let targetType = null;
+          if (ls.isSymbolicLink()) {
+            type = 'symlink';
+            try {
+              const st = await stat(entryPath);
+              if (st.isDirectory()) targetType = 'dir';
+              else if (st.isFile()) { targetType = 'file'; size = st.size; }
+              else targetType = 'other';
+            } catch {
+              targetType = 'broken';
+            }
+          } else if (ls.isDirectory()) {
+            type = 'dir';
+          } else if (ls.isFile()) {
+            type = 'file';
+            size = ls.size;
+          }
+          return {
+            name,
+            type,
+            targetType,
+            size,
+            mtime: ls.mtimeMs,
+            isHidden: name.startsWith('.'),
+          };
+        } catch {
+          return {
+            name,
+            type: 'other',
+            targetType: null,
+            size: 0,
+            mtime: 0,
+            isHidden: name.startsWith('.'),
+            unreadable: true,
+          };
+        }
+      }));
+
+      entries.sort((a, b) => {
+        const aDir = a.type === 'dir' || a.targetType === 'dir';
+        const bDir = b.type === 'dir' || b.targetType === 'dir';
+        if (aDir !== bDir) return aDir ? -1 : 1;
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      });
+
+      res.json({
+        success: true,
+        data: {
           absPath: result.absPath,
-          size: result.size,
-          ...result.info,
+          parent: parentWithinRoots(result.absPath, roots),
+          entries,
+          truncated,
+          totalCount: names.length,
         },
         error: null,
       });
