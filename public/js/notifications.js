@@ -1,56 +1,92 @@
-/* global escapeHtml, navigate, state */
+/* global escapeHtml, navigate, state, api */
 
 var NotificationPanel = (function () {
   var _notifications = [];
-  var _maxNotifications = 50;
   var _isOpen = false;
+  var _loaded = false;
 
-  // Load from sessionStorage
-  function _save() {
-    try { sessionStorage.setItem('tmux_notifications', JSON.stringify(_notifications)); }
-    catch (_e) { /* ignore */ }
-  }
-  function _load() {
-    try { var saved = sessionStorage.getItem('tmux_notifications'); if (saved) _notifications = JSON.parse(saved); }
-    catch (_e) { /* ignore */ }
-  }
-  _load();
+  // --- Server API helpers ---
 
-  function _lookupWindowName(session, windowIndex) {
-    if (typeof state === 'undefined' || !state.sessions) return '';
-    var s = state.sessions.find(function (s) { return s.name === session; });
-    if (!s || !s.windowDetails) return '';
-    var w = s.windowDetails.find(function (w) { return String(w.index) === String(windowIndex); });
-    return w ? (w.name || '') : '';
+  function _fetchAll() {
+    api.get('/api/notifications').then(function (res) {
+      if (res.success && Array.isArray(res.data)) {
+        _notifications = res.data;
+        _loaded = true;
+        _updateBadge();
+        if (_isOpen) _rerenderPanel();
+      }
+    }).catch(function () { /* ignore */ });
+  }
+
+  function _serverMarkRead(id) {
+    api.post('/api/notifications/' + id + '/read').catch(function () { /* ignore */ });
+  }
+
+  function _serverMarkReadByWindow(session, windowIndex) {
+    api.post('/api/notifications/read-by-window', {
+      session: session,
+      windowIndex: windowIndex,
+    }).catch(function () { /* ignore */ });
+  }
+
+  function _serverClearAll() {
+    api.delete('/api/notifications').catch(function () { /* ignore */ });
+  }
+
+  // NOTE: Do not call _fetchAll() here — this IIFE runs before app.js
+  // creates the `api` object. Instead, app.js calls NotificationPanel.refresh()
+  // after the StatusSocket connects.
+
+  /**
+   * Handle real-time notifications pushed via WebSocket.
+   * Called from app.js when a { type: 'notifications', data: [...] } message arrives.
+   */
+  function handleServerPush(newNotifications) {
+    if (!Array.isArray(newNotifications)) return;
+    for (var i = 0; i < newNotifications.length; i++) {
+      var n = newNotifications[i];
+      // Skip if already exists (dedup by id)
+      var exists = _notifications.some(function (existing) { return existing.id === n.id; });
+      if (!exists) {
+        // Auto-mark as read if user is currently viewing this window
+        if (
+          typeof state !== 'undefined' &&
+          state.currentTab === 'terminal' &&
+          state.currentSession === n.session &&
+          String(state.currentWindow) === String(n.windowIndex)
+        ) {
+          n.read = true;
+          n.readAt = Date.now();
+          _serverMarkRead(n.id);
+        }
+        _notifications.unshift(n);
+      }
+    }
+    _updateBadge();
+    if (_isOpen) _rerenderPanel();
   }
 
   function add(notification) {
-    var windowName = _lookupWindowName(notification.session, notification.windowIndex);
-    _notifications.unshift({
-      id: Date.now() + '-' + Math.random().toString(36).substr(2, 5),
-      session: notification.session,
-      windowIndex: notification.windowIndex,
-      windowName: windowName,
-      command: notification.prevCommand || '',
-      paneId: notification.paneId || '',
-      timestamp: Date.now(),
-      read: false,
-    });
-    if (_notifications.length > _maxNotifications) _notifications = _notifications.slice(0, _maxNotifications);
-    _save();
-    _updateBadge();
+    // Legacy path: called from app.js _applyCompletedWindows.
+    // With server-side persistence, notifications are added via monitor.js → WebSocket push.
+    // This is now a no-op — the server push path (handleServerPush) handles it.
   }
 
   function markRead(id) {
     var n = _notifications.find(function (n) { return n.id === id; });
-    if (n) { n.read = true; _save(); _updateBadge(); }
+    if (n && !n.read) {
+      n.read = true;
+      n.readAt = Date.now();
+      _updateBadge();
+      _serverMarkRead(id);
+    }
   }
 
   function clearAll() {
     _notifications = [];
-    _save();
     _updateBadge();
-    if (_isOpen) render();
+    _serverClearAll();
+    if (_isOpen) _rerenderPanel();
   }
 
   function unreadCount() {
@@ -75,6 +111,11 @@ var NotificationPanel = (function () {
   }
 
   var _closeHandler = null;
+
+  function _rerenderPanel() {
+    var panel = document.getElementById('notification-panel');
+    if (panel) _renderInto(panel, false);
+  }
 
   function render(event) {
     // Stop the click from propagating to the document close handler
@@ -187,9 +228,8 @@ var NotificationPanel = (function () {
           '" data-session="' + (typeof escapeHtml === 'function' ? escapeHtml(n.session) : n.session) +
           '" data-window-index="' + n.windowIndex + '">';
         html += '<div class="notification-item-header">';
-        var wName = n.windowName || _lookupWindowName(n.session, n.windowIndex);
-        var displayName = wName
-          ? n.windowIndex + ': ' + wName
+        var displayName = n.windowName
+          ? n.windowIndex + ': ' + n.windowName
           : 'window ' + n.windowIndex;
         html += '<span class="notification-item-target">' + (typeof escapeHtml === 'function' ? escapeHtml(displayName) : displayName) + '</span>';
         html += '<span class="notification-item-time">' + _relativeTime(n.timestamp) + '</span>';
@@ -222,11 +262,25 @@ var NotificationPanel = (function () {
     _notifications.forEach(function (n) {
       if (!n.read && n.session === session && String(n.windowIndex) === String(windowIndex)) {
         n.read = true;
+        n.readAt = Date.now();
         changed = true;
       }
     });
-    if (changed) { _save(); _updateBadge(); }
+    if (changed) {
+      _updateBadge();
+      _serverMarkReadByWindow(session, windowIndex);
+    }
   }
 
-  return { add: add, markRead: markRead, _markReadByWindow: markReadByWindow, clearAll: clearAll, unreadCount: unreadCount, render: render, updateBadge: _updateBadge };
+  return {
+    add: add,
+    markRead: markRead,
+    _markReadByWindow: markReadByWindow,
+    clearAll: clearAll,
+    unreadCount: unreadCount,
+    render: render,
+    updateBadge: _updateBadge,
+    handleServerPush: handleServerPush,
+    refresh: _fetchAll,
+  };
 })();
