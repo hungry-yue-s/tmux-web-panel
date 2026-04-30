@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Usage — 模块选择</title>
+<style>
+:root {
+  --bg-primary: #1a1b26;
+  --bg-deep: #16161e;
+  --bg-card: #24283b;
+  --bg-hover: #292e42;
+  --border: #3b4261;
+  --border-subtle: #2f3450;
+  --text-primary: #c0caf5;
+  --text-secondary: #a9b1d6;
+  --text-muted: #565f89;
+  --accent-blue: #7aa2f7;
+  --accent-green: #9ece6a;
+  --accent-red: #f7768e;
+  --accent-yellow: #e0af68;
+  --accent-purple: #bb9af7;
+  --accent-orange: #f6a623;
+  --accent-cyan: #7dcfff;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, 'SF Pro Text', sans-serif; background: var(--bg-primary); color: var(--text-primary); padding: 16px; }
+h1 { font-size: 1rem; font-weight: 700; margin-bottom: 4px; }
+.subtitle { color: var(--text-muted); font-size: 0.78rem; margin-bottom: 20px; }
+.modules { display: flex; flex-direction: column; gap: 20px; max-width: 780px; margin: 0 auto; }
+
+.module { background: var(--bg-deep); border: 1px solid var(--border-subtle); border-radius: 8px; overflow: hidden; }
+.module-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border-subtle); }
+.module-id { font-size: 0.65rem; color: var(--text-muted); font-family: monospace; }
+.module-name { font-size: 0.82rem; font-weight: 600; }
+.module-body { padding: 14px; }
+
+/* A: Subscription Bars */
+.sub-bars { display: flex; flex-direction: column; gap: 10px; }
+.sub-row { display: flex; align-items: center; gap: 10px; }
+.sub-label { font-size: 0.72rem; color: var(--text-muted); width: 80px; text-align: right; flex-shrink: 0; }
+.sub-bar-wrap { flex: 1; height: 18px; background: var(--bg-card); border-radius: 4px; overflow: hidden; }
+.sub-bar { height: 100%; border-radius: 4px; }
+.sub-bar.low { background: var(--accent-green); }
+.sub-bar.mid { background: var(--accent-yellow); }
+.sub-bar.high { background: var(--accent-red); }
+.sub-pct { font-size: 0.75rem; font-weight: 600; width: 40px; text-align: right; flex-shrink: 0; }
+.sub-reset { font-size: 0.65rem; color: var(--text-muted); margin-left: 90px; margin-top: 2px; }
+
+/* B: Stat Cards */
+.stat-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+@media (max-width: 500px) { .stat-cards { grid-template-columns: repeat(2, 1fr); } }
+.stat-card { background: var(--bg-card); border-radius: 6px; padding: 10px; text-align: center; }
+.stat-card .val { font-size: 1.2rem; font-weight: 700; }
+.stat-card .label { font-size: 0.65rem; color: var(--text-muted); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
+.stat-card .sub { font-size: 0.6rem; color: var(--accent-blue); margin-top: 2px; }
+
+/* C: Daily Trend */
+.trend-chart { width: 100%; height: 100px; }
+.trend-svg { width: 100%; height: 100%; }
+.trend-legend { display: flex; gap: 14px; margin-top: 6px; justify-content: center; }
+.trend-legend-item { display: flex; align-items: center; gap: 4px; font-size: 0.65rem; color: var(--text-muted); }
+.trend-legend-dot { width: 7px; height: 7px; border-radius: 50%; }
+
+/* D: Model Distribution */
+.model-dist { display: flex; gap: 14px; align-items: center; }
+.donut-wrap { width: 80px; height: 80px; flex-shrink: 0; }
+.model-list { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.model-row { display: flex; align-items: center; gap: 6px; }
+.model-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.model-name { font-size: 0.72rem; color: var(--text-secondary); flex: 1; }
+.model-tokens { font-size: 0.72rem; color: var(--text-muted); font-family: monospace; }
+.model-pct { font-size: 0.72rem; font-weight: 600; width: 36px; text-align: right; }
+
+/* E: Active Hours */
+.hours-grid { display: flex; gap: 2px; justify-content: center; flex-wrap: wrap; }
+.hour-cell { width: 26px; height: 26px; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 0.55rem; }
+.hour-cell.h0 { background: var(--bg-card); color: var(--text-muted); }
+.hour-cell.h1 { background: #1a3a2a; color: var(--accent-green); }
+.hour-cell.h2 { background: #264d35; color: #c3e88d; }
+.hour-cell.h3 { background: #357a4a; color: #fff; }
+.hour-cell.h4 { background: var(--accent-green); color: #1a1b26; font-weight: 700; }
+.hours-label { display: flex; justify-content: space-between; margin-top: 3px; font-size: 0.55rem; color: var(--text-muted); padding: 0 2px; }
+
+/* F: Recent Sessions */
+.session-list { display: flex; flex-direction: column; gap: 6px; }
+.session-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--bg-card); border-radius: 6px; }
+.session-main { flex: 1; min-width: 0; }
+.session-project { font-size: 0.72rem; color: var(--accent-blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-prompt { font-size: 0.65rem; color: var(--text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-meta { font-size: 0.65rem; color: var(--text-muted); display: flex; gap: 10px; flex-shrink: 0; }
+.session-meta span { white-space: nowrap; }
+
+/* G: Code Output */
+.code-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.code-stat { background: var(--bg-card); border-radius: 6px; padding: 10px; text-align: center; }
+.code-stat .val { font-size: 1.1rem; font-weight: 700; }
+.code-stat .label { font-size: 0.65rem; color: var(--text-muted); margin-top: 2px; }
+
+/* H: Tool Bars */
+.tool-bars { display: flex; flex-direction: column; gap: 5px; }
+.tool-row { display: flex; align-items: center; gap: 6px; }
+.tool-name { font-size: 0.68rem; color: var(--text-muted); width: 52px; text-align: right; font-family: monospace; }
+.tool-bar-wrap { flex: 1; height: 14px; background: var(--bg-card); border-radius: 3px; overflow: hidden; }
+.tool-bar { height: 100%; border-radius: 3px; }
+.tool-count { font-size: 0.68rem; color: var(--text-muted); width: 32px; font-family: monospace; }
+
+/* I: Cache Efficiency */
+.cache-row { display: flex; gap: 14px; align-items: center; }
+.cache-gauge { width: 70px; height: 70px; flex-shrink: 0; position: relative; }
+.cache-gauge-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 1rem; font-weight: 700; color: var(--accent-green); }
+.cache-detail { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.cache-item { display: flex; justify-content: space-between; font-size: 0.72rem; }
+.cache-item .k { color: var(--text-muted); }
+.cache-item .v { font-family: monospace; }
+
+/* J: Extra Usage */
+.extra-info { flex: 1; }
+.extra-row { display: flex; align-items: center; gap: 14px; }
+.extra-title { font-size: 0.78rem; font-weight: 600; margin-bottom: 6px; }
+.extra-bar-wrap { height: 8px; background: var(--bg-card); border-radius: 4px; overflow: hidden; margin-bottom: 5px; }
+.extra-bar { height: 100%; border-radius: 4px; background: var(--accent-blue); }
+.extra-nums { display: flex; justify-content: space-between; font-size: 0.65rem; color: var(--text-muted); }
+.extra-badge { background: #1a3a2a; color: var(--accent-green); font-size: 0.65rem; padding: 3px 8px; border-radius: 10px; font-weight: 600; flex-shrink: 0; border: 1px solid #264d35; }
+
+/* Footer */
+.pick-box { max-width: 780px; margin: 24px auto; padding: 14px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; }
+.pick-box h2 { font-size: 0.82rem; font-weight: 600; margin-bottom: 6px; }
+.pick-box p { font-size: 0.72rem; color: var(--text-muted); line-height: 1.8; }
+.pick-box .hint { color: var(--accent-blue); }
+</style>
+</head>
+<body>
+
+<h1>Claude Usage Tab — 模块选择</h1>
+<p class="subtitle">沿用 perf-panel 暗色主题。每个模块独立可选。</p>
+
+<div class="modules">
+
+<!-- A -->
+<div class="module">
+  <div class="module-header"><span class="module-name">A. 订阅用量状态</span><span class="module-id">OAuth API 实时</span></div>
+  <div class="module-body">
+    <div class="sub-bars">
+      <div class="sub-row">
+        <span class="sub-label">5h 窗口</span>
+        <div class="sub-bar-wrap"><div class="sub-bar low" style="width:4%"></div></div>
+        <span class="sub-pct">4%</span>
+      </div>
+      <div class="sub-row">
+        <span class="sub-label">7d 总量</span>
+        <div class="sub-bar-wrap"><div class="sub-bar mid" style="width:69%"></div></div>
+        <span class="sub-pct">69%</span>
+      </div>
+      <div class="sub-reset">重置于 2026-04-24 06:00 UTC</div>
+      <div class="sub-row">
+        <span class="sub-label">7d Sonnet</span>
+        <div class="sub-bar-wrap"><div class="sub-bar low" style="width:9%"></div></div>
+        <span class="sub-pct">9%</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- B -->
+<div class="module">
+  <div class="module-header"><span class="module-name">B. 概览数字卡片</span><span class="module-id">stats-cache + session-meta</span></div>
+  <div class="module-body">
+    <div class="stat-cards">
+      <div class="stat-card"><div class="val">192</div><div class="label">总会话</div><div class="sub">自 2026-02-11</div></div>
+      <div class="stat-card"><div class="val">14.2K</div><div class="label">总消息</div></div>
+      <div class="stat-card"><div class="val">403</div><div class="label">Git Commits</div></div>
+      <div class="stat-card"><div class="val">2,000h+</div><div class="label">总时长</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- C -->
+<div class="module">
+  <div class="module-header"><span class="module-name">C. 每日活跃趋势</span><span class="module-id">stats-cache.dailyActivity</span></div>
+  <div class="module-body">
+    <div class="trend-chart">
+      <svg class="trend-svg" viewBox="0 0 700 100" preserveAspectRatio="none">
+        <line x1="0" y1="25" x2="700" y2="25" stroke="var(--bg-card)" stroke-width="1"/>
+        <line x1="0" y1="50" x2="700" y2="50" stroke="var(--bg-card)" stroke-width="1"/>
+        <line x1="0" y1="75" x2="700" y2="75" stroke="var(--bg-card)" stroke-width="1"/>
+        <path d="M0,15 L100,30 L200,70 L300,40 L400,48 L500,10 L600,45 L700,35 L700,100 L0,100Z" fill="rgba(122,162,247,0.12)"/>
+        <polyline points="0,15 100,30 200,70 300,40 400,48 500,10 600,45 700,35" fill="none" stroke="var(--accent-blue)" stroke-width="1.5"/>
+        <polyline points="0,80 100,55 200,88 300,88 400,65 500,50 600,75 700,88" fill="none" stroke="var(--accent-orange)" stroke-width="1.5" stroke-dasharray="4,3"/>
+      </svg>
+    </div>
+    <div class="trend-legend">
+      <div class="trend-legend-item"><div class="trend-legend-dot" style="background:var(--accent-blue)"></div>消息数</div>
+      <div class="trend-legend-item"><div class="trend-legend-dot" style="background:var(--accent-orange)"></div>会话数</div>
+    </div>
+  </div>
+</div>
+
+<!-- D -->
+<div class="module">
+  <div class="module-header"><span class="module-name">D. 模型用量分布</span><span class="module-id">stats-cache.modelUsage</span></div>
+  <div class="module-body">
+    <div class="model-dist">
+      <div class="donut-wrap">
+        <svg viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r="38" fill="none" stroke="var(--bg-card)" stroke-width="12"/>
+          <circle cx="50" cy="50" r="38" fill="none" stroke="var(--accent-blue)" stroke-width="12"
+            stroke-dasharray="148 91" stroke-dashoffset="0" transform="rotate(-90 50 50)"/>
+          <circle cx="50" cy="50" r="38" fill="none" stroke="var(--accent-green)" stroke-width="12"
+            stroke-dasharray="91 148" stroke-dashoffset="-148" transform="rotate(-90 50 50)"/>
+        </svg>
+      </div>
+      <div class="model-list">
+        <div class="model-row">
+          <div class="model-dot" style="background:var(--accent-blue)"></div>
+          <span class="model-name">opus-4-6</span>
+          <span class="model-tokens">108.9M</span>
+          <span class="model-pct">62%</span>
+        </div>
+        <div class="model-row">
+          <div class="model-dot" style="background:var(--accent-green)"></div>
+          <span class="model-name">sonnet-4-5</span>
+          <span class="model-tokens">67.0M</span>
+          <span class="model-pct">38%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- E -->
+<div class="module">
+  <div class="module-header"><span class="module-name">E. 活跃时段热力图</span><span class="module-id">stats-cache.hourCounts</span></div>
+  <div class="module-body">
+    <div class="hours-grid">
+      <div class="hour-cell h0">0</div><div class="hour-cell h0">1</div><div class="hour-cell h0">2</div>
+      <div class="hour-cell h0">3</div><div class="hour-cell h0">4</div><div class="hour-cell h0">5</div>
+      <div class="hour-cell h0">6</div><div class="hour-cell h0">7</div><div class="hour-cell h0">8</div>
+      <div class="hour-cell h0">9</div><div class="hour-cell h0">10</div><div class="hour-cell h1">11</div>
+      <div class="hour-cell h0">12</div><div class="hour-cell h0">13</div><div class="hour-cell h2">14</div>
+      <div class="hour-cell h3">15</div><div class="hour-cell h2">16</div><div class="hour-cell h2">17</div>
+      <div class="hour-cell h2">18</div><div class="hour-cell h1">19</div><div class="hour-cell h2">20</div>
+      <div class="hour-cell h4">21</div><div class="hour-cell h1">22</div><div class="hour-cell h1">23</div>
+    </div>
+    <div class="hours-label"><span>0:00</span><span>6:00</span><span>12:00</span><span>18:00</span><span>23:00</span></div>
+  </div>
+</div>
+
+<!-- F -->
+<div class="module">
+  <div class="module-header"><span class="module-name">F. 最近会话列表</span><span class="module-id">session-meta 最近 10 条</span></div>
+  <div class="module-body">
+    <div class="session-list">
+      <div class="session-item">
+        <div class="session-main">
+          <div class="session-project">~/project/tmux-web-panel</div>
+          <div class="session-prompt">lazygit、vim、neovim 等会需要配置吗</div>
+        </div>
+        <div class="session-meta">
+          <span>24m</span><span>14.8K</span>
+          <span style="color:var(--accent-green)">+51</span>
+          <span style="color:var(--accent-red)">-13</span>
+        </div>
+      </div>
+      <div class="session-item">
+        <div class="session-main">
+          <div class="session-project">~/data3/mantis</div>
+          <div class="session-prompt">对play7的web并不满意，要分析业内的其他产品</div>
+        </div>
+        <div class="session-meta">
+          <span>2m</span><span>0.7K</span>
+          <span style="color:var(--accent-green)">+0</span>
+          <span style="color:var(--accent-red)">-0</span>
+        </div>
+      </div>
+      <div class="session-item">
+        <div class="session-main">
+          <div class="session-project">~/project/web-scrcpy</div>
+          <div class="session-prompt">Submit web-scrcpy to AI Nexus platform</div>
+        </div>
+        <div class="session-meta">
+          <span>45m</span><span>32.1K</span>
+          <span style="color:var(--accent-green)">+128</span>
+          <span style="color:var(--accent-red)">-24</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- G -->
+<div class="module">
+  <div class="module-header"><span class="module-name">G. 代码产出统计</span><span class="module-id">session-meta 聚合</span></div>
+  <div class="module-body">
+    <div class="code-stats">
+      <div class="code-stat"><div class="val" style="color:var(--accent-green)">+12,847</div><div class="label">行新增</div></div>
+      <div class="code-stat"><div class="val" style="color:var(--accent-red)">-3,291</div><div class="label">行删除</div></div>
+      <div class="code-stat"><div class="val" style="color:var(--accent-purple)">403</div><div class="label">次 Commit</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- H -->
+<div class="module">
+  <div class="module-header"><span class="module-name">H. 工具使用排行</span><span class="module-id">session-meta.tool_counts</span></div>
+  <div class="module-body">
+    <div class="tool-bars">
+      <div class="tool-row"><span class="tool-name">Bash</span><div class="tool-bar-wrap"><div class="tool-bar" style="width:100%;background:var(--accent-blue)"></div></div><span class="tool-count">1842</span></div>
+      <div class="tool-row"><span class="tool-name">Read</span><div class="tool-bar-wrap"><div class="tool-bar" style="width:72%;background:var(--accent-cyan)"></div></div><span class="tool-count">1326</span></div>
+      <div class="tool-row"><span class="tool-name">Edit</span><div class="tool-bar-wrap"><div class="tool-bar" style="width:58%;background:var(--accent-purple)"></div></div><span class="tool-count">1069</span></div>
+      <div class="tool-row"><span class="tool-name">Write</span><div class="tool-bar-wrap"><div class="tool-bar" style="width:31%;background:var(--accent-green)"></div></div><span class="tool-count">571</span></div>
+      <div class="tool-row"><span class="tool-name">Agent</span><div class="tool-bar-wrap"><div class="tool-bar" style="width:22%;background:var(--accent-orange)"></div></div><span class="tool-count">405</span></div>
+      <div class="tool-row"><span class="tool-name">Grep</span><div class="tool-bar-wrap"><div class="tool-bar" style="width:15%;background:var(--accent-yellow)"></div></div><span class="tool-count">276</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- I -->
+<div class="module">
+  <div class="module-header"><span class="module-name">I. 缓存效率</span><span class="module-id">stats-cache.modelUsage</span></div>
+  <div class="module-body">
+    <div class="cache-row">
+      <div class="cache-gauge">
+        <svg viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r="38" fill="none" stroke="var(--bg-card)" stroke-width="8"/>
+          <circle cx="50" cy="50" r="38" fill="none" stroke="var(--accent-green)" stroke-width="8"
+            stroke-dasharray="215 24" stroke-dashoffset="0" transform="rotate(-90 50 50)" stroke-linecap="round"/>
+        </svg>
+        <div class="cache-gauge-text">90%</div>
+      </div>
+      <div class="cache-detail">
+        <div class="cache-item"><span class="k">Cache Read</span><span class="v">296.6M tok</span></div>
+        <div class="cache-item"><span class="k">Cache Write</span><span class="v">111.0M tok</span></div>
+        <div class="cache-item"><span class="k">未缓存</span><span class="v">86.0K tok</span></div>
+        <div class="cache-item"><span class="k">估算节省</span><span class="v" style="color:var(--accent-green)">~$120</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- J -->
+<div class="module">
+  <div class="module-header"><span class="module-name">J. Extra Usage 余额</span><span class="module-id">OAuth API 实时</span></div>
+  <div class="module-body">
+    <div class="extra-row">
+      <div class="extra-info">
+        <div class="extra-title">Extra Usage 本月</div>
+        <div class="extra-bar-wrap"><div class="extra-bar" style="width:26.5%"></div></div>
+        <div class="extra-nums"><span>已用 $53.00</span><span>上限 $200.00</span></div>
+      </div>
+      <div class="extra-badge">已启用</div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<div class="pick-box">
+  <h2>选择说明</h2>
+  <p>
+    A — 订阅用量状态（5h/7d 进度条 + 重置时间）<br>
+    B — 概览数字卡片（总会话/消息/commit/时长）<br>
+    C — 每日活跃趋势（消息 + 会话折线图）<br>
+    D — 模型用量分布（环形图 + token 明细）<br>
+    E — 活跃时段热力图（24h 方格）<br>
+    F — 最近会话列表（项目/摘要/时长/代码变更）<br>
+    G — 代码产出统计（新增/删除/commit 数字）<br>
+    H — 工具使用排行（Bash/Read/Edit 条形图）<br>
+    I — 缓存效率（命中率圆环 + 节省金额）<br>
+    J — Extra Usage 余额（月度进度条）<br><br>
+    <span class="hint">告诉我你想要哪些，比如 "A+B+D+F+J" 或 "全部都要"</span>
+  </p>
+</div>
+
+</body>
+</html>

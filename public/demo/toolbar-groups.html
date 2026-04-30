@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FAB 抽屉 · 场景感知分组 Demo</title>
+<style>
+  :root {
+    --bg-primary: #1a1b26;
+    --bg-deep: #16161e;
+    --bg-card: #24283b;
+    --bg-hover: #292e42;
+    --border: #3b4261;
+    --border-subtle: #2f3450;
+    --text-primary: #c0caf5;
+    --text-secondary: #a9b1d6;
+    --text-muted: #565f89;
+    --accent-blue: #7aa2f7;
+    --accent-green: #9ece6a;
+    --accent-red: #f7768e;
+    --accent-yellow: #e0af68;
+    --accent-purple: #bb9af7;
+    --accent-orange: #f6a623;
+    --accent-cyan: #7dcfff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg-deep); color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    min-height: 100vh; line-height: 1.5; }
+  body { padding: 20px 12px 80px; }
+
+  .page-title { font-size: 18px; font-weight: 700; margin-bottom: 6px; text-align: center; }
+  .page-sub { font-size: 12px; color: var(--text-muted); text-align: center; margin-bottom: 20px; }
+
+  .toolbar {
+    display: flex; gap: 8px; justify-content: center; margin-bottom: 16px; flex-wrap: wrap;
+  }
+  .toolbar label {
+    font-size: 11px; color: var(--text-muted); align-self: center; margin-right: 2px;
+  }
+  .toolbar button {
+    padding: 7px 13px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg-card); color: var(--text-secondary);
+    font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  .toolbar button.active { background: var(--accent-blue); color: var(--bg-primary); border-color: var(--accent-blue); }
+  .toolbar button.add { border-style: dashed; color: var(--accent-green); border-color: color-mix(in srgb, var(--accent-green) 40%, transparent); }
+
+  .desc {
+    max-width: 780px; margin: 0 auto 18px;
+    padding: 12px 16px; background: var(--bg-card);
+    border: 1px solid var(--border); border-radius: 12px;
+    font-size: 12px; color: var(--text-secondary);
+  }
+  .desc b { color: var(--accent-blue); }
+  .desc code { background: var(--bg-hover); padding: 1px 5px; border-radius: 3px;
+    font-family: 'Menlo', monospace; font-size: 11px; color: var(--accent-cyan); }
+  .desc .pros { color: var(--accent-green); }
+  .desc .cons { color: var(--accent-yellow); }
+
+  .phone-wrap { display: flex; justify-content: center; }
+  .phone {
+    width: 380px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 28px;
+    padding: 14px 10px 0;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  }
+  .phone-notch {
+    position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+    width: 80px; height: 5px; background: var(--border); border-radius: 3px;
+  }
+
+  /* Simulated terminal */
+  .sim-term {
+    height: 210px; margin: 22px -10px 0;
+    background: var(--bg-deep);
+    color: var(--text-muted);
+    font-family: 'Menlo', monospace; font-size: 11px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--border-subtle);
+    overflow: hidden;
+  }
+  .sim-term .p-green { color: var(--accent-green); }
+  .sim-term .p-yellow { color: var(--accent-yellow); }
+  .sim-term .p-blue { color: var(--accent-blue); }
+  .sim-term .p-red { color: var(--accent-red); }
+  .sim-term .p-cyan { color: var(--accent-cyan); }
+  .sim-term .cursor {
+    display: inline-block; width: 7px; height: 13px;
+    background: var(--accent-blue); vertical-align: middle;
+    animation: blink 1s step-end infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* Scene badge (on drawer header, minimal inline) */
+  .scene-inline {
+    display: flex; align-items: center; gap: 6px;
+    padding: 3px 9px; border-radius: 10px;
+    background: color-mix(in srgb, var(--accent-orange) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent-orange) 40%, transparent);
+    font-size: 10px; color: var(--accent-orange); font-weight: 600;
+    letter-spacing: 0.3px; flex-shrink: 0;
+    cursor: pointer; user-select: none;
+  }
+  .scene-inline .dot {
+    width: 5px; height: 5px; border-radius: 50%; background: var(--accent-orange);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  .scene-inline .icn { font-size: 11px; }
+  .scene-inline .hint-lp {
+    font-size: 8px; color: var(--text-muted); margin-left: 2px;
+    letter-spacing: 0; font-weight: 400;
+  }
+  @keyframes pulse { 50% { opacity: 0.4; } }
+
+  /* Override menu popup (triggered by long-press) */
+  .override-menu {
+    position: absolute; top: 48px; left: 12px; right: 12px;
+    background: var(--bg-primary); border: 1px solid var(--border);
+    border-radius: 10px; padding: 8px; z-index: 20;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+    display: none;
+  }
+  .override-menu.show { display: block; }
+  .override-menu .mtitle {
+    font-size: 10px; color: var(--text-muted); text-transform: uppercase;
+    letter-spacing: 1px; padding: 4px 8px 6px;
+  }
+  .override-menu .mitem {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+    border-radius: 6px; cursor: pointer; font-size: 13px;
+    color: var(--text-primary);
+  }
+  .override-menu .mitem:hover { background: var(--bg-hover); }
+  .override-menu .mitem.current { background: color-mix(in srgb, var(--accent-orange) 15%, transparent); color: var(--accent-orange); }
+  .override-menu .mitem.add { color: var(--accent-green); border-top: 1px solid var(--border-subtle); margin-top: 4px; padding-top: 10px; }
+
+  /* Drawer */
+  .drawer {
+    background: var(--bg-card);
+    border-top: 1px solid var(--border);
+    border-radius: 16px 16px 0 0;
+    margin: 0 -10px 0;
+    max-height: 440px;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+
+  /* Tab bar (scene inline badge lives here on the left) */
+  .tabbar {
+    display: flex; gap: 4px; padding: 8px 10px;
+    border-bottom: 1px solid var(--border-subtle);
+    align-items: center;
+  }
+  .tabbar button {
+    flex: 1; padding: 7px 10px; border-radius: 6px;
+    background: transparent; border: none;
+    color: var(--text-muted); font-size: 12px; font-weight: 500;
+    white-space: nowrap; cursor: pointer;
+  }
+  .tabbar button.active {
+    background: var(--bg-hover); color: var(--text-primary); font-weight: 600;
+  }
+  .tabbar .icon-btn {
+    flex: 0 0 30px; color: var(--text-muted); font-size: 14px;
+  }
+
+  .body { padding: 12px; overflow-y: auto; flex: 1;
+    animation: scene-swap 0.25s ease; }
+  @keyframes scene-swap {
+    0% { opacity: 0; transform: translateY(8px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  .scene-inline.flash {
+    animation: badge-flash 0.6s ease;
+  }
+  @keyframes badge-flash {
+    0% { background: var(--accent-orange); color: var(--bg-primary); transform: scale(1.15); }
+    100% { background: color-mix(in srgb, var(--accent-orange) 15%, transparent); color: var(--accent-orange); transform: scale(1); }
+  }
+  .section { margin-bottom: 14px; }
+  .section:last-child { margin-bottom: 0; }
+  .section-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px;
+    color: var(--text-muted); opacity: 0.7;
+    margin-bottom: 7px; display: flex; justify-content: space-between; align-items: center;
+  }
+  .section-label .meta { color: var(--accent-orange); font-weight: 600; letter-spacing: 0.3px; text-transform: none; font-size: 9px; }
+
+  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+
+  .btn {
+    height: 40px; border-radius: 8px; background: var(--bg-hover);
+    color: var(--text-primary); font-size: 12px;
+    font-family: 'Menlo', monospace;
+    display: flex; align-items: center; justify-content: center;
+    border: none; position: relative; cursor: pointer;
+  }
+  .btn.accent { background: color-mix(in srgb, var(--accent-blue) 15%, var(--bg-hover));
+    color: var(--accent-blue); border: 1px solid color-mix(in srgb, var(--accent-blue) 25%, transparent); }
+  .btn.orange { background: color-mix(in srgb, var(--accent-orange) 12%, var(--bg-hover));
+    color: var(--accent-orange); border: 1px solid color-mix(in srgb, var(--accent-orange) 22%, transparent); }
+  .btn.green { background: color-mix(in srgb, var(--accent-green) 12%, var(--bg-hover));
+    color: var(--accent-green); border: 1px solid color-mix(in srgb, var(--accent-green) 22%, transparent); }
+  .btn.red { background: color-mix(in srgb, var(--accent-red) 12%, var(--bg-hover));
+    color: var(--accent-red); border: 1px solid color-mix(in srgb, var(--accent-red) 22%, transparent); }
+  .btn.purple { background: color-mix(in srgb, var(--accent-purple) 12%, var(--bg-hover));
+    color: var(--accent-purple); border: 1px solid color-mix(in srgb, var(--accent-purple) 22%, transparent); }
+  .btn.wide { grid-column: span 2; }
+
+  /* Heat badge */
+  .heat {
+    position: absolute; top: -5px; right: -5px;
+    background: var(--accent-orange); color: var(--bg-primary);
+    font-size: 9px; font-weight: 700; padding: 1px 5px;
+    border-radius: 8px; line-height: 1.4; min-width: 14px; text-align: center;
+    font-family: 'Menlo', monospace;
+  }
+  .heat.dim { background: var(--text-muted); color: var(--bg-card); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    padding: 6px 11px; border-radius: 14px;
+    background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-hover));
+    border: 1px solid color-mix(in srgb, var(--accent-blue) 18%, transparent);
+    color: color-mix(in srgb, var(--accent-blue) 75%, white);
+    font-size: 11px; font-family: 'Menlo', monospace;
+    position: relative; cursor: pointer;
+  }
+  .chip.add { background: transparent;
+    border: 1px dashed color-mix(in srgb, var(--accent-blue) 25%, transparent);
+    color: color-mix(in srgb, var(--accent-blue) 55%, transparent); }
+  .chip .heat { top: -4px; right: -4px; }
+
+  .tpl-item {
+    padding: 9px 11px; background: var(--bg-hover); border-radius: 8px;
+    margin-bottom: 6px; font-size: 12px; font-family: 'Menlo', monospace;
+    color: var(--text-secondary); position: relative;
+    border: 1px solid var(--border-subtle);
+  }
+  .tpl-item .heat { top: 8px; right: 10px; position: absolute; }
+  .tpl-item.add { border-style: dashed; color: var(--accent-green); background: transparent;
+    text-align: center; }
+
+  /* Arrow T-pad */
+  .arrow-pad {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+  }
+
+  /* Fixture label style */
+  .section-label .tag-fix {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    background: color-mix(in srgb, var(--accent-purple) 20%, transparent);
+    color: var(--accent-purple); font-size: 9px; font-weight: 700;
+    margin-right: 6px; letter-spacing: 0.5px; text-transform: uppercase;
+  }
+  .section-label .tag-heat {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    background: color-mix(in srgb, var(--accent-orange) 20%, transparent);
+    color: var(--accent-orange); font-size: 9px; font-weight: 700;
+    margin-right: 6px; letter-spacing: 0.5px; text-transform: uppercase;
+  }
+  .fixture-wrap {
+    background: color-mix(in srgb, var(--accent-purple) 5%, transparent);
+    border: 1px dashed color-mix(in srgb, var(--accent-purple) 25%, transparent);
+    border-radius: 8px; padding: 8px; margin-bottom: 4px;
+  }
+
+  .foot { text-align: center; font-size: 11px; color: var(--text-muted); margin-top: 24px; }
+  .foot code { background: var(--bg-card); padding: 2px 6px; border-radius: 4px;
+    font-family: 'Menlo', monospace; font-size: 10px; color: var(--accent-cyan); }
+</style>
+</head>
+<body>
+<div class="page-title">FAB 抽屉 · 场景感知分组</div>
+<div class="page-sub">按场景自动选择布局 · 场景内 Tab1=常用，其余按输入形态分</div>
+
+<div class="toolbar">
+  <label>模拟当前场景：</label>
+  <button data-scene="terminal" class="active">🖥️ 终端</button>
+  <button data-scene="claude">🤖 Claude</button>
+  <button data-scene="vim">📝 Vim</button>
+  <button data-scene="lazygit">🌿 Lazygit</button>
+  <button class="add">+ 添加场景</button>
+</div>
+
+<div class="desc" id="desc"></div>
+
+<div class="phone-wrap">
+  <div class="phone">
+    <div class="phone-notch"></div>
+    <div class="sim-term" id="simTerm"></div>
+    <div class="drawer" style="position:relative;">
+      <div class="override-menu" id="overrideMenu"></div>
+      <div class="tabbar" id="tabbar"></div>
+      <div class="body" id="body"></div>
+    </div>
+  </div>
+</div>
+
+<div class="foot">
+  🔍 场景 = tmux 前台进程自动识别（<code>pane_current_command</code>）· 误判兜底：点击 Tab 行最左的橙色场景徽章 → 二级菜单切换/添加 · 每 Tab 按使用热度降序
+</div>
+
+<script>
+// === Scene definitions ===
+const SCENES = {
+  terminal: {
+    name: '终端',
+    icon: '🖥️',
+    detect: 'bash / zsh / fish (兜底)',
+    term: [
+      ['<span class="p-green">➜ ~/project</span> ls -la'],
+      ['<span class="p-cyan">drwxr-xr-x</span>  12 yuebiao  4096 Apr 19 10:22 <span class="p-blue">public</span>'],
+      ['<span class="p-cyan">drwxr-xr-x</span>   8 yuebiao  4096 Apr 19 10:22 <span class="p-blue">server</span>'],
+      ['<span class="p-green">➜ ~/project</span> git status'],
+      ['<span class="p-green">➜ ~/project</span> <span class="cursor"></span>'],
+    ],
+    tabs: [
+      { key: 'common', name: '常用', content: 'terminal_common' },
+      { key: 'keys',   name: '按键', content: 'terminal_keys' },
+      { key: 'cmd',    name: '命令', content: 'terminal_cmd' },
+      { key: 'tpl',    name: '模板', content: 'terminal_tpl' },
+    ],
+  },
+  claude: {
+    name: 'Claude',
+    icon: '🤖',
+    detect: 'claude / claude-code 进程',
+    term: [
+      ['<span class="p-cyan">╭────────────────────────╮</span>'],
+      ['<span class="p-cyan">│</span> <span class="p-yellow">✻</span> Claude 4.7 Opus   <span class="p-cyan">│</span>'],
+      ['<span class="p-cyan">╰────────────────────────╯</span>'],
+      [''],
+      ['<span class="p-green">&gt;</span> 帮我重构 renderDrawer 函数...'],
+      ['<span class="p-yellow">⏺</span> 我来分析当前结构 <span class="cursor"></span>'],
+    ],
+    tabs: [
+      { key: 'common', name: '常用', content: 'claude_common' },
+      { key: 'keys',   name: '按键', content: 'claude_keys' },
+      { key: 'slash',  name: 'Slash', content: 'claude_slash' },
+      { key: 'tpl',    name: '模板', content: 'claude_tpl' },
+    ],
+  },
+  vim: {
+    name: 'Vim',
+    icon: '📝',
+    detect: 'vim / nvim / lazyvim',
+    term: [
+      ['<span class="p-cyan">  1 </span>function renderDrawer() {'],
+      ['<span class="p-cyan">  2 </span>  drawerEl.innerHTML = \'\';'],
+      ['<span class="p-cyan">  3 </span>  var TABS = [...];'],
+      ['<span class="p-cyan">  4 </span>  <span class="cursor"></span>'],
+      ['<span class="p-cyan">~ </span>'],
+      ['<span class="p-yellow">-- INSERT --</span>                 <span class="p-blue">4,3</span>  Top'],
+    ],
+    tabs: [
+      { key: 'common', name: '常用', content: 'vim_common' },
+      { key: 'keys',   name: '按键', content: 'vim_keys' },
+      { key: 'cmd',    name: '命令', content: 'vim_cmd' },
+      { key: 'motion', name: '移动', content: 'vim_motion' },
+    ],
+  },
+  lazygit: {
+    name: 'Lazygit',
+    icon: '🌿',
+    detect: 'lazygit 进程',
+    term: [
+      ['<span class="p-green">╭─ 1. Status ─╮</span> <span class="p-cyan">╭─ 2. Files ─────────────────╮</span>'],
+      ['<span class="p-green">│ master    ✓ │</span> <span class="p-cyan">│</span> <span class="p-yellow">M </span>public/demo/toolbar.html  <span class="p-cyan">│</span>'],
+      ['<span class="p-green">│ 3 ahead   2 │</span> <span class="p-cyan">│</span> <span class="p-green">? </span>server/api/notif.js       <span class="p-cyan">│</span>'],
+      ['<span class="p-green">╰─────────────╯</span> <span class="p-cyan">╰────────────────────────────╯</span>'],
+      ['<span class="p-cyan">╭─ 3. Branches ╮ ╭─ 5. Commits ───────────────╮</span>'],
+      ['<span class="p-cyan">│ * master     │ │</span> <span class="p-yellow">a3f8</span> feat: fab drawer      <span class="p-cyan">│</span>'],
+      ['<span class="p-cyan">╰──────────────╯ ╰────────────────────────────╯</span> <span class="cursor"></span>'],
+    ],
+    tabs: [
+      { key: 'common', name: '常用', content: 'lazygit_common' },
+      { key: 'action', name: '操作', content: 'lazygit_action' },
+      { key: 'panel',  name: '面板', content: 'lazygit_panel' },
+      { key: 'branch', name: '分支', content: 'lazygit_branch' },
+    ],
+  },
+};
+
+// === Tab body renderers ===
+const BODIES = {
+  // --- Terminal ---
+  terminal_common(body) {
+    secFixture(body, '方向键 + Tab + Ctrl-C + Ctrl-R', () => {
+      const wrap = document.createElement('div');
+      const p = document.createElement('div'); p.className = 'arrow-pad';
+      [['Esc'], ['↑'], ['↵'], ['←'], ['↓'], ['→']].forEach(([l]) => add(p, btn(l, '', null)));
+      wrap.appendChild(p);
+      const g = grid(4);
+      add(g, btn('Tab', 'accent', null));
+      add(g, btn('C-c', 'red', null));
+      add(g, btn('C-r', '', null));
+      add(g, btn('C-l', '', null));
+      wrap.appendChild(g);
+      return wrap;
+    });
+    sec(body, '<span class="tag-heat">热度</span>Top 8 · <span style="color:var(--accent-green)">discover 注入</span>', 'Android/ARMCLOUD 开发者画像', () => {
+      const g = grid(2);
+      add(g, btn('adb logcat | grep', 'accent wide', 55));
+      add(g, btn('adb -s 192.168.50.134', 'accent wide', 42));
+      add(g, btn('./gradlew assembleDebug', 'orange wide', 16));
+      add(g, btn('reboot', 'red wide', 24));
+      add(g, btn('ls -al', 'green wide', 47));
+      add(g, btn('grep -r ...', '', 9));
+      add(g, btn('cat Xorg.0.log | grep', 'wide', 13));
+      add(g, btn('sudo mhwd -r nvidia', 'red wide', 20));
+      return g;
+    });
+    sec(body, '最近使用', null, () => {
+      const c = document.createElement('div'); c.className = 'chips';
+      ['adb connect', 'lsmod | grep nvidia', 'python jacobi.py', 'source build/envsetup.sh', 'sudo systemctl restart sddm'].forEach(l => c.appendChild(chip(l)));
+      return c;
+    });
+  },
+  terminal_keys(body) {
+    sec(body, '方向键', null, () => {
+      const p = document.createElement('div'); p.className = 'arrow-pad';
+      [['Esc', 42], ['↑', 128], ['↵', 210], ['←', 56], ['↓', 134], ['→', 60]].forEach(([l, h]) => add(p, btn(l, '', h)));
+      return p;
+    });
+    sec(body, '控制键 · 按热度', null, () => {
+      const g = grid(4);
+      [['C-c', 188], ['C-d', 74], ['C-l', 55], ['C-r', 48], ['C-a', 22], ['C-e', 19], ['C-u', 12], ['C-w', 8]].forEach(([l, h]) => add(g, btn(l, '', h)));
+      add(g, btn('+', 'accent'));
+      return g;
+    });
+    sec(body, '符号', null, () => {
+      const g = grid(4);
+      [['|', 18], ['&&', 24], ['>', 10], ['~', 7], ['$', 12], ['()', 5], ['[]', 4], ['""', 3]].forEach(([l, h]) => add(g, btn(l, '', h)));
+      return g;
+    });
+  },
+  terminal_cmd(body) {
+    sec(body, '常用命令 · 按热度', null, () => {
+      const c = document.createElement('div'); c.className = 'chips';
+      [['clear', 41], ['exit', 9], ['history', 18], ['reset', 5], ['pwd', 22], ['whoami', 3]].forEach(([l, h]) => c.appendChild(chip(l, h)));
+      c.appendChild(chipAdd()); return c;
+    });
+  },
+  terminal_tpl(body) {
+    sec(body, '快捷模板 · 按热度', null, () => {
+      const box = document.createElement('div');
+      [['git status', 92], ['docker ps -a', 45], ['kubectl get pods -A', 31],
+       ['tmux attach -t main', 17], ['npm run dev', 12]].forEach(([l, h]) => box.appendChild(tpl(l, h)));
+      box.appendChild(tplAdd()); return box;
+    });
+  },
+
+  // --- Claude ---
+  claude_common(body) {
+    secFixture(body, '方向键 + Alt+T + Ctrl+O + Esc + Shift+Tab', () => {
+      const wrap = document.createElement('div');
+      const p = document.createElement('div'); p.className = 'arrow-pad';
+      [['Esc'], ['↑'], ['↵'], ['←'], ['↓'], ['→']].forEach(([l]) => add(p, btn(l, l === 'Esc' ? 'red' : '', null)));
+      wrap.appendChild(p);
+      const g = grid(2);
+      add(g, btn('Alt+T 思考', 'orange', null));
+      add(g, btn('Ctrl+O 详细', 'orange', null));
+      add(g, btn('Shift+Tab 模式', '', null));
+      add(g, btn('Ctrl+J 换行', '', null));
+      wrap.appendChild(g);
+      return wrap;
+    });
+    sec(body, '<span class="tag-heat">热度</span>Top 8 · <span style="color:var(--accent-green)">discover 注入</span>', 'PUA 重度用户 + Android 开发栈', () => {
+      const g = grid(2);
+      add(g, btn('/pua:p9', 'purple wide', 20));
+      add(g, btn('/pua:pua-loop', 'purple wide', 18));
+      add(g, btn('/work-log', 'accent wide', 16));
+      add(g, btn('/arm-cloud-ctl', 'orange wide', 14));
+      add(g, btn('/project-map', 'accent wide', 12));
+      add(g, btn('/deploy-android-container', 'orange wide', 10));
+      add(g, btn('/webapp-testing', 'accent wide', 9));
+      add(g, btn('/pua:mama', 'purple wide', 8));
+      return g;
+    });
+    sec(body, '最近使用', null, () => {
+      const c = document.createElement('div'); c.className = 'chips';
+      ['/pua:yes', '/archkb-capture', '/local-board-deploy', '/ui-ux-pro-max', '/pua:flavor'].forEach(l => c.appendChild(chip(l)));
+      return c;
+    });
+  },
+  claude_keys(body) {
+    sec(body, 'Claude 专属', null, () => {
+      const g = grid(2);
+      [['Alt+T 思考', 77], ['Ctrl+O 详细', 23], ['Shift+Tab 切换', 15], ['Esc 中断', 35]].forEach(([l, h]) => add(g, btn(l, 'orange', h)));
+      return g;
+    });
+    sec(body, '通用', null, () => {
+      const g = grid(4);
+      [['↵', 210, 'accent'], ['Esc', 35, ''], ['↑', 88, ''], ['↓', 64, '']].forEach(([l, h, k]) => add(g, btn(l, k, h)));
+      return g;
+    });
+  },
+  claude_slash(body) {
+    sec(body, 'Slash Commands · 按热度', null, () => {
+      const c = document.createElement('div'); c.className = 'chips';
+      [['/plan', 64], ['/review', 42], ['/test', 31], ['/commit', 28],
+       ['/refactor', 15], ['/explain', 9], ['/init', 5]].forEach(([l, h]) => c.appendChild(chip(l, h)));
+      c.appendChild(chipAdd()); return c;
+    });
+  },
+  claude_tpl(body) {
+    sec(body, 'Prompt 模板 · 按热度', null, () => {
+      const box = document.createElement('div');
+      [['请分析这段代码的性能瓶颈', 28], ['用 TDD 实现这个功能', 17],
+       ['写一份 PR 描述并列出测试点', 12], ['帮我重构，保持接口不变', 9]].forEach(([l, h]) => box.appendChild(tpl(l, h)));
+      box.appendChild(tplAdd()); return box;
+    });
+  },
+
+  // --- Vim ---
+  vim_common(body) {
+    secFixture(body, 'Esc 大键 + Space Leader + 方向键 + Ctrl+S', () => {
+      const wrap = document.createElement('div');
+      const spaceLeader = document.createElement('button');
+      spaceLeader.className = 'btn purple';
+      spaceLeader.style.cssText = 'width:100%;height:48px;font-size:14px;margin-bottom:6px;';
+      spaceLeader.innerHTML = '⎵ Space (Leader · 导航中心)';
+      wrap.appendChild(spaceLeader);
+      const escBig = document.createElement('button');
+      escBig.className = 'btn red';
+      escBig.style.cssText = 'width:100%;height:44px;font-size:14px;margin-bottom:6px;';
+      escBig.textContent = 'Esc (返回 Normal)';
+      wrap.appendChild(escBig);
+      const p = document.createElement('div'); p.className = 'arrow-pad';
+      [['Esc'], ['↑'], ['↵'], ['←'], ['↓'], ['→']].forEach(([l]) => add(p, btn(l, '', null)));
+      wrap.appendChild(p);
+      const g = grid(2);
+      add(g, btn('Ctrl+S 保存', 'green', null));
+      add(g, btn(':wq', 'accent', null));
+      wrap.appendChild(g);
+      return wrap;
+    });
+    sec(body, '<span class="tag-heat">热度</span>Top 8 · <span style="color:var(--accent-green)">discover 注入</span>', 'LazyVim + Space Leader + avante AI', () => {
+      const g = grid(2);
+      add(g, btn('⎵ff 文件查找', 'purple wide', 20));
+      add(g, btn('⎵fw 全局搜索', 'purple wide', 18));
+      add(g, btn('⎵gg LazyGit', 'orange wide', 16));
+      add(g, btn('⎵e 文件树', 'purple wide', 14));
+      add(g, btn('⎵cf 格式化', 'purple wide', 12));
+      add(g, btn('⎵cd 诊断浮窗', 'purple wide', 10));
+      add(g, btn('⎵mp MD 预览', 'accent wide', 9));
+      add(g, btn('Ctrl+hjkl 窗口导航', 'wide', 8));
+      return g;
+    });
+    sec(body, '最近使用', null, () => {
+      const c = document.createElement('div'); c.className = 'chips';
+      ['⎵l Lazy', '⎵fp 插件', '⎵bd 关 Buffer', '⎵qq 退出全部', ']d 下个诊断', 'Alt-j 移行'].forEach(l => c.appendChild(chip(l)));
+      return c;
+    });
+  },
+  vim_keys(body) {
+    sec(body, '常用单键 · 按热度', null, () => {
+      const g = grid(4);
+      [['Esc', 320, 'red'], ['dd', 74, ''], ['yy', 52, ''], ['p', 48, ''],
+       ['u', 38, ''], ['C-r', 24, ''], ['o', 22, ''], ['i', 19, ''],
+       ['a', 14, ''], ['x', 12, ''], ['.', 9, ''], ['*', 6, '']].forEach(([l, h, k]) => add(g, btn(l, k, h)));
+      return g;
+    });
+    sec(body, '可视模式', null, () => {
+      const g = grid(4);
+      [['v', 18], ['V', 12], ['C-v', 8], ['y', 15], ['d', 14], ['c', 7], ['>', 5], ['<', 4]].forEach(([l, h]) => add(g, btn(l, '', h)));
+      return g;
+    });
+  },
+  vim_cmd(body) {
+    sec(body, 'Ex 命令 · 按热度', null, () => {
+      const g = grid(2);
+      [[':w', 180], [':wq', 88], [':q', 95], [':q!', 55],
+       [':%s/', 34], [':set nu', 18], [':e ', 15], [':bn', 9]].forEach(([l, h]) => add(g, btn(l, 'accent wide', h)));
+      return g;
+    });
+    sec(body, 'Plugin · 按热度', null, () => {
+      const c = document.createElement('div'); c.className = 'chips';
+      [[':Git status', 28], [':Telescope', 22], [':NvimTreeToggle', 15], [':LazyGit', 12]].forEach(([l, h]) => c.appendChild(chip(l, h)));
+      c.appendChild(chipAdd()); return c;
+    });
+  },
+  vim_motion(body) {
+    sec(body, 'HJKL', null, () => {
+      const g = grid(4);
+      [['h', 55], ['j', 88], ['k', 76], ['l', 62]].forEach(([l, h]) => add(g, btn(l, '', h)));
+      return g;
+    });
+    sec(body, '跳转 · 按热度', null, () => {
+      const g = grid(4);
+      [['gg', 44], ['G', 38], ['0', 28], ['$', 26],
+       ['w', 22], ['b', 18], ['e', 12], ['%', 9],
+       ['{', 6], ['}', 5], ['(', 3], [')', 3]].forEach(([l, h]) => add(g, btn(l, '', h)));
+      return g;
+    });
+  },
+
+  // --- Lazygit ---
+  lazygit_common(body) {
+    secFixture(body, '方向键 + Enter + Esc + Space + q', () => {
+      const wrap = document.createElement('div');
+      const p = document.createElement('div'); p.className = 'arrow-pad';
+      [['Esc'], ['↑'], ['↵'], ['←'], ['↓'], ['→']].forEach(([l]) => add(p, btn(l, l === 'Esc' ? 'red' : '', null)));
+      wrap.appendChild(p);
+      const g = grid(3);
+      add(g, btn('Space 暂存', 'accent', null));
+      add(g, btn('Tab 面板', '', null));
+      add(g, btn('q 退出', 'red', null));
+      wrap.appendChild(g);
+      return wrap;
+    });
+    sec(body, '<span class="tag-heat">热度</span>Top 8 混排', '14 天半衰期', () => {
+      const g = grid(4);
+      add(g, btn('c 提交', 'green', 142));
+      add(g, btn('P 推送', 'green', 98));
+      add(g, btn('p 拉取', 'green', 76));
+      add(g, btn('a 全选', '', 64));
+      add(g, btn('A 合并提交', 'orange', 55));
+      add(g, btn('R 变基', 'orange', 44));
+      add(g, btn('d 丢弃', 'red', 38));
+      add(g, btn('? 帮助', 'purple', 28));
+      return g;
+    });
+    sec(body, '最近使用', null, () => {
+      const c = document.createElement('div'); c.className = 'chips';
+      ['s 暂存', 'D reset', 'M merge', 'C copy sha', 'n 新分支'].forEach(l => c.appendChild(chip(l)));
+      return c;
+    });
+  },
+  lazygit_action(body) {
+    sec(body, '文件操作', null, () => {
+      const g = grid(4);
+      [['Space 暂存', 188, 'accent'], ['a 全选', 64, ''], ['d 丢弃', 38, 'red'],
+       ['e 编辑', 28, ''], ['o 打开', 22, ''], ['M 拉到', 15, ''],
+       ['s stash', 44, ''], ['S 全 stash', 9, '']].forEach(([l, h, k]) => add(g, btn(l, k, h)));
+      return g;
+    });
+    sec(body, '提交操作', null, () => {
+      const g = grid(2);
+      [['c 提交', 142, 'green'], ['A 合并提交 amend', 55, 'orange'],
+       ['C commit msg', 33, 'green'], ['w 空提交', 8, '']].forEach(([l, h, k]) => add(g, btn(l, k + ' wide', h)));
+      return g;
+    });
+    sec(body, '同步', null, () => {
+      const g = grid(3);
+      [['P 推送', 98, 'green'], ['p 拉取', 76, 'green'], ['f fetch', 35, '']].forEach(([l, h, k]) => add(g, btn(l, k, h)));
+      return g;
+    });
+  },
+  lazygit_panel(body) {
+    secFixture(body, '面板数字键', () => {
+      const g = grid(5);
+      [['1 状态'], ['2 文件'], ['3 分支'], ['4 提交'], ['5 暂存']].forEach(([l]) => add(g, btn(l, 'accent', null)));
+      return g;
+    });
+    sec(body, '切面板', null, () => {
+      const g = grid(2);
+      [['Tab 下一个', 98], ['Shift+Tab 上一个', 42]].forEach(([l, h]) => add(g, btn(l, 'wide', h)));
+      return g;
+    });
+    sec(body, '视图', null, () => {
+      const g = grid(3);
+      [['] 下一 tab', 22], ['[ 上一 tab', 18], [': ex 命令', 11]].forEach(([l, h]) => add(g, btn(l, '', h)));
+      return g;
+    });
+  },
+  lazygit_branch(body) {
+    sec(body, '分支操作 · 按热度', null, () => {
+      const g = grid(2);
+      [['n 新建分支', 55, 'green'], ['Space 切换', 98, 'accent'],
+       ['M merge', 44, 'orange'], ['R rebase', 38, 'orange'],
+       ['d 删除', 22, 'red'], ['F 拉最新', 18, ''],
+       ['r 重命名', 9, ''], ['g reset hard', 6, 'red']].forEach(([l, h, k]) => add(g, btn(l, k + ' wide', h)));
+      return g;
+    });
+    sec(body, 'Rebase 子菜单', null, () => {
+      const c = document.createElement('div'); c.className = 'chips';
+      [['s squash', 28], ['f fixup', 22], ['e edit', 15], ['d drop', 9], ['p pick', 7]].forEach(([l, h]) => c.appendChild(chip(l, h)));
+      return c;
+    });
+  },
+};
+
+// === Helpers ===
+function sec(parent, label, meta, contentFn) {
+  const s = document.createElement('div'); s.className = 'section';
+  const lbl = document.createElement('div'); lbl.className = 'section-label';
+  lbl.innerHTML = `<span>${label}</span>${meta ? `<span class="meta">${meta}</span>` : ''}`;
+  s.appendChild(lbl);
+  s.appendChild(contentFn());
+  parent.appendChild(s);
+}
+function secFixture(parent, label, contentFn) {
+  const s = document.createElement('div'); s.className = 'section';
+  const lbl = document.createElement('div'); lbl.className = 'section-label';
+  lbl.innerHTML = `<span><span class="tag-fix">固定</span>${label}</span><span class="meta">不参与热度</span>`;
+  s.appendChild(lbl);
+  const wrap = document.createElement('div'); wrap.className = 'fixture-wrap';
+  wrap.appendChild(contentFn());
+  s.appendChild(wrap);
+  parent.appendChild(s);
+}
+function grid(cols) { const g = document.createElement('div'); g.className = 'grid' + cols; return g; }
+function add(p, el) { p.appendChild(el); }
+function btn(label, klass, heat) {
+  const b = document.createElement('button');
+  b.className = 'btn' + (klass ? ' ' + klass : '');
+  b.innerHTML = label + (heat != null ? `<span class="heat${heat < 15 ? ' dim' : ''}">${heat}</span>` : '');
+  return b;
+}
+function chip(label, heat) {
+  const c = document.createElement('button');
+  c.className = 'chip';
+  c.innerHTML = label + (heat != null ? `<span class="heat${heat < 15 ? ' dim' : ''}">${heat}</span>` : '');
+  return c;
+}
+function chipAdd() { const c = document.createElement('button'); c.className = 'chip add'; c.textContent = '+ 添加'; return c; }
+function tpl(label, heat) {
+  const d = document.createElement('div'); d.className = 'tpl-item';
+  d.innerHTML = label + `<span class="heat${heat < 15 ? ' dim' : ''}">${heat}</span>`;
+  return d;
+}
+function tplAdd() { const d = document.createElement('div'); d.className = 'tpl-item add'; d.textContent = '+ 添加自定义模板'; return d; }
+
+// === Render ===
+let currentScene = 'terminal';
+let currentTab = 0;
+
+function render() {
+  const scene = SCENES[currentScene];
+  if (currentTab >= scene.tabs.length) currentTab = 0;
+
+  // Terminal simulation
+  const term = document.getElementById('simTerm');
+  term.innerHTML = scene.term.map(lines => `<div>${lines[0]}</div>`).join('');
+
+  // Tab bar with inline scene badge on the left
+  const tb = document.getElementById('tabbar');
+  tb.innerHTML = '';
+
+  const sceneBadge = document.createElement('div');
+  sceneBadge.className = 'scene-inline';
+  sceneBadge.innerHTML = `<span class="dot"></span><span class="icn">${scene.icon}</span>${scene.name}<span class="hint-lp">长按改</span>`;
+  sceneBadge.addEventListener('click', toggleOverride);
+  tb.appendChild(sceneBadge);
+
+  scene.tabs.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.className = (i === currentTab ? 'active' : '');
+    b.textContent = t.name;
+    b.addEventListener('click', () => { currentTab = i; render(); });
+    tb.appendChild(b);
+  });
+  const kbd = document.createElement('button'); kbd.className = 'icon-btn'; kbd.textContent = '⌨'; tb.appendChild(kbd);
+  const close = document.createElement('button'); close.className = 'icon-btn'; close.textContent = '✕'; tb.appendChild(close);
+
+  // Override menu (hidden by default)
+  renderOverrideMenu();
+
+  // Body
+  const body = document.getElementById('body');
+  body.innerHTML = '';
+  const fn = BODIES[scene.tabs[currentTab].content];
+  if (fn) fn(body);
+
+  // Description
+  const d = document.getElementById('desc');
+  d.innerHTML = `
+    <b>当前场景：${scene.icon} ${scene.name}</b>（自动检测信号：<code>${scene.detect}</code>）· <b>零手动选择</b>，抽屉顶部只有 Tab 行<br>
+    Tab 结构：<code>${scene.tabs.map(t => t.name).join(' / ')}</code>，第一个永远是"常用"（本场景 Top N + 最近），其余按输入形态（按键 / 命令 / Slash / 模板 等）。<br>
+    <span class="pros">✓ 激进自动切场景 · <b style="color:var(--accent-purple)">Fixture</b> + <b style="color:var(--accent-orange)">Heat Top 8</b> + 最近使用 · <b style="color:var(--accent-green)">Top 8 由 /api/scene/discover 扫描你本机生成</b></span><br>
+    <span class="cons">△ Demo 里展示的 Top 8 = 基于 4 个并行 agent 真实扫描你本机结果：终端(.bash_history 437 条) + Claude(36 skills) + Vim(LazyVim+avante) + Lazygit(极简)</span>
+  `;
+}
+
+function renderOverrideMenu() {
+  const m = document.getElementById('overrideMenu');
+  m.innerHTML = '';
+  const t = document.createElement('div'); t.className = 'mtitle';
+  t.textContent = '手动切换场景（误判兜底）'; m.appendChild(t);
+  Object.entries(SCENES).forEach(([key, s]) => {
+    const it = document.createElement('div');
+    it.className = 'mitem' + (key === currentScene ? ' current' : '');
+    it.innerHTML = `<span style="font-size:15px">${s.icon}</span> ${s.name}` +
+      (key === currentScene ? '<span style="margin-left:auto;font-size:10px">● 当前</span>' : '');
+    it.addEventListener('click', () => {
+      currentScene = key; currentTab = 0;
+      m.classList.remove('show');
+      render(); syncToolbar();
+    });
+    m.appendChild(it);
+  });
+  const addIt = document.createElement('div');
+  addIt.className = 'mitem add';
+  addIt.innerHTML = '＋ 添加新场景（名称 + 检测规则）';
+  m.appendChild(addIt);
+}
+function toggleOverride() {
+  document.getElementById('overrideMenu').classList.toggle('show');
+}
+document.addEventListener('click', (e) => {
+  const m = document.getElementById('overrideMenu');
+  if (!m.contains(e.target) && !e.target.closest('.scene-inline')) m.classList.remove('show');
+});
+
+function syncToolbar() {
+  document.querySelectorAll('.toolbar button[data-scene]').forEach(b => {
+    b.classList.toggle('active', b.dataset.scene === currentScene);
+  });
+}
+
+document.querySelectorAll('.toolbar button[data-scene]').forEach(b => {
+  b.addEventListener('click', () => {
+    currentScene = b.dataset.scene;
+    currentTab = 0;
+    render(); syncToolbar();
+    // Flash badge to indicate aggressive auto-switch
+    const badge = document.querySelector('.scene-inline');
+    if (badge) {
+      badge.classList.remove('flash');
+      void badge.offsetWidth;
+      badge.classList.add('flash');
+    }
+  });
+});
+
+render();
+</script>
+</body>
+</html>

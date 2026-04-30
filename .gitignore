@@ -2,3 +2,8 @@ node_modules/
 .env
 .superpowers/
 *.pem
+.playwright-mcp/
+docs/superpowers/
+
+# Root-level temp screenshots (project screenshots live in public/screenshots/)
+/*.png

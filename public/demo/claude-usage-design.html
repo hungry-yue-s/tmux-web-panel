@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Usage — 整合布局设计</title>
+<style>
+:root {
+  --bg-primary: #1a1b26;
+  --bg-deep: #16161e;
+  --bg-card: #24283b;
+  --bg-hover: #292e42;
+  --border: #3b4261;
+  --border-subtle: #2f3450;
+  --text-primary: #c0caf5;
+  --text-secondary: #a9b1d6;
+  --text-muted: #565f89;
+  --accent-blue: #7aa2f7;
+  --accent-green: #9ece6a;
+  --accent-red: #f7768e;
+  --accent-yellow: #e0af68;
+  --accent-purple: #bb9af7;
+  --accent-orange: #f6a623;
+  --accent-cyan: #7dcfff;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, 'SF Pro Text', sans-serif; background: var(--bg-primary); color: var(--text-primary); padding: 12px; }
+
+/* Layout */
+.claude-panel { max-width: 780px; margin: 0 auto; }
+.section-title { font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 16px 0 8px; font-weight: 600; }
+.section-title:first-child { margin-top: 0; }
+
+/* Row layouts */
+.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.row-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; }
+.row-1-2 { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; }
+@media (max-width: 600px) {
+  .row-2, .row-3, .row-2-1, .row-1-2 { grid-template-columns: 1fr; }
+}
+
+.card { background: var(--bg-deep); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 12px; }
+.card-label { font-size: 0.65rem; color: var(--text-muted); margin-bottom: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* ====== Tier 1: Subscription Status (hero zone) ====== */
+.sub-hero { background: var(--bg-deep); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 14px; }
+.sub-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.sub-plan { display: flex; align-items: center; gap: 8px; }
+.sub-plan-badge { background: var(--accent-purple); color: #1a1b26; font-size: 0.65rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+.sub-plan-tier { font-size: 0.68rem; color: var(--text-muted); }
+.sub-extra { display: flex; align-items: center; gap: 6px; }
+.sub-extra-badge { font-size: 0.6rem; color: var(--accent-green); background: #1a3a2a; border: 1px solid #264d35; padding: 2px 6px; border-radius: 3px; }
+.sub-extra-text { font-size: 0.68rem; color: var(--text-muted); }
+
+.sub-meters { display: flex; flex-direction: column; gap: 8px; }
+.meter { display: flex; align-items: center; gap: 8px; }
+.meter-label { font-size: 0.7rem; color: var(--text-secondary); width: 90px; text-align: right; flex-shrink: 0; }
+.meter-track { flex: 1; height: 16px; background: var(--bg-card); border-radius: 3px; overflow: hidden; position: relative; }
+.meter-fill { height: 100%; border-radius: 3px; transition: width 0.8s ease; }
+.meter-fill.green { background: var(--accent-green); }
+.meter-fill.yellow { background: var(--accent-yellow); }
+.meter-fill.red { background: var(--accent-red); }
+.meter-val { font-size: 0.72rem; font-weight: 600; width: 36px; text-align: right; flex-shrink: 0; }
+.meter-reset { font-size: 0.6rem; color: var(--text-muted); margin-left: 98px; }
+
+.extra-meter { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-subtle); }
+.extra-meter .meter-track { height: 8px; }
+.extra-meter .meter-fill { background: var(--accent-blue); }
+.extra-nums { display: flex; justify-content: space-between; font-size: 0.62rem; color: var(--text-muted); margin-top: 3px; margin-left: 98px; }
+
+/* ====== Tier 2: Quick stats ====== */
+.qs { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 10px 8px; }
+.qs .val { font-size: 1.15rem; font-weight: 700; }
+.qs .label { font-size: 0.6rem; color: var(--text-muted); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
+.qs .sub { font-size: 0.55rem; color: var(--accent-blue); margin-top: 1px; }
+
+/* ====== Model + Cache side by side ====== */
+.model-dist { display: flex; gap: 10px; align-items: center; }
+.donut-wrap { width: 64px; height: 64px; flex-shrink: 0; }
+.model-list { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.model-row { display: flex; align-items: center; gap: 5px; }
+.model-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.model-name { font-size: 0.68rem; color: var(--text-secondary); flex: 1; }
+.model-val { font-size: 0.68rem; color: var(--text-muted); font-family: monospace; }
+
+.cache-row { display: flex; gap: 10px; align-items: center; }
+.cache-gauge { width: 56px; height: 56px; flex-shrink: 0; position: relative; }
+.cache-gauge-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 0.85rem; font-weight: 700; color: var(--accent-green); }
+.cache-detail { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.cache-item { display: flex; justify-content: space-between; font-size: 0.68rem; }
+.cache-item .k { color: var(--text-muted); }
+.cache-item .v { font-family: monospace; }
+
+/* ====== Trend ====== */
+.trend-svg { width: 100%; height: 80px; display: block; }
+.trend-legend { display: flex; gap: 12px; margin-top: 4px; }
+.trend-legend-item { display: flex; align-items: center; gap: 3px; font-size: 0.6rem; color: var(--text-muted); }
+.trend-legend-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+/* ====== Hours bar chart ====== */
+.hours-chart { display: flex; align-items: flex-end; gap: 1px; height: 52px; padding: 0 2px; }
+.hour-bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 0; min-width: 0; }
+.hour-bar { width: 100%; border-radius: 2px 2px 0 0; min-height: 2px; transition: height 0.3s; }
+.hour-bar.h0 { background: var(--bg-card); }
+.hour-bar.h1 { background: #1a3a2a; }
+.hour-bar.h2 { background: #264d35; }
+.hour-bar.h3 { background: #357a4a; }
+.hour-bar.h4 { background: var(--accent-green); }
+.hours-labels { display: flex; gap: 1px; padding: 0 2px; margin-top: 3px; }
+.hours-labels span { flex: 1; text-align: center; font-size: 0.45rem; color: var(--text-muted); min-width: 0; }
+.hours-labels span.dim { color: transparent; }
+.hour-peak { font-size: 0.55rem; color: var(--accent-green); text-align: right; margin-top: 4px; }
+
+.tool-bars { display: flex; flex-direction: column; gap: 4px; }
+.tool-row { display: flex; align-items: center; gap: 5px; }
+.tool-name { font-size: 0.62rem; color: var(--text-muted); width: 44px; text-align: right; font-family: monospace; }
+.tool-bar-wrap { flex: 1; height: 12px; background: var(--bg-card); border-radius: 3px; overflow: hidden; }
+.tool-bar { height: 100%; border-radius: 3px; }
+.tool-count { font-size: 0.62rem; color: var(--text-muted); width: 30px; font-family: monospace; }
+
+/* ====== Code output (inline in stats row) ====== */
+.code-inline { display: flex; align-items: center; gap: 4px; font-size: 0.68rem; }
+
+/* ====== Token Table ====== */
+.token-table { width: 100%; border-collapse: collapse; font-size: 0.68rem; font-family: monospace; }
+.token-table th { color: var(--text-muted); font-weight: 600; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+.token-table td { padding: 5px 8px; border-bottom: 1px solid var(--border-subtle); vertical-align: middle; }
+.token-table .col-date { text-align: left; color: var(--text-secondary); font-weight: 600; font-family: -apple-system, sans-serif; white-space: nowrap; }
+.token-table th.col-date { text-align: left; }
+.token-table .col-num { text-align: right; color: var(--text-primary); }
+.token-table .col-total { color: var(--accent-blue); font-weight: 600; }
+.token-table .col-cost { color: var(--accent-yellow); font-weight: 600; }
+.token-table .row-alt td { background: rgba(36,40,59,0.4); }
+.token-table tfoot td { border-top: 1px solid var(--border); border-bottom: none; font-weight: 600; padding-top: 8px; }
+.token-table tfoot .col-total { color: var(--accent-blue); }
+.token-table tfoot .col-cost { color: var(--accent-yellow); }
+.model-tag { font-size: 0.58rem; padding: 1px 6px; border-radius: 3px; font-family: -apple-system, sans-serif; white-space: nowrap; }
+.model-tag.opus { background: rgba(122,162,247,0.15); color: var(--accent-blue); }
+.model-tag.sonnet { background: rgba(158,206,106,0.15); color: var(--accent-green); }
+.model-tag.haiku { background: rgba(187,154,247,0.15); color: var(--accent-purple); }
+
+/* ====== Sessions ====== */
+.session-list { display: flex; flex-direction: column; gap: 5px; }
+.session-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--bg-card); border-radius: 5px; }
+.session-main { flex: 1; min-width: 0; }
+.session-project { font-size: 0.7rem; color: var(--accent-blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-prompt { font-size: 0.62rem; color: var(--text-muted); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-meta { font-size: 0.62rem; color: var(--text-muted); display: flex; gap: 8px; flex-shrink: 0; }
+</style>
+</head>
+<body>
+<div class="claude-panel">
+
+<!-- ====== TIER 1: Subscription Status ====== -->
+<div class="sub-hero">
+  <div class="sub-top">
+    <div class="sub-plan">
+      <span class="sub-plan-badge">Max</span>
+      <span class="sub-plan-tier">claude_max_20x</span>
+    </div>
+    <div class="sub-extra">
+      <span class="sub-extra-badge">Extra Usage</span>
+      <span class="sub-extra-text">$53 / $200</span>
+    </div>
+  </div>
+  <div class="sub-meters">
+    <div class="meter">
+      <span class="meter-label">5h 窗口</span>
+      <div class="meter-track"><div class="meter-fill green" style="width:4%"></div></div>
+      <span class="meter-val">4%</span>
+    </div>
+    <div class="meter">
+      <span class="meter-label">7d 总量</span>
+      <div class="meter-track"><div class="meter-fill yellow" style="width:69%"></div></div>
+      <span class="meter-val">69%</span>
+    </div>
+    <div class="meter-reset">重置于 2026-04-24 06:00 UTC（剩余 5h 12m）</div>
+    <div class="meter">
+      <span class="meter-label">7d Sonnet</span>
+      <div class="meter-track"><div class="meter-fill green" style="width:9%"></div></div>
+      <span class="meter-val">9%</span>
+    </div>
+  </div>
+  <div class="extra-meter">
+    <div class="meter">
+      <span class="meter-label">Extra 本月</span>
+      <div class="meter-track"><div class="meter-fill" style="width:26.5%"></div></div>
+      <span class="meter-val">27%</span>
+    </div>
+    <div class="extra-nums"><span>$53.00 已用</span><span>$200.00 上限</span></div>
+  </div>
+</div>
+
+<!-- ====== TIER 2: Quick Numbers + Model + Cache ====== -->
+<div class="section-title">概览</div>
+<div class="row-3" style="margin-bottom:8px">
+  <div class="card qs"><div class="val">192</div><div class="label">总会话</div><div class="sub">自 2026-02-11</div></div>
+  <div class="card qs"><div class="val">14.2K</div><div class="label">总消息</div></div>
+  <div class="card qs">
+    <div class="code-inline">
+      <span style="color:var(--accent-green);font-weight:700">+12,847</span>
+      <span style="color:var(--text-muted)">/</span>
+      <span style="color:var(--accent-red);font-weight:700">-3,291</span>
+    </div>
+    <div class="label">代码行变更</div>
+    <div class="sub">403 commits</div>
+  </div>
+</div>
+<div class="row-2">
+  <div class="card">
+    <div class="card-label">模型分布</div>
+    <div class="model-dist">
+      <div class="donut-wrap">
+        <svg viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r="36" fill="none" stroke="var(--bg-card)" stroke-width="10"/>
+          <circle cx="50" cy="50" r="36" fill="none" stroke="var(--accent-blue)" stroke-width="10"
+            stroke-dasharray="140 86" stroke-dashoffset="0" transform="rotate(-90 50 50)"/>
+          <circle cx="50" cy="50" r="36" fill="none" stroke="var(--accent-green)" stroke-width="10"
+            stroke-dasharray="86 140" stroke-dashoffset="-140" transform="rotate(-90 50 50)"/>
+        </svg>
+      </div>
+      <div class="model-list">
+        <div class="model-row"><div class="model-dot" style="background:var(--accent-blue)"></div><span class="model-name">opus-4-6</span><span class="model-val">108.9M</span></div>
+        <div class="model-row"><div class="model-dot" style="background:var(--accent-green)"></div><span class="model-name">sonnet-4-5</span><span class="model-val">67.0M</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-label">缓存效率</div>
+    <div class="cache-row">
+      <div class="cache-gauge">
+        <svg viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r="36" fill="none" stroke="var(--bg-card)" stroke-width="8"/>
+          <circle cx="50" cy="50" r="36" fill="none" stroke="var(--accent-green)" stroke-width="8"
+            stroke-dasharray="204 22" stroke-dashoffset="0" transform="rotate(-90 50 50)" stroke-linecap="round"/>
+        </svg>
+        <div class="cache-gauge-text">90%</div>
+      </div>
+      <div class="cache-detail">
+        <div class="cache-item"><span class="k">Read</span><span class="v">296.6M</span></div>
+        <div class="cache-item"><span class="k">Write</span><span class="v">111.0M</span></div>
+        <div class="cache-item"><span class="k">Miss</span><span class="v">86.0K</span></div>
+        <div class="cache-item"><span class="k">节省</span><span class="v" style="color:var(--accent-green)">~$120</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ====== TIER 3: Trends ====== -->
+<div class="section-title">趋势</div>
+<div class="card">
+  <div class="card-label">每日活跃</div>
+  <svg class="trend-svg" viewBox="0 0 700 80" preserveAspectRatio="none">
+    <line x1="0" y1="20" x2="700" y2="20" stroke="var(--border-subtle)" stroke-width="0.5"/>
+    <line x1="0" y1="40" x2="700" y2="40" stroke="var(--border-subtle)" stroke-width="0.5"/>
+    <line x1="0" y1="60" x2="700" y2="60" stroke="var(--border-subtle)" stroke-width="0.5"/>
+    <path d="M0,12 L100,24 L200,56 L300,32 L400,38 L500,8 L600,36 L700,28 L700,80 L0,80Z" fill="rgba(122,162,247,0.1)"/>
+    <polyline points="0,12 100,24 200,56 300,32 400,38 500,8 600,36 700,28" fill="none" stroke="var(--accent-blue)" stroke-width="1.5"/>
+    <polyline points="0,65 100,45 200,72 300,72 400,52 500,40 600,60 700,72" fill="none" stroke="var(--accent-orange)" stroke-width="1.2" stroke-dasharray="3,2"/>
+  </svg>
+  <div class="trend-legend">
+    <div class="trend-legend-item"><div class="trend-legend-dot" style="background:var(--accent-blue)"></div>消息</div>
+    <div class="trend-legend-item"><div class="trend-legend-dot" style="background:var(--accent-orange)"></div>会话</div>
+  </div>
+</div>
+
+<!-- ====== TIER 3b: Daily Token Table ====== -->
+<div class="card" style="margin-top:8px; overflow-x:auto;">
+  <div class="card-label">每日 Token 明细</div>
+  <table class="token-table">
+    <thead>
+      <tr>
+        <th class="col-date">日期</th>
+        <th class="col-model">模型</th>
+        <th class="col-num">Input</th>
+        <th class="col-num">Output</th>
+        <th class="col-num">Cache Create</th>
+        <th class="col-num">Cache Read</th>
+        <th class="col-num col-total">Total</th>
+        <th class="col-num col-cost">Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="col-date" rowspan="2">04-23</td>
+        <td><span class="model-tag opus">opus-4-7</span></td>
+        <td class="col-num">2.1K</td>
+        <td class="col-num">18.4K</td>
+        <td class="col-num">52.0K</td>
+        <td class="col-num">1.2M</td>
+        <td class="col-num col-total">1.27M</td>
+        <td class="col-num col-cost" rowspan="2">$3.42</td>
+      </tr>
+      <tr>
+        <td><span class="model-tag haiku">haiku-4-5</span></td>
+        <td class="col-num">0.8K</td>
+        <td class="col-num">2.1K</td>
+        <td class="col-num">4.5K</td>
+        <td class="col-num">38.2K</td>
+        <td class="col-num col-total">45.6K</td>
+      </tr>
+      <tr class="row-alt">
+        <td class="col-date" rowspan="2">04-22</td>
+        <td><span class="model-tag opus">opus-4-7</span></td>
+        <td class="col-num">3.8K</td>
+        <td class="col-num">24.1K</td>
+        <td class="col-num">68.3K</td>
+        <td class="col-num">2.4M</td>
+        <td class="col-num col-total">2.50M</td>
+        <td class="col-num col-cost" rowspan="2">$5.71</td>
+      </tr>
+      <tr class="row-alt">
+        <td><span class="model-tag sonnet">sonnet-4-6</span></td>
+        <td class="col-num">1.2K</td>
+        <td class="col-num">5.6K</td>
+        <td class="col-num">12.1K</td>
+        <td class="col-num">180.5K</td>
+        <td class="col-num col-total">199.4K</td>
+      </tr>
+      <tr>
+        <td class="col-date">04-21</td>
+        <td><span class="model-tag opus">opus-4-6</span></td>
+        <td class="col-num">1.5K</td>
+        <td class="col-num">12.3K</td>
+        <td class="col-num">31.2K</td>
+        <td class="col-num">890.1K</td>
+        <td class="col-num col-total">935.1K</td>
+        <td class="col-num col-cost">$2.18</td>
+      </tr>
+      <tr class="row-alt">
+        <td class="col-date" rowspan="2">04-20</td>
+        <td><span class="model-tag opus">opus-4-7</span></td>
+        <td class="col-num">4.2K</td>
+        <td class="col-num">31.8K</td>
+        <td class="col-num">82.5K</td>
+        <td class="col-num">3.1M</td>
+        <td class="col-num col-total">3.22M</td>
+        <td class="col-num col-cost" rowspan="2">$7.89</td>
+      </tr>
+      <tr class="row-alt">
+        <td><span class="model-tag sonnet">sonnet-4-6</span></td>
+        <td class="col-num">0.6K</td>
+        <td class="col-num">3.2K</td>
+        <td class="col-num">8.4K</td>
+        <td class="col-num">95.0K</td>
+        <td class="col-num col-total">107.2K</td>
+      </tr>
+      <tr>
+        <td class="col-date">04-19</td>
+        <td><span class="model-tag opus">opus-4-6</span></td>
+        <td class="col-num">2.0K</td>
+        <td class="col-num">15.7K</td>
+        <td class="col-num">44.8K</td>
+        <td class="col-num">1.5M</td>
+        <td class="col-num col-total">1.56M</td>
+        <td class="col-num col-cost">$3.65</td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr>
+        <td class="col-date" colspan="2" style="text-align:right;font-weight:600;">7日合计</td>
+        <td class="col-num">16.2K</td>
+        <td class="col-num">113.2K</td>
+        <td class="col-num">303.8K</td>
+        <td class="col-num">9.4M</td>
+        <td class="col-num col-total">9.83M</td>
+        <td class="col-num col-cost">$22.85</td>
+      </tr>
+      <tr>
+        <td class="col-date" colspan="2" style="text-align:right;font-weight:600;color:var(--text-muted)">4月合计</td>
+        <td class="col-num" style="color:var(--text-secondary)">58.7K</td>
+        <td class="col-num" style="color:var(--text-secondary)">412.5K</td>
+        <td class="col-num" style="color:var(--text-secondary)">1.1M</td>
+        <td class="col-num" style="color:var(--text-secondary)">34.2M</td>
+        <td class="col-num col-total">35.8M</td>
+        <td class="col-num col-cost">$83.40</td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+
+<!-- ====== TIER 4: Patterns ====== -->
+<div class="section-title">使用画像</div>
+<div class="row-2">
+  <div class="card">
+    <div class="card-label">活跃时段</div>
+    <div class="hours-chart">
+      <div class="hour-bar-col"><div class="hour-bar h0" style="height:2px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h0" style="height:2px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h0" style="height:2px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h0" style="height:2px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h0" style="height:2px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h0" style="height:2px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h0" style="height:2px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h0" style="height:2px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h0" style="height:2px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h0" style="height:2px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h0" style="height:2px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h1" style="height:16px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h0" style="height:2px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h0" style="height:2px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h2" style="height:26px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h3" style="height:38px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h2" style="height:26px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h2" style="height:30px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h2" style="height:30px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h1" style="height:16px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h2" style="height:26px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h4" style="height:52px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h1" style="height:10px"></div></div>
+      <div class="hour-bar-col"><div class="hour-bar h1" style="height:10px"></div></div>
+    </div>
+    <div class="hours-labels">
+      <span>0</span><span class="dim">.</span><span class="dim">.</span><span>3</span><span class="dim">.</span><span class="dim">.</span>
+      <span>6</span><span class="dim">.</span><span class="dim">.</span><span>9</span><span class="dim">.</span><span class="dim">.</span>
+      <span>12</span><span class="dim">.</span><span class="dim">.</span><span>15</span><span class="dim">.</span><span class="dim">.</span>
+      <span>18</span><span class="dim">.</span><span class="dim">.</span><span>21</span><span class="dim">.</span><span class="dim">.</span>
+    </div>
+    <div class="hour-peak">峰值 21:00</div>
+  </div>
+  <div class="card">
+    <div class="card-label">工具使用</div>
+    <div class="tool-bars">
+      <div class="tool-row"><span class="tool-name">Bash</span><div class="tool-bar-wrap"><div class="tool-bar" style="width:100%;background:var(--accent-blue)"></div></div><span class="tool-count">1842</span></div>
+      <div class="tool-row"><span class="tool-name">Read</span><div class="tool-bar-wrap"><div class="tool-bar" style="width:72%;background:var(--accent-cyan)"></div></div><span class="tool-count">1326</span></div>
+      <div class="tool-row"><span class="tool-name">Edit</span><div class="tool-bar-wrap"><div class="tool-bar" style="width:58%;background:var(--accent-purple)"></div></div><span class="tool-count">1069</span></div>
+      <div class="tool-row"><span class="tool-name">Write</span><div class="tool-bar-wrap"><div class="tool-bar" style="width:31%;background:var(--accent-green)"></div></div><span class="tool-count">571</span></div>
+      <div class="tool-row"><span class="tool-name">Agent</span><div class="tool-bar-wrap"><div class="tool-bar" style="width:22%;background:var(--accent-orange)"></div></div><span class="tool-count">405</span></div>
+      <div class="tool-row"><span class="tool-name">Grep</span><div class="tool-bar-wrap"><div class="tool-bar" style="width:15%;background:var(--accent-yellow)"></div></div><span class="tool-count">276</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ====== TIER 5: Recent Sessions ====== -->
+<div class="section-title">最近会话</div>
+<div class="card">
+  <div class="session-list">
+    <div class="session-item">
+      <div class="session-main">
+        <div class="session-project">~/project/tmux-web-panel</div>
+        <div class="session-prompt">lazygit、vim、neovim 等会需要配置吗</div>
+      </div>
+      <div class="session-meta">
+        <span>24m</span><span>14.8K</span>
+        <span style="color:var(--accent-green)">+51</span>
+        <span style="color:var(--accent-red)">-13</span>
+      </div>
+    </div>
+    <div class="session-item">
+      <div class="session-main">
+        <div class="session-project">~/data3/mantis</div>
+        <div class="session-prompt">对play7的web并不满意，要分析业内其他产品重新设计</div>
+      </div>
+      <div class="session-meta">
+        <span>2m</span><span>0.7K</span>
+        <span style="color:var(--accent-green)">+0</span>
+        <span style="color:var(--accent-red)">-0</span>
+      </div>
+    </div>
+    <div class="session-item">
+      <div class="session-main">
+        <div class="session-project">~/project/web-scrcpy</div>
+        <div class="session-prompt">Submit web-scrcpy to AI Nexus platform</div>
+      </div>
+      <div class="session-meta">
+        <span>45m</span><span>32.1K</span>
+        <span style="color:var(--accent-green)">+128</span>
+        <span style="color:var(--accent-red)">-24</span>
+      </div>
+    </div>
+    <div class="session-item">
+      <div class="session-main">
+        <div class="session-project">~/data3/mantis</div>
+        <div class="session-prompt">CBS 迁移任务失败排查，查看实例日志和任务状态</div>
+      </div>
+      <div class="session-meta">
+        <span>67m</span><span>48.2K</span>
+        <span style="color:var(--accent-green)">+12</span>
+        <span style="color:var(--accent-red)">-3</span>
+      </div>
+    </div>
+    <div class="session-item">
+      <div class="session-main">
+        <div class="session-project">~/project/tmux-web-panel</div>
+        <div class="session-prompt">移动端 FAB 抽屉场景感知分组 + 热度排序</div>
+      </div>
+      <div class="session-meta">
+        <span>38m</span><span>22.5K</span>
+        <span style="color:var(--accent-green)">+247</span>
+        <span style="color:var(--accent-red)">-89</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>
