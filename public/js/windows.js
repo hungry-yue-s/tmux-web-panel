@@ -329,7 +329,11 @@ function _initWindowSwipe(view, container) {
   var startY = 0;
   var currentX = 0;
   var swiping = false;
+  var longPressTimer = null;
+  var longPressFired = false;
   var THRESHOLD = 60;
+  var LONG_PRESS_MS = 500;
+  var MOVE_CANCEL_PX = 10;
 
   view.addEventListener('touchstart', function (e) {
     var swipeContainer = e.target.closest('.swipe-container');
@@ -344,7 +348,14 @@ function _initWindowSwipe(view, container) {
     startY = touch.clientY;
     currentX = 0;
     swiping = false;
+    longPressFired = false;
     activeSwipe = swipeContainer;
+
+    longPressTimer = setTimeout(function () {
+      longPressFired = true;
+      longPressTimer = null;
+      _showMobileContextMenu(swipeContainer, container, startX, startY);
+    }, LONG_PRESS_MS);
   }, { passive: true });
 
   view.addEventListener('touchmove', function (e) {
@@ -354,13 +365,22 @@ function _initWindowSwipe(view, container) {
     var dx = touch.clientX - startX;
     var dy = touch.clientY - startY;
 
+    if (Math.abs(dx) > MOVE_CANCEL_PX || Math.abs(dy) > MOVE_CANCEL_PX) {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+    }
+
+    if (longPressFired) return; // suppress swipe after long-press
+
     if (!swiping && Math.abs(dy) > Math.abs(dx)) {
       activeSwipe = null;
       return;
     }
 
     swiping = true;
-    currentX = Math.min(0, Math.max(-160, dx));
+    currentX = Math.min(0, Math.max(-220, dx));
 
     var card = activeSwipe.querySelector('.window-card');
     if (card) {
@@ -370,6 +390,15 @@ function _initWindowSwipe(view, container) {
   }, { passive: true });
 
   view.addEventListener('touchend', function () {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+    if (longPressFired) {
+      longPressFired = false;
+      activeSwipe = null;
+      return;
+    }
     if (!activeSwipe) return;
 
     var card = activeSwipe.querySelector('.window-card');
@@ -381,7 +410,7 @@ function _initWindowSwipe(view, container) {
     card.style.transition = 'transform 0.2s ease';
 
     if (currentX < -THRESHOLD) {
-      card.style.transform = 'translateX(-140px)';
+      card.style.transform = 'translateX(-200px)';
       _attachWindowSwipeActionHandlers(activeSwipe, container);
     } else {
       card.style.transform = 'translateX(0)';
@@ -396,6 +425,28 @@ function _initWindowSwipe(view, container) {
       activeSwipe = null;
     }
   }, { passive: true });
+}
+
+function _showMobileContextMenu(swipeContainer, container, x, y) {
+  var windowId = swipeContainer.getAttribute('data-window-id');
+  var windowIndex = swipeContainer.getAttribute('data-window-index');
+  var isPinned = !!(state.pinsById && state.pinsById[windowId]);
+
+  var menu = document.getElementById('window-context-menu');
+  if (!menu) return;
+
+  menu.querySelector('[data-action="pin"]').textContent = isPinned ? 'Unpin' : 'Pin to top';
+  _ctxTargetIndex = windowIndex;
+  _ctxTargetId = windowId;
+  _ctxContainer = container;
+
+  menu.style.display = 'block';
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+
+  var rect = menu.getBoundingClientRect();
+  if (rect.right > window.innerWidth) menu.style.left = (window.innerWidth - rect.width - 8) + 'px';
+  if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + 'px';
 }
 
 function _resetWindowSwipe(swipeContainer) {
