@@ -85,6 +85,22 @@ function _loadWindows(bodyEl, parentContainer) {
       var windows = result.data || [];
       state.windows = windows;
 
+      // Compute snapshot order using the pure sort function (if module loaded).
+      if (typeof window.sortWindowsForSnapshot === 'function') {
+        var orderIds = window.sortWindowsForSnapshot(windows, {
+          pinsById: state.pinsById || {},
+          promotedBellIds: (state.promotedBellIdsBySession && state.promotedBellIdsBySession[state.currentSession]) || [],
+        });
+        state.windowOrderBySession = state.windowOrderBySession || {};
+        state.windowOrderBySession[state.currentSession] = orderIds;
+
+        // Reorder windows array to match the snapshot.
+        var byId = {};
+        windows.forEach(function (w) { byId[w.id] = w; });
+        windows = orderIds.map(function (id) { return byId[id]; }).filter(Boolean);
+        state.windows = windows;
+      }
+
       if (windows.length === 0) {
         bodyEl.innerHTML =
           '<div class="windows-empty">' +

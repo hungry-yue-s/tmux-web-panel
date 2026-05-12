@@ -268,6 +268,9 @@ var state = {
   sessions: [],
   windows: [],
   panes: [],
+  pinsById: {},                  // { '@5': true } — fetched once on init
+  windowOrderBySession: {},      // { 'main': ['@5', '@12'] } — latest snapshot order
+  promotedBellIdsBySession: {},  // { 'main': ['@12'] } — newest first
 };
 
 var _recentWindows = (function () {
@@ -1732,6 +1735,12 @@ function init() {
 function _startApp() {
   initTopbar();
   updateTopbarSession();
+  // Fetch pinned window ids once on startup (non-fatal).
+  api.get('/api/pins').then(function (res) {
+    state.pinsById = {};
+    var pins = res && res.data && res.data.pins ? res.data.pins : [];
+    pins.forEach(function (id) { state.pinsById[id] = true; });
+  }).catch(function () { /* non-fatal */ });
   statusSocket.connect();
   render();
   updateSidebar();
