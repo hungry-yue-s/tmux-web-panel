@@ -160,12 +160,22 @@ function requireValidWindowIndex(index) {
 // --- High-Level Functions ---
 
 export async function listSessions() {
-  const stdout = await tmuxExec([
-    'list-sessions',
-    '-F',
-    '#{session_name}|#{session_windows}|#{session_attached}|#{session_last_attached}',
-  ]);
-  return parseSessions(stdout);
+  try {
+    const stdout = await tmuxExec([
+      'list-sessions',
+      '-F',
+      '#{session_name}|#{session_windows}|#{session_attached}|#{session_last_attached}',
+    ]);
+    return parseSessions(stdout);
+  } catch (err) {
+    // tmux server not running yet → treat as "no sessions" rather than error.
+    // The web panel intentionally does not auto-start tmux; recovery is the
+    // job of tmux-server.service + tmux-continuum auto-restore (see CLAUDE.md).
+    if (typeof err?.stderr === 'string' && err.stderr.includes('no server running')) {
+      return [];
+    }
+    throw err;
+  }
 }
 
 export async function listWindows(session) {

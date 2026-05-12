@@ -9,9 +9,11 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # --- Defaults (override via env) ---
 SERVICE_NAME="tmux-web-panel"
+TMUX_SERVER_SERVICE="tmux-server"
 PORT="${PORT:-7681}"
 HOST="${HOST:-0.0.0.0}"
 NODE_BIN="${NODE_BIN:-$(command -v node)}"
+TMUX_BIN="${TMUX_BIN:-$(command -v tmux 2>/dev/null || true)}"
 
 usage() {
   cat <<EOF
@@ -41,9 +43,69 @@ EOF
 
 systemd_dir="$HOME/.config/systemd/user"
 systemd_unit="$systemd_dir/${SERVICE_NAME}.service"
+tmux_server_unit="$systemd_dir/${TMUX_SERVER_SERVICE}.service"
+tmux_conf="$HOME/.tmux.conf"
+
+# Idempotently ensure ~/.tmux.conf has `set -g exit-empty off`.
+# Without this, the empty tmux server started by tmux-server.service can self-exit
+# before tmux-continuum auto-restore kicks in, breaking session persistence.
+ensure_tmux_exit_empty() {
+  if [[ ! -f "$tmux_conf" ]]; then
+    return 0
+  fi
+  if grep -qE '^[[:space:]]*set[[:space:]]+-g[[:space:]]+exit-empty[[:space:]]+off' "$tmux_conf"; then
+    return 0
+  fi
+  printf '\n# Added by tmux-web-panel install-service.sh: keep server alive without sessions\nset -g exit-empty off\n' >> "$tmux_conf"
+  echo "✓ Appended 'set -g exit-empty off' to $tmux_conf"
+}
+
+# Install tmux-server.service: bootstraps the user's tmux server on login so the
+# web panel always has sessions to list. Pairs with tmux-continuum's
+# @continuum-restore to recover sessions across reboots.
+install_tmux_server_systemd() {
+  if [[ -z "$TMUX_BIN" ]]; then
+    echo "⚠ tmux not found in PATH — skipping tmux-server.service"
+    echo "  Sessions will NOT auto-recover on reboot. Install tmux and re-run."
+    return 0
+  fi
+
+  cat > "$tmux_server_unit" <<UNIT
+[Unit]
+Description=tmux server (keep-alive for tmux-web-panel)
+Documentation=https://github.com/tmux-plugins/tmux-continuum
+After=default.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=${TMUX_BIN} start-server
+ExecStop=${TMUX_BIN} kill-server
+
+[Install]
+WantedBy=default.target
+UNIT
+
+  ensure_tmux_exit_empty
+
+  systemctl --user daemon-reload
+  systemctl --user enable "$TMUX_SERVER_SERVICE" 2>/dev/null || true
+  systemctl --user start "$TMUX_SERVER_SERVICE" 2>/dev/null || true
+  echo "✓ Installed tmux-server.service (keeps tmux alive for the web panel)"
+}
+
+uninstall_tmux_server_systemd() {
+  systemctl --user stop "$TMUX_SERVER_SERVICE" 2>/dev/null || true
+  systemctl --user disable "$TMUX_SERVER_SERVICE" 2>/dev/null || true
+  rm -f "$tmux_server_unit"
+  systemctl --user daemon-reload
+  echo "✓ Removed tmux-server.service (~/.tmux.conf unchanged — keeping 'exit-empty off' is harmless)"
+}
 
 install_systemd() {
   mkdir -p "$systemd_dir"
+
+  install_tmux_server_systemd
 
   local env_lines="Environment=PORT=${PORT}\nEnvironment=HOST=${HOST}"
   if [[ -n "${AUTH:-}" ]]; then
@@ -53,7 +115,8 @@ install_systemd() {
   cat > "$systemd_unit" <<UNIT
 [Unit]
 Description=tmux web panel
-After=network.target
+After=network.target ${TMUX_SERVER_SERVICE}.service
+Wants=${TMUX_SERVER_SERVICE}.service
 
 [Service]
 Type=simple
@@ -84,6 +147,7 @@ uninstall_systemd() {
   systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
   systemctl --user disable "$SERVICE_NAME" 2>/dev/null || true
   rm -f "$systemd_unit"
+  uninstall_tmux_server_systemd
   systemctl --user daemon-reload
   echo "✓ Removed systemd user service"
 }
