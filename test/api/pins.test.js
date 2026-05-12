@@ -7,16 +7,32 @@ import path from 'node:path';
 import { PinStore } from '../../server/pins.js';
 import { createPinsRouter } from '../../server/api/pins.js';
 
-vi.mock('../../server/tmux.js', () => ({
-  listSessions: vi.fn(),
-  listWindows: vi.fn(),
-}));
+vi.mock('../../server/tmux.js', () => {
+  const listSessions = vi.fn();
+  const listWindows = vi.fn();
+  async function listAllWindowIds() {
+    const sessions = await listSessions();
+    const all = new Set();
+    for (const s of sessions) {
+      try {
+        const windows = await listWindows(s.name);
+        for (const w of windows) {
+          if (w.id) all.add(w.id);
+        }
+      } catch {
+        // skip
+      }
+    }
+    return all;
+  }
+  return { listSessions, listWindows, listAllWindowIds };
+});
 const tmux = await import('../../server/tmux.js');
 
 async function startApp(store) {
   const app = express();
   app.use(express.json());
-  app.use('/api/pins', createPinsRouter({ pinStore: store }));
+  app.use('/api/pins', createPinsRouter(store));
   return new Promise((resolve) => {
     const server = app.listen(0, () => resolve({ server, port: server.address().port }));
   });

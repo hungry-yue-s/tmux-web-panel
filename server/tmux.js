@@ -204,6 +204,28 @@ export async function listWindows(session) {
   return parseWindows(stdout);
 }
 
+/**
+ * Returns the set of all live window_id values across all sessions.
+ * Per-session errors are swallowed so one bad session doesn't abort the scan.
+ *
+ * @returns {Promise<Set<string>>}
+ */
+export async function listAllWindowIds() {
+  const sessions = await listSessions();
+  const all = new Set();
+  for (const s of sessions) {
+    try {
+      const windows = await listWindows(s.name);
+      for (const w of windows) {
+        if (w.id) all.add(w.id);
+      }
+    } catch {
+      // Skip sessions we can't read.
+    }
+  }
+  return all;
+}
+
 export async function unzoomWindow(session, window) {
   requireValidSessionName(session);
   requireValidWindowIndex(window);

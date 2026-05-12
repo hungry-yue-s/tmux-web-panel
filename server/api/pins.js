@@ -3,28 +3,12 @@ import * as tmux from '../tmux.js';
 
 const WINDOW_ID_RE = /^@\d+$/;
 
-async function collectLiveWindowIds() {
-  const sessions = await tmux.listSessions();
-  const all = new Set();
-  for (const s of sessions) {
-    try {
-      const windows = await tmux.listWindows(s.name);
-      for (const w of windows) {
-        if (w.id) all.add(w.id);
-      }
-    } catch {
-      // Skip sessions we can't read.
-    }
-  }
-  return all;
-}
-
-export function createPinsRouter({ pinStore }) {
+export function createPinsRouter(pinStore) {
   const router = Router();
 
   router.get('/', async (_req, res) => {
     try {
-      const live = await collectLiveWindowIds();
+      const live = await tmux.listAllWindowIds();
       await pinStore.sweep(live);
       res.json({ success: true, data: { pins: pinStore.list() }, error: null });
     } catch (err) {
@@ -44,7 +28,7 @@ export function createPinsRouter({ pinStore }) {
       }
 
       if (pinned) {
-        const live = await collectLiveWindowIds();
+        const live = await tmux.listAllWindowIds();
         if (!live.has(windowId)) {
           return res.status(400).json({ success: false, data: null, error: 'unknown_window_id' });
         }
