@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import {
-  fmtBytes, fmtBps, fmtUptime, fmtPercent,
-  colorFor, sparkPath, pressureScore, detectAlerts,
-  ALERT_THRESHOLDS,
-} from '../public/js/perf-utils.js';
+import fs from 'node:fs';
+const src = fs.readFileSync('public/js/perf-utils.js', 'utf8');
+const sandbox = { window: {} };
+new Function('window', src)(sandbox.window);
+const { fmtBytes, fmtBps, fmtUptime, fmtPercent, colorFor, sparkPath, pressureScore, detectAlerts, ALERT_THRESHOLDS } = sandbox.window.PerfUtils;
 
 describe('formatters', () => {
   it('fmtBytes', () => {

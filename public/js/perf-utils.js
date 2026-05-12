@@ -1,6 +1,7 @@
+window.PerfUtils = (function () {
 // Pure helpers for the perf panel. No DOM access, no fetch, safe to unit test.
 
-export const ALERT_THRESHOLDS = {
+const ALERT_THRESHOLDS = {
   cpuMachine:  { warn: 60, critical: 80 },      // % of all cores
   windowCpu:   { warn: 80, critical: 200 },     // absolute % (per window)
   memMachine:  { warn: 70, critical: 85 },      // % of total RAM
@@ -11,13 +12,13 @@ export const ALERT_THRESHOLDS = {
 
 const PALETTE = ['#f7768e','#e0af68','#7aa2f7','#9ece6a','#bb9af7','#7dcfff','#ff9e64','#73daca','#c0caf5','#f4a261'];
 
-export function colorFor(key) {
+function colorFor(key) {
   let h = 0;
   for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) & 0xffffffff;
   return PALETTE[Math.abs(h) % PALETTE.length];
 }
 
-export function fmtBytes(n) {
+function fmtBytes(n) {
   if (n == null) return '—';
   if (n === 0) return '0 B';
   const u = ['B','KB','MB','GB','TB'];
@@ -27,9 +28,9 @@ export function fmtBytes(n) {
   return `${v.toFixed(d)} ${u[i]}`;
 }
 
-export function fmtBps(n) { return `${fmtBytes(n)}/s`; }
+function fmtBps(n) { return `${fmtBytes(n)}/s`; }
 
-export function fmtUptime(s) {
+function fmtUptime(s) {
   const d = Math.floor(s / 86400);
   const h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -38,12 +39,12 @@ export function fmtUptime(s) {
   return `${m}m`;
 }
 
-export function fmtPercent(v, d = 1) {
+function fmtPercent(v, d = 1) {
   return `${v.toFixed(v >= 10 ? 0 : d)}%`;
 }
 
 // Returns {line, fill} SVG path strings sized to fit `w × h`.
-export function sparkPath(values, w, h, opts = {}) {
+function sparkPath(values, w, h, opts = {}) {
   if (!values || values.length === 0) return { line: '', fill: '' };
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -63,7 +64,7 @@ export function sparkPath(values, w, h, opts = {}) {
 }
 
 // item: { cpuPercent, memBytes, ioBps }; total: { cpuCount, systemMemTotal, windowIoBps }
-export function pressureScore(item, total) {
+function pressureScore(item, total) {
   const cpuShare = total.cpuCount > 0 ? item.cpuPercent / (total.cpuCount * 100) : 0;
   const memShare = total.systemMemTotal > 0 ? item.memBytes / total.systemMemTotal : 0;
   const ioShare  = total.windowIoBps > 0 ? item.ioBps / total.windowIoBps : 0;
@@ -71,7 +72,7 @@ export function pressureScore(item, total) {
 }
 
 // Returns { critical: [...], warn: [...] }; each entry: { kind, message, severity }.
-export function detectAlerts(snap) {
+function detectAlerts(snap) {
   const out = { critical: [], warn: [] };
   const t = snap.total;
   const cpuMachinePct = t.cpuCount > 0 ? (t.windowCpuPercent / (t.cpuCount * 100)) * 100 : 0;
@@ -103,10 +104,8 @@ export function detectAlerts(snap) {
   return out;
 }
 
-// Dual export for legacy script tags. Browser sees window.PerfUtils.
-if (typeof window !== 'undefined') {
-  window.PerfUtils = {
-    ALERT_THRESHOLDS, colorFor, fmtBytes, fmtBps, fmtUptime, fmtPercent,
-    sparkPath, pressureScore, detectAlerts,
-  };
-}
+return {
+  ALERT_THRESHOLDS, colorFor, fmtBytes, fmtBps, fmtUptime, fmtPercent,
+  sparkPath, pressureScore, detectAlerts,
+};
+})();
