@@ -12,6 +12,9 @@ const SESSION_NAME_RE = /^[\w\-\u4e00-\u9fff][\w\-\u4e00-\u9fff\s]*$/;
 const WINDOW_NAME_RE = /^[^\x00-\x1f:]*$/;
 const PANE_ID_RE = /^%\d+$/;
 const WINDOW_INDEX_RE = /^\d+$/;
+const WINDOW_ID_RE = /^@\d+$/;
+
+const FIELD_SEP = '\x1f'; // ASCII Unit Separator \u2014 cannot occur in app-created tmux names
 
 /**
  * Validates a tmux session or window name.
@@ -51,6 +54,15 @@ export function validateWindowIndex(index) {
   return Number.isInteger(num) && num >= 0;
 }
 
+/**
+ * Validates a tmux window ID (format: @<digits>). Window IDs are stable across
+ * renames/moves/renumbers — prefer over index for destructive operations.
+ */
+export function validateWindowId(id) {
+  if (typeof id !== 'string') return false;
+  return WINDOW_ID_RE.test(id);
+}
+
 // --- Parsing ---
 
 /**
@@ -70,30 +82,33 @@ export function parseSessions(output) {
 }
 
 /**
- * Parses `tmux list-windows -F '#{window_index}|#{window_name}|#{window_active}|#{window_width}|#{window_height}|#{window_bell_flag}'`
+ * Parses `tmux list-windows -F '#{window_id}\x1f#{window_index}\x1f...'`
+ * 8 fields: id, index, name, active, width, height, bell, activity.
  */
 export function parseWindows(output) {
   if (!output || output.trim().length === 0) return [];
   return output.trim().split('\n').map((line) => {
-    const [index, name, active, width, height, bell] = line.split('|');
+    const [id, index, name, active, width, height, bell, activity] = line.split(FIELD_SEP);
     return {
+      id,
       index: Number(index),
       name,
       active: active === '1',
       width: Number(width),
       height: Number(height),
       bell: bell === '1',
+      activity: Number(activity),
     };
   });
 }
 
 /**
- * Parses `tmux list-panes -F '#{pane_id}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}|#{pane_active}|#{pane_current_command}'`
+ * Parses `tmux list-panes -F '#{pane_id}\x1f#{pane_left}\x1f...'`
  */
 export function parsePanes(output) {
   if (!output || output.trim().length === 0) return [];
   return output.trim().split('\n').map((line) => {
-    const [id, x, y, width, height, active, command] = line.split('|');
+    const [id, x, y, width, height, active, command] = line.split(FIELD_SEP);
     return {
       id,
       x: Number(x),
@@ -107,12 +122,12 @@ export function parsePanes(output) {
 }
 
 /**
- * Parses `tmux list-panes -s -F '#{window_index}|#{pane_id}|#{pane_current_command}'`
+ * Parses `tmux list-panes -s -F '#{window_index}\x1f#{pane_id}\x1f...'`
  */
 export function parsePaneCommands(output) {
   if (!output || output.trim().length === 0) return [];
   return output.trim().split('\n').map((line) => {
-    const [windowIndex, paneId, command, path, pid] = line.split('|');
+    const [windowIndex, paneId, command, path, pid] = line.split(FIELD_SEP);
     return { windowIndex: Number(windowIndex), paneId, command, path: path || '', pid: pid ? Number(pid) : 0 };
   });
 }
@@ -157,6 +172,12 @@ function requireValidWindowIndex(index) {
   }
 }
 
+function requireValidWindowId(id) {
+  if (!validateWindowId(id)) {
+    throw new Error(`Invalid window ID: ${id}`);
+  }
+}
+
 // --- High-Level Functions ---
 
 export async function listSessions() {
@@ -184,9 +205,31 @@ export async function listWindows(session) {
     'list-windows',
     '-t', session,
     '-F',
-    '#{window_index}|#{window_name}|#{window_active}|#{window_width}|#{window_height}|#{window_bell_flag}',
+    `#{window_id}${FIELD_SEP}#{window_index}${FIELD_SEP}#{window_name}${FIELD_SEP}#{window_active}${FIELD_SEP}#{window_width}${FIELD_SEP}#{window_height}${FIELD_SEP}#{window_bell_flag}${FIELD_SEP}#{window_activity}`,
   ]);
   return parseWindows(stdout);
+}
+
+/**
+ * Returns the set of all live window_id values across all sessions.
+ * Per-session errors are swallowed so one bad session doesn't abort the scan.
+ *
+ * @returns {Promise<Set<string>>}
+ */
+export async function listAllWindowIds() {
+  const sessions = await listSessions();
+  const all = new Set();
+  for (const s of sessions) {
+    try {
+      const windows = await listWindows(s.name);
+      for (const w of windows) {
+        if (w.id) all.add(w.id);
+      }
+    } catch {
+      // Skip sessions we can't read.
+    }
+  }
+  return all;
 }
 
 export async function unzoomWindow(session, window) {
@@ -212,7 +255,7 @@ export async function listPanes(session, window) {
     'list-panes',
     '-t', `${session}:${window}`,
     '-F',
-    '#{pane_id}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}|#{pane_active}|#{pane_current_command}',
+    `#{pane_id}${FIELD_SEP}#{pane_left}${FIELD_SEP}#{pane_top}${FIELD_SEP}#{pane_width}${FIELD_SEP}#{pane_height}${FIELD_SEP}#{pane_active}${FIELD_SEP}#{pane_current_command}`,
   ]);
   return parsePanes(stdout);
 }
@@ -221,7 +264,7 @@ export async function listPaneCommands(session) {
   requireValidSessionName(session);
   const stdout = await tmuxExec([
     'list-panes', '-s', '-t', session, '-F',
-    '#{window_index}|#{pane_id}|#{pane_current_command}|#{pane_current_path}|#{pane_pid}',
+    `#{window_index}${FIELD_SEP}#{pane_id}${FIELD_SEP}#{pane_current_command}${FIELD_SEP}#{pane_current_path}${FIELD_SEP}#{pane_pid}`,
   ]);
   return parsePaneCommands(stdout);
 }
@@ -325,4 +368,24 @@ export async function capturePane(paneId, { escape = false } = {}) {
   args.push('-t', paneId, '-p');
   const stdout = await tmuxExec(args);
   return stdout;
+}
+
+// --- by-id helpers (use window_id @N — stable across renames/moves/renumbers) ---
+
+export async function renameWindowById(windowId, newName) {
+  requireValidWindowId(windowId);
+  requireValidWindowName(newName);
+  await tmuxExec(['rename-window', '-t', windowId, newName]);
+}
+
+export async function killWindowById(windowId) {
+  requireValidWindowId(windowId);
+  await tmuxExec(['kill-window', '-t', windowId]);
+}
+
+export async function moveWindowById(windowId, dstSession) {
+  requireValidWindowId(windowId);
+  requireValidSessionName(dstSession);
+  // '=<name>:' forces exact-name match (no prefix collision like foo vs foobar).
+  await tmuxExec(['move-window', '-s', windowId, '-t', '=' + dstSession + ':']);
 }

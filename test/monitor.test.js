@@ -76,8 +76,8 @@ describe('StatusMonitor', () => {
         { name: 'main', windows: 2, attached: true, lastActivity: '12345' },
       ]);
       tmux.listWindows.mockResolvedValue([
-        { index: 0, name: 'bash', active: true, width: 80, height: 24 },
-        { index: 1, name: 'vim', active: false, width: 80, height: 24 },
+        { id: '@1', index: 0, name: 'bash', active: true, width: 80, height: 24, bell: false, activity: 1700000000 },
+        { id: '@2', index: 1, name: 'vim', active: false, width: 80, height: 24, bell: false, activity: 1700000000 },
       ]);
       tmux.listPaneCommands.mockResolvedValue([]);
 
@@ -103,7 +103,7 @@ describe('StatusMonitor', () => {
         { name: 'main', windows: 1, attached: true, lastActivity: '12345' },
       ]);
       tmux.listWindows.mockResolvedValue([
-        { index: 0, name: 'bash', active: true, width: 80, height: 24 },
+        { id: '@1', index: 0, name: 'bash', active: true, width: 80, height: 24, bell: false, activity: 1700000000 },
       ]);
       tmux.listPaneCommands.mockResolvedValue([
         { windowIndex: 0, paneId: '%1', command: 'vim', path: '/home/user/project', pid: 1234 },
@@ -129,7 +129,7 @@ describe('StatusMonitor', () => {
         { name: 'main', windows: 1, attached: true, lastActivity: '12345' },
       ]);
       tmux.listWindows.mockResolvedValue([
-        { index: 0, name: 'bash', active: true, width: 80, height: 24 },
+        { id: '@1', index: 0, name: 'bash', active: true, width: 80, height: 24, bell: false, activity: 1700000000 },
       ]);
       tmux.listPaneCommands.mockResolvedValue([
         { windowIndex: 0, paneId: '%1', command: 'vim', path: '/home/user', pid: 1234 },
@@ -148,7 +148,7 @@ describe('StatusMonitor', () => {
         { name: 'main', windows: 1, attached: false, lastActivity: '0' },
       ]);
       tmux.listWindows.mockResolvedValue([
-        { index: 0, name: 'bash', active: true, width: 80, height: 24 },
+        { id: '@1', index: 0, name: 'bash', active: true, width: 80, height: 24, bell: false, activity: 1700000000 },
       ]);
       tmux.listPaneCommands.mockResolvedValue([]);
 
@@ -252,7 +252,7 @@ describe('StatusMonitor', () => {
     ];
 
     function windowsWith(bell = false) {
-      return [{ index: 0, name: 'bash', active: true, width: 80, height: 24, bell }];
+      return [{ id: '@1', index: 0, name: 'bash', active: true, width: 80, height: 24, bell, activity: 1700000000 }];
     }
 
     function paneCommandsWith(command) {
@@ -282,9 +282,11 @@ describe('StatusMonitor', () => {
         .map(c => JSON.parse(c[0]))
         .find(m => m.type === 'status');
       expect(statusMsg).toBeDefined();
-      expect(statusMsg.data.completedWindows).toEqual([
-        { session: 'main', windowIndex: 0, prevCommand: 'node', source: 'command' },
-      ]);
+      expect(statusMsg.data.completedWindows).toHaveLength(1);
+      expect(statusMsg.data.completedWindows[0]).toEqual({
+        session: 'main', windowIndex: 0, windowId: '@1', prevCommand: 'node', source: 'command',
+      });
+      expect(statusMsg.data.completedWindows[0].windowId).toMatch(/^@\d+$/);
     });
 
     it('detects bell signal on rising edge only', async () => {
@@ -307,9 +309,11 @@ describe('StatusMonitor', () => {
 
       expect(ws.send).toHaveBeenCalledTimes(1);
       const msg2 = JSON.parse(ws.send.mock.calls[0][0]);
-      expect(msg2.data.completedWindows).toEqual([
-        { session: 'main', windowIndex: 0, prevCommand: 'zsh', source: 'bell' },
-      ]);
+      expect(msg2.data.completedWindows).toHaveLength(1);
+      expect(msg2.data.completedWindows[0]).toEqual({
+        session: 'main', windowIndex: 0, windowId: '@1', prevCommand: 'zsh', source: 'bell',
+      });
+      expect(msg2.data.completedWindows[0].windowId).toMatch(/^@\d+$/);
 
       ws.send.mockClear();
 
@@ -355,8 +359,8 @@ describe('StatusMonitor', () => {
 
       function windowsWithTwo() {
         return [
-          { index: 0, name: 'win0', active: true, width: 80, height: 24, bell: false },
-          { index: 1, name: 'win1', active: false, width: 80, height: 24, bell: false },
+          { id: '@10', index: 0, name: 'win0', active: true, width: 80, height: 24, bell: false, activity: 1700000000 },
+          { id: '@11', index: 1, name: 'win1', active: false, width: 80, height: 24, bell: false, activity: 1700000000 },
         ];
       }
 
@@ -395,10 +399,13 @@ describe('StatusMonitor', () => {
       expect(msg.data.completedWindows).toHaveLength(2);
       expect(msg.data.completedWindows).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ session: 'main', windowIndex: 0, source: 'command' }),
-          expect.objectContaining({ session: 'main', windowIndex: 1, source: 'command' }),
+          expect.objectContaining({ session: 'main', windowIndex: 0, windowId: '@10', source: 'command' }),
+          expect.objectContaining({ session: 'main', windowIndex: 1, windowId: '@11', source: 'command' }),
         ]),
       );
+      msg.data.completedWindows.forEach((cw) => {
+        expect(cw.windowId).toMatch(/^@\d+$/);
+      });
 
       // completedPanes has one entry per pane — all three panes
       expect(msg.data.completedPanes).toHaveLength(3);
@@ -440,7 +447,7 @@ describe('StatusMonitor', () => {
   describe('pane-cmd broadcasts', () => {
     it('broadcasts pane-cmd when pane command changes', async () => {
       tmux.listSessions.mockResolvedValue([{ name: 'main', windows: 1 }]);
-      tmux.listWindows.mockResolvedValue([{ index: 0, name: 'bash', active: true, bell: false }]);
+      tmux.listWindows.mockResolvedValue([{ id: '@1', index: 0, name: 'bash', active: true, bell: false, activity: 1700000000 }]);
       tmux.listPaneCommands.mockResolvedValue([
         { windowIndex: 0, paneId: '%0', command: 'bash', path: '/', pid: 111 },
       ]);
@@ -469,7 +476,7 @@ describe('StatusMonitor', () => {
 
     it('does not broadcast when command stays the same', async () => {
       tmux.listSessions.mockResolvedValue([{ name: 'main', windows: 1 }]);
-      tmux.listWindows.mockResolvedValue([{ index: 0, name: 'bash', active: true, bell: false }]);
+      tmux.listWindows.mockResolvedValue([{ id: '@1', index: 0, name: 'bash', active: true, bell: false, activity: 1700000000 }]);
       tmux.listPaneCommands.mockResolvedValue([
         { windowIndex: 0, paneId: '%0', command: 'bash', path: '/', pid: 111 },
       ]);

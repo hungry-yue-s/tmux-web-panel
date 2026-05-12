@@ -16,19 +16,37 @@ function showPrompt(opts) {
   return new Promise(function (resolve) {
     var overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
-    overlay.innerHTML =
-      '<div class="modal-box">' +
-        '<div class="modal-title">' + (opts.title || '') + '</div>' +
-        '<input class="modal-input" type="text" placeholder="' + (opts.placeholder || '') + '" value="' + (opts.value || '') + '">' +
-        '<div class="modal-actions">' +
-          '<button class="modal-btn modal-cancel">' + (opts.cancelText || '取消') + '</button>' +
-          '<button class="modal-btn modal-btn-primary modal-confirm">' + (opts.confirmText || '确定') + '</button>' +
-        '</div>' +
-      '</div>';
 
-    var input = overlay.querySelector('.modal-input');
-    var confirmBtn = overlay.querySelector('.modal-confirm');
-    var cancelBtn = overlay.querySelector('.modal-cancel');
+    var box = document.createElement('div');
+    box.className = 'modal-box';
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'modal-title';
+    titleEl.textContent = opts.title || '';
+    box.appendChild(titleEl);
+
+    var input = document.createElement('input');
+    input.className = 'modal-input';
+    input.type = 'text';
+    input.placeholder = opts.placeholder || '';
+    input.value = opts.value || '';
+    box.appendChild(input);
+
+    var actions = document.createElement('div');
+    actions.className = 'modal-actions';
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'modal-btn modal-cancel';
+    cancelBtn.textContent = opts.cancelText || '取消';
+    actions.appendChild(cancelBtn);
+
+    var confirmBtn = document.createElement('button');
+    confirmBtn.className = 'modal-btn modal-btn-primary modal-confirm';
+    confirmBtn.textContent = opts.confirmText || '确定';
+    actions.appendChild(confirmBtn);
+
+    box.appendChild(actions);
+    overlay.appendChild(box);
 
     function close(val) {
       overlay.remove();
@@ -37,11 +55,9 @@ function showPrompt(opts) {
 
     confirmBtn.addEventListener('click', function () { close(input.value); });
     cancelBtn.addEventListener('click', function () { close(null); });
-
     overlay.addEventListener('click', function (e) {
       if (e.target === overlay) close(null);
     });
-
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') close(input.value);
       if (e.key === 'Escape') close(null);
@@ -67,19 +83,37 @@ function showConfirm(opts) {
   return new Promise(function (resolve) {
     var overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
-    var dangerClass = opts.danger ? ' modal-btn-danger' : ' modal-btn-primary';
-    overlay.innerHTML =
-      '<div class="modal-box">' +
-        '<div class="modal-title">' + (opts.title || '') + '</div>' +
-        (opts.message ? '<div class="modal-message">' + opts.message + '</div>' : '') +
-        '<div class="modal-actions">' +
-          '<button class="modal-btn modal-cancel">' + (opts.cancelText || '取消') + '</button>' +
-          '<button class="modal-btn' + dangerClass + ' modal-confirm">' + (opts.confirmText || '确定') + '</button>' +
-        '</div>' +
-      '</div>';
 
-    var confirmBtn = overlay.querySelector('.modal-confirm');
-    var cancelBtn = overlay.querySelector('.modal-cancel');
+    var box = document.createElement('div');
+    box.className = 'modal-box';
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'modal-title';
+    titleEl.textContent = opts.title || '';
+    box.appendChild(titleEl);
+
+    if (opts.message) {
+      var msgEl = document.createElement('div');
+      msgEl.className = 'modal-message';
+      msgEl.textContent = opts.message;
+      box.appendChild(msgEl);
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'modal-actions';
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'modal-btn modal-cancel';
+    cancelBtn.textContent = opts.cancelText || '取消';
+    actions.appendChild(cancelBtn);
+
+    var confirmBtn = document.createElement('button');
+    confirmBtn.className = 'modal-btn modal-confirm ' + (opts.danger ? 'modal-btn-danger' : 'modal-btn-primary');
+    confirmBtn.textContent = opts.confirmText || '确定';
+    actions.appendChild(confirmBtn);
+
+    box.appendChild(actions);
+    overlay.appendChild(box);
 
     function close(val) {
       overlay.remove();
@@ -112,16 +146,30 @@ function showAlert(opts) {
   return new Promise(function (resolve) {
     var overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
-    overlay.innerHTML =
-      '<div class="modal-box">' +
-        '<div class="modal-title">' + (opts.title || '') + '</div>' +
-        (opts.message ? '<div class="modal-message">' + opts.message + '</div>' : '') +
-        '<div class="modal-actions">' +
-          '<button class="modal-btn modal-btn-primary modal-confirm">确定</button>' +
-        '</div>' +
-      '</div>';
 
-    var confirmBtn = overlay.querySelector('.modal-confirm');
+    var box = document.createElement('div');
+    box.className = 'modal-box';
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'modal-title';
+    titleEl.textContent = opts.title || '';
+    box.appendChild(titleEl);
+
+    if (opts.message) {
+      var msgEl = document.createElement('div');
+      msgEl.className = 'modal-message';
+      msgEl.textContent = opts.message;
+      box.appendChild(msgEl);
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'modal-actions';
+    var confirmBtn = document.createElement('button');
+    confirmBtn.className = 'modal-btn modal-btn-primary modal-confirm';
+    confirmBtn.textContent = '确定';
+    actions.appendChild(confirmBtn);
+    box.appendChild(actions);
+    overlay.appendChild(box);
 
     function close() {
       overlay.remove();
@@ -220,6 +268,9 @@ var state = {
   sessions: [],
   windows: [],
   panes: [],
+  pinsById: {},                  // { '@5': true } — fetched once on init
+  windowOrderBySession: {},      // { 'main': ['@5', '@12'] } — latest snapshot order
+  promotedBellIdsBySession: {},  // { 'main': ['@12'] } — newest first
 };
 
 var _recentWindows = (function () {
@@ -1404,6 +1455,60 @@ class StatusSocket {
     if (data && data.sessions !== undefined) {
       state.sessions = data.sessions;
 
+      // Reconcile cached window orders against the live set per session.
+      // If a session's window-id set has changed (add/remove/move), invalidate
+      // the cached order so the next render computes a fresh snapshot.
+      state.windowOrderBySession = state.windowOrderBySession || {};
+      state.promotedBellIdsBySession = state.promotedBellIdsBySession || {};
+      Object.keys(state.windowOrderBySession).forEach(function (session) {
+        var s = (data.sessions || []).find(function (x) { return x.name === session; });
+        if (!s) {
+          // Session gone entirely
+          delete state.windowOrderBySession[session];
+          delete state.promotedBellIdsBySession[session];
+          return;
+        }
+        var liveIds = (s.windowDetails || []).map(function (w) { return w.id; });
+        var cached = state.windowOrderBySession[session] || [];
+        var liveSet = {};
+        liveIds.forEach(function (id) { liveSet[id] = true; });
+
+        var sameSet = cached.length === liveIds.length
+          && cached.every(function (id) { return liveSet[id]; });
+
+        if (!sameSet) {
+          // Structural change → invalidate cached order
+          delete state.windowOrderBySession[session];
+          // Also drop any promoted-bell ids that no longer exist
+          if (state.promotedBellIdsBySession[session]) {
+            state.promotedBellIdsBySession[session] = state.promotedBellIdsBySession[session]
+              .filter(function (id) { return liveSet[id]; });
+          }
+          if (session === state.currentSession && typeof window.rerenderCurrentWindowsView === 'function') {
+            window.rerenderCurrentWindowsView();
+          }
+        }
+      });
+
+      // Bell promotion: any window with source:'bell' in completedWindows joins
+      // the promotion list (newest-first), so the snapshot/splice logic lifts
+      // it visually to the top of Tier 2.
+      var _completed = (data && data.completedWindows) || [];
+      _completed.forEach(function (cw) {
+        if (cw.source !== 'bell' || !cw.windowId) return;
+        state.promotedBellIdsBySession[cw.session] = state.promotedBellIdsBySession[cw.session] || [];
+        var arr = state.promotedBellIdsBySession[cw.session];
+        var existing = arr.indexOf(cw.windowId);
+        if (existing >= 0) arr.splice(existing, 1);
+        arr.unshift(cw.windowId);
+
+        // If currently viewing this session, splice the card visually without
+        // a full re-snapshot.
+        if (cw.session === state.currentSession && typeof window.spliceBellPromoted === 'function') {
+          window.spliceBellPromoted(cw.windowId);
+        }
+      });
+
       // Build pane scene map from status data (pane-cmd only fires on change,
       // but status arrives every poll with current commands for all panes)
       if (typeof FabScene !== 'undefined') {
@@ -1684,6 +1789,12 @@ function init() {
 function _startApp() {
   initTopbar();
   updateTopbarSession();
+  // Fetch pinned window ids once on startup (non-fatal).
+  api.get('/api/pins').then(function (res) {
+    state.pinsById = {};
+    var pins = res && res.data && res.data.pins ? res.data.pins : [];
+    pins.forEach(function (id) { state.pinsById[id] = true; });
+  }).catch(function () { /* non-fatal */ });
   statusSocket.connect();
   render();
   updateSidebar();

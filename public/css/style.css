@@ -709,19 +709,44 @@ body {
 
 .swipe-actions {
   position: absolute;
-  right: 0;
   top: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
+  right: 0;
+  height: 100%;
+  width: 220px;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 6px;
-  padding-right: 8px;
-  z-index: 0;
+  padding: 8px 8px 8px 0;
+  box-sizing: border-box;
 }
 
 .swipe-actions .btn {
-  height: 36px;
-  font-size: 0.8rem;
+  min-width: 0;
+  font-size: 0.85rem;
+}
+
+.session-picker-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  margin: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.session-picker-item {
+  text-align: left;
+  background: var(--bg-card, #24283b);
+  color: var(--text-primary, #c0caf5);
+  border: 1px solid var(--border, #3b4261);
+  border-radius: 6px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.session-picker-item:hover {
+  background: var(--bg-hover, #292e42);
 }
 
 /* Session card */

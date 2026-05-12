@@ -221,9 +221,12 @@ export class StatusMonitor {
           // Per-window entry (dedup by window)
           if (!completedInSession.has(pc.windowIndex)) {
             completedInSession.add(pc.windowIndex);
+            const winForId = session.windowDetails.find((wd) => wd.index === pc.windowIndex);
+            const windowId = winForId ? winForId.id : null;
             completedWindows.push({
               session: session.name,
               windowIndex: pc.windowIndex,
+              windowId,
               prevCommand: prev,
               source: 'command',
             });
@@ -233,7 +236,7 @@ export class StatusMonitor {
 
       // Check bell flags (rising edge only)
       for (const w of session.windowDetails) {
-        const bellKey = `${session.name}:${w.index}`;
+        const bellKey = w.id;
         newBellFlags.set(bellKey, w.bell);
 
         const prevBell = this._previousBellFlags.get(bellKey);
@@ -248,6 +251,7 @@ export class StatusMonitor {
           completedWindows.push({
             session: session.name,
             windowIndex: w.index,
+            windowId: w.id,
             prevCommand: activePc ? activePc.command : '',
             source: 'bell',
           });

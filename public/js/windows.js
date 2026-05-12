@@ -85,6 +85,22 @@ function _loadWindows(bodyEl, parentContainer) {
       var windows = result.data || [];
       state.windows = windows;
 
+      // Compute snapshot order using the pure sort function (if module loaded).
+      if (typeof window.sortWindowsForSnapshot === 'function') {
+        var orderIds = window.sortWindowsForSnapshot(windows, {
+          pinsById: state.pinsById || {},
+          promotedBellIds: (state.promotedBellIdsBySession && state.promotedBellIdsBySession[state.currentSession]) || [],
+        });
+        state.windowOrderBySession = state.windowOrderBySession || {};
+        state.windowOrderBySession[state.currentSession] = orderIds;
+
+        // Reorder windows array to match the snapshot.
+        var byId = {};
+        windows.forEach(function (w) { byId[w.id] = w; });
+        windows = orderIds.map(function (id) { return byId[id]; }).filter(Boolean);
+        state.windows = windows;
+      }
+
       if (windows.length === 0) {
         bodyEl.innerHTML =
           '<div class="windows-empty">' +
@@ -134,12 +150,13 @@ function _buildWindowCard(w) {
   // Pane info is now rendered inside the thumbnail preview below
 
   return (
-    '<div class="swipe-container" data-window-index="' + w.index + '" data-window-name="' + escapeHtml(w.name || '') + '">' +
+    '<div class="swipe-container" data-window-index="' + w.index + '" data-window-id="' + escapeHtml(w.id || '') + '" data-window-name="' + escapeHtml(w.name || '') + '">' +
     '<div class="swipe-actions">' +
-    '<button class="btn swipe-action-rename" data-window-index="' + w.index + '">Rename</button>' +
-    '<button class="btn btn-danger swipe-action-delete" data-window-index="' + w.index + '">Delete</button>' +
+    '<button class="btn swipe-action-move" data-window-index="' + w.index + '" data-window-id="' + escapeHtml(w.id || '') + '">Move</button>' +
+    '<button class="btn swipe-action-rename" data-window-index="' + w.index + '" data-window-id="' + escapeHtml(w.id || '') + '">Rename</button>' +
+    '<button class="btn btn-danger swipe-action-delete" data-window-index="' + w.index + '" data-window-id="' + escapeHtml(w.id || '') + '">Delete</button>' +
     '</div>' +
-    '<div class="window-card card' + cardExtraClass + '" data-window-index="' + w.index + '">' +
+    '<div class="window-card card' + cardExtraClass + '" data-window-index="' + w.index + '" data-window-id="' + escapeHtml(w.id || '') + '">' +
     '<div class="window-card-header">' +
     '<strong class="window-card-name">' + escapeHtml(w.index + ': ' + (w.name || '')) + '</strong>' +
     completionHtml +
@@ -286,14 +303,25 @@ function _attachWindowHandlers(view, container) {
     card.addEventListener('click', function (e) {
       if (e.defaultPrevented) return;
       var windowIndex = card.getAttribute('data-window-index');
+      var windowId = card.getAttribute('data-window-id');
       if (!windowIndex) return;
 
-      api
-        .get('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/' + encodeURIComponent(windowIndex) + '/panes')
+      // C2 transitional: panes API still keyed by index. Re-fetch the index
+      // from live tmux state right before the call to minimize stale-index risk.
+      api.get('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows')
         .then(function (result) {
-          var panes = result.data || [];
-          var firstPaneId = panes.length > 0 ? panes[0].id : null;
-          navigate('terminal', { currentWindow: windowIndex, currentPane: firstPaneId });
+          var wins = result.data || [];
+          var live = windowId ? wins.find(function (w) { return w.id === windowId; }) : null;
+          var liveIndex = live ? String(live.index) : windowIndex;
+
+          return api.get(
+            '/api/sessions/' + encodeURIComponent(state.currentSession) +
+            '/windows/' + encodeURIComponent(liveIndex) + '/panes'
+          ).then(function (paneResult) {
+            var panes = paneResult.data || [];
+            var firstPaneId = panes.length > 0 ? panes[0].id : null;
+            navigate('terminal', { currentWindow: liveIndex, currentPane: firstPaneId });
+          });
         })
         .catch(function () {
           navigate('terminal', { currentWindow: windowIndex, currentPane: null });
@@ -313,7 +341,11 @@ function _initWindowSwipe(view, container) {
   var startY = 0;
   var currentX = 0;
   var swiping = false;
+  var longPressTimer = null;
+  var longPressFired = false;
   var THRESHOLD = 60;
+  var LONG_PRESS_MS = 500;
+  var MOVE_CANCEL_PX = 10;
 
   view.addEventListener('touchstart', function (e) {
     var swipeContainer = e.target.closest('.swipe-container');
@@ -328,7 +360,14 @@ function _initWindowSwipe(view, container) {
     startY = touch.clientY;
     currentX = 0;
     swiping = false;
+    longPressFired = false;
     activeSwipe = swipeContainer;
+
+    longPressTimer = setTimeout(function () {
+      longPressFired = true;
+      longPressTimer = null;
+      _showMobileContextMenu(swipeContainer, container, startX, startY);
+    }, LONG_PRESS_MS);
   }, { passive: true });
 
   view.addEventListener('touchmove', function (e) {
@@ -338,13 +377,22 @@ function _initWindowSwipe(view, container) {
     var dx = touch.clientX - startX;
     var dy = touch.clientY - startY;
 
+    if (Math.abs(dx) > MOVE_CANCEL_PX || Math.abs(dy) > MOVE_CANCEL_PX) {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+    }
+
+    if (longPressFired) return; // suppress swipe after long-press
+
     if (!swiping && Math.abs(dy) > Math.abs(dx)) {
       activeSwipe = null;
       return;
     }
 
     swiping = true;
-    currentX = Math.min(0, Math.max(-160, dx));
+    currentX = Math.min(0, Math.max(-220, dx));
 
     var card = activeSwipe.querySelector('.window-card');
     if (card) {
@@ -354,6 +402,15 @@ function _initWindowSwipe(view, container) {
   }, { passive: true });
 
   view.addEventListener('touchend', function () {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+    if (longPressFired) {
+      longPressFired = false;
+      activeSwipe = null;
+      return;
+    }
     if (!activeSwipe) return;
 
     var card = activeSwipe.querySelector('.window-card');
@@ -365,7 +422,7 @@ function _initWindowSwipe(view, container) {
     card.style.transition = 'transform 0.2s ease';
 
     if (currentX < -THRESHOLD) {
-      card.style.transform = 'translateX(-140px)';
+      card.style.transform = 'translateX(-200px)';
       _attachWindowSwipeActionHandlers(activeSwipe, container);
     } else {
       card.style.transform = 'translateX(0)';
@@ -382,6 +439,28 @@ function _initWindowSwipe(view, container) {
   }, { passive: true });
 }
 
+function _showMobileContextMenu(swipeContainer, container, x, y) {
+  var windowId = swipeContainer.getAttribute('data-window-id');
+  var windowIndex = swipeContainer.getAttribute('data-window-index');
+  var isPinned = !!(state.pinsById && state.pinsById[windowId]);
+
+  var menu = document.getElementById('window-context-menu');
+  if (!menu) return;
+
+  menu.querySelector('[data-action="pin"]').textContent = isPinned ? 'Unpin' : 'Pin to top';
+  _ctxTargetIndex = windowIndex;
+  _ctxTargetId = windowId;
+  _ctxContainer = container;
+
+  menu.style.display = 'block';
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+
+  var rect = menu.getBoundingClientRect();
+  if (rect.right > window.innerWidth) menu.style.left = (window.innerWidth - rect.width - 8) + 'px';
+  if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + 'px';
+}
+
 function _resetWindowSwipe(swipeContainer) {
   var card = swipeContainer.querySelector('.window-card');
   if (card) {
@@ -392,15 +471,17 @@ function _resetWindowSwipe(swipeContainer) {
 
 function _attachWindowSwipeActionHandlers(swipeContainer, parentContainer) {
   var windowIndex = swipeContainer.getAttribute('data-window-index');
+  var windowId = swipeContainer.getAttribute('data-window-id');
 
   var renameBtn = swipeContainer.querySelector('.swipe-action-rename');
   var deleteBtn = swipeContainer.querySelector('.swipe-action-delete');
+  var moveBtn = swipeContainer.querySelector('.swipe-action-move');
 
   if (renameBtn) {
     renameBtn.onclick = function (e) {
       e.preventDefault();
       e.stopPropagation();
-      _renameWindow(windowIndex, parentContainer);
+      _renameWindow(windowIndex, windowId, parentContainer);
     };
   }
 
@@ -408,7 +489,15 @@ function _attachWindowSwipeActionHandlers(swipeContainer, parentContainer) {
     deleteBtn.onclick = function (e) {
       e.preventDefault();
       e.stopPropagation();
-      _deleteWindow(windowIndex, parentContainer);
+      _deleteWindow(windowIndex, windowId, parentContainer);
+    };
+  }
+
+  if (moveBtn) {
+    moveBtn.onclick = function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      _moveWindow(windowIndex, windowId, parentContainer);
     };
   }
 }
@@ -419,6 +508,7 @@ function _attachWindowSwipeActionHandlers(swipeContainer, parentContainer) {
 var _ctxMenu = null;
 var _ctxContainer = null;
 var _ctxTargetIndex = null;
+var _ctxTargetId = null;
 
 function _initWindowContextMenu(view, container) {
   _ctxContainer = container;
@@ -431,6 +521,8 @@ function _initWindowContextMenu(view, container) {
   menu.className = 'context-menu';
   menu.style.display = 'none';
   menu.innerHTML =
+    '<div class="context-menu-item" data-action="pin"></div>' +
+    '<div class="context-menu-item" data-action="move">Move to session…</div>' +
     '<div class="context-menu-item" data-action="rename">Rename</div>' +
     '<div class="context-menu-item context-menu-item-danger" data-action="delete">Delete</div>';
   document.body.appendChild(menu);
@@ -438,7 +530,7 @@ function _initWindowContextMenu(view, container) {
 
   // Capture phase — fires before browser can show native menu
   document.addEventListener('contextmenu', function (e) {
-    var swipeContainer = e.target.closest('.swipe-container[data-window-index]');
+    var swipeContainer = e.target.closest('.swipe-container[data-window-id]');
     if (!swipeContainer) {
       menu.style.display = 'none';
       return;
@@ -447,18 +539,19 @@ function _initWindowContextMenu(view, container) {
     e.preventDefault();
     e.stopImmediatePropagation();
     _ctxTargetIndex = swipeContainer.getAttribute('data-window-index');
+    _ctxTargetId = swipeContainer.getAttribute('data-window-id');
+
+    var pinItem = menu.querySelector('[data-action="pin"]');
+    var isPinned = state.pinsById && state.pinsById[_ctxTargetId];
+    pinItem.textContent = isPinned ? 'Unpin' : 'Pin to top';
 
     menu.style.display = 'block';
     menu.style.left = e.pageX + 'px';
     menu.style.top = e.pageY + 'px';
 
     var rect = menu.getBoundingClientRect();
-    if (rect.right > window.innerWidth) {
-      menu.style.left = (e.pageX - rect.width) + 'px';
-    }
-    if (rect.bottom > window.innerHeight) {
-      menu.style.top = (e.pageY - rect.height) + 'px';
-    }
+    if (rect.right > window.innerWidth) menu.style.left = (e.pageX - rect.width) + 'px';
+    if (rect.bottom > window.innerHeight) menu.style.top = (e.pageY - rect.height) + 'px';
   }, true); // capture phase
 
   menu.addEventListener('click', function (e) {
@@ -469,9 +562,13 @@ function _initWindowContextMenu(view, container) {
     menu.style.display = 'none';
 
     if (action === 'rename') {
-      _renameWindow(_ctxTargetIndex, _ctxContainer);
+      _renameWindow(_ctxTargetIndex, _ctxTargetId, _ctxContainer);
     } else if (action === 'delete') {
-      _deleteWindow(_ctxTargetIndex, _ctxContainer);
+      _deleteWindow(_ctxTargetIndex, _ctxTargetId, _ctxContainer);
+    } else if (action === 'pin') {
+      _togglePin(_ctxTargetId, _ctxContainer);
+    } else if (action === 'move') {
+      _moveWindow(_ctxTargetIndex, _ctxTargetId, _ctxContainer);
     }
   });
 
@@ -482,16 +579,16 @@ function _initWindowContextMenu(view, container) {
 
 // === Window Actions ===
 
-function _renameWindow(windowIndex, container) {
+function _renameWindow(windowIndex, windowId, container) {
   var currentName = '';
-  var sc = document.querySelector('.swipe-container[data-window-index="' + windowIndex + '"]');
+  var sc = document.querySelector('.swipe-container[data-window-id="' + windowId + '"]');
   if (sc) currentName = sc.getAttribute('data-window-name') || '';
 
   showPrompt({ title: '重命名窗口 ' + windowIndex, placeholder: '新名称', value: currentName })
     .then(function (newName) {
       if (!newName || !newName.trim()) return;
       return api.put(
-        '/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/' + encodeURIComponent(windowIndex),
+        '/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/by-id/' + encodeURIComponent(windowId),
         { newName: newName.trim() }
       );
     })
@@ -499,15 +596,21 @@ function _renameWindow(windowIndex, container) {
       if (result) renderWindows(container);
     })
     .catch(function (err) {
-      showAlert({ title: '重命名失败', message: err.message });
+      if (err.message && err.message.indexOf('moved_window') >= 0) {
+        showAlert({ title: '重命名失败', message: '窗口已被移到其它会话，请刷新后重试。' });
+      } else {
+        showAlert({ title: '重命名失败', message: err.message });
+      }
     });
 }
 
-function _deleteWindow(windowIndex, container) {
+function _deleteWindow(windowIndex, windowId, container) {
   showConfirm({ title: '删除窗口', message: '确定删除窗口 ' + windowIndex + '？此操作不可撤销。', confirmText: '删除', danger: true })
     .then(function (confirmed) {
       if (!confirmed) return;
-      return api.delete('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/' + encodeURIComponent(windowIndex));
+      return api.delete(
+        '/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/by-id/' + encodeURIComponent(windowId)
+      );
     })
     .then(function (result) {
       if (!result) return;
@@ -519,6 +622,176 @@ function _deleteWindow(windowIndex, container) {
       renderWindows(container);
     })
     .catch(function (err) {
-      showAlert({ title: '删除失败', message: err.message });
+      if (err.message && err.message.indexOf('moved_window') >= 0) {
+        showAlert({ title: '删除失败', message: '窗口已被移到其它会话，请刷新后重试。' });
+      } else {
+        showAlert({ title: '删除失败', message: err.message });
+      }
     });
 }
+
+/**
+ * Show a list of sessions (excluding `excludeSession`) and resolve with the picked name,
+ * or null if cancelled.
+ * @returns {Promise<string|null>}
+ */
+function _showSessionPicker(excludeSession) {
+  return new Promise(function (resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    var box = document.createElement('div');
+    box.className = 'modal-box';
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'modal-title';
+    titleEl.textContent = '选择目标会话';
+    box.appendChild(titleEl);
+
+    var list = document.createElement('div');
+    list.className = 'session-picker-list';
+
+    var sessions = (state.sessions || []).filter(function (s) { return s.name !== excludeSession; });
+    if (sessions.length === 0) {
+      var emptyMsg = document.createElement('div');
+      emptyMsg.className = 'modal-message';
+      emptyMsg.textContent = '没有可选的目标会话。';
+      box.appendChild(emptyMsg);
+    } else {
+      sessions.forEach(function (s) {
+        var item = document.createElement('button');
+        item.className = 'session-picker-item';
+        item.textContent = s.name + '  (' + s.windows + ' window' + (s.windows !== 1 ? 's' : '') + ')';
+        item.addEventListener('click', function () {
+          overlay.remove();
+          resolve(s.name);
+        });
+        list.appendChild(item);
+      });
+      box.appendChild(list);
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'modal-actions';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'modal-btn modal-cancel';
+    cancelBtn.textContent = '取消';
+    cancelBtn.addEventListener('click', function () { overlay.remove(); resolve(null); });
+    actions.appendChild(cancelBtn);
+    box.appendChild(actions);
+
+    overlay.appendChild(box);
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) { overlay.remove(); resolve(null); }
+    });
+
+    document.body.appendChild(overlay);
+  });
+}
+
+function _moveWindow(windowIndex, windowId, container) {
+  _showSessionPicker(state.currentSession).then(function (targetSession) {
+    if (!targetSession) return;
+    return _doMove(windowIndex, windowId, targetSession, false, container);
+  });
+}
+
+function _doMove(windowIndex, windowId, targetSession, confirmDestroy, container) {
+  var body = { targetSession: targetSession };
+  if (confirmDestroy) body.confirmDestroySource = true;
+
+  return api.post(
+    '/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/by-id/' + encodeURIComponent(windowId) + '/move',
+    body
+  ).then(function (result) {
+    if (!result) return;
+    // Invalidate cached order for both source and target sessions so they re-snapshot
+    if (state.windowOrderBySession) {
+      delete state.windowOrderBySession[state.currentSession];
+      delete state.windowOrderBySession[targetSession];
+    }
+    renderWindows(container);
+  }).catch(function (err) {
+    var msg = err.message || '';
+    if (msg.indexOf('requires_confirmation') >= 0) {
+      return showConfirm({
+        title: '销毁源会话',
+        message: '这会销毁会话 ' + state.currentSession + '，继续？',
+        confirmText: '继续',
+        danger: true,
+      }).then(function (ok) {
+        if (ok) return _doMove(windowIndex, windowId, targetSession, true, container);
+      });
+    }
+    if (msg.indexOf('moved_window') >= 0) {
+      showAlert({ title: '移动失败', message: '窗口已被移到其它会话，请刷新后重试。' });
+      return;
+    }
+    showAlert({ title: '移动失败', message: msg });
+  });
+}
+
+function _togglePin(windowId, container) {
+  if (!windowId) return;
+  var currentlyPinned = !!(state.pinsById && state.pinsById[windowId]);
+  var nextPinned = !currentlyPinned;
+
+  api.put('/api/pins/' + encodeURIComponent(windowId), { pinned: nextPinned })
+    .then(function () {
+      return api.get('/api/pins');
+    })
+    .then(function (res) {
+      state.pinsById = {};
+      var pins = (res.data && res.data.pins) || [];
+      pins.forEach(function (id) { state.pinsById[id] = true; });
+      // Force a full re-snapshot for current session
+      if (state.windowOrderBySession) {
+        delete state.windowOrderBySession[state.currentSession];
+      }
+      renderWindows(container);
+    })
+    .catch(function (err) {
+      showAlert({ title: 'Pin 失败', message: err.message });
+    });
+}
+
+// === Re-render hook used by WS reconcile (Task 8) ===
+//
+// Called when the live window-id set diverges from the cached snapshot
+// (window created/killed/moved). Triggers a fresh fetch + snapshot.
+window.rerenderCurrentWindowsView = function () {
+  var view = document.querySelector('.windows-view');
+  if (!view || !state.currentSession) return;
+  var container = view.parentElement;
+  if (container) renderWindows(container);
+};
+
+// === DOM splice for bell-rising-edge promotion (Task 8) ===
+//
+// Moves the card for `windowId` to just below the pinned tier (top of Tier 2)
+// without re-fetching or re-rendering the entire list. Pinned cards are not
+// promoted (they already sit higher).
+window.spliceBellPromoted = function (windowId) {
+  if (!windowId) return;
+  if (state.pinsById && state.pinsById[windowId]) return;
+
+  var list = document.querySelector('.windows-list');
+  if (!list) return;
+  var card = list.querySelector('.swipe-container[data-window-id="' + windowId + '"]');
+  if (!card) return;
+
+  // Count leading pinned cards to know where Tier 2 starts.
+  var pinnedCount = 0;
+  for (var i = 0; i < list.children.length; i++) {
+    var id = list.children[i].getAttribute('data-window-id');
+    if (id && state.pinsById && state.pinsById[id]) {
+      pinnedCount++;
+    } else {
+      break;
+    }
+  }
+  var target = list.children[pinnedCount] || null;
+  if (target === card) return; // already at top of non-pinned region
+
+  list.insertBefore(card, target);
+};
