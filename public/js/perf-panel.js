@@ -131,7 +131,52 @@ var PerfPanel = (function () {
     return html;
   }
 
-  function renderPressureList(_) { return '<div class="pp-loading-row">…</div>'; }
+  function renderPressureList(s) {
+    var t = s.total;
+    var items = [];
+    (s.windows || []).forEach(function (w) {
+      items.push({
+        key: w.session + '|' + w.windowIndex,
+        name: w.session + ':' + w.windowIndex + ' ' + w.windowName,
+        ext: false,
+        cpu: w.cpuPercent,
+        mem: w.memBytes,
+        io: w.ioBps,
+        procs: w.procCount,
+        score: U.pressureScore({ cpuPercent: w.cpuPercent, memBytes: w.memBytes, ioBps: w.ioBps }, t),
+      });
+    });
+    (s.external || []).forEach(function (e) {
+      items.push({
+        key: 'sys|' + e.comm,
+        name: e.comm,
+        ext: true,
+        cpu: e.cpuPercent,
+        mem: e.memBytes,
+        io: e.ioBps,
+        procs: e.procCount,
+        score: U.pressureScore({ cpuPercent: e.cpuPercent, memBytes: e.memBytes, ioBps: e.ioBps }, t),
+      });
+    });
+    items.sort(function (a, b) { return b.score - a.score; });
+    items = items.slice(0, 5);
+    if (items.length === 0) return '<div class="pp-empty">暂无活跃 window</div>';
+
+    return items.map(function (it, i) {
+      return '<div class="pp-pr-row" data-rank="' + (i + 1) + '">' +
+        '<span class="pp-pr-rank">' + (i + 1) + '</span>' +
+        '<div class="pp-pr-main">' +
+          '<div class="pp-pr-name">' + escapeHtml(it.name) + '<span class="pp-pr-tag' + (it.ext ? ' pp-pr-tag-ext' : '') + '">' + (it.ext ? 'system' : 'tmux') + '</span></div>' +
+          '<div class="pp-pr-metrics">' +
+            '<span class="pp-pr-m"><span class="pp-sw" style="background:var(--accent-red)"></span>' + it.cpu.toFixed(0) + '% CPU</span>' +
+            '<span class="pp-pr-m"><span class="pp-sw" style="background:var(--accent-blue)"></span>' + U.fmtBytes(it.mem) + '</span>' +
+            '<span class="pp-pr-m"><span class="pp-sw" style="background:var(--accent-yellow)"></span>' + U.fmtBps(it.io) + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="pp-pr-score"><div class="pp-pr-score-num">' + it.score.toFixed(1) + '</div><div class="pp-pr-score-lbl">压力分</div></div>' +
+      '</div>';
+    }).join('');
+  }
   function renderTrendChart() { return '<div class="pp-loading-row">…</div>'; }
   function renderTable(_) { return '<div class="pp-loading-row">…</div>'; }
   function bindRangeButtons() {
