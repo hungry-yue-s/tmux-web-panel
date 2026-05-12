@@ -78,3 +78,12 @@ export function _resetForTests() {
   count = 0;
   stopSampler();
 }
+
+import { Router } from 'express';
+const router = Router();
+router.get('/', (req, res) => {
+  const raw = Number(req.query.window);
+  const windowSeconds = Number.isFinite(raw) ? Math.max(10, Math.min(3600, raw)) : 60;
+  res.json({ success: true, data: getHistory(windowSeconds), error: null });
+});
+export default router;

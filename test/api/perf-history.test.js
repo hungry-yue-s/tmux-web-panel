@@ -48,3 +48,40 @@ describe('perf-history ring buffer', () => {
     expect(getHistory(60).points.length).toBeLessThanOrEqual(30);
   });
 });
+
+import express from 'express';
+import request from 'supertest';
+import historyRouter from '../../server/api/perf-history.js';
+
+function buildApp() {
+  const app = express();
+  app.use('/api/perf/history', historyRouter);
+  return app;
+}
+
+describe('/api/perf/history endpoint', () => {
+  beforeEach(() => _resetForTests());
+
+  it('returns empty points when ring is empty', async () => {
+    const res = await request(buildApp()).get('/api/perf/history?window=60');
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.points).toEqual([]);
+  });
+
+  it('clamps window to [10, 3600]', async () => {
+    await sampleAndStore();
+    const tooSmall = await request(buildApp()).get('/api/perf/history?window=1');
+    expect(tooSmall.status).toBe(200);
+    expect(tooSmall.body.data.points.length).toBeGreaterThanOrEqual(0);
+    const tooBig = await request(buildApp()).get('/api/perf/history?window=99999');
+    expect(tooBig.status).toBe(200);
+  });
+
+  it('defaults to window=60 when param missing', async () => {
+    await sampleAndStore();
+    const res = await request(buildApp()).get('/api/perf/history');
+    expect(res.status).toBe(200);
+    expect(res.body.data.points.length).toBeGreaterThan(0);
+  });
+});
