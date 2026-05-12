@@ -1477,8 +1477,12 @@ function _showPortMenu(e, port) {
     // payload 在 dragover 期间通常 getData 拿不到（浏览器限制），用 .dragging-from-here 兜底判断 src
     var srcEl = document.querySelector('.sidebar-window-item.dragging-from-here');
     var srcSession = (payload && payload.srcSession) || (srcEl && srcEl.getAttribute('data-session'));
-    if (srcSession && targetSession === srcSession) {
-      // 同会话不高亮
+    if (!srcSession) {
+      // Source unknown (e.g. sidebar rebuilt mid-drag) — don't highlight either way
+      header.classList.remove('drag-over');
+      return;
+    }
+    if (targetSession === srcSession) {
       header.classList.remove('drag-over');
       return;
     }
