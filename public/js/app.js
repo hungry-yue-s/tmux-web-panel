@@ -16,19 +16,37 @@ function showPrompt(opts) {
   return new Promise(function (resolve) {
     var overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
-    overlay.innerHTML =
-      '<div class="modal-box">' +
-        '<div class="modal-title">' + (opts.title || '') + '</div>' +
-        '<input class="modal-input" type="text" placeholder="' + (opts.placeholder || '') + '" value="' + (opts.value || '') + '">' +
-        '<div class="modal-actions">' +
-          '<button class="modal-btn modal-cancel">' + (opts.cancelText || '取消') + '</button>' +
-          '<button class="modal-btn modal-btn-primary modal-confirm">' + (opts.confirmText || '确定') + '</button>' +
-        '</div>' +
-      '</div>';
 
-    var input = overlay.querySelector('.modal-input');
-    var confirmBtn = overlay.querySelector('.modal-confirm');
-    var cancelBtn = overlay.querySelector('.modal-cancel');
+    var box = document.createElement('div');
+    box.className = 'modal-box';
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'modal-title';
+    titleEl.textContent = opts.title || '';
+    box.appendChild(titleEl);
+
+    var input = document.createElement('input');
+    input.className = 'modal-input';
+    input.type = 'text';
+    input.placeholder = opts.placeholder || '';
+    input.value = opts.value || '';
+    box.appendChild(input);
+
+    var actions = document.createElement('div');
+    actions.className = 'modal-actions';
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'modal-btn modal-cancel';
+    cancelBtn.textContent = opts.cancelText || '取消';
+    actions.appendChild(cancelBtn);
+
+    var confirmBtn = document.createElement('button');
+    confirmBtn.className = 'modal-btn modal-btn-primary modal-confirm';
+    confirmBtn.textContent = opts.confirmText || '确定';
+    actions.appendChild(confirmBtn);
+
+    box.appendChild(actions);
+    overlay.appendChild(box);
 
     function close(val) {
       overlay.remove();
@@ -37,11 +55,9 @@ function showPrompt(opts) {
 
     confirmBtn.addEventListener('click', function () { close(input.value); });
     cancelBtn.addEventListener('click', function () { close(null); });
-
     overlay.addEventListener('click', function (e) {
       if (e.target === overlay) close(null);
     });
-
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') close(input.value);
       if (e.key === 'Escape') close(null);
@@ -67,19 +83,37 @@ function showConfirm(opts) {
   return new Promise(function (resolve) {
     var overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
-    var dangerClass = opts.danger ? ' modal-btn-danger' : ' modal-btn-primary';
-    overlay.innerHTML =
-      '<div class="modal-box">' +
-        '<div class="modal-title">' + (opts.title || '') + '</div>' +
-        (opts.message ? '<div class="modal-message">' + opts.message + '</div>' : '') +
-        '<div class="modal-actions">' +
-          '<button class="modal-btn modal-cancel">' + (opts.cancelText || '取消') + '</button>' +
-          '<button class="modal-btn' + dangerClass + ' modal-confirm">' + (opts.confirmText || '确定') + '</button>' +
-        '</div>' +
-      '</div>';
 
-    var confirmBtn = overlay.querySelector('.modal-confirm');
-    var cancelBtn = overlay.querySelector('.modal-cancel');
+    var box = document.createElement('div');
+    box.className = 'modal-box';
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'modal-title';
+    titleEl.textContent = opts.title || '';
+    box.appendChild(titleEl);
+
+    if (opts.message) {
+      var msgEl = document.createElement('div');
+      msgEl.className = 'modal-message';
+      msgEl.textContent = opts.message;
+      box.appendChild(msgEl);
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'modal-actions';
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'modal-btn modal-cancel';
+    cancelBtn.textContent = opts.cancelText || '取消';
+    actions.appendChild(cancelBtn);
+
+    var confirmBtn = document.createElement('button');
+    confirmBtn.className = 'modal-btn modal-confirm ' + (opts.danger ? 'modal-btn-danger' : 'modal-btn-primary');
+    confirmBtn.textContent = opts.confirmText || '确定';
+    actions.appendChild(confirmBtn);
+
+    box.appendChild(actions);
+    overlay.appendChild(box);
 
     function close(val) {
       overlay.remove();
@@ -112,16 +146,30 @@ function showAlert(opts) {
   return new Promise(function (resolve) {
     var overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
-    overlay.innerHTML =
-      '<div class="modal-box">' +
-        '<div class="modal-title">' + (opts.title || '') + '</div>' +
-        (opts.message ? '<div class="modal-message">' + opts.message + '</div>' : '') +
-        '<div class="modal-actions">' +
-          '<button class="modal-btn modal-btn-primary modal-confirm">确定</button>' +
-        '</div>' +
-      '</div>';
 
-    var confirmBtn = overlay.querySelector('.modal-confirm');
+    var box = document.createElement('div');
+    box.className = 'modal-box';
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'modal-title';
+    titleEl.textContent = opts.title || '';
+    box.appendChild(titleEl);
+
+    if (opts.message) {
+      var msgEl = document.createElement('div');
+      msgEl.className = 'modal-message';
+      msgEl.textContent = opts.message;
+      box.appendChild(msgEl);
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'modal-actions';
+    var confirmBtn = document.createElement('button');
+    confirmBtn.className = 'modal-btn modal-btn-primary modal-confirm';
+    confirmBtn.textContent = '确定';
+    actions.appendChild(confirmBtn);
+    box.appendChild(actions);
+    overlay.appendChild(box);
 
     function close() {
       overlay.remove();
