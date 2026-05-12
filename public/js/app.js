@@ -1274,6 +1274,7 @@ function _loadSidebarWindows(sessionName) {
     if (windowItem) {
       var winIdx = windowItem.getAttribute('data-window-index');
       var winSess = windowItem.getAttribute('data-session');
+      var winId = windowItem.getAttribute('data-window-id');
       _showMenu(e,
         '<div class="context-menu-item" data-action="rename"><span class="context-menu-icon">✏</span>重命名</div>' +
         '<div class="context-menu-item context-menu-item-danger" data-action="delete"><span class="context-menu-icon">✕</span>删除</div>',
@@ -1283,19 +1284,27 @@ function _loadSidebarWindows(sessionName) {
               .then(function (newName) {
                 if (!newName || !newName.trim()) return;
                 return api.put(
-                  '/api/sessions/' + encodeURIComponent(winSess) + '/windows/' + encodeURIComponent(winIdx),
+                  '/api/sessions/' + encodeURIComponent(winSess) + '/windows/by-id/' + encodeURIComponent(winId),
                   { newName: newName.trim() }
                 );
               })
               .then(function (result) {
                 if (result) { _sidebarSessionKey = ''; updateSidebar(); }
               })
-              .catch(function (err) { showAlert({ title: '重命名失败', message: err.message }); });
+              .catch(function (err) {
+                if (err.message && err.message.indexOf('moved_window') >= 0) {
+                  showAlert({ title: '重命名失败', message: '窗口已被移到其它会话，请刷新后重试。' });
+                } else {
+                  showAlert({ title: '重命名失败', message: err.message });
+                }
+              });
           } else if (action === 'delete') {
             showConfirm({ title: '删除窗口', message: '确定删除窗口 ' + winIdx + '？', confirmText: '删除', danger: true })
               .then(function (confirmed) {
                 if (!confirmed) return;
-                return api.delete('/api/sessions/' + encodeURIComponent(winSess) + '/windows/' + encodeURIComponent(winIdx));
+                return api.delete(
+                  '/api/sessions/' + encodeURIComponent(winSess) + '/windows/by-id/' + encodeURIComponent(winId)
+                );
               })
               .then(function (result) {
                 if (!result) return;
@@ -1307,7 +1316,13 @@ function _loadSidebarWindows(sessionName) {
                 updateSidebar();
                 if (String(state.currentWindow) === String(winIdx)) navigate('windows');
               })
-              .catch(function (err) { showAlert({ title: '删除失败', message: err.message }); });
+              .catch(function (err) {
+                if (err.message && err.message.indexOf('moved_window') >= 0) {
+                  showAlert({ title: '删除失败', message: '窗口已被移到其它会话，请刷新后重试。' });
+                } else {
+                  showAlert({ title: '删除失败', message: err.message });
+                }
+              });
           }
         }
       );
