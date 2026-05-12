@@ -736,9 +736,9 @@ body {
 
 .session-picker-item {
   text-align: left;
-  background: var(--bg-card, #1e2030);
-  color: var(--text-primary, #e2e2e2);
-  border: 1px solid var(--border-color, #313244);
+  background: var(--bg-card, #24283b);
+  color: var(--text-primary, #c0caf5);
+  border: 1px solid var(--border, #3b4261);
   border-radius: 6px;
   padding: 10px 12px;
   cursor: pointer;
@@ -746,7 +746,7 @@ body {
 }
 
 .session-picker-item:hover {
-  background: var(--bg-hover, #2a2c3d);
+  background: var(--bg-hover, #292e42);
 }
 
 /* Session card */
