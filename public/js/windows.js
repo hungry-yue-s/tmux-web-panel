@@ -152,6 +152,7 @@ function _buildWindowCard(w) {
   return (
     '<div class="swipe-container" data-window-index="' + w.index + '" data-window-id="' + escapeHtml(w.id || '') + '" data-window-name="' + escapeHtml(w.name || '') + '">' +
     '<div class="swipe-actions">' +
+    '<button class="btn swipe-action-move" data-window-index="' + w.index + '" data-window-id="' + escapeHtml(w.id || '') + '">Move</button>' +
     '<button class="btn swipe-action-rename" data-window-index="' + w.index + '" data-window-id="' + escapeHtml(w.id || '') + '">Rename</button>' +
     '<button class="btn btn-danger swipe-action-delete" data-window-index="' + w.index + '" data-window-id="' + escapeHtml(w.id || '') + '">Delete</button>' +
     '</div>' +
@@ -302,14 +303,25 @@ function _attachWindowHandlers(view, container) {
     card.addEventListener('click', function (e) {
       if (e.defaultPrevented) return;
       var windowIndex = card.getAttribute('data-window-index');
+      var windowId = card.getAttribute('data-window-id');
       if (!windowIndex) return;
 
-      api
-        .get('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/' + encodeURIComponent(windowIndex) + '/panes')
+      // C2 transitional: panes API still keyed by index. Re-fetch the index
+      // from live tmux state right before the call to minimize stale-index risk.
+      api.get('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows')
         .then(function (result) {
-          var panes = result.data || [];
-          var firstPaneId = panes.length > 0 ? panes[0].id : null;
-          navigate('terminal', { currentWindow: windowIndex, currentPane: firstPaneId });
+          var wins = result.data || [];
+          var live = windowId ? wins.find(function (w) { return w.id === windowId; }) : null;
+          var liveIndex = live ? String(live.index) : windowIndex;
+
+          return api.get(
+            '/api/sessions/' + encodeURIComponent(state.currentSession) +
+            '/windows/' + encodeURIComponent(liveIndex) + '/panes'
+          ).then(function (paneResult) {
+            var panes = paneResult.data || [];
+            var firstPaneId = panes.length > 0 ? panes[0].id : null;
+            navigate('terminal', { currentWindow: liveIndex, currentPane: firstPaneId });
+          });
         })
         .catch(function () {
           navigate('terminal', { currentWindow: windowIndex, currentPane: null });
@@ -459,15 +471,17 @@ function _resetWindowSwipe(swipeContainer) {
 
 function _attachWindowSwipeActionHandlers(swipeContainer, parentContainer) {
   var windowIndex = swipeContainer.getAttribute('data-window-index');
+  var windowId = swipeContainer.getAttribute('data-window-id');
 
   var renameBtn = swipeContainer.querySelector('.swipe-action-rename');
   var deleteBtn = swipeContainer.querySelector('.swipe-action-delete');
+  var moveBtn = swipeContainer.querySelector('.swipe-action-move');
 
   if (renameBtn) {
     renameBtn.onclick = function (e) {
       e.preventDefault();
       e.stopPropagation();
-      _renameWindow(windowIndex, parentContainer);
+      _renameWindow(windowIndex, windowId, parentContainer);
     };
   }
 
@@ -475,7 +489,15 @@ function _attachWindowSwipeActionHandlers(swipeContainer, parentContainer) {
     deleteBtn.onclick = function (e) {
       e.preventDefault();
       e.stopPropagation();
-      _deleteWindow(windowIndex, parentContainer);
+      _deleteWindow(windowIndex, windowId, parentContainer);
+    };
+  }
+
+  if (moveBtn) {
+    moveBtn.onclick = function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      _moveWindow(windowIndex, windowId, parentContainer);
     };
   }
 }
@@ -540,13 +562,13 @@ function _initWindowContextMenu(view, container) {
     menu.style.display = 'none';
 
     if (action === 'rename') {
-      _renameWindow(_ctxTargetIndex, _ctxContainer);
+      _renameWindow(_ctxTargetIndex, _ctxTargetId, _ctxContainer);
     } else if (action === 'delete') {
-      _deleteWindow(_ctxTargetIndex, _ctxContainer);
+      _deleteWindow(_ctxTargetIndex, _ctxTargetId, _ctxContainer);
     } else if (action === 'pin') {
       _togglePin(_ctxTargetId, _ctxContainer);
     } else if (action === 'move') {
-      // Move handler is wired in Task 7 — no-op for now
+      _moveWindow(_ctxTargetIndex, _ctxTargetId, _ctxContainer);
     }
   });
 
@@ -557,16 +579,16 @@ function _initWindowContextMenu(view, container) {
 
 // === Window Actions ===
 
-function _renameWindow(windowIndex, container) {
+function _renameWindow(windowIndex, windowId, container) {
   var currentName = '';
-  var sc = document.querySelector('.swipe-container[data-window-index="' + windowIndex + '"]');
+  var sc = document.querySelector('.swipe-container[data-window-id="' + windowId + '"]');
   if (sc) currentName = sc.getAttribute('data-window-name') || '';
 
   showPrompt({ title: '重命名窗口 ' + windowIndex, placeholder: '新名称', value: currentName })
     .then(function (newName) {
       if (!newName || !newName.trim()) return;
       return api.put(
-        '/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/' + encodeURIComponent(windowIndex),
+        '/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/by-id/' + encodeURIComponent(windowId),
         { newName: newName.trim() }
       );
     })
@@ -574,15 +596,21 @@ function _renameWindow(windowIndex, container) {
       if (result) renderWindows(container);
     })
     .catch(function (err) {
-      showAlert({ title: '重命名失败', message: err.message });
+      if (err.message && err.message.indexOf('moved_window') >= 0) {
+        showAlert({ title: '重命名失败', message: '窗口已被移到其它会话，请刷新后重试。' });
+      } else {
+        showAlert({ title: '重命名失败', message: err.message });
+      }
     });
 }
 
-function _deleteWindow(windowIndex, container) {
+function _deleteWindow(windowIndex, windowId, container) {
   showConfirm({ title: '删除窗口', message: '确定删除窗口 ' + windowIndex + '？此操作不可撤销。', confirmText: '删除', danger: true })
     .then(function (confirmed) {
       if (!confirmed) return;
-      return api.delete('/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/' + encodeURIComponent(windowIndex));
+      return api.delete(
+        '/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/by-id/' + encodeURIComponent(windowId)
+      );
     })
     .then(function (result) {
       if (!result) return;
@@ -594,8 +622,113 @@ function _deleteWindow(windowIndex, container) {
       renderWindows(container);
     })
     .catch(function (err) {
-      showAlert({ title: '删除失败', message: err.message });
+      if (err.message && err.message.indexOf('moved_window') >= 0) {
+        showAlert({ title: '删除失败', message: '窗口已被移到其它会话，请刷新后重试。' });
+      } else {
+        showAlert({ title: '删除失败', message: err.message });
+      }
     });
+}
+
+/**
+ * Show a list of sessions (excluding `excludeSession`) and resolve with the picked name,
+ * or null if cancelled.
+ * @returns {Promise<string|null>}
+ */
+function _showSessionPicker(excludeSession) {
+  return new Promise(function (resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    var box = document.createElement('div');
+    box.className = 'modal-box';
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'modal-title';
+    titleEl.textContent = '选择目标会话';
+    box.appendChild(titleEl);
+
+    var list = document.createElement('div');
+    list.className = 'session-picker-list';
+
+    var sessions = (state.sessions || []).filter(function (s) { return s.name !== excludeSession; });
+    if (sessions.length === 0) {
+      var emptyMsg = document.createElement('div');
+      emptyMsg.className = 'modal-message';
+      emptyMsg.textContent = '没有可选的目标会话。';
+      box.appendChild(emptyMsg);
+    } else {
+      sessions.forEach(function (s) {
+        var item = document.createElement('button');
+        item.className = 'session-picker-item';
+        item.textContent = s.name + '  (' + s.windows + ' window' + (s.windows !== 1 ? 's' : '') + ')';
+        item.addEventListener('click', function () {
+          overlay.remove();
+          resolve(s.name);
+        });
+        list.appendChild(item);
+      });
+      box.appendChild(list);
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'modal-actions';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'modal-btn modal-cancel';
+    cancelBtn.textContent = '取消';
+    cancelBtn.addEventListener('click', function () { overlay.remove(); resolve(null); });
+    actions.appendChild(cancelBtn);
+    box.appendChild(actions);
+
+    overlay.appendChild(box);
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) { overlay.remove(); resolve(null); }
+    });
+
+    document.body.appendChild(overlay);
+  });
+}
+
+function _moveWindow(windowIndex, windowId, container) {
+  _showSessionPicker(state.currentSession).then(function (targetSession) {
+    if (!targetSession) return;
+    return _doMove(windowIndex, windowId, targetSession, false, container);
+  });
+}
+
+function _doMove(windowIndex, windowId, targetSession, confirmDestroy, container) {
+  var body = { targetSession: targetSession };
+  if (confirmDestroy) body.confirmDestroySource = true;
+
+  return api.post(
+    '/api/sessions/' + encodeURIComponent(state.currentSession) + '/windows/by-id/' + encodeURIComponent(windowId) + '/move',
+    body
+  ).then(function (result) {
+    if (!result) return;
+    // Invalidate cached order for both source and target sessions so they re-snapshot
+    if (state.windowOrderBySession) {
+      delete state.windowOrderBySession[state.currentSession];
+      delete state.windowOrderBySession[targetSession];
+    }
+    renderWindows(container);
+  }).catch(function (err) {
+    var msg = err.message || '';
+    if (msg.indexOf('requires_confirmation') >= 0) {
+      return showConfirm({
+        title: '销毁源会话',
+        message: '这会销毁会话 ' + state.currentSession + '，继续？',
+        confirmText: '继续',
+        danger: true,
+      }).then(function (ok) {
+        if (ok) return _doMove(windowIndex, windowId, targetSession, true, container);
+      });
+    }
+    if (msg.indexOf('moved_window') >= 0) {
+      showAlert({ title: '移动失败', message: '窗口已被移到其它会话，请刷新后重试。' });
+      return;
+    }
+    showAlert({ title: '移动失败', message: msg });
+  });
 }
 
 function _togglePin(windowId, container) {
