@@ -277,7 +277,75 @@ var PerfPanel = (function () {
       });
     });
   }
-  function bindTableRows() { /* filled in by Task 12 */ }
+  function bindTableRows() {
+    function renderDrill(procs) {
+      procs = procs || [];
+      if (procs.length === 0) {
+        return '<div class="pp-wt-drill"><div class="pp-empty">暂无进程详情</div></div>';
+      }
+      var rows = procs.map(function (p) {
+        return '<tr>' +
+          '<td>' + escapeHtml(p.pid) + '</td>' +
+          '<td>' + escapeHtml(p.comm || '') + '</td>' +
+          '<td class="pp-r">' + fmtPercent(p.cpuPercent || 0) + '</td>' +
+          '<td class="pp-r">' + fmtBytes(p.memBytes || 0) + '</td>' +
+          '<td class="pp-wt-cmd">' + escapeHtml(p.cmdline || '') + '</td>' +
+        '</tr>';
+      }).join('');
+      return '<div class="pp-wt-drill">' +
+        '<table><thead><tr><th>PID</th><th>comm</th><th class="pp-r">CPU</th><th class="pp-r">MEM</th><th>cmdline</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      '</div>';
+    }
+
+    function setDrill(row, html) {
+      var open = row.querySelector('.pp-wt-drill');
+      if (open) open.remove();
+      row.insertAdjacentHTML('beforeend', html);
+    }
+
+    document.querySelectorAll('#perf-panel .pp-wt-row').forEach(function (row) {
+      row.addEventListener('click', function () {
+        var open = row.querySelector('.pp-wt-drill');
+        if (open) { open.remove(); return; }
+
+        var key = row.getAttribute('data-key') || '';
+        if (key.indexOf('sys|') === 0) {
+          setDrill(row, '<div class="pp-wt-drill">comm group drilldown not implemented</div>');
+          return;
+        }
+
+        var cached = state.drilldown.get(key);
+        if (cached && Date.now() - cached.ts < 5000) {
+          setDrill(row, renderDrill(cached.procs));
+          return;
+        }
+
+        var session = row.getAttribute('data-session');
+        var windowIndex = row.getAttribute('data-windowindex');
+        if (!session || windowIndex == null) return;
+
+        var token = Date.now() + ':' + Math.random();
+        row._ppDrillToken = token;
+        setDrill(row, '<div class="pp-wt-drill"><div class="pp-loading">加载进程详情…</div></div>');
+        fetch('/api/perf/drilldown?session=' + encodeURIComponent(session) + '&windowIndex=' + encodeURIComponent(windowIndex), { credentials: 'same-origin' })
+          .then(function (r) { return r.json(); })
+          .then(function (resp) {
+            if (row._ppDrillToken !== token || !row.querySelector('.pp-wt-drill')) return;
+            if (!resp || !resp.success) {
+              setDrill(row, '<div class="pp-wt-drill"><div class="pp-empty">进程详情加载失败</div></div>');
+              return;
+            }
+            var procs = (resp.data && resp.data.procs) || [];
+            state.drilldown.set(key, { ts: Date.now(), procs: procs });
+            setDrill(row, renderDrill(procs));
+          })
+          .catch(function () {
+            if (row._ppDrillToken !== token || !row.querySelector('.pp-wt-drill')) return;
+            setDrill(row, '<div class="pp-wt-drill"><div class="pp-empty">进程详情加载失败</div></div>');
+          });
+      });
+    });
+  }
 
   function paintPerf() {
     var root = document.getElementById('perf-view-root');
