@@ -566,7 +566,7 @@ function _initWindowContextMenu(view, container) {
     } else if (action === 'delete') {
       _deleteWindow(_ctxTargetIndex, _ctxTargetId, _ctxContainer);
     } else if (action === 'pin') {
-      _togglePin(_ctxTargetId, _ctxContainer);
+      _togglePin(_ctxTargetId, function () { renderWindows(_ctxContainer); });
     } else if (action === 'move') {
       _moveWindow(_ctxTargetIndex, _ctxTargetId, _ctxContainer);
     }
@@ -692,11 +692,13 @@ function _showSessionPicker(excludeSession) {
 function _moveWindow(windowIndex, windowId, container) {
   _showSessionPicker(state.currentSession).then(function (targetSession) {
     if (!targetSession) return;
-    return _doMove(windowIndex, windowId, targetSession, false, container);
+    return _doMove(windowIndex, windowId, targetSession, false, function () {
+      renderWindows(container);
+    });
   });
 }
 
-function _doMove(windowIndex, windowId, targetSession, confirmDestroy, container) {
+function _doMove(windowIndex, windowId, targetSession, confirmDestroy, refreshFn) {
   var body = { targetSession: targetSession };
   if (confirmDestroy) body.confirmDestroySource = true;
 
@@ -710,7 +712,7 @@ function _doMove(windowIndex, windowId, targetSession, confirmDestroy, container
       delete state.windowOrderBySession[state.currentSession];
       delete state.windowOrderBySession[targetSession];
     }
-    renderWindows(container);
+    if (typeof refreshFn === 'function') refreshFn();
   }).catch(function (err) {
     var msg = err.message || '';
     if (msg.indexOf('requires_confirmation') >= 0) {
@@ -720,7 +722,7 @@ function _doMove(windowIndex, windowId, targetSession, confirmDestroy, container
         confirmText: '继续',
         danger: true,
       }).then(function (ok) {
-        if (ok) return _doMove(windowIndex, windowId, targetSession, true, container);
+        if (ok) return _doMove(windowIndex, windowId, targetSession, true, refreshFn);
       });
     }
     if (msg.indexOf('moved_window') >= 0) {
@@ -731,7 +733,7 @@ function _doMove(windowIndex, windowId, targetSession, confirmDestroy, container
   });
 }
 
-function _togglePin(windowId, container) {
+function _togglePin(windowId, refreshFn) {
   if (!windowId) return;
   var currentlyPinned = !!(state.pinsById && state.pinsById[windowId]);
   var nextPinned = !currentlyPinned;
@@ -748,7 +750,7 @@ function _togglePin(windowId, container) {
       if (state.windowOrderBySession) {
         delete state.windowOrderBySession[state.currentSession];
       }
-      renderWindows(container);
+      if (typeof refreshFn === 'function') refreshFn();
     })
     .catch(function (err) {
       showAlert({ title: 'Pin 失败', message: err.message });
