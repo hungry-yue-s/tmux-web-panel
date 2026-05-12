@@ -1275,11 +1275,43 @@ function _loadSidebarWindows(sessionName) {
       var winIdx = windowItem.getAttribute('data-window-index');
       var winSess = windowItem.getAttribute('data-session');
       var winId = windowItem.getAttribute('data-window-id');
+      var isPinned = !!(state.pinsById && state.pinsById[winId]);
+      var pinLabel = isPinned ? 'Unpin' : 'Pin to top';
+
+      // 侧边栏刷新回调：清缓存键 → updateSidebar 会触发 _rebuildSidebar → _loadSidebarWindows(currentSession)
+      var refreshSidebar = function () {
+        _sidebarSessionKey = '';
+        updateSidebar();
+      };
+
       _showMenu(e,
+        '<div class="context-menu-item" data-action="pin"><span class="context-menu-icon">📌</span>' + pinLabel + '</div>' +
+        '<div class="context-menu-item" data-action="move"><span class="context-menu-icon">→</span>Move to session…</div>' +
         '<div class="context-menu-item" data-action="rename"><span class="context-menu-icon">✏</span>重命名</div>' +
         '<div class="context-menu-item context-menu-item-danger" data-action="delete"><span class="context-menu-icon">✕</span>删除</div>',
         function (action) {
-          if (action === 'rename') {
+          if (action === 'pin') {
+            if (typeof _togglePin === 'function') {
+              _togglePin(winId, refreshSidebar);
+            }
+          } else if (action === 'move') {
+            // 临时把 currentSession 指向源会话，让 _doMove 的 URL / 错误信息正确（源不一定是当前会话）
+            var savedCurrent = state.currentSession;
+            state.currentSession = winSess;
+            _showSessionPicker(winSess).then(function (targetSession) {
+              state.currentSession = savedCurrent;
+              if (!targetSession) return;
+              // _doMove 内部还会用 state.currentSession 拼 URL，再切回去
+              var savedAgain = state.currentSession;
+              state.currentSession = winSess;
+              return _doMove(winIdx, winId, targetSession, false, function () {
+                state.currentSession = savedAgain;
+                refreshSidebar();
+              }).finally(function () {
+                state.currentSession = savedAgain;
+              });
+            });
+          } else if (action === 'rename') {
             showPrompt({ title: '重命名窗口 ' + winIdx, placeholder: '新名称' })
               .then(function (newName) {
                 if (!newName || !newName.trim()) return;
@@ -1289,7 +1321,7 @@ function _loadSidebarWindows(sessionName) {
                 );
               })
               .then(function (result) {
-                if (result) { _sidebarSessionKey = ''; updateSidebar(); }
+                if (result) refreshSidebar();
               })
               .catch(function (err) {
                 if (err.message && err.message.indexOf('moved_window') >= 0) {
@@ -1312,8 +1344,7 @@ function _loadSidebarWindows(sessionName) {
                   delete _fontOffsets[winSess + ':' + winIdx];
                   _saveFontOffsets();
                 }
-                _sidebarSessionKey = '';
-                updateSidebar();
+                refreshSidebar();
                 if (String(state.currentWindow) === String(winIdx)) navigate('windows');
               })
               .catch(function (err) {
