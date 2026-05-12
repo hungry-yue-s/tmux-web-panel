@@ -768,32 +768,41 @@ window.rerenderCurrentWindowsView = function () {
   if (container) renderWindows(container);
 };
 
-// === DOM splice for bell-rising-edge promotion (Task 8) ===
+// === DOM splice for bell-rising-edge promotion (Task 8 + sidebar) ===
 //
-// Moves the card for `windowId` to just below the pinned tier (top of Tier 2)
-// without re-fetching or re-rendering the entire list. Pinned cards are not
-// promoted (they already sit higher).
-window.spliceBellPromoted = function (windowId) {
-  if (!windowId) return;
-  if (state.pinsById && state.pinsById[windowId]) return;
+// Moves the item for `windowId` to just below the pinned tier (top of Tier 2)
+// without re-fetching or re-rendering. Pinned items are not promoted (they
+// already sit higher). Works on any flat list of items selected by itemSelector.
+function _splicePromotedInList(listEl, itemSelector, windowId) {
+  if (!listEl) return;
+  var item = listEl.querySelector(itemSelector + '[data-window-id="' + windowId + '"]');
+  if (!item) return;
 
-  var list = document.querySelector('.windows-list');
-  if (!list) return;
-  var card = list.querySelector('.swipe-container[data-window-id="' + windowId + '"]');
-  if (!card) return;
-
-  // Count leading pinned cards to know where Tier 2 starts.
+  // Count leading pinned items to know where Tier 2 starts.
   var pinnedCount = 0;
-  for (var i = 0; i < list.children.length; i++) {
-    var id = list.children[i].getAttribute('data-window-id');
+  for (var i = 0; i < listEl.children.length; i++) {
+    var id = listEl.children[i].getAttribute('data-window-id');
     if (id && state.pinsById && state.pinsById[id]) {
       pinnedCount++;
     } else {
       break;
     }
   }
-  var target = list.children[pinnedCount] || null;
-  if (target === card) return; // already at top of non-pinned region
+  var target = listEl.children[pinnedCount] || null;
+  if (target === item) return; // already at top of non-pinned region
 
-  list.insertBefore(card, target);
+  listEl.insertBefore(item, target);
+}
+
+window.spliceBellPromoted = function (windowId) {
+  if (!windowId) return;
+  if (state.pinsById && state.pinsById[windowId]) return;
+
+  // Card view（当前在 Windows tab 时存在）
+  _splicePromotedInList(document.querySelector('.windows-list'), '.swipe-container', windowId);
+
+  // Sidebar windows（每个展开的 session group 一个 .sidebar-windows 容器）
+  document.querySelectorAll('.sidebar-windows').forEach(function (listEl) {
+    _splicePromotedInList(listEl, '.sidebar-window-item', windowId);
+  });
 };
