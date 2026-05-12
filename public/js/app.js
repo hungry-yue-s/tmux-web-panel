@@ -1455,6 +1455,60 @@ class StatusSocket {
     if (data && data.sessions !== undefined) {
       state.sessions = data.sessions;
 
+      // Reconcile cached window orders against the live set per session.
+      // If a session's window-id set has changed (add/remove/move), invalidate
+      // the cached order so the next render computes a fresh snapshot.
+      state.windowOrderBySession = state.windowOrderBySession || {};
+      state.promotedBellIdsBySession = state.promotedBellIdsBySession || {};
+      Object.keys(state.windowOrderBySession).forEach(function (session) {
+        var s = (data.sessions || []).find(function (x) { return x.name === session; });
+        if (!s) {
+          // Session gone entirely
+          delete state.windowOrderBySession[session];
+          delete state.promotedBellIdsBySession[session];
+          return;
+        }
+        var liveIds = (s.windowDetails || []).map(function (w) { return w.id; });
+        var cached = state.windowOrderBySession[session] || [];
+        var liveSet = {};
+        liveIds.forEach(function (id) { liveSet[id] = true; });
+
+        var sameSet = cached.length === liveIds.length
+          && cached.every(function (id) { return liveSet[id]; });
+
+        if (!sameSet) {
+          // Structural change → invalidate cached order
+          delete state.windowOrderBySession[session];
+          // Also drop any promoted-bell ids that no longer exist
+          if (state.promotedBellIdsBySession[session]) {
+            state.promotedBellIdsBySession[session] = state.promotedBellIdsBySession[session]
+              .filter(function (id) { return liveSet[id]; });
+          }
+          if (session === state.currentSession && typeof window.rerenderCurrentWindowsView === 'function') {
+            window.rerenderCurrentWindowsView();
+          }
+        }
+      });
+
+      // Bell promotion: any window with source:'bell' in completedWindows joins
+      // the promotion list (newest-first), so the snapshot/splice logic lifts
+      // it visually to the top of Tier 2.
+      var _completed = (data && data.completedWindows) || [];
+      _completed.forEach(function (cw) {
+        if (cw.source !== 'bell' || !cw.windowId) return;
+        state.promotedBellIdsBySession[cw.session] = state.promotedBellIdsBySession[cw.session] || [];
+        var arr = state.promotedBellIdsBySession[cw.session];
+        var existing = arr.indexOf(cw.windowId);
+        if (existing >= 0) arr.splice(existing, 1);
+        arr.unshift(cw.windowId);
+
+        // If currently viewing this session, splice the card visually without
+        // a full re-snapshot.
+        if (cw.session === state.currentSession && typeof window.spliceBellPromoted === 'function') {
+          window.spliceBellPromoted(cw.windowId);
+        }
+      });
+
       // Build pane scene map from status data (pane-cmd only fires on change,
       // but status arrives every poll with current commands for all panes)
       if (typeof FabScene !== 'undefined') {

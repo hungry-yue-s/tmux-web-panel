@@ -754,3 +754,44 @@ function _togglePin(windowId, container) {
       showAlert({ title: 'Pin 失败', message: err.message });
     });
 }
+
+// === Re-render hook used by WS reconcile (Task 8) ===
+//
+// Called when the live window-id set diverges from the cached snapshot
+// (window created/killed/moved). Triggers a fresh fetch + snapshot.
+window.rerenderCurrentWindowsView = function () {
+  var view = document.querySelector('.windows-view');
+  if (!view || !state.currentSession) return;
+  var container = view.parentElement;
+  if (container) renderWindows(container);
+};
+
+// === DOM splice for bell-rising-edge promotion (Task 8) ===
+//
+// Moves the card for `windowId` to just below the pinned tier (top of Tier 2)
+// without re-fetching or re-rendering the entire list. Pinned cards are not
+// promoted (they already sit higher).
+window.spliceBellPromoted = function (windowId) {
+  if (!windowId) return;
+  if (state.pinsById && state.pinsById[windowId]) return;
+
+  var list = document.querySelector('.windows-list');
+  if (!list) return;
+  var card = list.querySelector('.swipe-container[data-window-id="' + windowId + '"]');
+  if (!card) return;
+
+  // Count leading pinned cards to know where Tier 2 starts.
+  var pinnedCount = 0;
+  for (var i = 0; i < list.children.length; i++) {
+    var id = list.children[i].getAttribute('data-window-id');
+    if (id && state.pinsById && state.pinsById[id]) {
+      pinnedCount++;
+    } else {
+      break;
+    }
+  }
+  var target = list.children[pinnedCount] || null;
+  if (target === card) return; // already at top of non-pinned region
+
+  list.insertBefore(card, target);
+};
