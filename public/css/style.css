@@ -4105,3 +4105,13 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   opacity: 0.7;
   flex-shrink: 0;
 }
+
+.sidebar-window-item.dragging-from-here {
+  opacity: 0.4;
+}
+
+.sidebar-session-header.drag-over {
+  background: var(--bg-hover);
+  outline: 2px solid var(--accent-blue);
+  outline-offset: -2px;
+}

@@ -1416,6 +1416,113 @@ function _showPortMenu(e, port) {
   }
 }
 
+// === Sidebar Drag-and-Drop (window → session header → Move) ===
+//
+// HTML5 native drag, document-level delegation so it survives sidebar re-renders.
+// Drop target = .sidebar-session-header. Same-session drops are silently ignored.
+
+(function () {
+  function _parseDragPayload(e) {
+    try {
+      var raw = e.dataTransfer && e.dataTransfer.getData('text/plain');
+      if (!raw) return null;
+      var payload = JSON.parse(raw);
+      if (!payload || typeof payload.windowId !== 'string' || typeof payload.srcSession !== 'string') {
+        return null;
+      }
+      return payload;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  document.addEventListener('dragstart', function (e) {
+    var item = e.target.closest && e.target.closest('.sidebar-window-item');
+    if (!item) return;
+    var windowId = item.getAttribute('data-window-id');
+    var srcSession = item.getAttribute('data-session');
+    var windowIndex = item.getAttribute('data-window-index');
+    if (!windowId || !srcSession) return;
+
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', JSON.stringify({
+        windowId: windowId,
+        srcSession: srcSession,
+        windowIndex: windowIndex,
+      }));
+    }
+    item.classList.add('dragging-from-here');
+  });
+
+  document.addEventListener('dragend', function (e) {
+    // 清理所有源 item 和遗留的 drop target 高亮
+    document.querySelectorAll('.sidebar-window-item.dragging-from-here').forEach(function (el) {
+      el.classList.remove('dragging-from-here');
+    });
+    document.querySelectorAll('.sidebar-session-header.drag-over').forEach(function (el) {
+      el.classList.remove('drag-over');
+    });
+  });
+
+  document.addEventListener('dragover', function (e) {
+    var header = e.target.closest && e.target.closest('.sidebar-session-header');
+    if (!header) return;
+    // 允许 drop
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+
+    var targetSession = header.getAttribute('data-session');
+    var payload = _parseDragPayload(e);
+    // payload 在 dragover 期间通常 getData 拿不到（浏览器限制），用 .dragging-from-here 兜底判断 src
+    var srcEl = document.querySelector('.sidebar-window-item.dragging-from-here');
+    var srcSession = (payload && payload.srcSession) || (srcEl && srcEl.getAttribute('data-session'));
+    if (srcSession && targetSession === srcSession) {
+      // 同会话不高亮
+      header.classList.remove('drag-over');
+      return;
+    }
+    header.classList.add('drag-over');
+  });
+
+  document.addEventListener('dragleave', function (e) {
+    var header = e.target.closest && e.target.closest('.sidebar-session-header');
+    if (!header) return;
+    // 仅当离开 header 边界（relatedTarget 不在 header 内）时清除
+    var rt = e.relatedTarget;
+    if (rt && header.contains(rt)) return;
+    header.classList.remove('drag-over');
+  });
+
+  document.addEventListener('drop', function (e) {
+    var header = e.target.closest && e.target.closest('.sidebar-session-header');
+    if (!header) return;
+    e.preventDefault();
+    header.classList.remove('drag-over');
+
+    var payload = _parseDragPayload(e);
+    if (!payload) return;
+    var targetSession = header.getAttribute('data-session');
+    if (!targetSession || targetSession === payload.srcSession) return;
+
+    // _doMove 内部用 state.currentSession 拼源 URL；临时切到 srcSession，完成后还原
+    var savedCurrent = state.currentSession;
+    state.currentSession = payload.srcSession;
+
+    var refreshSidebar = function () {
+      _sidebarSessionKey = '';
+      updateSidebar();
+    };
+
+    _doMove(payload.windowIndex, payload.windowId, targetSession, false, function () {
+      state.currentSession = savedCurrent;
+      refreshSidebar();
+    }).finally(function () {
+      state.currentSession = savedCurrent;
+    });
+  });
+})();
+
 function escapeHtml(str) {
   var div = document.createElement('div');
   div.appendChild(document.createTextNode(str));
