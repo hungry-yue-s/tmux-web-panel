@@ -177,7 +177,38 @@ var PerfPanel = (function () {
       '</div>';
     }).join('');
   }
-  function renderTrendChart() { return '<div class="pp-loading-row">…</div>'; }
+  function renderTrendChart() {
+    var pts = (state.history && state.history.points) || [];
+    if (pts.length === 0) {
+      return '<svg viewBox="0 0 540 200" preserveAspectRatio="none" class="pp-trend-svg"><text x="270" y="100" text-anchor="middle" fill="var(--text-muted)" font-size="12">采样中…</text></svg>';
+    }
+    var t = (state.snapshot && state.snapshot.total) || {};
+    var cpuMax = (t.cpuCount || 1) * 100;
+    var memMax = t.systemMemTotal || 1;
+    var ioPeak = Math.max(1, Math.max.apply(null, pts.map(function (p) { return p.total.io; })));
+
+    var series = [
+      { color: 'var(--accent-red)',    name: 'cpu', values: pts.map(function (p) { return p.total.cpu / cpuMax; }) },
+      { color: 'var(--accent-blue)',   name: 'mem', values: pts.map(function (p) { return p.total.mem / memMax; }) },
+      { color: 'var(--accent-yellow)', name: 'io',  values: pts.map(function (p) { return p.total.io / ioPeak; }) },
+    ];
+
+    var W = 540, H = 200;
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" class="pp-trend-svg">';
+    for (var i = 1; i < 4; i++) {
+      var y = (H / 4) * i;
+      svg += '<line x1="0" y1="' + y + '" x2="' + W + '" y2="' + y + '" stroke="var(--border-subtle)" stroke-dasharray="2,4" opacity=".5"/>';
+    }
+    series.forEach(function (s, idx) {
+      var p = U.sparkPath(s.values, W, H, { pad: 8 });
+      var gid = 'pp-tg-' + idx;
+      svg += '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="' + s.color + '" stop-opacity=".22"/><stop offset="100%" stop-color="' + s.color + '" stop-opacity="0"/></linearGradient></defs>';
+      svg += '<path d="' + p.fill + '" fill="url(#' + gid + ')"/>';
+      svg += '<path d="' + p.line + '" fill="none" stroke="' + s.color + '" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>';
+    });
+    svg += '</svg>';
+    return svg;
+  }
   function renderTable(_) { return '<div class="pp-loading-row">…</div>'; }
   function bindRangeButtons() {
     document.querySelectorAll('#perf-panel .pp-rb').forEach(function (b) {
