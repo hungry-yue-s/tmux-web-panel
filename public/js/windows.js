@@ -134,12 +134,12 @@ function _buildWindowCard(w) {
   // Pane info is now rendered inside the thumbnail preview below
 
   return (
-    '<div class="swipe-container" data-window-index="' + w.index + '" data-window-name="' + escapeHtml(w.name || '') + '">' +
+    '<div class="swipe-container" data-window-index="' + w.index + '" data-window-id="' + escapeHtml(w.id || '') + '" data-window-name="' + escapeHtml(w.name || '') + '">' +
     '<div class="swipe-actions">' +
-    '<button class="btn swipe-action-rename" data-window-index="' + w.index + '">Rename</button>' +
-    '<button class="btn btn-danger swipe-action-delete" data-window-index="' + w.index + '">Delete</button>' +
+    '<button class="btn swipe-action-rename" data-window-index="' + w.index + '" data-window-id="' + escapeHtml(w.id || '') + '">Rename</button>' +
+    '<button class="btn btn-danger swipe-action-delete" data-window-index="' + w.index + '" data-window-id="' + escapeHtml(w.id || '') + '">Delete</button>' +
     '</div>' +
-    '<div class="window-card card' + cardExtraClass + '" data-window-index="' + w.index + '">' +
+    '<div class="window-card card' + cardExtraClass + '" data-window-index="' + w.index + '" data-window-id="' + escapeHtml(w.id || '') + '">' +
     '<div class="window-card-header">' +
     '<strong class="window-card-name">' + escapeHtml(w.index + ': ' + (w.name || '')) + '</strong>' +
     completionHtml +

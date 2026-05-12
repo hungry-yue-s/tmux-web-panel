@@ -3,6 +3,7 @@ import {
   validateSessionName,
   validatePaneId,
   validateWindowIndex,
+  validateWindowId,
   parseSessions,
   parseWindows,
   parsePanes,
@@ -76,6 +77,25 @@ describe('validateWindowIndex', () => {
   });
 });
 
+describe('validateWindowId', () => {
+  it('accepts valid window IDs', () => {
+    expect(validateWindowId('@0')).toBe(true);
+    expect(validateWindowId('@1')).toBe(true);
+    expect(validateWindowId('@123')).toBe(true);
+  });
+
+  it('rejects invalid forms', () => {
+    expect(validateWindowId('0')).toBe(false);
+    expect(validateWindowId('%0')).toBe(false);
+    expect(validateWindowId('@')).toBe(false);
+    expect(validateWindowId('@abc')).toBe(false);
+    expect(validateWindowId('@1@2')).toBe(false);
+    expect(validateWindowId('')).toBe(false);
+    expect(validateWindowId(null)).toBe(false);
+    expect(validateWindowId(undefined)).toBe(false);
+  });
+});
+
 describe('parseSessions', () => {
   it('parses tmux session list output', () => {
     const output = [
@@ -96,65 +116,68 @@ describe('parseSessions', () => {
 });
 
 describe('parseWindows', () => {
-  it('parses tmux window list output', () => {
-    const output = [
-      '0|bash|1|80|24|0',
-      '1|vim|0|120|40|1',
-    ].join('\n');
+  const SEP = '\x1f';
 
-    const result = parseWindows(output);
-    expect(result).toEqual([
-      { index: 0, name: 'bash', active: true, width: 80, height: 24, bell: false },
-      { index: 1, name: 'vim', active: false, width: 120, height: 40, bell: true },
+  it('parses 8 fields including id and activity', () => {
+    const line = ['@5', '0', 'main', '1', '80', '24', '0', '1700000000'].join(SEP);
+    expect(parseWindows(line)).toEqual([
+      { id: '@5', index: 0, name: 'main', active: true, width: 80, height: 24, bell: false, activity: 1700000000 },
     ]);
   });
 
-  it('returns empty array for empty input', () => {
+  it('parses multiple lines', () => {
+    const out = [
+      ['@1', '0', 'shell', '1', '80', '24', '0', '1700000000'].join(SEP),
+      ['@2', '1', 'vim', '0', '80', '24', '1', '1700000100'].join(SEP),
+    ].join('\n');
+    const parsed = parseWindows(out);
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0].id).toBe('@1');
+    expect(parsed[1].bell).toBe(true);
+    expect(parsed[1].activity).toBe(1700000100);
+  });
+
+  it('handles names containing pipe character', () => {
+    const line = ['@9', '3', 'docs|notes', '0', '80', '24', '0', '0'].join(SEP);
+    const parsed = parseWindows(line);
+    expect(parsed[0].name).toBe('docs|notes');
+  });
+
+  it('returns empty array on empty input', () => {
     expect(parseWindows('')).toEqual([]);
+    expect(parseWindows('   ')).toEqual([]);
   });
 });
 
 describe('parsePanes', () => {
-  it('parses tmux pane list output with geometry', () => {
-    const output = [
-      '%0|0|0|80|24|1|bash',
-      '%1|0|24|80|12|0|node',
-    ].join('\n');
+  const SEP = '\x1f';
 
-    const result = parsePanes(output);
-    expect(result).toEqual([
-      { id: '%0', x: 0, y: 0, width: 80, height: 24, active: true, command: 'bash' },
-      { id: '%1', x: 0, y: 24, width: 80, height: 12, active: false, command: 'node' },
+  it('parses pane lines with unit-separator', () => {
+    const line = ['%0', '0', '0', '80', '24', '1', 'zsh'].join(SEP);
+    expect(parsePanes(line)).toEqual([
+      { id: '%0', x: 0, y: 0, width: 80, height: 24, active: true, command: 'zsh' },
     ]);
   });
 
-  it('returns empty array for empty input', () => {
+  it('returns empty array on empty input', () => {
     expect(parsePanes('')).toEqual([]);
   });
 });
 
 describe('parsePaneCommands', () => {
-  it('parses tmux pane command list output', () => {
-    const output = '0|%0|zsh\n0|%1|node\n1|%2|python';
-    const result = parsePaneCommands(output);
-    expect(result).toEqual([
-      { windowIndex: 0, paneId: '%0', command: 'zsh', path: '', pid: 0 },
-      { windowIndex: 0, paneId: '%1', command: 'node', path: '', pid: 0 },
-      { windowIndex: 1, paneId: '%2', command: 'python', path: '', pid: 0 },
+  const SEP = '\x1f';
+
+  it('parses pane command lines with unit-separator', () => {
+    const line = ['0', '%1', 'vim', '/home/u', '1234'].join(SEP);
+    expect(parsePaneCommands(line)).toEqual([
+      { windowIndex: 0, paneId: '%1', command: 'vim', path: '/home/u', pid: 1234 },
     ]);
   });
 
-  it('returns empty array for empty input', () => {
-    expect(parsePaneCommands('')).toEqual([]);
-  });
-
-  it('parsePaneCommands should parse path and pid fields', () => {
-    const output = '0|%1|vim|/home/user/project|1234\n0|%2|bash|/home/user|1235\n1|%3|node|/home/user/api|1236';
-    const result = parsePaneCommands(output);
-    expect(result).toEqual([
-      { windowIndex: 0, paneId: '%1', command: 'vim', path: '/home/user/project', pid: 1234 },
-      { windowIndex: 0, paneId: '%2', command: 'bash', path: '/home/user', pid: 1235 },
-      { windowIndex: 1, paneId: '%3', command: 'node', path: '/home/user/api', pid: 1236 },
-    ]);
+  it('handles missing path and pid', () => {
+    const line = ['0', '%1', 'zsh', '', ''].join(SEP);
+    const parsed = parsePaneCommands(line);
+    expect(parsed[0].path).toBe('');
+    expect(parsed[0].pid).toBe(0);
   });
 });
