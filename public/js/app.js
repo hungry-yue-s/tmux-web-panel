@@ -1087,6 +1087,19 @@ function _loadSidebarWindows(sessionName) {
         return;
       }
 
+      // 与卡片视图共享排序 + 缓存 snapshot 顺序，WS reconcile 检测集合变化时会失效
+      if (typeof window.sortWindowsForSnapshot === 'function') {
+        var orderIds = window.sortWindowsForSnapshot(windows, {
+          pinsById: state.pinsById || {},
+          promotedBellIds: (state.promotedBellIdsBySession && state.promotedBellIdsBySession[sessionName]) || [],
+        });
+        state.windowOrderBySession = state.windowOrderBySession || {};
+        state.windowOrderBySession[sessionName] = orderIds;
+        var byId = {};
+        windows.forEach(function (w) { byId[w.id] = w; });
+        windows = orderIds.map(function (id) { return byId[id]; }).filter(Boolean);
+      }
+
       // Get pane data from state.sessions for this session
       var sessionData = state.sessions.find(function (s) { return s.name === sessionName; });
 
@@ -1112,14 +1125,21 @@ function _loadSidebarWindows(sessionName) {
           ratioHtml = '<span class="sidebar-pane-ratio">' + completionInfo.completed + '/' + completionInfo.total + '</span>';
         }
 
+        // Pinned 状态（与卡片视图共享 state.pinsById）
+        var isPinned = !!(state.pinsById && state.pinsById[w.id]);
+        var pinnedIconHtml = isPinned ? '<span class="sidebar-pinned-icon">📌</span>' : '';
+
         html +=
           '<div class="sidebar-item sidebar-window-item' +
           (isCurrentWindow ? ' active' : '') +
           notifClass +
           '" data-session="' + escapeHtml(sessionName) +
-          '" data-window-index="' + w.index + '">' +
+          '" data-window-index="' + w.index +
+          '" data-window-id="' + escapeHtml(w.id || '') + '"' +
+          ' draggable="true">' +
           '<span class="sidebar-window-index">' + w.index + '</span>' +
           '<span class="sidebar-window-name">' + escapeHtml(w.name || 'window') + '</span>' +
+          pinnedIconHtml +
           (notif ? '<span class="notification-dot"></span>' : '') +
           '<span class="sidebar-window-cmd">' + escapeHtml(w.command || '') + '</span>' +
           (panes.length > 1 ? '<span class="sidebar-pane-count">' + panes.length + 'p</span>' : '') +
@@ -1254,28 +1274,69 @@ function _loadSidebarWindows(sessionName) {
     if (windowItem) {
       var winIdx = windowItem.getAttribute('data-window-index');
       var winSess = windowItem.getAttribute('data-session');
+      var winId = windowItem.getAttribute('data-window-id');
+      var isPinned = !!(state.pinsById && state.pinsById[winId]);
+      var pinLabel = isPinned ? 'Unpin' : 'Pin to top';
+
+      // 侧边栏刷新回调：清缓存键 → updateSidebar 会触发 _rebuildSidebar → _loadSidebarWindows(currentSession)
+      var refreshSidebar = function () {
+        _sidebarSessionKey = '';
+        updateSidebar();
+      };
+
       _showMenu(e,
+        '<div class="context-menu-item" data-action="pin"><span class="context-menu-icon">📌</span>' + pinLabel + '</div>' +
+        '<div class="context-menu-item" data-action="move"><span class="context-menu-icon">→</span>Move to session…</div>' +
         '<div class="context-menu-item" data-action="rename"><span class="context-menu-icon">✏</span>重命名</div>' +
         '<div class="context-menu-item context-menu-item-danger" data-action="delete"><span class="context-menu-icon">✕</span>删除</div>',
         function (action) {
-          if (action === 'rename') {
+          if (action === 'pin') {
+            if (typeof _togglePin === 'function') {
+              _togglePin(winId, refreshSidebar);
+            }
+          } else if (action === 'move') {
+            // 临时把 currentSession 指向源会话，让 _doMove 的 URL / 错误信息正确（源不一定是当前会话）
+            var savedCurrent = state.currentSession;
+            state.currentSession = winSess;
+            _showSessionPicker(winSess).then(function (targetSession) {
+              state.currentSession = savedCurrent;
+              if (!targetSession) return;
+              // _doMove 内部还会用 state.currentSession 拼 URL，再切回去
+              var savedAgain = state.currentSession;
+              state.currentSession = winSess;
+              return _doMove(winIdx, winId, targetSession, false, function () {
+                state.currentSession = savedAgain;
+                refreshSidebar();
+              }).finally(function () {
+                state.currentSession = savedAgain;
+              });
+            });
+          } else if (action === 'rename') {
             showPrompt({ title: '重命名窗口 ' + winIdx, placeholder: '新名称' })
               .then(function (newName) {
                 if (!newName || !newName.trim()) return;
                 return api.put(
-                  '/api/sessions/' + encodeURIComponent(winSess) + '/windows/' + encodeURIComponent(winIdx),
+                  '/api/sessions/' + encodeURIComponent(winSess) + '/windows/by-id/' + encodeURIComponent(winId),
                   { newName: newName.trim() }
                 );
               })
               .then(function (result) {
-                if (result) { _sidebarSessionKey = ''; updateSidebar(); }
+                if (result) refreshSidebar();
               })
-              .catch(function (err) { showAlert({ title: '重命名失败', message: err.message }); });
+              .catch(function (err) {
+                if (err.message && err.message.indexOf('moved_window') >= 0) {
+                  showAlert({ title: '重命名失败', message: '窗口已被移到其它会话，请刷新后重试。' });
+                } else {
+                  showAlert({ title: '重命名失败', message: err.message });
+                }
+              });
           } else if (action === 'delete') {
             showConfirm({ title: '删除窗口', message: '确定删除窗口 ' + winIdx + '？', confirmText: '删除', danger: true })
               .then(function (confirmed) {
                 if (!confirmed) return;
-                return api.delete('/api/sessions/' + encodeURIComponent(winSess) + '/windows/' + encodeURIComponent(winIdx));
+                return api.delete(
+                  '/api/sessions/' + encodeURIComponent(winSess) + '/windows/by-id/' + encodeURIComponent(winId)
+                );
               })
               .then(function (result) {
                 if (!result) return;
@@ -1283,11 +1344,16 @@ function _loadSidebarWindows(sessionName) {
                   delete _fontOffsets[winSess + ':' + winIdx];
                   _saveFontOffsets();
                 }
-                _sidebarSessionKey = '';
-                updateSidebar();
+                refreshSidebar();
                 if (String(state.currentWindow) === String(winIdx)) navigate('windows');
               })
-              .catch(function (err) { showAlert({ title: '删除失败', message: err.message }); });
+              .catch(function (err) {
+                if (err.message && err.message.indexOf('moved_window') >= 0) {
+                  showAlert({ title: '删除失败', message: '窗口已被移到其它会话，请刷新后重试。' });
+                } else {
+                  showAlert({ title: '删除失败', message: err.message });
+                }
+              });
           }
         }
       );
@@ -1349,6 +1415,117 @@ function _showPortMenu(e, port) {
     }, 0);
   }
 }
+
+// === Sidebar Drag-and-Drop (window → session header → Move) ===
+//
+// HTML5 native drag, document-level delegation so it survives sidebar re-renders.
+// Drop target = .sidebar-session-header. Same-session drops are silently ignored.
+
+(function () {
+  function _parseDragPayload(e) {
+    try {
+      var raw = e.dataTransfer && e.dataTransfer.getData('text/plain');
+      if (!raw) return null;
+      var payload = JSON.parse(raw);
+      if (!payload || typeof payload.windowId !== 'string' || typeof payload.srcSession !== 'string') {
+        return null;
+      }
+      return payload;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  document.addEventListener('dragstart', function (e) {
+    var item = e.target.closest && e.target.closest('.sidebar-window-item');
+    if (!item) return;
+    var windowId = item.getAttribute('data-window-id');
+    var srcSession = item.getAttribute('data-session');
+    var windowIndex = item.getAttribute('data-window-index');
+    if (!windowId || !srcSession) return;
+
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', JSON.stringify({
+        windowId: windowId,
+        srcSession: srcSession,
+        windowIndex: windowIndex,
+      }));
+    }
+    item.classList.add('dragging-from-here');
+  });
+
+  document.addEventListener('dragend', function (e) {
+    // 清理所有源 item 和遗留的 drop target 高亮
+    document.querySelectorAll('.sidebar-window-item.dragging-from-here').forEach(function (el) {
+      el.classList.remove('dragging-from-here');
+    });
+    document.querySelectorAll('.sidebar-session-header.drag-over').forEach(function (el) {
+      el.classList.remove('drag-over');
+    });
+  });
+
+  document.addEventListener('dragover', function (e) {
+    var header = e.target.closest && e.target.closest('.sidebar-session-header');
+    if (!header) return;
+    // 允许 drop
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+
+    var targetSession = header.getAttribute('data-session');
+    var payload = _parseDragPayload(e);
+    // payload 在 dragover 期间通常 getData 拿不到（浏览器限制），用 .dragging-from-here 兜底判断 src
+    var srcEl = document.querySelector('.sidebar-window-item.dragging-from-here');
+    var srcSession = (payload && payload.srcSession) || (srcEl && srcEl.getAttribute('data-session'));
+    if (!srcSession) {
+      // Source unknown (e.g. sidebar rebuilt mid-drag) — don't highlight either way
+      header.classList.remove('drag-over');
+      return;
+    }
+    if (targetSession === srcSession) {
+      header.classList.remove('drag-over');
+      return;
+    }
+    header.classList.add('drag-over');
+  });
+
+  document.addEventListener('dragleave', function (e) {
+    var header = e.target.closest && e.target.closest('.sidebar-session-header');
+    if (!header) return;
+    // 仅当离开 header 边界（relatedTarget 不在 header 内）时清除
+    var rt = e.relatedTarget;
+    if (rt && header.contains(rt)) return;
+    header.classList.remove('drag-over');
+  });
+
+  document.addEventListener('drop', function (e) {
+    var header = e.target.closest && e.target.closest('.sidebar-session-header');
+    if (!header) return;
+    e.preventDefault();
+    header.classList.remove('drag-over');
+
+    var payload = _parseDragPayload(e);
+    if (!payload) return;
+    var targetSession = header.getAttribute('data-session');
+    if (!targetSession || targetSession === payload.srcSession) return;
+
+    // _doMove 内部用 state.currentSession 拼源 URL；临时切到 srcSession，完成后还原
+    var savedCurrent = state.currentSession;
+    state.currentSession = payload.srcSession;
+
+    var refreshSidebar = function () {
+      _sidebarSessionKey = '';
+      updateSidebar();
+    };
+
+    _doMove(payload.windowIndex, payload.windowId, targetSession, false, function () {
+      state.currentSession = savedCurrent;
+      refreshSidebar();
+    }).finally(function () {
+      state.currentSession = savedCurrent;
+    });
+  });
+})();
 
 function escapeHtml(str) {
   var div = document.createElement('div');
