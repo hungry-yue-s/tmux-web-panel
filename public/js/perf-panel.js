@@ -365,12 +365,345 @@ var PerfPanel = (function () {
     bindTableRows();
   }
 
-  // === paintClaude — pasted verbatim from old module in Task 13 ===
+  function fmtTokens(n) {
+    if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+    return String(n);
+  }
+
+  function meterColorClass(pct) {
+    if (pct >= 80) return 'red';
+    if (pct >= 50) return 'yellow';
+    return 'green';
+  }
+
+  function modelShortName(id) {
+    return id.replace(/^claude-/, '').replace(/-\d{8}$/, '');
+  }
+
+  function modelTagClass(id) {
+    if (id.includes('opus')) return 'opus';
+    if (id.includes('sonnet')) return 'sonnet';
+    if (id.includes('haiku')) return 'haiku';
+    return 'sonnet';
+  }
+
   function paintClaude(_root) {
     var root = _root || document.getElementById('claude-view-root');
     if (!root) return;
-    if (!claudeState.data) { root.innerHTML = '<div class="pp-loading">加载 Claude 用量…</div>'; return; }
-    root.innerHTML = '<pre style="padding:20px;color:var(--text-muted);font-size:11px">claude data ready (placeholder)</pre>';
+    var d = claudeState.data;
+    if (!d) {
+      root.innerHTML = '<div class="pp-loading">加载 Claude 用量数据…</div>';
+      return;
+    }
+
+    var html = '';
+
+    // === Tier 1: Subscription Status ===
+    if (d.utilization) {
+      var u = d.utilization;
+      html += '<div class="cu-sub-hero">';
+      html += '<div class="cu-sub-top">';
+      html += '<div style="display:flex;align-items:center;gap:8px">';
+      html += '<span class="cu-plan-badge">' + escapeHtml(d.subscription.type || 'free') + '</span>';
+      if (d.subscription.rateLimitTier) html += '<span class="cu-plan-tier">' + escapeHtml(d.subscription.rateLimitTier) + '</span>';
+      html += '</div>';
+      if (u.extra_usage && u.extra_usage.is_enabled) {
+        var euCredits = u.extra_usage.used_credits || 0;
+        var euLimitCents = u.extra_usage.monthly_limit || 0;
+        html += '<div style="display:flex;align-items:center;gap:6px">';
+        html += '<span class="cu-extra-badge">Extra Usage</span>';
+        html += '<span class="cu-extra-text">$' + Math.round(euCredits) + ' / $' + Math.round(euLimitCents / 100) + '</span>';
+        html += '</div>';
+      }
+      html += '</div>';
+      html += '<div class="cu-meters">';
+
+      var WINDOW_DURATIONS = { 'five_hour': 5 * 3600000, 'seven_day': 7 * 86400000 };
+
+      function renderMeter(label, obj, windowKey) {
+        if (!obj) return '';
+        var pct = Math.floor(obj.utilization);
+        var cls = meterColorClass(pct);
+        var timePct = 0;
+        var remain = 0;
+        if (obj.resets_at) {
+          remain = Math.max(0, new Date(obj.resets_at) - Date.now());
+          var totalMs = WINDOW_DURATIONS[windowKey] || 0;
+          if (totalMs > 0) timePct = Math.min(100, Math.max(0, ((totalMs - remain) / totalMs) * 100));
+        }
+        var s = '<div class="cu-meter">';
+        s += '<span class="cu-meter-label">' + label + '</span>';
+        s += '<div class="cu-meter-track">';
+        s += '<div class="cu-meter-fill ' + cls + '" style="width:' + pct + '%"></div>';
+        if (timePct > 0) s += '<div class="cu-meter-time" style="left:' + timePct.toFixed(1) + '%"></div>';
+        s += '</div>';
+        s += '<span class="cu-meter-val">' + pct + '%</span>';
+        s += '</div>';
+        if (obj.resets_at) {
+          var rh = Math.floor(remain / 3600000);
+          var rm = Math.floor((remain % 3600000) / 60000);
+          var status = pct > timePct ? ' · 超前' : ' · 健康';
+          s += '<div class="cu-meter-reset">重置于 ' + obj.resets_at.replace('T', ' ').slice(0, 16) + ' UTC（剩余 ' + rh + 'h ' + rm + 'm）' + status + '</div>';
+        }
+        return s;
+      }
+
+      html += renderMeter('5h 窗口', u.five_hour, 'five_hour');
+      html += renderMeter('7d 总量', u.seven_day, 'seven_day');
+      html += renderMeter('7d Sonnet', u.seven_day_sonnet, 'seven_day');
+
+      if (u.extra_usage && u.extra_usage.is_enabled) {
+        var euPct = Math.floor((u.extra_usage.utilization || 0) * 100);
+        var euUsed = (u.extra_usage.used_credits || 0).toFixed(2);
+        var euLimit = ((u.extra_usage.monthly_limit || 0) / 100).toFixed(2);
+        html += '<div class="cu-extra-meter">';
+        html += '<div class="cu-meter"><span class="cu-meter-label">Extra 本月</span>';
+        html += '<div class="cu-meter-track"><div class="cu-meter-fill" style="width:' + euPct + '%;background:var(--accent-blue)"></div></div>';
+        html += '<span class="cu-meter-val">' + euPct + '%</span></div>';
+        html += '<div class="cu-extra-nums"><span>$' + euUsed + ' 已用</span><span>$' + euLimit + ' 上限</span></div>';
+        html += '</div>';
+      }
+      html += '</div></div>';
+    }
+
+    // === Tier 2: Overview cards ===
+    html += '<div class="cu-section-title">概览</div>';
+    var agg = d.aggregate || {};
+    html += '<div class="cu-row-3" style="margin-bottom:8px">';
+    html += '<div class="cu-card cu-qs"><div class="cu-val">' + (agg.totalSessions || 0) + '</div><div class="cu-label">总会话</div>';
+    if (agg.firstSessionDate) html += '<div class="cu-sub">自 ' + agg.firstSessionDate.slice(0, 10) + '</div>';
+    html += '</div>';
+    html += '<div class="cu-card cu-qs"><div class="cu-val">' + fmtTokens(agg.totalMessages || 0) + '</div><div class="cu-label">总消息</div></div>';
+    html += '<div class="cu-card cu-qs"><div class="cu-code-inline">';
+    html += '<span style="color:var(--accent-green);font-weight:700">+' + (d.totalLinesAdded || 0).toLocaleString() + '</span>';
+    html += '<span style="color:var(--text-muted)">/</span>';
+    html += '<span style="color:var(--accent-red);font-weight:700">-' + (d.totalLinesRemoved || 0).toLocaleString() + '</span>';
+    html += '</div><div class="cu-label">代码行变更</div>';
+    html += '<div class="cu-sub">' + (d.totalCommits || 0) + ' commits</div></div>';
+    html += '</div>';
+
+    // Model distribution + Cache efficiency
+    var mu = d.modelUsage || {};
+    var models = Object.keys(mu).sort(function (a, b) {
+      var ta = (mu[a].inputTokens || 0) + (mu[a].outputTokens || 0) + (mu[a].cacheReadInputTokens || 0) + (mu[a].cacheCreationInputTokens || 0);
+      var tb = (mu[b].inputTokens || 0) + (mu[b].outputTokens || 0) + (mu[b].cacheReadInputTokens || 0) + (mu[b].cacheCreationInputTokens || 0);
+      return tb - ta;
+    });
+    var modelTotals = models.map(function (m) {
+      var u2 = mu[m];
+      return (u2.inputTokens || 0) + (u2.outputTokens || 0) + (u2.cacheReadInputTokens || 0) + (u2.cacheCreationInputTokens || 0);
+    });
+    var grandTotal = modelTotals.reduce(function (a, b) { return a + b; }, 0);
+    var totalCacheRead = 0, totalCacheWrite = 0, totalInput = 0;
+    models.forEach(function (m) {
+      totalCacheRead += mu[m].cacheReadInputTokens || 0;
+      totalCacheWrite += mu[m].cacheCreationInputTokens || 0;
+      totalInput += mu[m].inputTokens || 0;
+    });
+    var cacheTotal = totalCacheRead + totalCacheWrite + totalInput;
+    var cacheHitPct = cacheTotal > 0 ? Math.round((totalCacheRead / cacheTotal) * 100) : 0;
+
+    html += '<div class="cu-row-2">';
+
+    // Donut chart
+    html += '<div class="cu-card"><div class="cu-card-label">模型分布</div><div class="cu-model-dist">';
+    html += '<div class="cu-donut-wrap"><svg viewBox="0 0 100 100">';
+    html += '<circle cx="50" cy="50" r="36" fill="none" stroke="var(--bg-card)" stroke-width="10"/>';
+    var offset = 0;
+    var circ = 2 * Math.PI * 36;
+    models.forEach(function (m, i) {
+      var frac = grandTotal > 0 ? modelTotals[i] / grandTotal : 0;
+      var dash = frac * circ;
+      var gap = circ - dash;
+      html += '<circle cx="50" cy="50" r="36" fill="none" stroke="' + MODEL_COLORS[i % MODEL_COLORS.length] + '" stroke-width="10" stroke-dasharray="' + dash.toFixed(1) + ' ' + gap.toFixed(1) + '" stroke-dashoffset="' + (-offset).toFixed(1) + '" transform="rotate(-90 50 50)"/>';
+      offset += dash;
+    });
+    html += '</svg></div>';
+    html += '<div class="cu-model-list">';
+    models.forEach(function (m, i) {
+      html += '<div class="cu-model-row"><div class="cu-model-dot" style="background:' + MODEL_COLORS[i % MODEL_COLORS.length] + '"></div>';
+      html += '<span class="cu-model-name">' + escapeHtml(modelShortName(m)) + '</span>';
+      html += '<span class="cu-model-val">' + fmtTokens(modelTotals[i]) + '</span></div>';
+    });
+    html += '</div></div></div>';
+
+    // Cache efficiency
+    var gaugeCirc = 2 * Math.PI * 36;
+    var gaugeFill = (cacheHitPct / 100) * gaugeCirc;
+    var gaugeGap = gaugeCirc - gaugeFill;
+    html += '<div class="cu-card"><div class="cu-card-label">缓存效率</div><div class="cu-cache-row">';
+    html += '<div class="cu-cache-gauge"><svg viewBox="0 0 100 100">';
+    html += '<circle cx="50" cy="50" r="36" fill="none" stroke="var(--bg-card)" stroke-width="8"/>';
+    html += '<circle cx="50" cy="50" r="36" fill="none" stroke="var(--accent-green)" stroke-width="8" stroke-dasharray="' + gaugeFill.toFixed(1) + ' ' + gaugeGap.toFixed(1) + '" stroke-dashoffset="0" transform="rotate(-90 50 50)" stroke-linecap="round"/>';
+    html += '</svg><div class="cu-cache-gauge-text">' + cacheHitPct + '%</div></div>';
+    html += '<div class="cu-cache-detail">';
+    html += '<div class="cu-cache-item"><span class="k">Read</span><span class="v">' + fmtTokens(totalCacheRead) + '</span></div>';
+    html += '<div class="cu-cache-item"><span class="k">Write</span><span class="v">' + fmtTokens(totalCacheWrite) + '</span></div>';
+    html += '<div class="cu-cache-item"><span class="k">Miss</span><span class="v">' + fmtTokens(totalInput) + '</span></div>';
+    if (d.estimatedCost) html += '<div class="cu-cache-item"><span class="k">估算费用</span><span class="v" style="color:var(--accent-yellow)">$' + d.estimatedCost + '</span></div>';
+    html += '</div></div></div>';
+    html += '</div>';
+
+    // === Tier 3: Trends ===
+    html += '<div class="cu-section-title">趋势</div>';
+    var daily = d.dailyActivity || [];
+    if (daily.length > 1) {
+      html += '<div class="cu-card"><div class="cu-card-label">每日活跃</div>';
+      var maxMsg = Math.max.apply(null, daily.map(function (d2) { return d2.messages || d2.messageCount || 0; }));
+      var maxSes = Math.max.apply(null, daily.map(function (d2) { return d2.sessions || d2.sessionCount || 0; }));
+      if (maxMsg < 1) maxMsg = 1;
+      if (maxSes < 1) maxSes = 1;
+      var tW = 700, tH = 80;
+      var step = tW / Math.max(1, daily.length - 1);
+      html += '<svg class="cu-trend-svg" viewBox="0 0 ' + tW + ' ' + tH + '" preserveAspectRatio="none">';
+      html += '<line x1="0" y1="' + (tH * 0.25) + '" x2="' + tW + '" y2="' + (tH * 0.25) + '" stroke="var(--border-subtle)" stroke-width="0.5"/>';
+      html += '<line x1="0" y1="' + (tH * 0.5) + '" x2="' + tW + '" y2="' + (tH * 0.5) + '" stroke="var(--border-subtle)" stroke-width="0.5"/>';
+      html += '<line x1="0" y1="' + (tH * 0.75) + '" x2="' + tW + '" y2="' + (tH * 0.75) + '" stroke="var(--border-subtle)" stroke-width="0.5"/>';
+      var msgPts = daily.map(function (d2, i) { return (i * step).toFixed(1) + ',' + (tH - ((d2.messages || d2.messageCount || 0) / maxMsg) * (tH - 4)).toFixed(1); });
+      var sesPts = daily.map(function (d2, i) { return (i * step).toFixed(1) + ',' + (tH - ((d2.sessions || d2.sessionCount || 0) / maxSes) * (tH - 4)).toFixed(1); });
+      html += '<path d="M' + msgPts.join(' L') + ' L' + (tW) + ',' + tH + ' L0,' + tH + 'Z" fill="rgba(122,162,247,0.1)"/>';
+      html += '<polyline points="' + msgPts.join(' ') + '" fill="none" stroke="var(--accent-blue)" stroke-width="1.5"/>';
+      html += '<polyline points="' + sesPts.join(' ') + '" fill="none" stroke="var(--accent-orange)" stroke-width="1.2" stroke-dasharray="3,2"/>';
+      html += '</svg>';
+      html += '<div class="cu-trend-legend"><div class="cu-trend-legend-item"><div class="cu-trend-legend-dot" style="background:var(--accent-blue)"></div>消息</div>';
+      html += '<div class="cu-trend-legend-item"><div class="cu-trend-legend-dot" style="background:var(--accent-orange)"></div>会话</div></div>';
+      html += '</div>';
+    }
+
+    // Daily token table from session-meta aggregation
+    // Daily token table — use ccusageDaily (accurate) if available, else session-meta (input+output only)
+    var ccDaily = d.ccusageDaily;
+    var ccTotals = d.ccusageTotals;
+    if (ccDaily && ccDaily.length > 0) {
+      var recentCc = ccDaily.slice().reverse().slice(0, 14);
+      html += '<div class="cu-card" style="margin-top:8px"><div class="cu-card-label">每日 Token 明细</div>';
+      html += '<table class="cu-token-table">';
+      html += '<colgroup><col class="col-w-date"><col class="col-w-model"><col class="col-w-num"><col class="col-w-num"><col class="col-w-num"><col class="col-w-cost"></colgroup>';
+      html += '<thead><tr>';
+      html += '<th class="col-date">日期</th><th>模型</th>';
+      html += '<th class="col-num">Input</th><th class="col-num">Output</th>';
+      html += '<th class="col-num col-total">Total</th>';
+      html += '<th class="col-num col-cost">Cost</th>';
+      html += '</tr></thead><tbody>';
+      var weekCost = 0, weekTokens = 0;
+      recentCc.forEach(function (day, di) {
+        var isAlt = di % 2 === 1;
+        var altCls = isAlt ? ' class="row-alt"' : '';
+        var bk = day.modelBreakdowns || [];
+        var rowCount = Math.max(1, bk.length);
+        bk.forEach(function (mb, mi) {
+          html += '<tr' + altCls + '>';
+          if (mi === 0) html += '<td class="col-date" rowspan="' + rowCount + '">' + day.date.slice(5) + '</td>';
+          var mName = (mb.modelName || '').replace(/^claude-/, '').replace(/-\d{8}$/, '');
+          html += '<td><span class="cu-model-tag ' + modelTagClass(mb.modelName || '') + '">' + escapeHtml(mName) + '</span></td>';
+          html += '<td class="col-num">' + fmtTokens(mb.inputTokens || 0) + '</td>';
+          html += '<td class="col-num">' + fmtTokens(mb.outputTokens || 0) + '</td>';
+          var mbTotal = (mb.inputTokens || 0) + (mb.outputTokens || 0) + (mb.cacheCreationTokens || 0) + (mb.cacheReadTokens || 0);
+          html += '<td class="col-num col-total">' + fmtTokens(mbTotal) + '</td>';
+          if (mi === 0) html += '<td class="col-num col-cost" rowspan="' + rowCount + '">$' + (day.totalCost || 0).toFixed(2) + '</td>';
+          html += '</tr>';
+        });
+        if (di < 7) { weekCost += day.totalCost || 0; weekTokens += day.totalTokens || 0; }
+      });
+      html += '</tbody><tfoot>';
+      html += '<tr><td class="col-date" colspan="2" style="text-align:right;font-weight:600">7日合计</td>';
+      html += '<td class="col-num" colspan="2"></td>';
+      html += '<td class="col-num col-total">' + fmtTokens(weekTokens) + '</td>';
+      html += '<td class="col-num col-cost">$' + weekCost.toFixed(2) + '</td></tr>';
+      if (ccTotals) {
+        var currentMonth = new Date().getMonth() + 1;
+        html += '<tr><td class="col-date" colspan="2" style="text-align:right;font-weight:600;color:var(--text-muted)">' + currentMonth + '月合计</td>';
+        html += '<td class="col-num" colspan="2"></td>';
+        html += '<td class="col-num col-total">' + fmtTokens(ccTotals.totalTokens || 0) + '</td>';
+        html += '<td class="col-num col-cost" style="color:var(--text-muted)">$' + (ccTotals.totalCost || 0).toFixed(2) + '</td></tr>';
+      }
+      html += '</tfoot></table></div>';
+    } else {
+      // Fallback: session-meta daily (no cache tokens, no model split)
+      var daily = d.dailyActivity || [];
+      var recentDays = daily.slice().reverse().slice(0, 14);
+      if (recentDays.length > 0) {
+        html += '<div class="cu-card" style="margin-top:8px"><div class="cu-card-label">每日明细（仅 Input+Output）</div>';
+        html += '<table class="cu-token-table"><thead><tr>';
+        html += '<th class="col-date">日期</th>';
+        html += '<th class="col-num">会话</th><th class="col-num">消息</th>';
+        html += '<th class="col-num col-total">Tokens</th>';
+        html += '</tr></thead><tbody>';
+        recentDays.forEach(function (day, di) {
+          html += '<tr' + (di % 2 === 1 ? ' class="row-alt"' : '') + '>';
+          html += '<td class="col-date">' + day.date.slice(5) + '</td>';
+          html += '<td class="col-num">' + day.sessions + '</td>';
+          html += '<td class="col-num">' + day.messages + '</td>';
+          html += '<td class="col-num col-total">' + fmtTokens(day.tokens) + '</td>';
+          html += '</tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+    }
+
+    // === Tier 4: Patterns ===
+    html += '<div class="cu-section-title">使用画像</div>';
+    html += '<div class="cu-row-2">';
+
+    // Active hours bar chart
+    var hc = d.hourCounts || {};
+    var maxHVal = Math.max.apply(null, Object.values(hc).concat([1]));
+    var peakHour = Object.keys(hc).reduce(function (a, b) { return (hc[a] || 0) > (hc[b] || 0) ? a : b; }, '0');
+    html += '<div class="cu-card"><div class="cu-card-label">活跃时段</div>';
+    html += '<div class="cu-hours-chart">';
+    for (var h = 0; h < 24; h++) {
+      var cnt = hc[String(h)] || 0;
+      var barH = cnt > 0 ? Math.max(2, Math.round((cnt / maxHVal) * 52)) : 2;
+      var lvl = cnt === 0 ? 'h0' : cnt <= maxHVal * 0.2 ? 'h1' : cnt <= maxHVal * 0.5 ? 'h2' : cnt <= maxHVal * 0.8 ? 'h3' : 'h4';
+      html += '<div class="cu-hour-bar-col"><div class="cu-hour-bar ' + lvl + '" style="height:' + barH + 'px"></div></div>';
+    }
+    html += '</div>';
+    html += '<div class="cu-hours-labels">';
+    for (var h2 = 0; h2 < 24; h2++) {
+      html += h2 % 3 === 0 ? '<span>' + h2 + '</span>' : '<span class="dim">.</span>';
+    }
+    html += '</div>';
+    html += '<div class="cu-hour-peak">峰值 ' + peakHour + ':00</div></div>';
+
+    // Tool usage bars
+    var tools = d.aggregatedTools || {};
+    var toolEntries = Object.entries(tools).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 8);
+    var maxTool = toolEntries.length > 0 ? toolEntries[0][1] : 1;
+    html += '<div class="cu-card"><div class="cu-card-label">工具使用</div><div class="cu-tool-bars">';
+    toolEntries.forEach(function (e) {
+      var name = e[0], count = e[1];
+      var pct = (count / maxTool) * 100;
+      var color = TOOL_COLORS[name] || '#7aa2f7';
+      html += '<div class="cu-tool-row"><span class="cu-tool-name">' + escapeHtml(name) + '</span>';
+      html += '<div class="cu-tool-bar-wrap"><div class="cu-tool-bar" style="width:' + pct.toFixed(1) + '%;background:' + color + '"></div></div>';
+      html += '<span class="cu-tool-count">' + count + '</span></div>';
+    });
+    html += '</div></div>';
+    html += '</div>';
+
+    // === Tier 5: Recent Sessions ===
+    var sessions = d.recentSessions || [];
+    if (sessions.length > 0) {
+      html += '<div class="cu-section-title">最近会话</div>';
+      html += '<div class="cu-card"><div class="cu-session-list">';
+      sessions.forEach(function (s) {
+        var proj = (s.project_path || '').replace(/^\/home\/[^/]+/, '~');
+        html += '<div class="cu-session-item"><div class="cu-session-main">';
+        html += '<div class="cu-session-project">' + escapeHtml(proj) + '</div>';
+        html += '<div class="cu-session-prompt">' + escapeHtml(s.first_prompt || '') + '</div>';
+        html += '</div><div class="cu-session-meta">';
+        html += '<span>' + (s.duration_minutes || 0) + 'm</span>';
+        html += '<span>' + fmtTokens((s.input_tokens || 0) + (s.output_tokens || 0)) + '</span>';
+        html += '<span style="color:var(--accent-green)">+' + (s.lines_added || 0) + '</span>';
+        html += '<span style="color:var(--accent-red)">-' + (s.lines_removed || 0) + '</span>';
+        html += '</div></div>';
+      });
+      html += '</div></div>';
+    }
+
+    root.innerHTML = html;
   }
 
   // === Polling loops ===
