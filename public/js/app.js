@@ -1112,14 +1112,21 @@ function _loadSidebarWindows(sessionName) {
           ratioHtml = '<span class="sidebar-pane-ratio">' + completionInfo.completed + '/' + completionInfo.total + '</span>';
         }
 
+        // Pinned 状态（与卡片视图共享 state.pinsById）
+        var isPinned = !!(state.pinsById && state.pinsById[w.id]);
+        var pinnedIconHtml = isPinned ? '<span class="sidebar-pinned-icon">📌</span>' : '';
+
         html +=
           '<div class="sidebar-item sidebar-window-item' +
           (isCurrentWindow ? ' active' : '') +
           notifClass +
           '" data-session="' + escapeHtml(sessionName) +
-          '" data-window-index="' + w.index + '">' +
+          '" data-window-index="' + w.index +
+          '" data-window-id="' + escapeHtml(w.id || '') + '"' +
+          ' draggable="true">' +
           '<span class="sidebar-window-index">' + w.index + '</span>' +
           '<span class="sidebar-window-name">' + escapeHtml(w.name || 'window') + '</span>' +
+          pinnedIconHtml +
           (notif ? '<span class="notification-dot"></span>' : '') +
           '<span class="sidebar-window-cmd">' + escapeHtml(w.command || '') + '</span>' +
           (panes.length > 1 ? '<span class="sidebar-pane-count">' + panes.length + 'p</span>' : '') +

@@ -4098,3 +4098,10 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   color: var(--accent-green) !important;
   font-size: 18px !important;
 }
+
+.sidebar-pinned-icon {
+  margin-left: 4px;
+  font-size: 0.75rem;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
