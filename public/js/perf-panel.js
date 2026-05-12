@@ -209,7 +209,65 @@ var PerfPanel = (function () {
     svg += '</svg>';
     return svg;
   }
-  function renderTable(_) { return '<div class="pp-loading-row">…</div>'; }
+  function renderTable(s) {
+    var t = s.total;
+    var rows = [];
+    (s.windows || []).forEach(function (w) {
+      rows.push({
+        key: w.session + '|' + w.windowIndex,
+        session: w.session,
+        windowIndex: w.windowIndex,
+        label: w.windowName,
+        sLabel: w.session + ':' + w.windowIndex,
+        ext: false,
+        cpu: w.cpuPercent, mem: w.memBytes, io: w.ioBps, procs: w.procCount,
+      });
+    });
+    (s.external || []).forEach(function (e) {
+      rows.push({
+        key: 'sys|' + e.comm,
+        label: e.comm, sLabel: '[sys]', ext: true,
+        cpu: e.cpuPercent, mem: e.memBytes, io: e.ioBps, procs: e.procCount,
+      });
+    });
+    rows.sort(function (a, b) { return b.cpu - a.cpu; });
+    if (rows.length === 0) return '<div class="pp-empty">暂无活动 tmux 窗口</div>';
+
+    var maxMem = Math.max.apply(null, rows.map(function (r) { return r.mem; }));
+    var maxIO = Math.max.apply(null, rows.map(function (r) { return r.io; })) || 1;
+    // Per-key recent history from state.history.points
+    var perKeyHist = {};
+    (state.history.points || []).forEach(function (p) {
+      (p.top || []).forEach(function (e) {
+        if (!perKeyHist[e.key]) perKeyHist[e.key] = [];
+        perKeyHist[e.key].push(e.cpu);
+      });
+    });
+
+    var head =
+      '<div class="pp-wt-head">' +
+        '<span>名称</span><span class="pp-r">CPU</span><span>CPU 趋势</span>' +
+        '<span class="pp-r">MEM</span><span class="pp-r">IO</span><span class="pp-r">P</span><span></span>' +
+      '</div>';
+
+    var body = rows.map(function (r) {
+      var color = U.colorFor(r.key);
+      var hist = perKeyHist[r.key] || [];
+      var sp = hist.length >= 2 ? U.sparkPath(hist.slice(-20), 90, 22, { pad: 2 }) : null;
+      var cpuCls = r.cpu >= 200 ? 'pp-hi' : r.cpu >= 80 ? 'pp-warn' : '';
+      return '<div class="pp-wt-row" data-key="' + escapeHtml(r.key) + '"' + (r.ext ? '' : ' data-session="' + escapeHtml(r.session) + '" data-windowindex="' + escapeHtml(String(r.windowIndex)) + '"') + '>' +
+        '<div class="pp-wt-name"><span class="pp-wt-icn" style="background:' + color + '"></span>' +
+          '<span class="pp-wt-txt">' + (r.ext ? '<span class="pp-wt-sess">[sys]</span>' : '<span class="pp-wt-sess">' + escapeHtml(r.sLabel) + '</span>') + escapeHtml(r.label) + '</span></div>' +
+        '<div class="pp-wt-cpu-val ' + cpuCls + '">' + r.cpu.toFixed(0) + '%</div>' +
+        (sp ? '<svg class="pp-wt-spark" viewBox="0 0 90 22" preserveAspectRatio="none"><path d="' + sp.line + '" fill="none" stroke="' + color + '" stroke-width="1.4"/></svg>' : '<span class="pp-wt-spark">—</span>') +
+        '<div class="pp-wt-bar" data-l="MEM"><div class="pp-wt-tr"><div class="pp-wt-fl" style="width:' + Math.min(100,(r.mem/maxMem)*100) + '%;background:var(--accent-blue)"></div></div><span class="pp-wt-lbl">' + U.fmtBytes(r.mem) + '</span></div>' +
+        '<div class="pp-wt-bar" data-l="IO"><div class="pp-wt-tr"><div class="pp-wt-fl" style="width:' + Math.min(100,(r.io/maxIO)*100) + '%;background:var(--accent-yellow)"></div></div><span class="pp-wt-lbl">' + U.fmtBps(r.io) + '</span></div>' +
+        '<span class="pp-wt-procs">' + r.procs + 'p</span>' +
+        '<span class="pp-wt-arrow">›</span>' +
+      '</div>';
+    }).join('');
+    return head + body;
+  }
   function bindRangeButtons() {
     document.querySelectorAll('#perf-panel .pp-rb').forEach(function (b) {
       b.addEventListener('click', function (e) {
