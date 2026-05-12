@@ -1163,12 +1163,12 @@ function _loadSidebarWindows(sessionName) {
             showPrompt({ title: '重命名会话', placeholder: '新名称', value: sess })
               .then(function (newName) {
                 if (!newName || !newName.trim()) return;
-                return api.put('/api/sessions/' + encodeURIComponent(sess), { name: newName.trim() });
+                return api.put('/api/sessions/' + encodeURIComponent(sess), { newName: newName.trim() });
               })
               .then(function (result) {
                 if (!result) return;
                 if (state.currentSession === sess) {
-                  state.currentSession = result.data && result.data.name || state.currentSession;
+                  state.currentSession = result.data && result.data.newName || state.currentSession;
                   updateTopbarSession();
                 }
                 _sidebarSessionKey = '';
@@ -1582,11 +1582,11 @@ function _handleSessionAction(action) {
     showPrompt({ title: '重命名会话', placeholder: '新名称', value: state.currentSession })
       .then(function (newName) {
         if (!newName || !newName.trim()) return;
-        return api.put('/api/sessions/' + encodeURIComponent(state.currentSession), { name: newName.trim() });
+        return api.put('/api/sessions/' + encodeURIComponent(state.currentSession), { newName: newName.trim() });
       })
       .then(function (result) {
         if (!result) return;
-        state.currentSession = result.data && result.data.name || state.currentSession;
+        state.currentSession = result.data && result.data.newName || state.currentSession;
         updateTopbarSession();
         render();
       })

@@ -300,7 +300,7 @@ function _renameSession(sessionName) {
   showPrompt({ title: '重命名会话', placeholder: '新名称', value: sessionName })
     .then(function (newName) {
       if (!newName || !newName.trim()) return;
-      return api.put('/api/sessions/' + encodeURIComponent(sessionName), { name: newName.trim() });
+      return api.put('/api/sessions/' + encodeURIComponent(sessionName), { newName: newName.trim() });
     })
     .then(function (result) {
       if (result) navigate('sessions');
