@@ -435,6 +435,7 @@ function _attachWindowSwipeActionHandlers(swipeContainer, parentContainer) {
 var _ctxMenu = null;
 var _ctxContainer = null;
 var _ctxTargetIndex = null;
+var _ctxTargetId = null;
 
 function _initWindowContextMenu(view, container) {
   _ctxContainer = container;
@@ -447,6 +448,8 @@ function _initWindowContextMenu(view, container) {
   menu.className = 'context-menu';
   menu.style.display = 'none';
   menu.innerHTML =
+    '<div class="context-menu-item" data-action="pin"></div>' +
+    '<div class="context-menu-item" data-action="move">Move to session…</div>' +
     '<div class="context-menu-item" data-action="rename">Rename</div>' +
     '<div class="context-menu-item context-menu-item-danger" data-action="delete">Delete</div>';
   document.body.appendChild(menu);
@@ -454,7 +457,7 @@ function _initWindowContextMenu(view, container) {
 
   // Capture phase — fires before browser can show native menu
   document.addEventListener('contextmenu', function (e) {
-    var swipeContainer = e.target.closest('.swipe-container[data-window-index]');
+    var swipeContainer = e.target.closest('.swipe-container[data-window-id]');
     if (!swipeContainer) {
       menu.style.display = 'none';
       return;
@@ -463,18 +466,19 @@ function _initWindowContextMenu(view, container) {
     e.preventDefault();
     e.stopImmediatePropagation();
     _ctxTargetIndex = swipeContainer.getAttribute('data-window-index');
+    _ctxTargetId = swipeContainer.getAttribute('data-window-id');
+
+    var pinItem = menu.querySelector('[data-action="pin"]');
+    var isPinned = state.pinsById && state.pinsById[_ctxTargetId];
+    pinItem.textContent = isPinned ? 'Unpin' : 'Pin to top';
 
     menu.style.display = 'block';
     menu.style.left = e.pageX + 'px';
     menu.style.top = e.pageY + 'px';
 
     var rect = menu.getBoundingClientRect();
-    if (rect.right > window.innerWidth) {
-      menu.style.left = (e.pageX - rect.width) + 'px';
-    }
-    if (rect.bottom > window.innerHeight) {
-      menu.style.top = (e.pageY - rect.height) + 'px';
-    }
+    if (rect.right > window.innerWidth) menu.style.left = (e.pageX - rect.width) + 'px';
+    if (rect.bottom > window.innerHeight) menu.style.top = (e.pageY - rect.height) + 'px';
   }, true); // capture phase
 
   menu.addEventListener('click', function (e) {
@@ -488,6 +492,10 @@ function _initWindowContextMenu(view, container) {
       _renameWindow(_ctxTargetIndex, _ctxContainer);
     } else if (action === 'delete') {
       _deleteWindow(_ctxTargetIndex, _ctxContainer);
+    } else if (action === 'pin') {
+      _togglePin(_ctxTargetId, _ctxContainer);
+    } else if (action === 'move') {
+      // Move handler is wired in Task 7 — no-op for now
     }
   });
 
@@ -536,5 +544,29 @@ function _deleteWindow(windowIndex, container) {
     })
     .catch(function (err) {
       showAlert({ title: '删除失败', message: err.message });
+    });
+}
+
+function _togglePin(windowId, container) {
+  if (!windowId) return;
+  var currentlyPinned = !!(state.pinsById && state.pinsById[windowId]);
+  var nextPinned = !currentlyPinned;
+
+  api.put('/api/pins/' + encodeURIComponent(windowId), { pinned: nextPinned })
+    .then(function () {
+      return api.get('/api/pins');
+    })
+    .then(function (res) {
+      state.pinsById = {};
+      var pins = (res.data && res.data.pins) || [];
+      pins.forEach(function (id) { state.pinsById[id] = true; });
+      // Force a full re-snapshot for current session
+      if (state.windowOrderBySession) {
+        delete state.windowOrderBySession[state.currentSession];
+      }
+      renderWindows(container);
+    })
+    .catch(function (err) {
+      showAlert({ title: 'Pin 失败', message: err.message });
     });
 }
