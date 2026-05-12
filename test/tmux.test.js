@@ -181,3 +181,26 @@ describe('parsePaneCommands', () => {
     expect(parsed[0].pid).toBe(0);
   });
 });
+
+describe('by-id tmux helpers', () => {
+  it('rejects bad windowId for renameWindowById', async () => {
+    const { renameWindowById } = await import('../server/tmux.js');
+    await expect(renameWindowById('bad', 'name')).rejects.toThrow(/Invalid window ID/);
+  });
+
+  it('rejects bad windowId for killWindowById', async () => {
+    const { killWindowById } = await import('../server/tmux.js');
+    await expect(killWindowById('bad')).rejects.toThrow(/Invalid window ID/);
+  });
+
+  it('rejects bad windowId or sessionName for moveWindowById', async () => {
+    const { moveWindowById } = await import('../server/tmux.js');
+    await expect(moveWindowById('bad', 'dst')).rejects.toThrow(/Invalid window ID/);
+    await expect(moveWindowById('@1', '; rm')).rejects.toThrow(/Invalid session name/);
+  });
+
+  it('rejects invalid windowName for renameWindowById', async () => {
+    const { renameWindowById } = await import('../server/tmux.js');
+    await expect(renameWindowById('@1', 'bad:name')).rejects.toThrow(/Invalid window name/);
+  });
+});

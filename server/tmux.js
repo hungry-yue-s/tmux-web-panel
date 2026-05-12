@@ -172,6 +172,12 @@ function requireValidWindowIndex(index) {
   }
 }
 
+function requireValidWindowId(id) {
+  if (!validateWindowId(id)) {
+    throw new Error(`Invalid window ID: ${id}`);
+  }
+}
+
 // --- High-Level Functions ---
 
 export async function listSessions() {
@@ -362,4 +368,24 @@ export async function capturePane(paneId, { escape = false } = {}) {
   args.push('-t', paneId, '-p');
   const stdout = await tmuxExec(args);
   return stdout;
+}
+
+// --- by-id helpers (use window_id @N — stable across renames/moves/renumbers) ---
+
+export async function renameWindowById(windowId, newName) {
+  requireValidWindowId(windowId);
+  requireValidWindowName(newName);
+  await tmuxExec(['rename-window', '-t', windowId, newName]);
+}
+
+export async function killWindowById(windowId) {
+  requireValidWindowId(windowId);
+  await tmuxExec(['kill-window', '-t', windowId]);
+}
+
+export async function moveWindowById(windowId, dstSession) {
+  requireValidWindowId(windowId);
+  requireValidSessionName(dstSession);
+  // '=<name>:' forces exact-name match (no prefix collision like foo vs foobar).
+  await tmuxExec(['move-window', '-s', windowId, '-t', '=' + dstSession + ':']);
 }
