@@ -30,6 +30,8 @@ import { NotificationStore } from './notifications.js';
 import { createNotificationsRouter } from './api/notifications.js';
 import { createSceneDiscoverRouter } from './api/scene-discover.js';
 import createClaudeUsageRouter from './api/claude-usage.js';
+import { PinStore } from './pins.js';
+import { createPinsRouter } from './api/pins.js';
 
 // --- CLI Argument Parsing ---
 
@@ -159,6 +161,30 @@ const notificationStore = new NotificationStore(
   join(homedir(), '.config', 'tmux-web-panel', 'notifications.json'),
 );
 
+// --- Pin Store (window-id pinning, persisted across restarts) ---
+
+const pinStore = new PinStore(
+  join(homedir(), '.config', 'tmux-web-panel', 'pins.json'),
+);
+await pinStore.load();
+
+// Best-effort startup sweep — drop orphan pins from prior tmux sessions.
+try {
+  const sessions = await tmux.listSessions();
+  const live = new Set();
+  for (const s of sessions) {
+    try {
+      const ws = await tmux.listWindows(s.name);
+      for (const w of ws) if (w.id) live.add(w.id);
+    } catch {
+      /* skip sessions we can't read */
+    }
+  }
+  await pinStore.sweep(live);
+} catch {
+  // Startup sweep failure is non-fatal.
+}
+
 // Mount API routes
 app.use('/api/sessions', sessionsRouter);
 app.use('/api/sessions/:name/windows', windowsRouter);
@@ -168,6 +194,7 @@ app.use('/api/system-stats', systemStatsRouter);
 app.use('/api/window-stats', windowStatsRouter);
 app.use('/api/notifications', createNotificationsRouter(notificationStore));
 app.use('/api/scene/discover', createSceneDiscoverRouter());
+app.use('/api/pins', createPinsRouter({ pinStore }));
 
 // File upload (uses /tmp — cleaned by OS on reboot)
 app.use('/api/upload', createUploadRouter('/tmp/tmux-web-panel-uploads'));
