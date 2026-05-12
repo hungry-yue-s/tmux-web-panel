@@ -1087,6 +1087,19 @@ function _loadSidebarWindows(sessionName) {
         return;
       }
 
+      // 与卡片视图共享排序 + 缓存 snapshot 顺序，WS reconcile 检测集合变化时会失效
+      if (typeof window.sortWindowsForSnapshot === 'function') {
+        var orderIds = window.sortWindowsForSnapshot(windows, {
+          pinsById: state.pinsById || {},
+          promotedBellIds: (state.promotedBellIdsBySession && state.promotedBellIdsBySession[sessionName]) || [],
+        });
+        state.windowOrderBySession = state.windowOrderBySession || {};
+        state.windowOrderBySession[sessionName] = orderIds;
+        var byId = {};
+        windows.forEach(function (w) { byId[w.id] = w; });
+        windows = orderIds.map(function (id) { return byId[id]; }).filter(Boolean);
+      }
+
       // Get pane data from state.sessions for this session
       var sessionData = state.sessions.find(function (s) { return s.name === sessionName; });
 
