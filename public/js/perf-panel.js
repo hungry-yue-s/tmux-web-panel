@@ -364,6 +364,13 @@ var PerfPanel = (function () {
     bindTableRows();
   }
 
+  // Claude usage palettes — referenced by the verbatim paintClaude block.
+  var TOOL_COLORS = {
+    Bash: '#7aa2f7', Read: '#7dcfff', Edit: '#bb9af7', Write: '#9ece6a',
+    Agent: '#f6a623', Grep: '#e0af68', Glob: '#f7768e', Skill: '#73daca',
+  };
+  var MODEL_COLORS = ['#7aa2f7', '#9ece6a', '#bb9af7', '#7dcfff', '#e0af68', '#f7768e'];
+
   function fmtTokens(n) {
     if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
     if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
