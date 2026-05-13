@@ -1,137 +1,369 @@
-// Perf panel — D2 design: treemap of windows by CPU/MEM/IO + 100% stacked area history.
+// Perf panel — Observatory layout. Top-level tabs: 性能 / Claude.
 // Self-managing: polls only while its DOM root exists.
 var PerfPanel = (function () {
   var POLL_MS = 2000;
-  var HISTORY = 40; // ~80s
-  var MAX_ROWS = 15; // top N windows in bar chart; rest aggregated as "others"
-  var METRICS = ['cpu', 'mem', 'io', 'disk', 'claude'];
-  var METRIC_LABEL = { cpu: 'CPU', mem: '内存', io: 'IO', disk: '磁盘', claude: 'Claude' };
-
-  var timer = null;
-  var state = {
-    metric: 'cpu',
-    history: [], // each entry: { ts, windows: [{key,name,cpu,mem,io}], total: {...} }
-    last: null,
-  };
-
-  var claudeState = { data: null, timer: null, loading: false };
+  var HISTORY_POLL_MS = 4000;
   var CLAUDE_POLL_MS = 30000;
+  var DEFAULT_RANGE = 60; // seconds
 
-  // Stable color per window key (deterministic hash → palette index)
-  var PALETTE = ['#f7768e', '#e0af68', '#7aa2f7', '#9ece6a', '#bb9af7', '#7dcfff', '#ff9e64', '#73daca'];
-  function colorFor(key) {
-    var h = 0;
-    for (var i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) & 0xffffffff;
-    return PALETTE[Math.abs(h) % PALETTE.length];
-  }
+  var U = window.PerfUtils;
+  var fmtBytes   = U.fmtBytes;
+  var fmtBps     = U.fmtBps;
+  var fmtUptime  = U.fmtUptime;
+  var fmtPercent = U.fmtPercent;
+  var colorFor   = U.colorFor;
 
-  function fmtBytes(n) {
-    if (!n && n !== 0) return '—';
-    var u = ['B', 'KB', 'MB', 'GB', 'TB']; var i = 0;
-    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-    return n.toFixed(n >= 10 ? 0 : 1) + u[i];
-  }
-  function fmtBps(n) { return fmtBytes(n) + '/s'; }
-  function fmtUptime(s) {
-    var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-    if (d) return d + 'd ' + h + 'h';
-    if (h) return h + 'h ' + m + 'm';
-    return m + 'm';
-  }
-  function metricValue(w, metric) {
-    if (metric === 'cpu') return w.cpuPercent;
-    if (metric === 'mem') return w.memBytes;
-    return w.ioBps;
-  }
-  function fmtMetric(v, metric) {
-    if (metric === 'cpu') return v.toFixed(v >= 10 ? 0 : 1) + '%';
-    if (metric === 'mem') return fmtBytes(v);
-    return fmtBps(v);
+  var state = {
+    activeTab: 'perf',
+    range: DEFAULT_RANGE,
+    snapshot: null,
+    history: { points: [] },
+    drilldown: new Map(),    // windowKey → { fetchedAt, procs }
+    timers: { snap: null, hist: null, claude: null },
+  };
+  // Claude state is kept identical to the old module so the verbatim paintClaude
+  // call site continues to work unchanged.
+  var claudeState = { data: null, loading: false };
+
+  function escapeHtml(s) {
+    if (typeof window.escapeHtml === 'function') return window.escapeHtml(s);
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
   }
 
-  // === Squarified treemap ===
-  // Returns array of {x,y,w,h, item}
-  function squarify(items, x, y, w, h) {
-    var out = [];
-    var total = items.reduce(function (a, it) { return a + it.value; }, 0);
-    if (total <= 0 || items.length === 0) return out;
+  // === Skeleton ===
+  function renderSkeleton() {
+    return [
+      '<div id="perf-panel" class="pp-card">',
+      '  <div class="pp-toptabs">',
+      '    <div class="pp-toptabs-l">',
+      '      <button class="pp-tt pp-active" data-view="perf">📊 机器性能<span class="pp-tt-badge" id="pp-badge-perf" hidden></span></button>',
+      '      <button class="pp-tt" data-view="claude">💰 Claude 用量<span class="pp-tt-badge" id="pp-badge-claude" hidden></span></button>',
+      '    </div>',
+      '  </div>',
+      '  <div class="pp-view pp-active" id="view-perf"><div id="perf-view-root"><div class="pp-loading">加载机器与窗口性能…</div></div></div>',
+      '  <div class="pp-view" id="view-claude"><div id="claude-view-root"><div class="pp-loading">加载 Claude 用量…</div></div></div>',
+      '</div>',
+    ].join('');
+  }
 
-    function layoutRow(row, rx, ry, rw, rh, isHorizontal) {
-      var rowSum = row.reduce(function (a, it) { return a + it.value; }, 0);
-      var ox = rx, oy = ry;
-      for (var i = 0; i < row.length; i++) {
-        var frac = row[i].value / rowSum;
-        if (isHorizontal) {
-          var cw = rw * frac;
-          out.push({ x: ox, y: oy, w: cw, h: rh, item: row[i].item });
-          ox += cw;
-        } else {
-          var ch = rh * frac;
-          out.push({ x: ox, y: oy, w: rw, h: ch, item: row[i].item });
-          oy += ch;
+  function bindTopTabs() {
+    var btns = document.querySelectorAll('#perf-panel .pp-tt');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].addEventListener('click', function (e) {
+        switchTab(e.currentTarget.getAttribute('data-view'));
+      });
+    }
+  }
+
+  function switchTab(name) {
+    state.activeTab = name;
+    document.querySelectorAll('#perf-panel .pp-tt').forEach(function (b) {
+      b.classList.toggle('pp-active', b.getAttribute('data-view') === name);
+    });
+    document.querySelectorAll('#perf-panel .pp-view').forEach(function (v) {
+      v.classList.toggle('pp-active', v.id === 'view-' + name);
+    });
+    // Repaint the now-visible tab immediately so the user doesn't wait for next poll.
+    if (name === 'perf' && state.snapshot) paintPerf();
+    if (name === 'claude' && claudeState.data) paintClaude(document.getElementById('claude-view-root'));
+  }
+
+  // === Renderers (filled in by Tasks 8–12) ===
+  function renderHero(s, alerts) {
+    var t = s.total;
+    var cpuMachinePct = t.cpuCount > 0 ? (t.windowCpuPercent / (t.cpuCount * 100)) * 100 : 0;
+    var memPct = t.systemMemTotal > 0 ? (t.systemMemUsed / t.systemMemTotal) * 100 : 0;
+    var rootDisk = (s.disks || []).find(function (d) { return d.mount === '/'; }) || (s.disks && s.disks[0]) || null;
+
+    var rangeOptions = [{v:60,l:'1分'},{v:600,l:'10分'},{v:3600,l:'1小时'}];
+
+    var alertPill = '';
+    if (alerts.critical.length > 0) {
+      alertPill = '<div class="pp-alert"><span class="pp-alert-dot"></span>' + escapeHtml(alerts.critical.length + ' 项告警 · ' + alerts.critical[0].message) + '</div>';
+    }
+
+    var html = '<div class="pp-hdr">';
+    html += '<div class="pp-hdr-l">';
+    html += '  <div class="pp-host-badge"><span class="pp-pulse"></span><span class="pp-host">' + escapeHtml(t.hostname) + '</span><span class="pp-host-meta">' + t.cpuCount + ' cores · load ' + t.load1.toFixed(2) + ' · up ' + U.fmtUptime(t.uptime) + '</span></div>';
+    html += alertPill;
+    html += '</div>';
+    html += '<div class="pp-hdr-r"><div class="pp-range">';
+    rangeOptions.forEach(function (r) {
+      html += '<button class="pp-rb' + (r.v === state.range ? ' pp-active' : '') + '" data-range="' + r.v + '">' + r.l + '</button>';
+    });
+    html += '</div></div>';
+    html += '</div>';
+
+    // KPI hero
+    var historyTotals = (state.history.points || []);
+    var sparkCpu = historyTotals.map(function (p) { return p.total.cpu / (t.cpuCount * 100); });
+    var sparkMem = historyTotals.map(function (p) { return p.total.mem / t.systemMemTotal; });
+    var sparkIo  = historyTotals.map(function (p) { return p.total.io; });
+    var ioCurrent = sparkIo.length ? sparkIo[sparkIo.length - 1] : t.windowIoBps;
+
+    function kpi(cls, label, valueText, unit, sub, sparkValues, color, bar) {
+      var sp = sparkValues && sparkValues.length ? U.sparkPath(sparkValues, 160, 32, { pad: 2 }) : null;
+      var spId = 'pp-sg-' + cls;
+      var spSvg = sp ? '<svg viewBox="0 0 160 32" preserveAspectRatio="none" class="pp-kpi-spark"><defs><linearGradient id="' + spId + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="' + color + '" stop-opacity=".4"/><stop offset="100%" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs><path d="' + sp.fill + '" fill="url(#' + spId + ')"/><path d="' + sp.line + '" fill="none" stroke="' + color + '" stroke-width="1.6"/></svg>' : '';
+      var barHtml = bar != null ? '<div class="pp-kpi-bar"><div style="width:' + Math.min(100, bar) + '%;background:' + color + '"></div></div>' : '';
+      return '<div class="pp-kpi pp-kpi-' + cls + '">' +
+        '<div class="pp-kpi-row"><span class="pp-kpi-label">' + label + '</span></div>' +
+        '<div class="pp-kpi-value">' + valueText + '<span class="pp-kpi-unit">' + unit + '</span></div>' +
+        '<div class="pp-kpi-sub">' + escapeHtml(sub) + '</div>' +
+        spSvg + barHtml +
+        '</div>';
+    }
+
+    html += '<div class="pp-kpis">';
+    html += kpi('cpu',  'CPU', cpuMachinePct.toFixed(0), '% of cores', t.windowCpuPercent.toFixed(0) + '% / ' + (t.cpuCount * 100) + '%',
+                sparkCpu, 'var(--accent-red)', cpuMachinePct);
+    html += kpi('mem',  'MEM', memPct.toFixed(0), '%', U.fmtBytes(t.systemMemUsed) + ' / ' + U.fmtBytes(t.systemMemTotal),
+                sparkMem, 'var(--accent-blue)', memPct);
+    html += kpi('io',   'IO',  U.fmtBps(ioCurrent).split(' ')[0], U.fmtBps(ioCurrent).split(' ').slice(1).join(' '),
+                '累计 ' + U.fmtBytes(ioCurrent * 60) + ' / 1min', sparkIo, 'var(--accent-yellow)', null);
+    if (rootDisk) {
+      html += kpi('disk', 'DISK ' + rootDisk.mount, String(rootDisk.percent), '%', U.fmtBytes(rootDisk.used) + ' / ' + U.fmtBytes(rootDisk.total),
+                  null, 'var(--accent-green)', rootDisk.percent);
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function renderPressureList(s) {
+    var t = s.total;
+    var items = [];
+    (s.windows || []).forEach(function (w) {
+      items.push({
+        key: w.session + '|' + w.windowIndex,
+        name: w.session + ':' + w.windowIndex + ' ' + w.windowName,
+        ext: false,
+        cpu: w.cpuPercent,
+        mem: w.memBytes,
+        io: w.ioBps,
+        procs: w.procCount,
+        score: U.pressureScore({ cpuPercent: w.cpuPercent, memBytes: w.memBytes, ioBps: w.ioBps }, t),
+      });
+    });
+    (s.external || []).forEach(function (e) {
+      items.push({
+        key: 'sys|' + e.comm,
+        name: e.comm,
+        ext: true,
+        cpu: e.cpuPercent,
+        mem: e.memBytes,
+        io: e.ioBps,
+        procs: e.procCount,
+        score: U.pressureScore({ cpuPercent: e.cpuPercent, memBytes: e.memBytes, ioBps: e.ioBps }, t),
+      });
+    });
+    items.sort(function (a, b) { return b.score - a.score; });
+    items = items.slice(0, 5);
+    if (items.length === 0) return '<div class="pp-empty">暂无活跃 window</div>';
+
+    return items.map(function (it, i) {
+      return '<div class="pp-pr-row" data-rank="' + (i + 1) + '">' +
+        '<span class="pp-pr-rank">' + (i + 1) + '</span>' +
+        '<div class="pp-pr-main">' +
+          '<div class="pp-pr-name">' + escapeHtml(it.name) + '<span class="pp-pr-tag' + (it.ext ? ' pp-pr-tag-ext' : '') + '">' + (it.ext ? 'system' : 'tmux') + '</span></div>' +
+          '<div class="pp-pr-metrics">' +
+            '<span class="pp-pr-m"><span class="pp-sw" style="background:var(--accent-red)"></span>' + it.cpu.toFixed(0) + '% CPU</span>' +
+            '<span class="pp-pr-m"><span class="pp-sw" style="background:var(--accent-blue)"></span>' + U.fmtBytes(it.mem) + '</span>' +
+            '<span class="pp-pr-m"><span class="pp-sw" style="background:var(--accent-yellow)"></span>' + U.fmtBps(it.io) + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="pp-pr-score"><div class="pp-pr-score-num">' + it.score.toFixed(1) + '</div><div class="pp-pr-score-lbl">压力分</div></div>' +
+      '</div>';
+    }).join('');
+  }
+  function renderTrendChart() {
+    var pts = (state.history && state.history.points) || [];
+    if (pts.length === 0) {
+      return '<svg viewBox="0 0 540 200" preserveAspectRatio="none" class="pp-trend-svg"><text x="270" y="100" text-anchor="middle" fill="var(--text-muted)" font-size="12">采样中…</text></svg>';
+    }
+    var t = (state.snapshot && state.snapshot.total) || {};
+    var cpuMax = (t.cpuCount || 1) * 100;
+    var memMax = t.systemMemTotal || 1;
+    var ioPeak = Math.max(1, Math.max.apply(null, pts.map(function (p) { return p.total.io; })));
+
+    var series = [
+      { color: 'var(--accent-red)',    name: 'cpu', values: pts.map(function (p) { return p.total.cpu / cpuMax; }) },
+      { color: 'var(--accent-blue)',   name: 'mem', values: pts.map(function (p) { return p.total.mem / memMax; }) },
+      { color: 'var(--accent-yellow)', name: 'io',  values: pts.map(function (p) { return p.total.io / ioPeak; }) },
+    ];
+
+    var W = 540, H = 200;
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" class="pp-trend-svg">';
+    for (var i = 1; i < 4; i++) {
+      var y = (H / 4) * i;
+      svg += '<line x1="0" y1="' + y + '" x2="' + W + '" y2="' + y + '" stroke="var(--border-subtle)" stroke-dasharray="2,4" opacity=".5"/>';
+    }
+    series.forEach(function (s, idx) {
+      var p = U.sparkPath(s.values, W, H, { pad: 8 });
+      var gid = 'pp-tg-' + idx;
+      svg += '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="' + s.color + '" stop-opacity=".22"/><stop offset="100%" stop-color="' + s.color + '" stop-opacity="0"/></linearGradient></defs>';
+      svg += '<path d="' + p.fill + '" fill="url(#' + gid + ')"/>';
+      svg += '<path d="' + p.line + '" fill="none" stroke="' + s.color + '" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>';
+    });
+    svg += '</svg>';
+    return svg;
+  }
+  function renderTable(s) {
+    var t = s.total;
+    var rows = [];
+    (s.windows || []).forEach(function (w) {
+      rows.push({
+        key: w.session + '|' + w.windowIndex,
+        session: w.session,
+        windowIndex: w.windowIndex,
+        label: w.windowName,
+        sLabel: w.session + ':' + w.windowIndex,
+        ext: false,
+        cpu: w.cpuPercent, mem: w.memBytes, io: w.ioBps, procs: w.procCount,
+      });
+    });
+    (s.external || []).forEach(function (e) {
+      rows.push({
+        key: 'sys|' + e.comm,
+        label: e.comm, sLabel: '[sys]', ext: true,
+        cpu: e.cpuPercent, mem: e.memBytes, io: e.ioBps, procs: e.procCount,
+      });
+    });
+    rows.sort(function (a, b) { return b.cpu - a.cpu; });
+    if (rows.length === 0) return '<div class="pp-empty">暂无活动 tmux 窗口</div>';
+
+    var maxMem = Math.max.apply(null, rows.map(function (r) { return r.mem; }));
+    var maxIO = Math.max.apply(null, rows.map(function (r) { return r.io; })) || 1;
+    // Per-key recent history from state.history.points
+    var perKeyHist = {};
+    (state.history.points || []).forEach(function (p) {
+      (p.top || []).forEach(function (e) {
+        if (!perKeyHist[e.key]) perKeyHist[e.key] = [];
+        perKeyHist[e.key].push(e.cpu);
+      });
+    });
+
+    var head =
+      '<div class="pp-wt-head">' +
+        '<span>名称</span><span class="pp-r">CPU</span><span>CPU 趋势</span>' +
+        '<span class="pp-r">MEM</span><span class="pp-r">IO</span><span class="pp-r">P</span><span></span>' +
+      '</div>';
+
+    var body = rows.map(function (r) {
+      var color = U.colorFor(r.key);
+      var hist = perKeyHist[r.key] || [];
+      var sp = hist.length >= 2 ? U.sparkPath(hist.slice(-20), 90, 22, { pad: 2 }) : null;
+      var cpuCls = r.cpu >= 200 ? 'pp-hi' : r.cpu >= 80 ? 'pp-warn' : '';
+      return '<div class="pp-wt-row" data-key="' + escapeHtml(r.key) + '"' + (r.ext ? '' : ' data-session="' + escapeHtml(r.session) + '" data-windowindex="' + escapeHtml(String(r.windowIndex)) + '"') + '>' +
+        '<div class="pp-wt-name"><span class="pp-wt-icn" style="background:' + color + '"></span>' +
+          '<span class="pp-wt-txt">' + (r.ext ? '<span class="pp-wt-sess">[sys]</span>' : '<span class="pp-wt-sess">' + escapeHtml(r.sLabel) + '</span>') + escapeHtml(r.label) + '</span></div>' +
+        '<div class="pp-wt-cpu-val ' + cpuCls + '">' + r.cpu.toFixed(0) + '%</div>' +
+        (sp ? '<svg class="pp-wt-spark" viewBox="0 0 90 22" preserveAspectRatio="none"><path d="' + sp.line + '" fill="none" stroke="' + color + '" stroke-width="1.4"/></svg>' : '<span class="pp-wt-spark">—</span>') +
+        '<div class="pp-wt-bar" data-l="MEM"><div class="pp-wt-tr"><div class="pp-wt-fl" style="width:' + Math.min(100,(r.mem/maxMem)*100) + '%;background:var(--accent-blue)"></div></div><span class="pp-wt-lbl">' + U.fmtBytes(r.mem) + '</span></div>' +
+        '<div class="pp-wt-bar" data-l="IO"><div class="pp-wt-tr"><div class="pp-wt-fl" style="width:' + Math.min(100,(r.io/maxIO)*100) + '%;background:var(--accent-yellow)"></div></div><span class="pp-wt-lbl">' + U.fmtBps(r.io) + '</span></div>' +
+        '<span class="pp-wt-procs">' + r.procs + 'p</span>' +
+        '<span class="pp-wt-arrow">›</span>' +
+      '</div>';
+    }).join('');
+    return head + body;
+  }
+  function bindRangeButtons() {
+    document.querySelectorAll('#perf-panel .pp-rb').forEach(function (b) {
+      b.addEventListener('click', function (e) {
+        state.range = Number(e.currentTarget.getAttribute('data-range'));
+        tickHist();
+        paintPerf();
+      });
+    });
+  }
+  function bindTableRows() {
+    function renderDrill(procs) {
+      procs = procs || [];
+      if (procs.length === 0) {
+        return '<div class="pp-wt-drill"><div class="pp-empty">暂无进程详情</div></div>';
+      }
+      var rows = procs.map(function (p) {
+        return '<tr>' +
+          '<td>' + escapeHtml(p.pid) + '</td>' +
+          '<td>' + escapeHtml(p.comm || '') + '</td>' +
+          '<td class="pp-r">' + fmtPercent(p.cpuPercent || 0) + '</td>' +
+          '<td class="pp-r">' + fmtBytes(p.memBytes || 0) + '</td>' +
+          '<td class="pp-wt-cmd">' + escapeHtml(p.cmdline || '') + '</td>' +
+        '</tr>';
+      }).join('');
+      return '<div class="pp-wt-drill">' +
+        '<table><thead><tr><th>PID</th><th>comm</th><th class="pp-r">CPU</th><th class="pp-r">MEM</th><th>cmdline</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      '</div>';
+    }
+
+    function setDrill(row, html) {
+      var open = row.querySelector('.pp-wt-drill');
+      if (open) open.remove();
+      row.insertAdjacentHTML('beforeend', html);
+    }
+
+    document.querySelectorAll('#perf-panel .pp-wt-row').forEach(function (row) {
+      row.addEventListener('click', function () {
+        var open = row.querySelector('.pp-wt-drill');
+        if (open) { open.remove(); return; }
+
+        var key = row.getAttribute('data-key') || '';
+        if (key.indexOf('sys|') === 0) {
+          setDrill(row, '<div class="pp-wt-drill">comm group drilldown not implemented</div>');
+          return;
         }
-      }
-    }
 
-    function worstRatio(row, side, scale) {
-      var sum = row.reduce(function (a, it) { return a + it.value; }, 0) * scale;
-      var rmax = -Infinity, rmin = Infinity;
-      for (var i = 0; i < row.length; i++) {
-        var v = row[i].value * scale;
-        if (v > rmax) rmax = v;
-        if (v < rmin) rmin = v;
-      }
-      var s2 = sum * sum, side2 = side * side;
-      return Math.max((side2 * rmax) / s2, s2 / (side2 * rmin));
-    }
+        var cached = state.drilldown.get(key);
+        if (cached && Date.now() - cached.ts < 5000) {
+          setDrill(row, renderDrill(cached.procs));
+          return;
+        }
 
-    var scale = (w * h) / total;
-    var scaled = items.map(function (it) { return { value: it.value, item: it }; });
-    scaled.sort(function (a, b) { return b.value - a.value; });
+        var session = row.getAttribute('data-session');
+        var windowIndex = row.getAttribute('data-windowindex');
+        if (!session || windowIndex == null) return;
 
-    var rx = x, ry = y, rw = w, rh = h;
-    var queue = scaled.slice();
-
-    while (queue.length) {
-      var side = Math.min(rw, rh);
-      var row = [queue[0]];
-      var idx = 1;
-      while (idx < queue.length) {
-        var with_ = row.concat([queue[idx]]);
-        if (worstRatio(with_, side, scale) <= worstRatio(row, side, scale)) {
-          row = with_; idx++;
-        } else break;
-      }
-      var rowSum = row.reduce(function (a, it) { return a + it.value; }, 0);
-      var rowArea = rowSum * scale;
-      var isHorizontal = rw >= rh;
-      if (isHorizontal) {
-        var rowH = rowArea / rw;
-        layoutRow(row, rx, ry, rw, rowH, true);
-        ry += rowH; rh -= rowH;
-      } else {
-        var rowW = rowArea / rh;
-        layoutRow(row, rx, ry, rowW, rh, false);
-        rx += rowW; rw -= rowW;
-      }
-      queue.splice(0, row.length);
-    }
-    return out;
+        var token = Date.now() + ':' + Math.random();
+        row._ppDrillToken = token;
+        setDrill(row, '<div class="pp-wt-drill"><div class="pp-loading">加载进程详情…</div></div>');
+        fetch('/api/perf/drilldown?session=' + encodeURIComponent(session) + '&windowIndex=' + encodeURIComponent(windowIndex), { credentials: 'same-origin' })
+          .then(function (r) { return r.json(); })
+          .then(function (resp) {
+            if (row._ppDrillToken !== token || !row.querySelector('.pp-wt-drill')) return;
+            if (!resp || !resp.success) {
+              setDrill(row, '<div class="pp-wt-drill"><div class="pp-empty">进程详情加载失败</div></div>');
+              return;
+            }
+            var procs = (resp.data && resp.data.procs) || [];
+            state.drilldown.set(key, { ts: Date.now(), procs: procs });
+            setDrill(row, renderDrill(procs));
+          })
+          .catch(function () {
+            if (row._ppDrillToken !== token || !row.querySelector('.pp-wt-drill')) return;
+            setDrill(row, '<div class="pp-wt-drill"><div class="pp-empty">进程详情加载失败</div></div>');
+          });
+      });
+    });
   }
 
-  // === Claude Usage helpers ===
-  var PRICING = {
-    'claude-opus-4-7': { input: 5.0, output: 25.0 },
-    'claude-opus-4-6': { input: 5.0, output: 25.0 },
-    'claude-sonnet-4-6': { input: 3.0, output: 15.0 },
-    'claude-sonnet-4-5-20250929': { input: 3.0, output: 15.0 },
-    'claude-haiku-4-5': { input: 1.0, output: 5.0 },
-  };
-  var TOOL_COLORS = {
-    Bash: '#7aa2f7', Read: '#7dcfff', Edit: '#bb9af7', Write: '#9ece6a',
-    Agent: '#f6a623', Grep: '#e0af68', Glob: '#f7768e', Skill: '#73daca',
-  };
-  var MODEL_COLORS = ['#7aa2f7', '#9ece6a', '#bb9af7', '#7dcfff', '#e0af68', '#f7768e'];
+  function paintPerf() {
+    var root = document.getElementById('perf-view-root');
+    if (!root) return;
+    if (!state.snapshot) { root.innerHTML = '<div class="pp-loading">加载机器与窗口性能…</div>'; return; }
+    var s = state.snapshot;
+    var alerts = U.detectAlerts(s);
+    var html = '';
+    html += renderHero(s, alerts);
+    html += '<div class="pp-row-2col">';
+    html += '  <div class="pp-card pp-pressure-card"><div class="pp-card-title"><h3>⚡ Top 压力来源</h3><span class="pp-hint">CPU 50% · MEM 35% · IO 15% 加权</span></div><div class="pp-pressure-list" id="pp-pressure-list">' + renderPressureList(s) + '</div></div>';
+    html += '  <div class="pp-card pp-trend-card"><div class="pp-card-title"><h3>📈 历史趋势</h3><span class="pp-hint">最近 ' + state.range + ' 秒</span></div><div class="pp-trend-legend"><span class="pp-li"><span class="pp-sw" style="background:var(--accent-red)"></span>CPU</span><span class="pp-li"><span class="pp-sw" style="background:var(--accent-blue)"></span>MEM</span><span class="pp-li"><span class="pp-sw" style="background:var(--accent-yellow)"></span>IO</span></div><div class="pp-trend" id="pp-trend">' + renderTrendChart() + '</div></div>';
+    html += '</div>';
+    html += '<div class="pp-card pp-wt-card"><div class="pp-card-title"><h3>🪟 Windows & 系统进程</h3><span class="pp-hint">点击行展开进程详情 · 按 CPU 排序</span></div>' + renderTable(s) + '</div>';
+    root.innerHTML = html;
+    bindRangeButtons();
+    bindTableRows();
+  }
 
   function fmtTokens(n) {
     if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
@@ -157,7 +389,9 @@ var PerfPanel = (function () {
     return 'sonnet';
   }
 
-  function paintClaude(root) {
+  function paintClaude(_root) {
+    var root = _root || document.getElementById('claude-view-root');
+    if (!root) return;
     var d = claudeState.data;
     if (!d) {
       root.innerHTML = '<div class="pp-loading">加载 Claude 用量数据…</div>';
@@ -165,14 +399,6 @@ var PerfPanel = (function () {
     }
 
     var html = '';
-
-    // === Tabs (reuse existing tab rendering) ===
-    html += '<div class="pp-tabs">';
-    METRICS.forEach(function (m) {
-      var cls = 'pp-tab' + (m === 'claude' ? ' pp-tab-active' : '');
-      html += '<button class="' + cls + '" data-metric="' + m + '">' + METRIC_LABEL[m] + '</button>';
-    });
-    html += '</div>';
 
     // === Tier 1: Subscription Status ===
     if (d.utilization) {
@@ -478,592 +704,89 @@ var PerfPanel = (function () {
     }
 
     root.innerHTML = html;
-
-    // Bind tab clicks
-    var tabs = root.querySelectorAll('.pp-tab');
-    for (var ti = 0; ti < tabs.length; ti++) {
-      tabs[ti].addEventListener('click', function (e) {
-        var newMetric = e.currentTarget.getAttribute('data-metric');
-        state.metric = newMetric;
-        if (newMetric === 'claude' && !claudeState.data) startClaude();
-        paint();
-      });
-    }
   }
 
-  // === Render skeleton (called once when home view is built) ===
-  function renderSkeleton() {
-    return (
-      '<div id="perf-panel" class="pp-card">' +
-        '<div class="pp-loading">加载机器与窗口性能…</div>' +
-      '</div>'
-    );
-  }
-
-  // === Paint full panel ===
-  function paint() {
-    var root = document.getElementById('perf-panel');
-    if (!root) return false;
-    var snap = state.last;
-    if (!snap) return true;
-
-    if (state.metric === 'claude') {
-      paintClaude(root);
-      return true;
-    }
-
-    var t = snap.total;
-    var metric = state.metric;
-    var windows = (snap.windows || []).slice();
-    var externals = (snap.external || []).slice();
-
-    // Wrap external (non-tmux) processes so they share the bar item shape
-    function metricValueExt(e) {
-      if (metric === 'cpu') return e.cpuPercent;
-      if (metric === 'mem') return e.memBytes;
-      return e.ioBps;
-    }
-    var extItems = externals.map(function (e) {
-      return {
-        key: 'sys|' + e.comm,
-        name: '[sys] ' + e.comm + (e.procCount > 1 ? ' ×' + e.procCount : ''),
-        value: metricValueExt(e),
-        win: { procCount: e.procCount, isExternal: true },
-      };
-    });
-
-    // Filter zero-value windows for treemap to avoid 0-area rectangles
-    var items = windows
-      .map(function (w) {
-        var key = w.session + '|' + w.windowIndex;
-        return {
-          key: key,
-          name: w.session + ':' + w.windowIndex + (w.windowName && w.windowName !== String(w.windowIndex) ? ' ' + w.windowName : ''),
-          value: metricValue(w, metric),
-          win: w,
-        };
-      })
-      .concat(extItems)
-      .filter(function (it) { return it.value > 0.01; })
-      .sort(function (a, b) { return b.value - a.value; });
-
-    var totalForMetric;
-    if (metric === 'cpu') totalForMetric = t.windowCpuPercent;
-    else if (metric === 'mem') totalForMetric = t.windowMemBytes;
-    else totalForMetric = t.windowIoBps;
-
-    var html = '';
-
-    // Header
-    html += '<div class="pp-header">';
-    html += '<div class="pp-host">' + escapeHtml(t.hostname) + '</div>';
-    html += '<div class="pp-meta">' + t.cpuCount + ' cores · load ' + t.load1.toFixed(2) + ' · up ' + fmtUptime(t.uptime) + '</div>';
-    html += '<div class="pp-totals">';
-    var cpuMachinePct = t.cpuCount > 0 ? (t.windowCpuPercent / (t.cpuCount * 100)) * 100 : 0;
-    var memMachinePct = t.systemMemTotal > 0 ? (t.systemMemUsed / t.systemMemTotal) * 100 : 0;
-    var swapMachinePct = t.systemSwapTotal > 0 ? (t.systemSwapUsed / t.systemSwapTotal) * 100 : 0;
-    html += '<span class="pp-tot"><span class="pp-tot-l">CPU</span><span class="pp-tot-v">' + t.windowCpuPercent.toFixed(0) + '% <span class="pp-tot-sub">/ ' + (t.cpuCount * 100) + '% (' + cpuMachinePct.toFixed(0) + '%)</span></span></span>';
-    html += '<span class="pp-tot"><span class="pp-tot-l">MEM</span><span class="pp-tot-v">' + fmtBytes(t.systemMemUsed) + ' <span class="pp-tot-sub">/ ' + fmtBytes(t.systemMemTotal) + ' (' + memMachinePct.toFixed(0) + '%)</span></span></span>';
-    if (t.systemSwapTotal > 0) {
-      html += '<span class="pp-tot"><span class="pp-tot-l">SWAP</span><span class="pp-tot-v">' + fmtBytes(t.systemSwapUsed) + ' <span class="pp-tot-sub">/ ' + fmtBytes(t.systemSwapTotal) + ' (' + swapMachinePct.toFixed(0) + '%)</span></span></span>';
-    }
-    html += '<span class="pp-tot"><span class="pp-tot-l">IO</span><span class="pp-tot-v">' + fmtBps(t.windowIoBps) + '</span></span>';
-    // Disk summary in header
-    var diskArr = snap.disks || [];
-    if (diskArr.length > 0) {
-      var rootDisk = diskArr.find(function (d) { return d.mount === '/'; });
-      if (rootDisk) {
-        var rootPct = rootDisk.total > 0 ? (rootDisk.used / rootDisk.total) * 100 : 0;
-        html += '<span class="pp-tot"><span class="pp-tot-l">DISK /</span><span class="pp-tot-v">' + fmtBytes(rootDisk.used) + ' <span class="pp-tot-sub">/ ' + fmtBytes(rootDisk.total) + ' (' + rootPct.toFixed(0) + '%)</span></span></span>';
-      }
-    }
-    html += '</div>';
-    html += '</div>';
-
-    // Tabs
-    html += '<div class="pp-tabs">';
-    METRICS.forEach(function (m) {
-      var cls = 'pp-tab' + (m === metric ? ' pp-tab-active' : '');
-      html += '<button class="' + cls + '" data-metric="' + m + '">' + METRIC_LABEL[m] + '</button>';
-    });
-    html += '<span class="pp-tabs-spacer"></span>';
-    if (metric === 'disk') {
-      html += '<span class="pp-tabs-hint">各分区磁盘使用情况</span>';
-    } else {
-      html += '<span class="pp-tabs-hint">面积 = ' + METRIC_LABEL[metric] + ' 占比 · 百分比 = 占机器总量</span>';
-    }
-    html += '</div>';
-
-    // Machine-total denominator (so cell pct = "% of machine")
-    var machineTotal;
-    if (metric === 'cpu') machineTotal = t.cpuCount * 100;
-    else if (metric === 'mem') machineTotal = t.systemMemTotal;
-    else machineTotal = totalForMetric; // IO has no machine cap, fall back to windows sum
-
-    function drawTreemap(svgItems, W, H, denom, valueFmt, getSubExtra) {
-      var s = '<svg class="pp-treemap" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">';
-      if (svgItems.length === 0) {
-        s += '<rect width="' + W + '" height="' + H + '" fill="#16161e" rx="6"/>';
-        s += '<text x="' + (W / 2) + '" y="' + (H / 2) + '" text-anchor="middle" fill="#565f89" font-size="12">暂无数据</text>';
-        s += '</svg>';
-        return s;
-      }
-      var rects = squarify(svgItems, 0, 0, W, H);
-      rects.forEach(function (r) {
-        var it = r.item;
-        var color = colorFor(it.key);
-        var pct = denom > 0 ? (it.value / denom) * 100 : 0;
-        var fontSize = Math.max(9, Math.min(28, Math.sqrt(r.w * r.h) / 6));
-        var labelSize = Math.max(8, Math.min(13, fontSize * 0.42));
-        s += '<g class="pp-tm-cell">';
-        s += '<rect x="' + r.x + '" y="' + r.y + '" width="' + r.w + '" height="' + r.h + '" fill="#1f2335" stroke="' + color + '" stroke-width="1.2" rx="4"/>';
-        s += '<rect x="' + r.x + '" y="' + r.y + '" width="3" height="' + r.h + '" fill="' + color + '" rx="2"/>';
-        if (r.w > 60 && r.h > 30) {
-          s += '<text x="' + (r.x + 10) + '" y="' + (r.y + labelSize + 6) + '" fill="#c0caf5" font-size="' + labelSize + '" font-weight="600">' + escapeHtml(it.name) + '</text>';
-          s += '<text x="' + (r.x + 10) + '" y="' + (r.y + labelSize + 6 + fontSize + 2) + '" fill="#c0caf5" font-size="' + fontSize + '" font-weight="700">' + valueFmt(it.value) + '</text>';
-          if (r.h > 70) {
-            var subTxt = pct.toFixed(1) + '% of machine · ' + it.win.procCount + 'p';
-            if (getSubExtra) { var ex = getSubExtra(it); if (ex) subTxt += ' · ' + ex; }
-            s += '<text x="' + (r.x + 10) + '" y="' + (r.y + r.h - 8) + '" fill="#7d8590" font-size="9">' + subTxt + '</text>';
-          }
-        } else if (r.w > 30 && r.h > 18) {
-          s += '<text x="' + (r.x + 4) + '" y="' + (r.y + 12) + '" fill="#c0caf5" font-size="9">' + escapeHtml(it.name.split(' ')[0]) + '</text>';
-        }
-        s += '<title>' + escapeHtml(it.name) + ' — ' + valueFmt(it.value) + ' (' + pct.toFixed(1) + '% of machine)</title>';
-        s += '</g>';
-      });
-      s += '</svg>';
-      return s;
-    }
-
-    // Use real container width so text stays at native px regardless of column size
-    var containerW = root.clientWidth || 880;
-    var W = Math.max(480, Math.floor(containerW - 4));
-    var H = 320;
-    if (metric === 'mem') {
-      // Horizontal bar chart: each row = one window OR external comm group,
-      // RAM + SWAP segments aligned to a common scale.
-      var memWinItems = windows.map(function (w) {
-        return {
-          key: w.session + '|' + w.windowIndex,
-          name: w.session + ':' + w.windowIndex + (w.windowName && w.windowName !== String(w.windowIndex) ? ' ' + w.windowName : ''),
-          ram: w.memBytes,
-          swap: w.swapBytes,
-          total: w.memBytes + w.swapBytes,
-          win: w,
-        };
-      });
-      var memExtItems = externals.map(function (e) {
-        return {
-          key: 'sys|' + e.comm,
-          name: '[sys] ' + e.comm + (e.procCount > 1 ? ' ×' + e.procCount : ''),
-          ram: e.memBytes,
-          swap: e.swapBytes,
-          total: e.memBytes + e.swapBytes,
-          win: { procCount: e.procCount, isExternal: true },
-        };
-      });
-      var memItems = memWinItems.concat(memExtItems)
-        .filter(function (it) { return it.total > 1024 * 1024; })
-        .sort(function (a, b) { return b.total - a.total; });
-
-      // Cap to top N; aggregate rest
-      var memOthers = null;
-      if (memItems.length > MAX_ROWS) {
-        var rest = memItems.slice(MAX_ROWS);
-        memItems = memItems.slice(0, MAX_ROWS);
-        memOthers = {
-          count: rest.length,
-          ram: rest.reduce(function (a, it) { return a + it.ram; }, 0),
-          swap: rest.reduce(function (a, it) { return a + it.swap; }, 0),
-          total: rest.reduce(function (a, it) { return a + it.total; }, 0),
-        };
-      }
-
-      var ramUsedByWin = windows.reduce(function (a, w) { return a + w.memBytes; }, 0);
-      var swapUsedByWin = windows.reduce(function (a, w) { return a + w.swapBytes; }, 0);
-
-      html += '<div class="pp-mem-legend">';
-      html += '<span class="pp-legend-item"><span class="pp-swatch pp-swatch-ram"></span>RAM ' + fmtBytes(ramUsedByWin) + ' / ' + fmtBytes(t.systemMemTotal) + '</span>';
-      if (t.systemSwapTotal > 0) {
-        html += '<span class="pp-legend-item"><span class="pp-swatch pp-swatch-swap"></span>SWAP ' + fmtBytes(swapUsedByWin) + ' / ' + fmtBytes(t.systemSwapTotal) + '</span>';
-      }
-      html += '<span class="pp-legend-hint">条长 = 占整机比例（满 = ' + fmtBytes(memDenom) + '）</span>';
-      html += '</div>';
-
-      var rowH = 26;
-      var rowGap = 4;
-      var nameW = 170;
-      var pctW = 92;
-      var barW = W - nameW - pctW - 16;
-      var memDenom = t.systemMemTotal + t.systemSwapTotal;
-      // 条长按机器总量（RAM+SWAP）归一化——满条 = 整机占满
-      var maxTotal = memDenom > 0 ? memDenom : (memItems.length > 0 ? memItems[0].total : 1);
-      var othersRows = memOthers ? 1 : 0;
-      var Hbar = Math.max(120, (memItems.length + othersRows) * (rowH + rowGap) + 8);
-
-      html += '<svg class="pp-membars" viewBox="0 0 ' + W + ' ' + Hbar + '">';
-      html += '<defs><pattern id="pp-swap-hatch" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">' +
-              '<rect width="6" height="6" fill="#7aa2f7" fill-opacity="0.18"/>' +
-              '<line x1="0" y1="0" x2="0" y2="6" stroke="#7aa2f7" stroke-width="2" stroke-opacity="0.6"/>' +
-              '</pattern></defs>';
-      if (memItems.length === 0) {
-        html += '<rect width="' + W + '" height="' + Hbar + '" fill="#16161e" rx="6"/>';
-        html += '<text x="' + (W / 2) + '" y="' + (Hbar / 2) + '" text-anchor="middle" fill="#565f89" font-size="12">暂无数据</text>';
-      } else {
-        memItems.forEach(function (it, i) {
-          var y = 4 + i * (rowH + rowGap);
-          var color = colorFor(it.key);
-          var ramW = (it.ram / maxTotal) * barW;
-          var swW = (it.swap / maxTotal) * barW;
-          var pct = memDenom > 0 ? (it.total / memDenom) * 100 : 0;
-          // Track background
-          html += '<rect x="' + nameW + '" y="' + y + '" width="' + barW + '" height="' + rowH + '" fill="#16161e" rx="3"/>';
-          // RAM segment (solid)
-          if (ramW > 0.5) {
-            html += '<rect x="' + nameW + '" y="' + y + '" width="' + ramW + '" height="' + rowH + '" fill="' + color + '" fill-opacity="0.85" rx="3"/>';
-          }
-          // SWAP segment (hatched, butted against RAM)
-          if (swW > 0.5) {
-            html += '<rect x="' + (nameW + ramW) + '" y="' + y + '" width="' + swW + '" height="' + rowH + '" fill="url(#pp-swap-hatch)" stroke="#7aa2f7" stroke-width="0.8" stroke-opacity="0.5"/>';
-          }
-          // Window name (left)
-          html += '<text x="8" y="' + (y + rowH / 2 + 4) + '" fill="#c0caf5" font-size="12" font-weight="600">' + escapeHtml(it.name.length > 24 ? it.name.slice(0, 23) + '…' : it.name) + '</text>';
-          // RAM label inside its segment (or to the right if too narrow)
-          var ramTxt = fmtBytes(it.ram);
-          if (ramW > 54) {
-            html += '<text x="' + (nameW + 6) + '" y="' + (y + rowH / 2 + 4) + '" fill="#1a1b26" font-size="11" font-weight="700">' + ramTxt + '</text>';
-          }
-          // SWAP label inside its segment (or skip if tiny)
-          if (it.swap > 0) {
-            var swTxt = fmtBytes(it.swap);
-            if (swW > 50) {
-              html += '<text x="' + (nameW + ramW + swW / 2) + '" y="' + (y + rowH / 2 + 4) + '" text-anchor="middle" fill="#c0caf5" font-size="11" font-weight="700">' + swTxt + '</text>';
-            } else if (swW > 20) {
-              html += '<text x="' + (nameW + ramW + swW + 4) + '" y="' + (y + rowH / 2 + 4) + '" fill="#7aa2f7" font-size="10" font-weight="600">' + swTxt + '</text>';
-            }
-          }
-          // Right column: total + machine percent
-          html += '<text x="' + (W - 6) + '" y="' + (y + rowH / 2 + 4) + '" text-anchor="end" fill="#c0caf5" font-size="11" font-weight="700">' + fmtBytes(it.total) + ' <tspan fill="#7d8590" font-weight="400">· ' + pct.toFixed(1) + '%</tspan></text>';
-          html += '<title>' + escapeHtml(it.name) + ' — RAM ' + ramTxt + ' + SWAP ' + fmtBytes(it.swap) + ' = ' + fmtBytes(it.total) + ' (' + pct.toFixed(1) + '% of machine)</title>';
-        });
-        if (memOthers) {
-          var y2 = 4 + memItems.length * (rowH + rowGap);
-          var ramW2 = (memOthers.ram / maxTotal) * barW;
-          var swW2 = (memOthers.swap / maxTotal) * barW;
-          var pct2 = memDenom > 0 ? (memOthers.total / memDenom) * 100 : 0;
-          html += '<rect x="' + nameW + '" y="' + y2 + '" width="' + barW + '" height="' + rowH + '" fill="#16161e" rx="3"/>';
-          if (ramW2 > 0.5) html += '<rect x="' + nameW + '" y="' + y2 + '" width="' + ramW2 + '" height="' + rowH + '" fill="#565f89" fill-opacity="0.6" rx="3"/>';
-          if (swW2 > 0.5) html += '<rect x="' + (nameW + ramW2) + '" y="' + y2 + '" width="' + swW2 + '" height="' + rowH + '" fill="url(#pp-swap-hatch)" stroke="#7aa2f7" stroke-width="0.8" stroke-opacity="0.5"/>';
-          html += '<text x="8" y="' + (y2 + rowH / 2 + 4) + '" fill="#7d8590" font-size="11" font-style="italic">其余 ' + memOthers.count + ' 个 window</text>';
-          html += '<text x="' + (W - 6) + '" y="' + (y2 + rowH / 2 + 4) + '" text-anchor="end" fill="#c0caf5" font-size="11" font-weight="700">' + fmtBytes(memOthers.total) + ' <tspan fill="#7d8590" font-weight="400">· ' + pct2.toFixed(1) + '%</tspan></text>';
-        }
-      }
-      html += '</svg>';
-    } else if (metric === 'cpu' || metric === 'io') {
-      // Horizontal bar chart for CPU / IO — same layout grammar as MEM.
-      var barItems = items.slice(); // already sorted desc, filtered
-      var otherAgg = null;
-      if (barItems.length > MAX_ROWS) {
-        var restCpu = barItems.slice(MAX_ROWS);
-        barItems = barItems.slice(0, MAX_ROWS);
-        otherAgg = {
-          count: restCpu.length,
-          value: restCpu.reduce(function (a, it) { return a + it.value; }, 0),
-          procCount: restCpu.reduce(function (a, it) { return a + it.win.procCount; }, 0),
-        };
-      }
-      var rowH2 = 26, rowGap2 = 4, nameW2 = 170, pctW2 = 92;
-      var barW2 = W - nameW2 - pctW2 - 16;
-      // CPU 用机器总量归一化（条长直接反映占整机比例）；IO 没有机器上限，仍按最大值
-      var maxV;
-      if (metric === 'cpu' && machineTotal > 0) {
-        maxV = machineTotal;
-      } else {
-        maxV = barItems.length > 0 ? barItems[0].value : 1;
-      }
-      var Hbar2 = Math.max(120, (barItems.length + (otherAgg ? 1 : 0)) * (rowH2 + rowGap2) + 8);
-      var fmtFn = function (v) { return fmtMetric(v, metric); };
-
-      var hintTxt = metric === 'cpu'
-        ? '条长 = 占机器总量比例（满 = ' + (t.cpuCount * 100) + '%）· 按 window 占用排序'
-        : '条长 = ' + METRIC_LABEL[metric] + '（无机器上限，相对最大值）· 百分比 = 占机器总量';
-      html += '<div class="pp-mem-legend"><span class="pp-legend-hint">' + hintTxt + '</span></div>';
-      html += '<svg class="pp-membars" viewBox="0 0 ' + W + ' ' + Hbar2 + '">';
-      if (barItems.length === 0) {
-        html += '<rect width="' + W + '" height="' + Hbar2 + '" fill="#16161e" rx="6"/>';
-        html += '<text x="' + (W / 2) + '" y="' + (Hbar2 / 2) + '" text-anchor="middle" fill="#565f89" font-size="12">暂无活跃窗口数据</text>';
-      } else {
-        barItems.forEach(function (it, i) {
-          var y = 4 + i * (rowH2 + rowGap2);
-          var color = colorFor(it.key);
-          var bw = (it.value / maxV) * barW2;
-          var pct = machineTotal > 0 ? (it.value / machineTotal) * 100 : 0;
-          html += '<rect x="' + nameW2 + '" y="' + y + '" width="' + barW2 + '" height="' + rowH2 + '" fill="#16161e" rx="3"/>';
-          if (bw > 0.5) {
-            html += '<rect x="' + nameW2 + '" y="' + y + '" width="' + bw + '" height="' + rowH2 + '" fill="' + color + '" fill-opacity="0.85" rx="3"/>';
-          }
-          html += '<text x="8" y="' + (y + rowH2 / 2 + 4) + '" fill="#c0caf5" font-size="12" font-weight="600">' + escapeHtml(it.name.length > 24 ? it.name.slice(0, 23) + '…' : it.name) + '</text>';
-          var vTxt = fmtFn(it.value);
-          if (bw > 60) {
-            html += '<text x="' + (nameW2 + 6) + '" y="' + (y + rowH2 / 2 + 4) + '" fill="#1a1b26" font-size="11" font-weight="700">' + vTxt + '</text>';
-          } else {
-            html += '<text x="' + (nameW2 + bw + 4) + '" y="' + (y + rowH2 / 2 + 4) + '" fill="#c0caf5" font-size="11" font-weight="700">' + vTxt + '</text>';
-          }
-          html += '<text x="' + (W - 6) + '" y="' + (y + rowH2 / 2 + 4) + '" text-anchor="end" fill="#7d8590" font-size="11">' + pct.toFixed(1) + '% · ' + it.win.procCount + 'p</text>';
-          html += '<title>' + escapeHtml(it.name) + ' — ' + vTxt + ' (' + pct.toFixed(1) + '% of machine)</title>';
-        });
-        if (otherAgg) {
-          var oy = 4 + barItems.length * (rowH2 + rowGap2);
-          var obw = (otherAgg.value / maxV) * barW2;
-          var opct = machineTotal > 0 ? (otherAgg.value / machineTotal) * 100 : 0;
-          html += '<rect x="' + nameW2 + '" y="' + oy + '" width="' + barW2 + '" height="' + rowH2 + '" fill="#16161e" rx="3"/>';
-          if (obw > 0.5) html += '<rect x="' + nameW2 + '" y="' + oy + '" width="' + obw + '" height="' + rowH2 + '" fill="#565f89" fill-opacity="0.6" rx="3"/>';
-          html += '<text x="8" y="' + (oy + rowH2 / 2 + 4) + '" fill="#7d8590" font-size="11" font-style="italic">其余 ' + otherAgg.count + ' 个 window</text>';
-          html += '<text x="' + (W - 6) + '" y="' + (oy + rowH2 / 2 + 4) + '" text-anchor="end" fill="#7d8590" font-size="11">' + opct.toFixed(1) + '% · ' + otherAgg.procCount + 'p</text>';
-        }
-      }
-      html += '</svg>';
-    }
-
-    if (metric === 'disk') {
-      // Disk usage horizontal bar chart
-      var disks = (snap.disks || []).slice();
-      // Color palette for disk bars based on usage severity
-      function diskColor(pct) {
-        if (pct >= 95) return '#f7768e'; // red — critical
-        if (pct >= 80) return '#e0af68'; // yellow — warning
-        return '#9ece6a'; // green — ok
-      }
-      function diskBarLabel(d) {
-        var short = d.mount;
-        if (short.length > 30) short = '…' + short.slice(-29);
-        return short;
-      }
-
-      var diskRowH = 26, diskRowGap = 4, diskNameW = 200, diskPctW = 120;
-      var diskBarW = W - diskNameW - diskPctW - 16;
-      var diskHbar = Math.max(120, disks.length * (diskRowH + diskRowGap) + 8);
-
-      html += '<div class="pp-mem-legend">';
-      var totalDiskUsed = disks.reduce(function (a, d) { return a + d.used; }, 0);
-      var totalDiskSize = disks.reduce(function (a, d) { return a + d.total; }, 0);
-      html += '<span class="pp-legend-item"><span class="pp-swatch" style="background:#9ece6a"></span>&lt;80%</span>';
-      html += '<span class="pp-legend-item"><span class="pp-swatch" style="background:#e0af68"></span>80-95%</span>';
-      html += '<span class="pp-legend-item"><span class="pp-swatch" style="background:#f7768e"></span>&gt;95%</span>';
-      html += '<span class="pp-legend-hint">已用 ' + fmtBytes(totalDiskUsed) + ' / ' + fmtBytes(totalDiskSize) + ' (' + disks.length + ' 个分区)</span>';
-      html += '</div>';
-
-      html += '<svg class="pp-membars" viewBox="0 0 ' + W + ' ' + diskHbar + '">';
-      if (disks.length === 0) {
-        html += '<rect width="' + W + '" height="' + diskHbar + '" fill="#16161e" rx="6"/>';
-        html += '<text x="' + (W / 2) + '" y="' + (diskHbar / 2) + '" text-anchor="middle" fill="#565f89" font-size="12">暂无磁盘数据</text>';
-      } else {
-        disks.forEach(function (d, i) {
-          var y = 4 + i * (diskRowH + diskRowGap);
-          var pct = d.total > 0 ? (d.used / d.total) * 100 : 0;
-          var color = diskColor(pct);
-          var bw = (pct / 100) * diskBarW;
-          // Track background
-          html += '<rect x="' + diskNameW + '" y="' + y + '" width="' + diskBarW + '" height="' + diskRowH + '" fill="#16161e" rx="3"/>';
-          // Used segment
-          if (bw > 0.5) {
-            html += '<rect x="' + diskNameW + '" y="' + y + '" width="' + bw + '" height="' + diskRowH + '" fill="' + color + '" fill-opacity="0.85" rx="3"/>';
-          }
-          // Mount point name
-          html += '<text x="8" y="' + (y + diskRowH / 2 + 4) + '" fill="#c0caf5" font-size="12" font-weight="600">' + escapeHtml(diskBarLabel(d)) + '</text>';
-          // Used amount inside bar
-          var usedTxt = fmtBytes(d.used);
-          if (bw > 60) {
-            html += '<text x="' + (diskNameW + 6) + '" y="' + (y + diskRowH / 2 + 4) + '" fill="#1a1b26" font-size="11" font-weight="700">' + usedTxt + '</text>';
-          }
-          // Right: total + percent
-          html += '<text x="' + (W - 6) + '" y="' + (y + diskRowH / 2 + 4) + '" text-anchor="end" fill="#c0caf5" font-size="11" font-weight="700">' + fmtBytes(d.used) + ' / ' + fmtBytes(d.total) + ' <tspan fill="' + color + '" font-weight="600">' + pct.toFixed(0) + '%</tspan></text>';
-          html += '<title>' + escapeHtml(d.device + ' → ' + d.mount) + ' (' + d.fstype + ') — ' + fmtBytes(d.used) + ' / ' + fmtBytes(d.total) + ' (' + pct.toFixed(1) + '%)</title>';
-        });
-      }
-      html += '</svg>';
-    }
-
-    // History strip — 100% stacked area for current metric (skip for disk — it's point-in-time)
-    if (metric !== 'disk') {
-      html += '<div class="pp-strip-label">最近 ' + (HISTORY * POLL_MS / 1000) + 's · 占比演化</div>';
-      html += renderHistoryStrip(W, 140, metric);
-    }
-
-    root.innerHTML = html;
-
-    // Bind tab clicks
-    var tabs = root.querySelectorAll('.pp-tab');
-    for (var i = 0; i < tabs.length; i++) {
-      tabs[i].addEventListener('click', function (e) {
-        var newMetric = e.currentTarget.getAttribute('data-metric');
-        state.metric = newMetric;
-        if (newMetric === 'claude' && !claudeState.data) startClaude();
-        paint();
-      });
-    }
-    return true;
-  }
-
-  function renderHistoryStrip(W, H, metric) {
-    if (state.history.length < 2) {
-      return '<svg class="pp-strip" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
-        '<rect width="' + W + '" height="' + H + '" fill="#16161e" rx="6"/>' +
-        '<text x="' + (W / 2) + '" y="' + (H / 2) + '" text-anchor="middle" fill="#565f89" font-size="11">采样中…</text>' +
-        '</svg>';
-    }
-
-    var stepCount = state.history.length;
-    // Collect all keys ever seen (tmux windows + external comms)
-    var keySet = {};
-    state.history.forEach(function (snap) {
-      snap.windows.forEach(function (w) {
-        keySet[w.session + '|' + w.windowIndex] = true;
-      });
-      (snap.external || []).forEach(function (e) {
-        keySet['sys|' + e.comm] = true;
-      });
-    });
-    var keys = Object.keys(keySet);
-
-    var perKey = {};
-    keys.forEach(function (k) { perKey[k] = new Array(stepCount).fill(0); });
-    // Per-step machine denominator (capacity). IO has no capacity → fall back to windows+external sum.
-    var denoms = new Array(stepCount).fill(0);
-    var sumBars = new Array(stepCount).fill(0);
-
-    state.history.forEach(function (snap, i) {
-      snap.windows.forEach(function (w) {
-        var v = metric === 'cpu' ? w.cpuPercent : metric === 'mem' ? w.memBytes : w.ioBps;
-        perKey[w.session + '|' + w.windowIndex][i] = v;
-        sumBars[i] += v;
-      });
-      (snap.external || []).forEach(function (e) {
-        var v = metric === 'cpu' ? e.cpuPercent : metric === 'mem' ? e.memBytes : e.ioBps;
-        perKey['sys|' + e.comm][i] = v;
-        sumBars[i] += v;
-      });
-      if (metric === 'cpu') denoms[i] = snap.cpuCapacity || sumBars[i];
-      else if (metric === 'mem') denoms[i] = snap.memCapacity || sumBars[i];
-      else denoms[i] = sumBars[i]; // IO: no fixed cap → stacked ratio across captured processes
-    });
-
-    // Stack: cumulative fraction-of-machine top of each band (0..1)
-    var stepW = W / Math.max(1, HISTORY - 1);
-    var svg = '<svg class="pp-strip" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">';
-    svg += '<rect width="' + W + '" height="' + H + '" fill="#16161e" rx="6"/>';
-    svg += '<line x1="0" y1="' + (H * 0.25) + '" x2="' + W + '" y2="' + (H * 0.25) + '" stroke="#24283b"/>';
-    svg += '<line x1="0" y1="' + (H * 0.5) + '" x2="' + W + '" y2="' + (H * 0.5) + '" stroke="#24283b"/>';
-    svg += '<line x1="0" y1="' + (H * 0.75) + '" x2="' + W + '" y2="' + (H * 0.75) + '" stroke="#24283b"/>';
-
-    var cum = new Array(stepCount).fill(0);
-    keys.sort(function (a, b) { return (perKey[b][stepCount - 1] || 0) - (perKey[a][stepCount - 1] || 0); });
-    keys.forEach(function (k) {
-      var pts = [];
-      var bottomPts = [];
-      for (var i = 0; i < stepCount; i++) {
-        var frac = denoms[i] > 0 ? (perKey[k][i] / denoms[i]) : 0;
-        if (frac > 1) frac = 1;
-        var bottomY = H - (cum[i] * H);
-        var topY = H - ((cum[i] + frac) * H);
-        pts.push((i * stepW).toFixed(1) + ',' + topY.toFixed(1));
-        bottomPts.push((i * stepW).toFixed(1) + ',' + bottomY.toFixed(1));
-        cum[i] += frac;
-      }
-      var color = colorFor(k);
-      var d = 'M' + pts.join(' L') + ' L' + bottomPts.reverse().join(' L') + ' Z';
-      svg += '<path d="' + d + '" fill="' + color + '" fill-opacity="0.35"/>';
-    });
-    var topLabel = metric === 'io' ? '100% (相对)' : '整机 100%';
-    svg += '<text x="6" y="12" fill="#565f89" font-size="9">' + topLabel + '</text>';
-    svg += '<text x="6" y="' + (H - 4) + '" fill="#565f89" font-size="9">0%</text>';
-    svg += '<text x="' + (W - 30) + '" y="' + (H - 4) + '" fill="#565f89" font-size="9">now</text>';
-    svg += '</svg>';
-    return svg;
-  }
-
-  // === Polling ===
-  function tick() {
+  // === Polling loops ===
+  function tickSnap() {
     if (!document.getElementById('perf-panel')) { stop(); return; }
-    api.get('/api/window-stats')
+    fetch('/api/window-stats', { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
       .then(function (resp) {
-        if (!resp || !resp.success || !resp.data) return;
-        state.last = resp.data;
-        var t = resp.data.total || {};
-        var memDenom = (t.systemMemTotal || 0) + (t.systemSwapTotal || 0);
-        state.history.push({
-          ts: Date.now(),
-          cpuCapacity: (t.cpuCount || 1) * 100,
-          memCapacity: memDenom,
-          windows: resp.data.windows.map(function (w) {
-            return {
-              session: w.session,
-              windowIndex: w.windowIndex,
-              cpuPercent: w.cpuPercent,
-              memBytes: w.memBytes + (w.swapBytes || 0),
-              ioBps: w.ioBps,
-            };
-          }),
-          external: (resp.data.external || []).map(function (e) {
-            return {
-              comm: e.comm,
-              cpuPercent: e.cpuPercent,
-              memBytes: e.memBytes + (e.swapBytes || 0),
-              ioBps: e.ioBps,
-            };
-          }),
-        });
-        if (state.history.length > HISTORY) state.history.shift();
-        paint();
+        if (!resp || !resp.success) return;
+        state.snapshot = resp.data;
+        updatePerfBadge();
+        if (state.activeTab === 'perf') paintPerf();
       })
       .catch(function () { /* swallow transient */ });
   }
 
-  function claudeTick() {
-    if (!document.getElementById('perf-panel')) { stopClaude(); return; }
+  function tickHist() {
+    if (!document.getElementById('perf-panel')) { stop(); return; }
+    fetch('/api/perf/history?window=' + state.range, { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (resp) {
+        if (!resp || !resp.success) return;
+        state.history = resp.data;
+        if (state.activeTab === 'perf') paintPerf();
+      })
+      .catch(function () {});
+  }
+
+  function tickClaude() {
+    if (!document.getElementById('perf-panel')) { stop(); return; }
     if (claudeState.loading) return;
     claudeState.loading = true;
-    api.get('/api/claude-usage')
+    fetch('/api/claude-usage', { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
       .then(function (resp) {
         claudeState.loading = false;
-        if (!resp || !resp.success) { claudeState.data = null; return; }
+        if (!resp || !resp.success) return;
         claudeState.data = resp.data;
-        if (state.metric === 'claude') paint();
+        updateClaudeBadge();
+        if (state.activeTab === 'claude') paintClaude(document.getElementById('claude-view-root'));
       })
       .catch(function () { claudeState.loading = false; });
   }
 
-  function startClaude() {
-    claudeTick();
-    if (claudeState.timer) clearInterval(claudeState.timer);
-    claudeState.timer = setInterval(claudeTick, CLAUDE_POLL_MS);
+  function updatePerfBadge() {
+    if (!state.snapshot || !U) return;
+    var a = U.detectAlerts(state.snapshot);
+    var el = document.getElementById('pp-badge-perf');
+    if (!el) return;
+    if (a.critical.length === 0) { el.hidden = true; return; }
+    el.hidden = false;
+    el.textContent = String(a.critical.length);
+    el.className = 'pp-tt-badge pp-badge-bad';
   }
 
-  function stopClaude() {
-    if (claudeState.timer) { clearInterval(claudeState.timer); claudeState.timer = null; }
+  function updateClaudeBadge() {
+    var d = claudeState.data;
+    var el = document.getElementById('pp-badge-claude');
+    if (!el) return;
+    if (!d || !d.utilization || !d.utilization.seven_day) { el.hidden = true; return; }
+    var pct = Math.floor(d.utilization.seven_day.utilization);
+    el.hidden = false;
+    el.textContent = '7d ' + pct + '%';
+    el.className = 'pp-tt-badge ' + (pct >= 85 ? 'pp-badge-bad' : pct >= 60 ? 'pp-badge-warn' : 'pp-badge-ok');
   }
 
   function start() {
-    state.history = [];
-    state.last = null;
-    if (timer) clearInterval(timer);
-    tick();
-    timer = setInterval(tick, POLL_MS);
-    startClaude();
+    bindTopTabs();
+    tickSnap();
+    tickHist();
+    tickClaude();
+    stop();
+    state.timers.snap = setInterval(tickSnap, POLL_MS);
+    state.timers.hist = setInterval(tickHist, HISTORY_POLL_MS);
+    state.timers.claude = setInterval(tickClaude, CLAUDE_POLL_MS);
   }
 
   function stop() {
-    if (timer) { clearInterval(timer); timer = null; }
-    stopClaude();
-  }
-
-  function escapeHtml(s) {
-    if (typeof window.escapeHtml === 'function') return window.escapeHtml(s);
-    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    ['snap', 'hist', 'claude'].forEach(function (k) {
+      if (state.timers[k]) clearInterval(state.timers[k]);
+      state.timers[k] = null;
     });
   }
 
-  return { renderSkeleton: renderSkeleton, start: start, stop: stop };
+  return { renderSkeleton: renderSkeleton, start: start, stop: stop, _state: state };
 })();

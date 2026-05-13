@@ -26,6 +26,8 @@ import { createUploadRouter } from './api/upload.js';
 import { createFilesRouter } from './api/files.js';
 import systemStatsRouter from './api/system-stats.js';
 import windowStatsRouter from './api/window-stats.js';
+import perfHistoryRouter, { startSampler as startPerfHistorySampler } from './api/perf-history.js';
+import perfDrilldownRouter from './api/perf-drilldown.js';
 import { NotificationStore } from './notifications.js';
 import { createNotificationsRouter } from './api/notifications.js';
 import { createSceneDiscoverRouter } from './api/scene-discover.js';
@@ -182,6 +184,8 @@ app.use('/api/sessions/:name/windows', windowsRouter);
 app.use('/api/sessions/:name/windows/:index/panes', nestedPanesRouter);
 app.use('/api/panes', flatPanesRouter);
 app.use('/api/system-stats', systemStatsRouter);
+app.use('/api/perf/history', perfHistoryRouter);
+app.use('/api/perf/drilldown', perfDrilldownRouter);
 app.use('/api/window-stats', windowStatsRouter);
 app.use('/api/notifications', createNotificationsRouter(notificationStore));
 app.use('/api/scene/discover', createSceneDiscoverRouter());
@@ -307,6 +311,8 @@ const tokenReapTimer = config.auth ? startTokenReaper(tokenMap) : null;
 server.listen(config.port, config.host, () => {
   const proto = config.tls ? 'https' : 'http';
   console.log(`tmux-web-panel listening on ${proto}://${config.host}:${config.port}`);
+  startPerfHistorySampler();
+  console.log('perf-history sampler started (2s interval, 1h buffer)');
   if (config.auth) {
     console.log('Authentication: enabled');
   } else {

@@ -64,7 +64,7 @@ export async function collectPids(rootPid) {
 }
 
 // Sample one PID; returns { cpuPercent (delta-based), rssKb, ioBps }.
-async function samplePid(pid, now) {
+export async function samplePid(pid, now) {
   const [stat, status, io] = await Promise.all([
     readStat(pid).catch(() => null),
     readStatus(pid).catch(() => null),
@@ -185,6 +185,26 @@ export async function sampleNonTmuxByComm(excludePids) {
   return Array.from(byComm.values()).filter(
     (g) => g.cpuPercent > 0.05 || g.memBytes > 4 * 1024 * 1024 || g.ioBps > 0 || g.swapBytes > 0,
   );
+}
+
+export async function samplePidDetail(pid) {
+  const now = Date.now();
+  const [base, comm, cmdline] = await Promise.all([
+    samplePid(pid, now),
+    readFile(`/proc/${pid}/comm`, 'utf8').catch(() => ''),
+    readFile(`/proc/${pid}/cmdline`, 'utf8').catch(() => ''),
+  ]);
+  if (!base) return null;
+  // /proc/<pid>/cmdline uses NUL separators; convert to spaces and trim.
+  const cmdlineClean = (cmdline.replace(/\0+/g, ' ').trim() || comm.trim()).slice(0, 200);
+  return {
+    pid,
+    comm: comm.trim(),
+    cmdline: cmdlineClean,
+    cpuPercent: base.cpuPercent,
+    memBytes: base.memBytes,
+    ioBps: base.ioBps,
+  };
 }
 
 export const cpuCount = CPU_COUNT;
