@@ -6,7 +6,14 @@ import { readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as tmux from '../tmux.js';
-import { sampleTree, pruneStaleSamples, cpuCount, collectPids, sampleNonTmuxByComm } from '../proc-stats.js';
+import {
+  sampleTree,
+  pruneStaleSamples,
+  cpuCount,
+  collectPids,
+  sampleNonTmuxByComm,
+  readDiskIo,
+} from '../proc-stats.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -125,6 +132,13 @@ export async function sampleWindowStats() {
     readDiskStats(),
     sampleNonTmuxByComm(tmuxPids),
   ]);
+  const diskIo = await readDiskIo();
+  disks.forEach((d) => {
+    const devName = (d.device || '').replace(/^\/dev\//, '');
+    const io = diskIo.get(devName);
+    d.readBps = io ? io.readBps : 0;
+    d.writeBps = io ? io.writeBps : 0;
+  });
   const sumCpu = windowStats.reduce((a, w) => a + w.cpuPercent, 0);
   const sumMem = windowStats.reduce((a, w) => a + w.memBytes, 0);
   const sumSwap = windowStats.reduce((a, w) => a + w.swapBytes, 0);

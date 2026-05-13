@@ -9,6 +9,7 @@ const CPU_COUNT = os.cpus().length;
 
 // pid → { utime, stime, rb, wb, ts }
 const _prev = new Map();
+const _prevDiskStats = new Map(); // device-name → { readSectors, writeSectors, ts }
 
 async function readStat(pid) {
   const buf = await readFile(`/proc/${pid}/stat`, 'utf8');
@@ -116,6 +117,38 @@ export async function sampleTree(rootPid) {
     ioBps: io,
     procCount: count,
   };
+}
+
+export async function readDiskIo() {
+  const buf = await readFile('/proc/diskstats', 'utf8').catch(() => '');
+  const now = Date.now();
+  const out = new Map();
+  for (const line of buf.split('\n')) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 14) continue;
+    const name = parts[2];
+    if (name.startsWith('loop') || name.startsWith('ram')) continue;
+    const readSectors = Number(parts[5]);
+    const writeSectors = Number(parts[9]);
+    if (!Number.isFinite(readSectors) || !Number.isFinite(writeSectors)) continue;
+    const prev = _prevDiskStats.get(name);
+    _prevDiskStats.set(name, { readSectors, writeSectors, ts: now });
+    if (!prev) {
+      out.set(name, { readBps: 0, writeBps: 0 });
+      continue;
+    }
+    const dt = (now - prev.ts) / 1000;
+    if (dt <= 0) {
+      out.set(name, { readBps: 0, writeBps: 0 });
+      continue;
+    }
+    const SECTOR = 512;
+    out.set(name, {
+      readBps: Math.max(0, ((readSectors - prev.readSectors) * SECTOR) / dt),
+      writeBps: Math.max(0, ((writeSectors - prev.writeSectors) * SECTOR) / dt),
+    });
+  }
+  return out;
 }
 
 // Garbage-collect _prev entries that weren't touched in the last N polls.
