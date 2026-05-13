@@ -10,7 +10,12 @@ function bootDom() {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     runScripts: 'outside-only',
   });
-  // Stub fetch so accidental calls don't fail the test
+  // Stub the global `api` ApiClient that perf-panel.js polls through (defined in app.js
+  // in real usage). All four ticks resolve immediately to a healthy empty response.
+  dom.window.api = {
+    get: async () => ({ success: true, data: { points: [] } }),
+  };
+  // Defensive: also stub fetch in case any code path falls back to it
   dom.window.fetch = async () => ({ ok: true, json: async () => ({ success: true, data: {} }) });
   dom.window.eval(utils);
   dom.window.eval(panel);

@@ -327,8 +327,7 @@ var PerfPanel = (function () {
         var token = Date.now() + ':' + Math.random();
         row._ppDrillToken = token;
         setDrill(row, '<div class="pp-wt-drill"><div class="pp-loading">加载进程详情…</div></div>');
-        fetch('/api/perf/drilldown?session=' + encodeURIComponent(session) + '&windowIndex=' + encodeURIComponent(windowIndex), { credentials: 'same-origin' })
-          .then(function (r) { return r.json(); })
+        api.get('/api/perf/drilldown?session=' + encodeURIComponent(session) + '&windowIndex=' + encodeURIComponent(windowIndex))
           .then(function (resp) {
             if (row._ppDrillToken !== token || !row.querySelector('.pp-wt-drill')) return;
             if (!resp || !resp.success) {
@@ -707,10 +706,12 @@ var PerfPanel = (function () {
   }
 
   // === Polling loops ===
+  // Uses the global `api` ApiClient (defined in app.js) which sends the
+  // bearer auth header. Plain fetch() would 401 because the server checks
+  // the Authorization header, not cookies.
   function tickSnap() {
     if (!document.getElementById('perf-panel')) { stop(); return; }
-    fetch('/api/window-stats', { credentials: 'same-origin' })
-      .then(function (r) { return r.json(); })
+    api.get('/api/window-stats')
       .then(function (resp) {
         if (!resp || !resp.success) return;
         state.snapshot = resp.data;
@@ -722,8 +723,7 @@ var PerfPanel = (function () {
 
   function tickHist() {
     if (!document.getElementById('perf-panel')) { stop(); return; }
-    fetch('/api/perf/history?window=' + state.range, { credentials: 'same-origin' })
-      .then(function (r) { return r.json(); })
+    api.get('/api/perf/history?window=' + state.range)
       .then(function (resp) {
         if (!resp || !resp.success) return;
         state.history = resp.data;
@@ -736,8 +736,7 @@ var PerfPanel = (function () {
     if (!document.getElementById('perf-panel')) { stop(); return; }
     if (claudeState.loading) return;
     claudeState.loading = true;
-    fetch('/api/claude-usage', { credentials: 'same-origin' })
-      .then(function (r) { return r.json(); })
+    api.get('/api/claude-usage')
       .then(function (resp) {
         claudeState.loading = false;
         if (!resp || !resp.success) return;
