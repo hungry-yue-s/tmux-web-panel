@@ -71,11 +71,37 @@ var PerfPanel = (function () {
   }
 
   // === Renderers (filled in by Tasks 8–12) ===
+  function renderDiskKpi(disks) {
+    var count = disks.length;
+    var rows = disks.map(function(d) {
+      var pct = d.percent || 0;
+      var color = pct >= 95 ? 'var(--accent-red)' : pct >= 80 ? 'var(--accent-yellow)' : 'var(--accent-green)';
+      var ioParts = [];
+      if (d.readBps > 100) ioParts.push('R ' + U.fmtBps(d.readBps));
+      if (d.writeBps > 100) ioParts.push('W ' + U.fmtBps(d.writeBps));
+      var ioLine = ioParts.join(' · ');
+      return '<div class="pp-disk-row">' +
+        '<div class="pp-disk-head">' +
+          '<span class="pp-disk-mount" title="' + escapeHtml(d.mount) + '">' + escapeHtml(d.mount) + '</span>' +
+          '<span class="pp-disk-pct">' + pct + '%</span>' +
+        '</div>' +
+        '<div class="pp-disk-bar"><div class="pp-disk-fill" style="width:' + pct + '%;background:' + color + '"></div></div>' +
+        '<div class="pp-disk-io">' + escapeHtml(ioLine) + '</div>' +
+      '</div>';
+    }).join('');
+    return '<div class="pp-kpi pp-kpi-disk">' +
+      '<div class="pp-kpi-row">' +
+        '<span class="pp-kpi-label">DISK</span>' +
+        '<span class="pp-kpi-count">' + count + ' mount' + (count !== 1 ? 's' : '') + '</span>' +
+      '</div>' +
+      '<div class="pp-disk-list">' + rows + '</div>' +
+    '</div>';
+  }
+
   function renderHero(s, alerts) {
     var t = s.total;
     var cpuMachinePct = t.cpuCount > 0 ? (t.windowCpuPercent / (t.cpuCount * 100)) * 100 : 0;
     var memPct = t.systemMemTotal > 0 ? (t.systemMemUsed / t.systemMemTotal) * 100 : 0;
-    var rootDisk = (s.disks || []).find(function (d) { return d.mount === '/'; }) || (s.disks && s.disks[0]) || null;
 
     var rangeOptions = [{v:60,l:'1分'},{v:600,l:'10分'},{v:3600,l:'1小时'}];
 
@@ -123,10 +149,7 @@ var PerfPanel = (function () {
                 sparkMem, 'var(--accent-blue)', memPct);
     html += kpi('io',   'IO',  U.fmtBps(ioCurrent).split(' ')[0], U.fmtBps(ioCurrent).split(' ').slice(1).join(' '),
                 '累计 ' + U.fmtBytes(ioCurrent * 60) + ' / 1min', sparkIo, 'var(--accent-yellow)', null);
-    if (rootDisk) {
-      html += kpi('disk', 'DISK ' + rootDisk.mount, String(rootDisk.percent), '%', U.fmtBytes(rootDisk.used) + ' / ' + U.fmtBytes(rootDisk.total),
-                  null, 'var(--accent-green)', rootDisk.percent);
-    }
+    html += renderDiskKpi(s.disks || []);
     html += '</div>';
     return html;
   }
