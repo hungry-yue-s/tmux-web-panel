@@ -32,6 +32,7 @@ import { NotificationStore } from './notifications.js';
 import { createNotificationsRouter } from './api/notifications.js';
 import { createSceneDiscoverRouter } from './api/scene-discover.js';
 import createClaudeUsageRouter from './api/claude-usage.js';
+import createCodexUsageRouter from './api/codex-usage.js';
 import { PinStore } from './pins.js';
 import { createPinsRouter } from './api/pins.js';
 
@@ -195,6 +196,7 @@ app.use('/api/pins', createPinsRouter(pinStore));
 app.use('/api/upload', createUploadRouter('/tmp/tmux-web-panel-uploads'));
 app.use('/api/files', createFilesRouter([homedir(), '/tmp']));
 app.use('/api/claude-usage', createClaudeUsageRouter());
+app.use('/api/codex-usage', createCodexUsageRouter());
 
 // --- HTTP(S) + WebSocket Server ---
 

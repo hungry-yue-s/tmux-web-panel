@@ -1,9 +1,10 @@
-// Perf panel — Observatory layout. Top-level tabs: 性能 / Claude.
+// Perf panel — Observatory layout. Top-level tabs: 性能 / Claude / Codex.
 // Self-managing: polls only while its DOM root exists.
 var PerfPanel = (function () {
   var POLL_MS = 2000;
   var HISTORY_POLL_MS = 4000;
   var CLAUDE_POLL_MS = 30000;
+  var CODEX_POLL_MS = 30000;
   var DEFAULT_RANGE = 60; // seconds
 
   var U = window.PerfUtils;
@@ -19,11 +20,12 @@ var PerfPanel = (function () {
     snapshot: null,
     history: { points: [] },
     drilldown: new Map(),    // windowKey → { fetchedAt, procs }
-    timers: { snap: null, hist: null, claude: null },
+    timers: { snap: null, hist: null, claude: null, codex: null },
   };
   // Claude state is kept identical to the old module so the verbatim paintClaude
   // call site continues to work unchanged.
   var claudeState = { data: null, loading: false };
+  var codexState = { data: null, loading: false };
 
   function escapeHtml(s) {
     if (typeof window.escapeHtml === 'function') return window.escapeHtml(s);
@@ -40,10 +42,12 @@ var PerfPanel = (function () {
       '    <div class="pp-toptabs-l">',
       '      <button class="pp-tt pp-active" data-view="perf">📊 机器性能<span class="pp-tt-badge" id="pp-badge-perf" hidden></span></button>',
       '      <button class="pp-tt" data-view="claude">💰 Claude 用量<span class="pp-tt-badge" id="pp-badge-claude" hidden></span></button>',
+      '      <button class="pp-tt" data-view="codex">⌘ Codex 用量<span class="pp-tt-badge" id="pp-badge-codex" hidden></span></button>',
       '    </div>',
       '  </div>',
       '  <div class="pp-view pp-active" id="view-perf"><div id="perf-view-root"><div class="pp-loading">加载机器与窗口性能…</div></div></div>',
       '  <div class="pp-view" id="view-claude"><div id="claude-view-root"><div class="pp-loading">加载 Claude 用量…</div></div></div>',
+      '  <div class="pp-view" id="view-codex"><div id="codex-view-root"><div class="pp-loading">加载 Codex 用量…</div></div></div>',
       '</div>',
     ].join('');
   }
@@ -68,6 +72,7 @@ var PerfPanel = (function () {
     // Repaint the now-visible tab immediately so the user doesn't wait for next poll.
     if (name === 'perf' && state.snapshot) paintPerf();
     if (name === 'claude' && claudeState.data) paintClaude(document.getElementById('claude-view-root'));
+    if (name === 'codex' && codexState.data) paintCodex(document.getElementById('codex-view-root'));
   }
 
   // === Renderers (filled in by Tasks 8–12) ===
@@ -735,6 +740,184 @@ var PerfPanel = (function () {
     root.innerHTML = html;
   }
 
+  function codexModelShortName(id) {
+    return String(id || 'unknown').replace(/^openai\//, '');
+  }
+
+  function renderCodexLimitMeter(label, obj) {
+    if (!obj) return '';
+    var pct = Math.floor(obj.used_percent || 0);
+    var cls = meterColorClass(pct);
+    var s = '<div class="cu-meter">';
+    s += '<span class="cu-meter-label">' + label + '</span>';
+    s += '<div class="cu-meter-track"><div class="cu-meter-fill ' + cls + '" style="width:' + Math.min(100, pct) + '%"></div></div>';
+    s += '<span class="cu-meter-val">' + pct + '%</span>';
+    s += '</div>';
+    if (obj.resets_at) {
+      var reset = new Date(obj.resets_at * 1000);
+      var remain = Math.max(0, reset - Date.now());
+      var rh = Math.floor(remain / 3600000);
+      var rm = Math.floor((remain % 3600000) / 60000);
+      s += '<div class="cu-meter-reset">窗口 ' + (obj.window_minutes || 0) + 'm · 重置于 ' + reset.toISOString().replace('T', ' ').slice(0, 16) + ' UTC（剩余 ' + rh + 'h ' + rm + 'm）</div>';
+    }
+    return s;
+  }
+
+  function paintCodex(_root) {
+    var root = _root || document.getElementById('codex-view-root');
+    if (!root) return;
+    var d = codexState.data;
+    if (!d) {
+      root.innerHTML = '<div class="pp-loading">加载 Codex 用量数据…</div>';
+      return;
+    }
+
+    var html = '';
+    var u = d.utilization;
+    if (u) {
+      html += '<div class="cu-sub-hero">';
+      html += '<div class="cu-sub-top"><div style="display:flex;align-items:center;gap:8px">';
+      html += '<span class="cu-plan-badge">' + escapeHtml((d.subscription && d.subscription.type) || 'codex') + '</span>';
+      if (d.subscription && d.subscription.limitId) html += '<span class="cu-plan-tier">' + escapeHtml(d.subscription.limitId) + '</span>';
+      html += '</div>';
+      if (u.observedAt) html += '<span class="cu-extra-text">采样 ' + escapeHtml(u.observedAt.replace('T', ' ').slice(0, 16)) + '</span>';
+      html += '</div><div class="cu-meters">';
+      html += renderCodexLimitMeter('5h 窗口', u.primary);
+      html += renderCodexLimitMeter('7d 总量', u.secondary);
+      html += '</div></div>';
+    }
+
+    var agg = d.aggregate || {};
+    html += '<div class="cu-section-title">概览</div>';
+    html += '<div class="cu-row-3" style="margin-bottom:8px">';
+    html += '<div class="cu-card cu-qs"><div class="cu-val">' + (agg.totalSessions || 0) + '</div><div class="cu-label">总会话</div>';
+    if (agg.firstSessionDate) html += '<div class="cu-sub">自 ' + agg.firstSessionDate.slice(0, 10) + '</div>';
+    html += '</div>';
+    html += '<div class="cu-card cu-qs"><div class="cu-val">' + fmtTokens(agg.totalTurns || 0) + '</div><div class="cu-label">Token 采样</div></div>';
+    html += '<div class="cu-card cu-qs"><div class="cu-val">' + fmtTokens(agg.totalTokens || 0) + '</div><div class="cu-label">总 Tokens</div></div>';
+    html += '</div>';
+
+    var mu = d.modelUsage || {};
+    var models = Object.keys(mu).sort(function (a, b) { return (mu[b].totalTokens || 0) - (mu[a].totalTokens || 0); });
+    var grandTotal = models.reduce(function (sum, m) { return sum + (mu[m].totalTokens || 0); }, 0);
+    var totalInput = models.reduce(function (sum, m) { return sum + (mu[m].inputTokens || 0); }, 0);
+    var totalOutput = models.reduce(function (sum, m) { return sum + (mu[m].outputTokens || 0); }, 0);
+    var totalCached = models.reduce(function (sum, m) { return sum + (mu[m].cachedInputTokens || 0); }, 0);
+    var totalReasoning = models.reduce(function (sum, m) { return sum + (mu[m].reasoningTokens || 0); }, 0);
+    var cachePct = totalInput > 0 ? Math.round((totalCached / totalInput) * 100) : 0;
+
+    html += '<div class="cu-row-2">';
+    html += '<div class="cu-card"><div class="cu-card-label">模型分布</div><div class="cu-model-dist">';
+    html += '<div class="cu-donut-wrap"><svg viewBox="0 0 100 100">';
+    html += '<circle cx="50" cy="50" r="36" fill="none" stroke="var(--bg-card)" stroke-width="10"/>';
+    var offset = 0;
+    var circ = 2 * Math.PI * 36;
+    models.forEach(function (m, i) {
+      var frac = grandTotal > 0 ? (mu[m].totalTokens || 0) / grandTotal : 0;
+      var dash = frac * circ;
+      var gap = circ - dash;
+      html += '<circle cx="50" cy="50" r="36" fill="none" stroke="' + MODEL_COLORS[i % MODEL_COLORS.length] + '" stroke-width="10" stroke-dasharray="' + dash.toFixed(1) + ' ' + gap.toFixed(1) + '" stroke-dashoffset="' + (-offset).toFixed(1) + '" transform="rotate(-90 50 50)"/>';
+      offset += dash;
+    });
+    html += '</svg></div><div class="cu-model-list">';
+    models.forEach(function (m, i) {
+      html += '<div class="cu-model-row"><div class="cu-model-dot" style="background:' + MODEL_COLORS[i % MODEL_COLORS.length] + '"></div>';
+      html += '<span class="cu-model-name">' + escapeHtml(codexModelShortName(m)) + '</span>';
+      html += '<span class="cu-model-val">' + fmtTokens(mu[m].totalTokens || 0) + '</span></div>';
+    });
+    html += '</div></div></div>';
+
+    html += '<div class="cu-card"><div class="cu-card-label">Token 结构</div><div class="cu-cache-row">';
+    html += '<div class="cu-cache-gauge"><svg viewBox="0 0 100 100">';
+    var gaugeCirc = 2 * Math.PI * 36;
+    var gaugeFill = (Math.min(100, cachePct) / 100) * gaugeCirc;
+    html += '<circle cx="50" cy="50" r="36" fill="none" stroke="var(--bg-card)" stroke-width="8"/>';
+    html += '<circle cx="50" cy="50" r="36" fill="none" stroke="var(--accent-green)" stroke-width="8" stroke-dasharray="' + gaugeFill.toFixed(1) + ' ' + (gaugeCirc - gaugeFill).toFixed(1) + '" transform="rotate(-90 50 50)" stroke-linecap="round"/>';
+    html += '</svg><div class="cu-cache-gauge-text">' + cachePct + '%</div></div>';
+    html += '<div class="cu-cache-detail">';
+    html += '<div class="cu-cache-item"><span class="k">Input</span><span class="v">' + fmtTokens(totalInput) + '</span></div>';
+    html += '<div class="cu-cache-item"><span class="k">Cached</span><span class="v">' + fmtTokens(totalCached) + '</span></div>';
+    html += '<div class="cu-cache-item"><span class="k">Output</span><span class="v">' + fmtTokens(totalOutput) + '</span></div>';
+    html += '<div class="cu-cache-item"><span class="k">Reasoning</span><span class="v">' + fmtTokens(totalReasoning) + '</span></div>';
+    html += '</div></div></div></div>';
+
+    html += '<div class="cu-section-title">趋势</div>';
+    var daily = d.dailyActivity || [];
+    if (daily.length > 1) {
+      html += '<div class="cu-card"><div class="cu-card-label">每日 Token</div>';
+      var maxTok = Math.max.apply(null, daily.map(function (day) { return day.tokens || 0; }).concat([1]));
+      var tW = 700, tH = 80;
+      var step = tW / Math.max(1, daily.length - 1);
+      var pts = daily.map(function (day, i) { return (i * step).toFixed(1) + ',' + (tH - ((day.tokens || 0) / maxTok) * (tH - 4)).toFixed(1); });
+      html += '<svg class="cu-trend-svg" viewBox="0 0 ' + tW + ' ' + tH + '" preserveAspectRatio="none">';
+      html += '<path d="M' + pts.join(' L') + ' L' + tW + ',' + tH + ' L0,' + tH + 'Z" fill="rgba(122,162,247,0.1)"/>';
+      html += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="var(--accent-blue)" stroke-width="1.5"/></svg></div>';
+    }
+
+    var recentDays = daily.slice().reverse().slice(0, 14);
+    if (recentDays.length > 0) {
+      html += '<div class="cu-card" style="margin-top:8px"><div class="cu-card-label">每日明细</div>';
+      html += '<table class="cu-token-table"><thead><tr>';
+      html += '<th class="col-date">日期</th><th class="col-num">会话</th><th class="col-num">采样</th><th class="col-num col-total">Tokens</th><th class="col-num">工具</th>';
+      html += '</tr></thead><tbody>';
+      recentDays.forEach(function (day, di) {
+        html += '<tr' + (di % 2 === 1 ? ' class="row-alt"' : '') + '>';
+        html += '<td class="col-date">' + day.date.slice(5) + '</td>';
+        html += '<td class="col-num">' + (day.sessions || 0) + '</td>';
+        html += '<td class="col-num">' + (day.turns || 0) + '</td>';
+        html += '<td class="col-num col-total">' + fmtTokens(day.tokens || 0) + '</td>';
+        html += '<td class="col-num">' + (day.toolCalls || 0) + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+
+    html += '<div class="cu-section-title">使用画像</div><div class="cu-row-2">';
+    var hc = d.hourCounts || {};
+    var maxHVal = Math.max.apply(null, Object.values(hc).concat([1]));
+    var peakHour = Object.keys(hc).reduce(function (a, b) { return (hc[a] || 0) > (hc[b] || 0) ? a : b; }, '0');
+    html += '<div class="cu-card"><div class="cu-card-label">活跃时段</div><div class="cu-hours-chart">';
+    for (var h = 0; h < 24; h++) {
+      var cnt = hc[String(h)] || 0;
+      var barH = cnt > 0 ? Math.max(2, Math.round((cnt / maxHVal) * 52)) : 2;
+      var lvl = cnt === 0 ? 'h0' : cnt <= maxHVal * 0.2 ? 'h1' : cnt <= maxHVal * 0.5 ? 'h2' : cnt <= maxHVal * 0.8 ? 'h3' : 'h4';
+      html += '<div class="cu-hour-bar-col"><div class="cu-hour-bar ' + lvl + '" style="height:' + barH + 'px"></div></div>';
+    }
+    html += '</div><div class="cu-hours-labels">';
+    for (var h2 = 0; h2 < 24; h2++) html += h2 % 3 === 0 ? '<span>' + h2 + '</span>' : '<span class="dim">.</span>';
+    html += '</div><div class="cu-hour-peak">峰值 ' + peakHour + ':00</div></div>';
+
+    var tools = d.aggregatedTools || {};
+    var toolEntries = Object.entries(tools).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 8);
+    var maxTool = toolEntries.length > 0 ? toolEntries[0][1] : 1;
+    html += '<div class="cu-card"><div class="cu-card-label">工具调用</div><div class="cu-tool-bars">';
+    toolEntries.forEach(function (e) {
+      var pct = (e[1] / maxTool) * 100;
+      html += '<div class="cu-tool-row"><span class="cu-tool-name">' + escapeHtml(e[0]) + '</span>';
+      html += '<div class="cu-tool-bar-wrap"><div class="cu-tool-bar" style="width:' + pct.toFixed(1) + '%;background:' + (TOOL_COLORS[e[0]] || '#7aa2f7') + '"></div></div>';
+      html += '<span class="cu-tool-count">' + e[1] + '</span></div>';
+    });
+    html += '</div></div></div>';
+
+    var sessions = d.recentSessions || [];
+    if (sessions.length > 0) {
+      html += '<div class="cu-section-title">最近会话</div><div class="cu-card"><div class="cu-session-list">';
+      sessions.forEach(function (s) {
+        var proj = (s.project_path || '').replace(/^\/home\/[^/]+/, '~');
+        html += '<div class="cu-session-item"><div class="cu-session-main">';
+        html += '<div class="cu-session-project">' + escapeHtml(proj) + '</div>';
+        html += '<div class="cu-session-prompt">' + escapeHtml(s.first_prompt || s.model || '') + '</div>';
+        html += '</div><div class="cu-session-meta">';
+        html += '<span>' + (s.duration_minutes || 0) + 'm</span>';
+        html += '<span>' + fmtTokens(s.tokens || 0) + '</span>';
+        html += '<span>' + (s.turns || 0) + ' turns</span>';
+        html += '</div></div>';
+      });
+      html += '</div></div>';
+    }
+
+    root.innerHTML = html;
+  }
+
   // === Polling loops ===
   // Uses the global `api` ApiClient (defined in app.js) which sends the
   // bearer auth header. Plain fetch() would 401 because the server checks
@@ -777,6 +960,21 @@ var PerfPanel = (function () {
       .catch(function () { claudeState.loading = false; });
   }
 
+  function tickCodex() {
+    if (!document.getElementById('perf-panel')) { stop(); return; }
+    if (codexState.loading) return;
+    codexState.loading = true;
+    api.get('/api/codex-usage')
+      .then(function (resp) {
+        codexState.loading = false;
+        if (!resp || !resp.success) return;
+        codexState.data = resp.data;
+        updateCodexBadge();
+        if (state.activeTab === 'codex') paintCodex(document.getElementById('codex-view-root'));
+      })
+      .catch(function () { codexState.loading = false; });
+  }
+
   function updatePerfBadge() {
     if (!state.snapshot || !U) return;
     var a = U.detectAlerts(state.snapshot);
@@ -799,19 +997,32 @@ var PerfPanel = (function () {
     el.className = 'pp-tt-badge ' + (pct >= 85 ? 'pp-badge-bad' : pct >= 60 ? 'pp-badge-warn' : 'pp-badge-ok');
   }
 
+  function updateCodexBadge() {
+    var d = codexState.data;
+    var el = document.getElementById('pp-badge-codex');
+    if (!el) return;
+    if (!d || !d.utilization || !d.utilization.primary) { el.hidden = true; return; }
+    var pct = Math.floor(d.utilization.primary.used_percent || 0);
+    el.hidden = false;
+    el.textContent = '5h ' + pct + '%';
+    el.className = 'pp-tt-badge ' + (pct >= 85 ? 'pp-badge-bad' : pct >= 60 ? 'pp-badge-warn' : 'pp-badge-ok');
+  }
+
   function start() {
     bindTopTabs();
     tickSnap();
     tickHist();
     tickClaude();
+    tickCodex();
     stop();
     state.timers.snap = setInterval(tickSnap, POLL_MS);
     state.timers.hist = setInterval(tickHist, HISTORY_POLL_MS);
     state.timers.claude = setInterval(tickClaude, CLAUDE_POLL_MS);
+    state.timers.codex = setInterval(tickCodex, CODEX_POLL_MS);
   }
 
   function stop() {
-    ['snap', 'hist', 'claude'].forEach(function (k) {
+    ['snap', 'hist', 'claude', 'codex'].forEach(function (k) {
       if (state.timers[k]) clearInterval(state.timers[k]);
       state.timers[k] = null;
     });

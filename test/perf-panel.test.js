@@ -32,13 +32,15 @@ describe('PerfPanel skeleton', () => {
     expect(typeof w.PerfPanel.stop).toBe('function');
   });
 
-  it('renderSkeleton returns HTML containing the two view containers', () => {
+  it('renderSkeleton returns HTML containing the view containers', () => {
     const html = w.PerfPanel.renderSkeleton();
     expect(html).toContain('id="perf-panel"');
     expect(html).toContain('id="perf-view-root"');
     expect(html).toContain('id="claude-view-root"');
+    expect(html).toContain('id="codex-view-root"');
     expect(html).toContain('data-view="perf"');
     expect(html).toContain('data-view="claude"');
+    expect(html).toContain('data-view="codex"');
   });
 
   it('tab click switches active view', () => {
@@ -48,6 +50,16 @@ describe('PerfPanel skeleton', () => {
     claudeBtn.click();
     expect(w.document.getElementById('view-perf').classList.contains('pp-active')).toBe(false);
     expect(w.document.getElementById('view-claude').classList.contains('pp-active')).toBe(true);
+    w.PerfPanel.stop();
+  });
+
+  it('tab click switches to codex view', () => {
+    w.document.getElementById('root').innerHTML = w.PerfPanel.renderSkeleton();
+    w.PerfPanel.start();
+    const codexBtn = w.document.querySelector('[data-view="codex"]');
+    codexBtn.click();
+    expect(w.document.getElementById('view-perf').classList.contains('pp-active')).toBe(false);
+    expect(w.document.getElementById('view-codex').classList.contains('pp-active')).toBe(true);
     w.PerfPanel.stop();
   });
 });
