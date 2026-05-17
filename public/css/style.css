@@ -3909,6 +3909,8 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 .cu-cache-item .v { font-family: monospace; }
 
 .cu-trend-svg { width: 100%; height: 80px; display: block; }
+.cu-trend-dates { position: relative; height: 16px; margin-top: 2px; font-size: 0.6rem; color: var(--text-muted); }
+.cu-trend-dates span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 .cu-trend-legend { display: flex; gap: 12px; margin-top: 4px; }
 .cu-trend-legend-item { display: flex; align-items: center; gap: 3px; font-size: 0.6rem; color: var(--text-muted); }
 .cu-trend-legend-dot { width: 6px; height: 6px; border-radius: 50%; }

@@ -582,27 +582,34 @@ var PerfPanel = (function () {
 
     // === Tier 3: Trends ===
     html += '<div class="cu-section-title">趋势</div>';
-    var daily = d.dailyActivity || [];
-    if (daily.length > 1) {
-      html += '<div class="cu-card"><div class="cu-card-label">每日活跃</div>';
-      var maxMsg = Math.max.apply(null, daily.map(function (d2) { return d2.messages || d2.messageCount || 0; }));
-      var maxSes = Math.max.apply(null, daily.map(function (d2) { return d2.sessions || d2.sessionCount || 0; }));
-      if (maxMsg < 1) maxMsg = 1;
-      if (maxSes < 1) maxSes = 1;
+    var ccDaily = d.ccusageDaily;
+    if (ccDaily && ccDaily.length > 1) {
+      var trendData = ccDaily.slice(-14);
+      html += '<div class="cu-card"><div class="cu-card-label">每日 TOKEN 趋势</div>';
+      var maxTok = Math.max.apply(null, trendData.map(function (d2) { return d2.totalTokens || 0; }).concat([1]));
+      var maxCost = Math.max.apply(null, trendData.map(function (d2) { return d2.totalCost || 0; }).concat([1]));
       var tW = 700, tH = 80;
-      var step = tW / Math.max(1, daily.length - 1);
+      var step = tW / Math.max(1, trendData.length - 1);
       html += '<svg class="cu-trend-svg" viewBox="0 0 ' + tW + ' ' + tH + '" preserveAspectRatio="none">';
       html += '<line x1="0" y1="' + (tH * 0.25) + '" x2="' + tW + '" y2="' + (tH * 0.25) + '" stroke="var(--border-subtle)" stroke-width="0.5"/>';
       html += '<line x1="0" y1="' + (tH * 0.5) + '" x2="' + tW + '" y2="' + (tH * 0.5) + '" stroke="var(--border-subtle)" stroke-width="0.5"/>';
       html += '<line x1="0" y1="' + (tH * 0.75) + '" x2="' + tW + '" y2="' + (tH * 0.75) + '" stroke="var(--border-subtle)" stroke-width="0.5"/>';
-      var msgPts = daily.map(function (d2, i) { return (i * step).toFixed(1) + ',' + (tH - ((d2.messages || d2.messageCount || 0) / maxMsg) * (tH - 4)).toFixed(1); });
-      var sesPts = daily.map(function (d2, i) { return (i * step).toFixed(1) + ',' + (tH - ((d2.sessions || d2.sessionCount || 0) / maxSes) * (tH - 4)).toFixed(1); });
-      html += '<path d="M' + msgPts.join(' L') + ' L' + (tW) + ',' + tH + ' L0,' + tH + 'Z" fill="rgba(122,162,247,0.1)"/>';
-      html += '<polyline points="' + msgPts.join(' ') + '" fill="none" stroke="var(--accent-blue)" stroke-width="1.5"/>';
-      html += '<polyline points="' + sesPts.join(' ') + '" fill="none" stroke="var(--accent-orange)" stroke-width="1.2" stroke-dasharray="3,2"/>';
+      var tokPts = trendData.map(function (d2, i) { return (i * step).toFixed(1) + ',' + (tH - ((d2.totalTokens || 0) / maxTok) * (tH - 4)).toFixed(1); });
+      var costPts = trendData.map(function (d2, i) { return (i * step).toFixed(1) + ',' + (tH - ((d2.totalCost || 0) / maxCost) * (tH - 4)).toFixed(1); });
+      html += '<path d="M' + tokPts.join(' L') + ' L' + tW + ',' + tH + ' L0,' + tH + 'Z" fill="rgba(122,162,247,0.1)"/>';
+      html += '<polyline points="' + tokPts.join(' ') + '" fill="none" stroke="var(--accent-blue)" stroke-width="1.5"/>';
+      html += '<polyline points="' + costPts.join(' ') + '" fill="none" stroke="var(--accent-orange)" stroke-width="1.2" stroke-dasharray="3,2"/>';
       html += '</svg>';
-      html += '<div class="cu-trend-legend"><div class="cu-trend-legend-item"><div class="cu-trend-legend-dot" style="background:var(--accent-blue)"></div>消息</div>';
-      html += '<div class="cu-trend-legend-item"><div class="cu-trend-legend-dot" style="background:var(--accent-orange)"></div>会话</div></div>';
+      html += '<div class="cu-trend-dates">';
+      trendData.forEach(function (d2, i) {
+        if (i % Math.ceil(trendData.length / 7) === 0 || i === trendData.length - 1) {
+          var pct = (i / Math.max(1, trendData.length - 1) * 100).toFixed(1);
+          html += '<span style="left:' + pct + '%">' + (d2.date || '').slice(5) + '</span>';
+        }
+      });
+      html += '</div>';
+      html += '<div class="cu-trend-legend"><div class="cu-trend-legend-item"><div class="cu-trend-legend-dot" style="background:var(--accent-blue)"></div>Tokens</div>';
+      html += '<div class="cu-trend-legend-item"><div class="cu-trend-legend-dot" style="background:var(--accent-orange)"></div>Cost</div></div>';
       html += '</div>';
     }
 

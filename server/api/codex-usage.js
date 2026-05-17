@@ -18,7 +18,10 @@ function createCache(ttlMs) {
   };
 }
 
-const sessionsCache = createCache(60 * 1000);
+const POLL_INTERVAL = 5 * 60 * 1000;
+const sessionsCache = createCache(POLL_INTERVAL + 30_000);
+
+let latestCodexSnapshot = null;
 
 async function listJsonlFiles(dir) {
   const out = [];
@@ -268,16 +271,25 @@ async function readSessions() {
   return result;
 }
 
+async function refreshCodexSnapshot() {
+  try {
+    latestCodexSnapshot = await readSessions();
+  } catch (err) {
+    console.error('codex-usage poll error:', err.message);
+  }
+}
+
 export default function createRouter() {
   const router = Router();
 
+  refreshCodexSnapshot();
+  setInterval(refreshCodexSnapshot, POLL_INTERVAL);
+
   router.get('/', async (_req, res) => {
-    try {
-      const data = await readSessions();
-      res.json({ success: true, data });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+    if (!latestCodexSnapshot) {
+      return res.json({ success: false, error: 'loading' });
     }
+    res.json({ success: true, data: latestCodexSnapshot });
   });
 
   return router;
