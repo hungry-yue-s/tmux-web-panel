@@ -179,6 +179,10 @@ try {
   // Startup sweep failure is non-fatal.
 }
 
+// Ensure the global pane-border title line is on so pane labels render.
+// Best-effort: tmux server may not be up yet (the panel never auto-starts it).
+await tmux.ensurePaneBorderConfig().catch(() => {});
+
 // Mount API routes
 app.use('/api/sessions', sessionsRouter);
 app.use('/api/sessions/:name/windows', windowsRouter);
