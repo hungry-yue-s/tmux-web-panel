@@ -1,4 +1,4 @@
-/* global Terminal, FitAddon, WebglAddon, Theme, Auth, api, state, navigate, escapeHtml, renderPaneLayout, renderPanePills, FilePreview, LinkDetect */
+/* global Terminal, FitAddon, WebglAddon, Theme, Auth, api, state, navigate, escapeHtml, renderPaneLayout, renderPanePills, _promptSetPaneLabelById, FilePreview, LinkDetect */
 
 // === Clipboard Helper ===
 
@@ -694,6 +694,7 @@ function renderTerminal(container) {
     '<button class="btn terminal-font-btn" data-dir="-1" title="Smaller font">A&#8722;</button>' +
     '<button class="btn terminal-font-btn" data-dir="1" title="Larger font">A&#43;</button>' +
     '<button class="btn terminal-split-btn" title="Split pane">&#10010;</button>' +
+    '<button class="btn terminal-label-btn" title="设置当前窗格标签">&#127991;</button>' +
     '<button class="btn terminal-open-buf-btn" title="Open file from tmux buffer (Ctrl+Shift+O)">&#128194;</button>' +
     '<button class="btn terminal-popout-btn" title="Pop out">&#8599;</button>' +
     '<button class="btn terminal-fullscreen-btn" title="Fullscreen">&#9634;</button>' +
@@ -795,6 +796,15 @@ function renderTerminal(container) {
     setTimeout(function () {
       document.addEventListener('click', closePopup, true);
     }, 0);
+  });
+
+  // Set a label on the current pane — always available (works for single-pane
+  // and split modes where no pane pills are shown).
+  view.querySelector('.terminal-label-btn').addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (typeof _promptSetPaneLabelById === 'function') {
+      _promptSetPaneLabelById(state.currentPane);
+    }
   });
 
   // Mode toggle: click to switch mode; if already in split mode, open layout picker

@@ -232,6 +232,20 @@ function _promptSetPaneLabel(pane) {
     });
 }
 
+// Sets the label for a pane by id, resolving its current label from state.panes
+// (so the prompt prefills correctly). Used by the always-visible header button,
+// which works for single-pane and split modes where no pane pills are shown.
+function _promptSetPaneLabelById(paneId) {
+  if (!paneId) return;
+  var panes = (typeof state !== 'undefined' && state.panes) || [];
+  var pane = null;
+  for (var i = 0; i < panes.length; i++) {
+    if (panes[i].id === paneId) { pane = panes[i]; break; }
+  }
+  if (!pane) pane = { id: paneId, label: '' };
+  _promptSetPaneLabel(pane);
+}
+
 function _confirmClosePane(paneId) {
   showConfirm({ title: '关闭窗格', message: '确定关闭此窗格？', confirmText: '关闭', danger: true })
     .then(function (confirmed) {

@@ -197,3 +197,41 @@ describe('pane context menu (label)', () => {
     expect(panes[0].label).toBe('构建'); // in-memory sync so re-open prefills new value
   });
 });
+
+describe('_promptSetPaneLabelById (header button entry)', () => {
+  let dom;
+  beforeEach(() => { dom = createEnv(); });
+
+  it('prefills the current label from state.panes and PUTs the new one', async () => {
+    let putArgs = null;
+    let promptVal = null;
+    dom.window.state = { panes: [{ id: '%5', label: '旧' }] };
+    dom.window.api = { put: (url, body) => { putArgs = { url, body }; return Promise.resolve({}); } };
+    dom.window.showPrompt = (opts) => { promptVal = opts.value; return Promise.resolve('前端'); };
+    dom.window.showAlert = () => {};
+    dom.window._promptSetPaneLabelById('%5');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(promptVal).toBe('旧');
+    expect(putArgs.url).toContain(encodeURIComponent('%5'));
+    expect(putArgs.body).toEqual({ label: '前端' });
+    expect(dom.window.state.panes[0].label).toBe('前端'); // in-memory sync
+  });
+
+  it('falls back to empty label when the pane is not in state.panes', async () => {
+    let promptVal = '__unset__';
+    dom.window.state = { panes: [] };
+    dom.window.api = { put: () => Promise.resolve({}) };
+    dom.window.showPrompt = (opts) => { promptVal = opts.value; return Promise.resolve(null); };
+    dom.window._promptSetPaneLabelById('%9');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(promptVal).toBe('');
+  });
+
+  it('does nothing without a pane id', () => {
+    let called = false;
+    dom.window.state = { panes: [] };
+    dom.window.showPrompt = () => { called = true; return Promise.resolve(null); };
+    dom.window._promptSetPaneLabelById(null);
+    expect(called).toBe(false);
+  });
+});
