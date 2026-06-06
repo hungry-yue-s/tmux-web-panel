@@ -108,7 +108,7 @@ export function parseWindows(output) {
 export function parsePanes(output) {
   if (!output || output.trim().length === 0) return [];
   return output.trim().split('\n').map((line) => {
-    const [id, x, y, width, height, active, command] = line.split(FIELD_SEP);
+    const [id, x, y, width, height, active, command, label] = line.split(FIELD_SEP);
     return {
       id,
       x: Number(x),
@@ -117,6 +117,7 @@ export function parsePanes(output) {
       height: Number(height),
       active: active === '1',
       command,
+      label: label || '',
     };
   });
 }
@@ -255,7 +256,7 @@ export async function listPanes(session, window) {
     'list-panes',
     '-t', `${session}:${window}`,
     '-F',
-    `#{pane_id}${FIELD_SEP}#{pane_left}${FIELD_SEP}#{pane_top}${FIELD_SEP}#{pane_width}${FIELD_SEP}#{pane_height}${FIELD_SEP}#{pane_active}${FIELD_SEP}#{pane_current_command}`,
+    `#{pane_id}${FIELD_SEP}#{pane_left}${FIELD_SEP}#{pane_top}${FIELD_SEP}#{pane_width}${FIELD_SEP}#{pane_height}${FIELD_SEP}#{pane_active}${FIELD_SEP}#{pane_current_command}${FIELD_SEP}#{@pane_label}`,
   ]);
   return parsePanes(stdout);
 }

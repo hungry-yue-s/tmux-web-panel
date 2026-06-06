@@ -152,11 +152,16 @@ describe('parseWindows', () => {
 describe('parsePanes', () => {
   const SEP = '\x1f';
 
-  it('parses pane lines with unit-separator', () => {
-    const line = ['%0', '0', '0', '80', '24', '1', 'zsh'].join(SEP);
+  it('parses pane lines with unit-separator and @pane_label', () => {
+    const line = ['%0', '0', '0', '80', '24', '1', 'zsh', '构建服务'].join(SEP);
     expect(parsePanes(line)).toEqual([
-      { id: '%0', x: 0, y: 0, width: 80, height: 24, active: true, command: 'zsh' },
+      { id: '%0', x: 0, y: 0, width: 80, height: 24, active: true, command: 'zsh', label: '构建服务' },
     ]);
+  });
+
+  it('defaults label to empty string when @pane_label unset', () => {
+    const line = ['%1', '0', '0', '80', '24', '0', 'vim', ''].join(SEP);
+    expect(parsePanes(line)[0].label).toBe('');
   });
 
   it('returns empty array on empty input', () => {
