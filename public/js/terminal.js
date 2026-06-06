@@ -1,22 +1,38 @@
-/* global Terminal, FitAddon, WebLinksAddon, WebglAddon, Theme, Auth, api, state, navigate, escapeHtml, renderPaneLayout, renderPanePills */
+/* global Terminal, FitAddon, WebglAddon, Theme, Auth, api, state, navigate, escapeHtml, renderPaneLayout, renderPanePills, FilePreview, LinkDetect */
 
 // === Clipboard Helper ===
 
-function _copyToClipboard(text) {
-  // Method 1: Clipboard API (works in secure contexts)
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text).catch(function () {});
-    return;
-  }
-  // Method 2: execCommand fallback (works in HTTP)
+function _execCommandCopy(text) {
   var ta = document.createElement('textarea');
   ta.value = text;
   ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;';
   document.body.appendChild(ta);
   ta.focus();
   ta.select();
-  try { document.execCommand('copy'); } catch (_e) { /* ignore */ }
+  var ok = false;
+  try { ok = document.execCommand('copy'); } catch (_e) { ok = false; }
   document.body.removeChild(ta);
+  return ok;
+}
+
+function _copyToClipboard(text, opts) {
+  opts = opts || {};
+  var silent = opts.silent;
+  var n = text ? text.length : 0;
+  function ok() { if (!silent) _showToast('已复制 ' + n + ' 字符'); }
+  function fail(reason) { if (!silent) _showToast('复制失败' + (reason ? ' (' + reason + ')' : '')); }
+
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(ok).catch(function (err) {
+      // Async context lost user activation, or permission denied.
+      // Fall back to execCommand (may also fail without gesture, but try).
+      if (_execCommandCopy(text)) ok();
+      else fail(err && err.name);
+    });
+    return;
+  }
+  if (_execCommandCopy(text)) ok();
+  else fail();
 }
 
 // === Toast Notification ===
@@ -496,7 +512,7 @@ function _calcTerminalFontSize(paneCols, paneRows, containerEl) {
 
 // === Create xterm Terminal ===
 
-function createTerminalInstance(paneCols, paneRows) {
+function createTerminalInstance(paneCols, paneRows, nozoom) {
   var term = new Terminal({
     theme: Theme.getTerminalTheme(),
     fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace",
@@ -505,6 +521,21 @@ function createTerminalInstance(paneCols, paneRows) {
     scrollback: 5000,
     overviewRuler: { width: 0 },
     rescaleOverlappingGlyphs: true,
+    // tmux runs with `mouse on`, so xterm forwards every drag to tmux and
+    // DISABLES its own local selection. tmux then routes the drag to copy-mode
+    // OR — if the pane runs a mouse-grabbing app (claude/vim/htop/less) — to
+    // that APP, whose weak/absent drag-select is what stalls after a few chars
+    // (same break in a native terminal, hence "tmux 内部异常时浏览器也异常").
+    // The escape hatch is xterm's force-selection modifier (macOS: Option +
+    // this option; Linux/Win: Shift), which bypasses both tmux and the app for
+    // a clean LOCAL selection.
+    //
+    // ONLY enable it in zoom/tab mode, where xterm renders a single pane.
+    // In split (nozoom) mode the grid holds ALL panes + borders, and xterm's
+    // LINEAR selection is not pane-aware — Option+drag would select straight
+    // across the `│` border into the next pane. Split mode must use tmux's own
+    // pane-aware copy-mode instead (plain drag, or keyboard prefix+[).
+    macOptionClickForcesSelection: !nozoom,
   });
   return term;
 }
@@ -542,8 +573,16 @@ function connectTerminalWs(paneId, term, nozoom) {
     }
   };
 
-  ws.onclose = function () {
-    // Auto-reconnect if terminal is still active
+  ws.onclose = function (event) {
+    // Clean close (1000) = tmux detached us: another client attached with `-d`
+    // and took over, or the session ended. Reconnecting would just kick that
+    // client back — an endless ping-pong between two web views. 1008/1013 are
+    // permanent rejections (bad paneId / connection limit). Only auto-reconnect
+    // on abnormal closures (1006 network drop / server crash / restart).
+    if (event && (event.code === 1000 || event.code === 1008 || event.code === 1013)) {
+      if (event.code === 1000) _showToast('会话已被其它窗口接管');
+      return;
+    }
     if (terminalState.term === term && state.currentTab === 'terminal') {
       _showReconnectOverlay(term, paneId, nozoom);
     }
@@ -593,6 +632,23 @@ function connectTerminalWs(paneId, term, nozoom) {
       if (e.button === 2) _suppressMouseMove = true;
       if (e.button === 0) _suppressMouseMove = false;
     }, true);
+
+    // Desktop local-selection copy. In zoom/tab mode (single pane rendered)
+    // macOptionClickForcesSelection is on, so Option/Alt+drag (Mac) or
+    // Shift+drag (Linux/Win) makes a LOCAL xterm selection that bypasses both
+    // tmux and any mouse-grabbing app in the pane (immune to live-output
+    // repaints, edge-drops, copy-mode state). xterm's selection lives on the
+    // canvas, not the DOM, so Cmd/Ctrl+C can't grab it — copy it on release.
+    //   - Plain drag forwards to tmux → xterm selection stays empty here → no
+    //     double-copy against tmux's OSC 52 path.
+    //   - Split (nozoom) mode: macOptionClickForcesSelection is OFF, so xterm
+    //     never makes a selection → getSelection() is empty → this is inert.
+    //     Split mode relies on tmux's pane-aware copy-mode instead.
+    termEl.addEventListener('mouseup', function () {
+      if (window.innerWidth < 768) return; // mobile has its own selection UI
+      var text = term.getSelection();
+      if (text) _copyToClipboard(text);
+    });
   }
 
   return ws;
@@ -846,20 +902,13 @@ function _mountTerminal(termContainer, nozoom) {
   var currentPane = state.panes ? state.panes.find(function (p) { return p.id === state.currentPane; }) : null;
   var paneCols = nozoom ? null : (currentPane ? currentPane.width : null);
   var paneRows = nozoom ? null : (currentPane ? currentPane.height : null);
-  var term = createTerminalInstance(paneCols, paneRows);
+  var term = createTerminalInstance(paneCols, paneRows, nozoom);
   var fitAddon = new FitAddon.FitAddon();
-  // Custom URL regex: same as WebLinksAddon default but excludes CJK
-  // characters and full-width punctuation, which the default regex
-  // incorrectly includes (causing URL highlight to extend into Chinese).
-  var _CJK = "\\u3000-\\u303f\\u4e00-\\u9fff\\uff00-\\uffef\\u2000-\\u206f";
-  var _urlRegex = new RegExp(
-    "(https?|HTTPS?):[/]{2}[^\\s\"'!*(){}|\\\\\\^<>`" + _CJK + "]*" +
-    "[^\\s\"':,.!?{}|\\\\\\^~\\[\\]`()<>" + _CJK + "]"
-  );
-  var webLinksAddon = new WebLinksAddon.WebLinksAddon(undefined, { urlRegex: _urlRegex });
 
   term.loadAddon(fitAddon);
-  term.loadAddon(webLinksAddon);
+  // URL + file-path links are both handled by FilePreview's unified provider
+  // (public/js/link-detect.js), which merges soft-wrapped rows — something the
+  // old WebLinksAddon (per display row) could not do. No web-links addon.
   if (typeof FilePreview !== 'undefined') {
     FilePreview.registerLinkProvider(term, state.currentPane);
   }
@@ -1313,15 +1362,15 @@ function _mountTerminal(termContainer, nozoom) {
       return;
     }
     if (!ts.moved) {
-      // Tap: check if tapped on a file path first
+      // Tap: check if tapped on a link (file path OR URL) first
       if (typeof FilePreview !== 'undefined') {
         var tapTouch = e.changedTouches[0];
         var tapCell = _touchToCell(tapTouch.clientX, tapTouch.clientY);
         if (tapCell) {
           var tapLine = _getLineText(tapCell.row);
-          var tapPath = FilePreview.hitTest(tapLine, tapCell.col, term, tapCell.row);
-          if (tapPath) {
-            FilePreview.openFile(tapPath, state.currentPane);
+          var tapHit = FilePreview.hitTest(tapLine, tapCell.col, term, tapCell.row);
+          if (tapHit) {
+            FilePreview.activateHit(tapHit, state.currentPane);
             return;
           }
         }
@@ -1511,7 +1560,16 @@ function _showReconnectOverlay(term, paneId, nozoom) {
       }
     };
 
-    ws.onclose = function () {
+    ws.onclose = function (event) {
+      // Stop retrying on a clean close — we were detached/taken over, not
+      // dropped. Retrying here would re-trigger the ping-pong. (See the main
+      // onclose handler for the full rationale.)
+      if (event && (event.code === 1000 || event.code === 1008 || event.code === 1013)) {
+        if (textEl) textEl.textContent = '会话已被其它窗口接管';
+        var spinner = overlay.querySelector('.terminal-reconnect-spinner');
+        if (spinner) spinner.style.display = 'none';
+        return;
+      }
       // Retry with exponential backoff
       if (state.currentTab === 'terminal' && terminalState.term === term) {
         var delay = Math.min(baseDelay * Math.pow(1.5, attempt - 1), 10000);

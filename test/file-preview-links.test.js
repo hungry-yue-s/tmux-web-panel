@@ -1,0 +1,78 @@
+import { describe, it, expect, beforeAll } from 'vitest';
+import fs from 'node:fs';
+
+// Load the DOM-free cores into a sandbox. file-preview.js references LinkDetect
+// as a bare global and exposes a _test seam for the buffer-level logic.
+let FP;
+beforeAll(() => {
+  const w = {};
+  new Function('window', fs.readFileSync('public/js/link-detect.js', 'utf8'))(w);
+  globalThis.LinkDetect = w.LinkDetect;
+  new Function('window', fs.readFileSync('public/js/file-preview.js', 'utf8'))(w);
+  FP = w.FilePreview._test;
+});
+
+// Minimal xterm-buffer mock: fixed width, ASCII cells (width 1).
+function mkBuffer(rows, cols) {
+  const lines = rows.map((r) => ({
+    isWrapped: !!r.wrapped,
+    length: cols,
+    translateToString(trim) {
+      const padded = (r.text + ' '.repeat(cols)).slice(0, cols);
+      return trim ? padded.replace(/\s+$/, '') : padded;
+    },
+    getCell(col) {
+      const ch = col < r.text.length ? r.text[col] : ' ';
+      return { getWidth: () => 1, getChars: () => ch };
+    },
+  }));
+  return { length: lines.length, getLine: (i) => lines[i] || null };
+}
+
+describe('F1 — wrapped-row end offset stays on the correct row', () => {
+  it('a link ending exactly at the row boundary does not bleed onto the next row', () => {
+    const cols = 8;
+    const buf = mkBuffer([
+      { text: 'x/aa/bbb' },               // full row, link fills it
+      { text: ' next', wrapped: true },   // soft-wrap continuation (leading space)
+    ], cols);
+    const logical = FP.getLogicalLine(buf, 0);
+    const links = FP.findLinks(logical.text);
+    const path = links.find((m) => m.text === 'x/aa/bbb');
+    expect(path, 'path should be detected').toBeTruthy();
+    const range = FP.buildLinkRange(logical, path);
+    expect(range.start).toEqual({ y: 1, x: 1 });
+    expect(range.end.y).toBe(1);   // NOT row 2
+    expect(range.end.x).toBe(8);
+  });
+});
+
+describe('F3 — hard-newline continuation resolves to the joined line', () => {
+  const cols = 28;
+  const buf = () => mkBuffer([
+    { text: 'https://example.com/a/b/c/d/' },  // full, ends with an open token
+    { text: 'h/i.html' },                       // hard newline (not wrapped)
+  ], cols);
+
+  it('forward: row 0 merges the hard-split URL', () => {
+    const l = FP.getLogicalLine(buf(), 0);
+    expect(l.startRow).toBe(0);
+    expect(FP.findLinks(l.text).some((m) => m.kind === 'web' && m.text.includes('h/i.html'))).toBe(true);
+  });
+
+  it('continuation row 1 resolves back to row 0 (no wrong standalone fragment)', () => {
+    const l = FP.getLogicalLine(buf(), 1);
+    expect(l.startRow).toBe(0);
+    const links = FP.findLinks(l.text);
+    expect(links.some((m) => m.kind === 'web')).toBe(true);
+    expect(links.some((m) => m.kind === 'file' && m.text === 'h/i.html')).toBe(false);
+  });
+
+  it('does NOT join when the next row is indented', () => {
+    const b = mkBuffer([
+      { text: 'https://example.com/a/b/c/d/' },
+      { text: '    indented' },
+    ], cols);
+    expect(FP.getLogicalLine(b, 0).rows.length).toBe(1);
+  });
+});

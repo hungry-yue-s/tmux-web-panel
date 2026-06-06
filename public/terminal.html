@@ -7,8 +7,8 @@
   <link rel="stylesheet" href="https://unpkg.com/@xterm/xterm@6.0.0/css/xterm.css">
   <script src="https://unpkg.com/@xterm/xterm@6.0.0/lib/xterm.js"></script>
   <script src="https://unpkg.com/@xterm/addon-fit@0.11.0/lib/addon-fit.js"></script>
-  <script src="https://unpkg.com/@xterm/addon-web-links@0.12.0/lib/addon-web-links.js"></script>
   <script src="/js/theme.js"></script>
+  <script src="/js/link-detect.js"></script>
   <script src="/js/file-preview.js"></script>
   <style>
     @font-face {
@@ -47,16 +47,10 @@
       });
 
       var fitAddon = new FitAddon.FitAddon();
-      // Custom URL regex: excludes CJK chars (default regex has this bug)
-      var _CJK = "\\u3000-\\u303f\\u4e00-\\u9fff\\uff00-\\uffef\\u2000-\\u206f";
-      var _urlRegex = new RegExp(
-        "(https?|HTTPS?):[/]{2}[^\\s\"'!*(){}|\\\\\\^<>`" + _CJK + "]*" +
-        "[^\\s\"':,.!?{}|\\\\\\^~\\[\\]`()<>" + _CJK + "]"
-      );
-      var webLinksAddon = new WebLinksAddon.WebLinksAddon(undefined, { urlRegex: _urlRegex });
 
       term.loadAddon(fitAddon);
-      term.loadAddon(webLinksAddon);
+      // Unified link provider (URL + file path) via link-detect.js — the old
+      // web-links addon could not merge soft-wrapped rows.
       if (typeof FilePreview !== 'undefined') {
         FilePreview.registerLinkProvider(term, paneId);
       }

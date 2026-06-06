@@ -1,4 +1,4 @@
-/* global Terminal, FitAddon, WebLinksAddon, Auth, Theme */
+/* global Terminal, FitAddon, Auth, Theme */
 
 // === Modal Dialog ===
 

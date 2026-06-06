@@ -3421,6 +3421,25 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   align-items: center; justify-content: center;
   animation: fpFadeIn 0.15s ease;
 }
+/* Ambiguous link chooser (URL vs file) */
+.fp-chooser { z-index: 10001; }
+.fp-chooser-box {
+  background: var(--bg-card); border: 1px solid var(--border-subtle);
+  border-radius: 12px; padding: 20px; max-width: 90vw; min-width: 260px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4); text-align: center;
+}
+.fp-chooser-q {
+  font-family: 'JetBrains Mono', monospace; font-size: 0.9rem;
+  color: var(--text-primary); word-break: break-all; margin-bottom: 6px;
+}
+.fp-chooser-sub { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px; }
+.fp-chooser-actions { display: flex; gap: 12px; justify-content: center; }
+.fp-chooser-btn {
+  flex: 1; padding: 10px 18px; font-size: 0.95rem; border-radius: 8px;
+  border: 1px solid var(--border-subtle); background: var(--bg-primary);
+  color: var(--text-primary); cursor: pointer; transition: background 0.15s;
+}
+.fp-chooser-btn:hover { background: var(--accent-blue); color: #fff; }
 .fp-modal {
   background: var(--bg-primary); border-radius: 10px;
   width: 80vw; height: 70vh; display: flex; flex-direction: column;
@@ -3466,17 +3485,21 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.85rem;
 }
 
-/* Code preview */
+/* Code preview — gutter + code are flex columns so they can't desync.
+   (A float gutter breaks once hljs makes the <code> a taller block.) */
 .fp-code-wrap { height: 100%; overflow: auto; }
 .fp-code-wrap pre {
   margin: 0; padding: 14px; font-size: 0.82rem; line-height: 1.5;
   font-family: 'JetBrains Mono', monospace; tab-size: 4;
+  display: flex; align-items: flex-start;
 }
 .fp-code-wrap .fp-line-numbers {
-  float: left; padding-right: 14px; border-right: 1px solid var(--border-subtle);
+  flex: 0 0 auto; padding-right: 14px; border-right: 1px solid var(--border-subtle);
   margin-right: 14px; text-align: right; color: var(--text-muted);
-  user-select: none; font-size: 0.82rem; line-height: 1.5;
+  user-select: none; white-space: pre;
 }
+.fp-code-wrap pre > code { flex: 1 1 auto; min-width: 0; white-space: pre; overflow-x: auto; }
+.fp-code-wrap pre > code.hljs { padding: 0; }
 
 /* Image preview */
 .fp-image-wrap {

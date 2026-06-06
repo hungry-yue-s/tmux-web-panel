@@ -138,10 +138,97 @@ var FilePreview = (function () {
     return b;
   }
 
+  // Snapshot the theme vars the main window currently has applied (Theme.apply
+  // writes these onto documentElement), so the standalone tab follows whatever
+  // theme — including light themes — the user has switched to.
+  function _rootVars() {
+    var keys = ['--bg-primary', '--bg-card', '--border-subtle',
+      '--text-primary', '--text-muted', '--accent-blue', '--accent-red'];
+    var cs = getComputedStyle(document.documentElement);
+    var out = ':root{';
+    keys.forEach(function (k) {
+      var v = (cs.getPropertyValue(k) || '').trim();
+      if (v) out += k + ':' + v + ';';
+    });
+    return out + '}';
+  }
+
+  // Inline theme so the standalone tab matches the in-modal preview (the new
+  // document has none of the page's stylesheets). Mirrors the .fp-* rules in
+  // public/css/style.css; keep them in sync.
+  function _standaloneCss() {
+    return [
+      _rootVars(),
+      'html,body{margin:0;background:var(--bg-card);color:var(--text-primary);',
+      "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}",
+      '.fp-code-wrap,.fp-md-wrap{height:auto;min-height:100vh;box-sizing:border-box;}',
+      ".fp-code-wrap pre{margin:0;padding:14px;font-size:0.82rem;line-height:1.5;font-family:'JetBrains Mono',monospace;tab-size:4;display:flex;align-items:flex-start;}",
+      '.fp-code-wrap .fp-line-numbers{flex:0 0 auto;padding-right:14px;border-right:1px solid var(--border-subtle);margin-right:14px;text-align:right;color:var(--text-muted);user-select:none;white-space:pre;}',
+      '.fp-code-wrap pre > code{flex:1 1 auto;min-width:0;white-space:pre;overflow-x:auto;}',
+      '.fp-code-wrap pre > code.hljs{padding:0;}',
+      '.fp-md-wrap{padding:20px 28px;font-size:0.9rem;line-height:1.7;color:var(--text-primary);}',
+      '.fp-md-wrap h1,.fp-md-wrap h2,.fp-md-wrap h3{margin:1em 0 0.5em;}',
+      '.fp-md-wrap h1{font-size:1.5rem;border-bottom:1px solid var(--border-subtle);padding-bottom:6px;}',
+      '.fp-md-wrap h2{font-size:1.25rem;}.fp-md-wrap h3{font-size:1.1rem;}',
+      '.fp-md-wrap pre{background:var(--bg-primary);border-radius:6px;padding:12px;overflow-x:auto;}',
+      ".fp-md-wrap code{font-family:'JetBrains Mono',monospace;font-size:0.82rem;}",
+      '.fp-md-wrap :not(pre) > code{background:var(--bg-primary);padding:2px 5px;border-radius:3px;}',
+      '.fp-md-wrap img{max-width:100%;border-radius:6px;}',
+      '.fp-md-wrap table{border-collapse:collapse;width:100%;margin:1em 0;}',
+      '.fp-md-wrap th,.fp-md-wrap td{border:1px solid var(--border-subtle);padding:6px 10px;text-align:left;}',
+      '.fp-md-wrap th{background:var(--bg-primary);}',
+      '.fp-md-wrap blockquote{border-left:3px solid var(--accent-blue);margin:1em 0;padding:4px 16px;color:var(--text-muted);}',
+      '.fp-md-wrap a{color:var(--accent-blue);}',
+      '.fp-md-wrap .katex-display{overflow-x:auto;padding:4px 0;}',
+      '.fp-fs-btn{position:fixed;top:12px;right:12px;z-index:9999;width:34px;height:34px;',
+      'display:flex;align-items:center;justify-content:center;font-size:16px;line-height:1;',
+      'background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-subtle);',
+      'border-radius:6px;cursor:pointer;opacity:0.5;transition:opacity 0.15s;}',
+      '.fp-fs-btn:hover{opacity:1;}',
+      ':fullscreen .fp-md-wrap,:fullscreen .fp-code-wrap{min-height:100vh;}',
+    ].join('');
+  }
+
+  // Floating fullscreen toggle injected into the standalone tab. The inline
+  // script runs because blob: text/html documents execute their own scripts.
+  function _fullscreenWidget() {
+    return '<button class="fp-fs-btn" id="fpFs" title="全屏 / Fullscreen" aria-label="Toggle fullscreen">⛶</button>'
+      + '<script>(function(){var b=document.getElementById("fpFs");if(!b)return;'
+      + 'function sync(){b.textContent=document.fullscreenElement?"\\u00d7":"\\u26f6";}'
+      + 'b.addEventListener("click",function(){'
+      + 'if(document.fullscreenElement){document.exitFullscreen();}'
+      + 'else{var el=document.documentElement;if(el.requestFullscreen)el.requestFullscreen();}});'
+      + 'document.addEventListener("fullscreenchange",sync);})();<\/script>';
+  }
+
+  function _escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
   function _openNewTab() {
     if (!_currentFile || _currentFile.isDirectory) return;
     if (_currentFile.isText || _currentFile.isMarkdown) {
-      var blob = new Blob([_currentFile.rawContent || ''], { type: 'text/plain' });
+      // Reuse the already-rendered preview (markdown HTML / highlighted code)
+      // so the standalone tab carries the same theme as the modal.
+      var rendered = _overlay && _overlay.querySelector('.fp-md-wrap, .fp-code-wrap');
+      if (rendered) {
+        var title = _escapeHtml(_currentFile.filename || 'preview');
+        var doc = '<!DOCTYPE html><html><head><meta charset="utf-8">'
+          + '<meta name="viewport" content="width=device-width, initial-scale=1">'
+          + '<title>' + title + '</title>'
+          + '<link rel="stylesheet" href="' + CDN.hljsCss + '">'
+          + '<link rel="stylesheet" href="' + CDN.katexCss + '">'
+          + '<style>' + _standaloneCss() + '</style></head><body>'
+          + _fullscreenWidget()
+          + rendered.outerHTML + '</body></html>';
+        var htmlBlob = new Blob([doc], { type: 'text/html;charset=utf-8' });
+        window.open(URL.createObjectURL(htmlBlob), '_blank');
+        return;
+      }
+      // Not rendered yet — fall back to raw text (still UTF-8 to avoid 乱码).
+      var blob = new Blob([_currentFile.rawContent || ''], { type: 'text/plain;charset=utf-8' });
       window.open(URL.createObjectURL(blob), '_blank');
     } else {
       window.open(_currentFile.rawUrl, '_blank');
@@ -243,7 +330,7 @@ var FilePreview = (function () {
     body.appendChild(wrap);
   }
 
-  function _renderCode(body, content, language) {
+  function _renderCode(body, content, language, targetLine) {
     body.innerHTML = '';
     var wrap = document.createElement('div');
     wrap.className = 'fp-code-wrap';
@@ -276,6 +363,17 @@ var FilePreview = (function () {
     pre.appendChild(code);
     wrap.appendChild(pre);
     body.appendChild(wrap);
+
+    // Best-effort jump to a target line (from path:line:col). Never let a
+    // scroll/measure failure block the file from opening.
+    if (targetLine && targetLine > 1) {
+      try {
+        var per = lineNums.scrollHeight / Math.max(lines.length, 1);
+        if (per > 0 && isFinite(per)) {
+          wrap.scrollTop = Math.max(0, (targetLine - 1) * per - wrap.clientHeight / 3);
+        }
+      } catch (_e) { /* ignore */ }
+    }
   }
 
   function _renderMarkdown(body, content, filePath) {
@@ -353,78 +451,20 @@ var FilePreview = (function () {
       });
   }
 
-  // --- Path detection ---
+  // --- Path / URL detection (delegated to the DOM-free LinkDetect core) ---
 
-  // A path must not be preceded by a "path-continuation" character that
-  // would indicate it's part of a larger token (like a URL or word).
-  // Allowed preceding chars: whitespace, =, (, [, {, etc.
-  // Disallowed: word chars (\w), -, :, /, . (which would mean we're in the
-  // middle of something).
-  var NOT_PREFIX = "(?<![\\w\\-:\\/\\.~])";
-
-  // Path body: exclude terminators and CJK punctuation/full-width chars.
-  // CJK Unified Ideographs (\u4e00-\u9fff) are ALLOWED because paths on
-  // CJK systems commonly contain Chinese characters (e.g. ~/文档/...).
-  //   \u3000-\u303f  CJK symbols and punctuation (。、「」 etc.)
-  //   \uff00-\uffef  Halfwidth/fullwidth forms (（）,，。)
-  //   \u2000-\u206f  General punctuation
-  // Also exclude =, ?, #, &, @ which commonly indicate URL query/params.
-  var PATH_BODY = "[^\\s'\"()\\[\\]{}<>:;,?#&@=\\u3000-\\u303f\\uff00-\\uffef\\u2000-\\u206f]";
-
-  // Absolute: /path (preceded by non-path-char; handles "file=/path", "(/path" etc.)
-  var ABS_RE = new RegExp(NOT_PREFIX + "\\/" + PATH_BODY + "+(?:\\/" + PATH_BODY + "+)*", "g");
-  // Home: ~/path or ~user/path
-  var TILDE_RE = new RegExp(NOT_PREFIX + "~[a-zA-Z0-9_\\-]*\\/" + PATH_BODY + "+(?:\\/" + PATH_BODY + "+)*", "g");
-  // Dot relative: ./path or ../path
-  var REL_RE = new RegExp(NOT_PREFIX + "\\.\\.?\\/" + PATH_BODY + "+(?:\\/" + PATH_BODY + "+)*", "g");
-  // Bare relative: word/word/... (at least one slash segment)
-  var BARE_RE = new RegExp(NOT_PREFIX + "[a-zA-Z0-9_\\-]+(?:\\/" + PATH_BODY + "+)+", "g");
-  // Bare filename: name.ext where ext is 1-6 lowercase letters/digits
-  // (e.g. README.md, index.js, package.json). Starts with letter to avoid
-  // matching IPs (192.168...) and version numbers (1.0.0).
-  var BARE_FILE_RE = new RegExp(NOT_PREFIX + "[a-zA-Z][\\w\\-]*(?:\\.[\\w\\-]+)*\\.[a-z][a-z0-9]{0,5}(?![\\w\\-\\/.])", "g");
-
-  function _runRegex(line, re, minLen, matches, seen, allowNoSlash) {
-    re.lastIndex = 0;
-    var m;
-    while ((m = re.exec(line)) !== null) {
-      var raw = m[0];
-      // For bare-file matches, don't strip trailing dots (they may be part
-      // of an extension); for path-style matches, strip common trailing
-      // punctuation that's likely sentence punctuation, not path content.
-      var trimmed = allowNoSlash
-        ? raw.replace(/[,;:!?)>\]}]+$/, '')
-        : raw.replace(/[.,;:!?)>\]}]+$/, '');
-      // Strip trailing CJK chars that leak past a file extension
-      // e.g. "file.txt然后继续" → "file.txt"
-      trimmed = trimmed.replace(/(\.[a-zA-Z][a-zA-Z0-9]{0,5})[\u4e00-\u9fff]+$/, '$1');
-      if (trimmed.length < minLen) continue;
-      if (!allowNoSlash && trimmed.indexOf('/') === -1) continue;
-      var startCol = m.index;
-      var endCol = startCol + trimmed.length;
-      if (seen[startCol]) continue;
-      // Check overlap with existing matches: skip if contained in one
-      var overlap = false;
-      for (var i = 0; i < matches.length; i++) {
-        var ex = matches[i];
-        if (startCol >= ex.startCol && endCol <= ex.endCol) { overlap = true; break; }
-      }
-      if (overlap) continue;
-      matches.push({ text: trimmed, startCol: startCol, endCol: endCol });
-      seen[startCol] = true;
-    }
-  }
-
+  // Runs on a single LOGICAL line (wrapped rows already merged); returns
+  // matches { text, kind, href, lineRef, startCol, endCol }. All regex logic
+  // lives in public/js/link-detect.js (window.LinkDetect) so it is unit-tested.
+  //   kind 'web'       -> open href in a new browser tab
+  //   kind 'file'      -> open in the file preview (lineRef jumps to a line)
+  //   kind 'ambiguous' -> let the user choose web vs file (e.g. example.com)
   function _findLinks(line) {
-    var matches = [];
-    var seen = {};
-    // Order matters: more specific patterns first
-    _runRegex(line, ABS_RE, 2, matches, seen);
-    _runRegex(line, TILDE_RE, 3, matches, seen);
-    _runRegex(line, REL_RE, 3, matches, seen);
-    _runRegex(line, BARE_RE, 3, matches, seen);
-    _runRegex(line, BARE_FILE_RE, 3, matches, seen, true);
-    return matches;
+    if (typeof LinkDetect === 'undefined') return [];
+    return LinkDetect.findLinks(line).map(function (m) {
+      return { text: m.text, kind: m.kind, href: m.href, lineRef: m.lineRef,
+        startCol: m.start, endCol: m.end };
+    });
   }
 
   // --- Wrapped line helpers ---
@@ -432,24 +472,69 @@ var FilePreview = (function () {
   // Collect a logical line by merging wrapped buffer lines.
   // Returns { text, startRow, rows } where rows is an array of
   // { line, row, strStart, strLen } for each physical row.
+  // A physical row is "full" (reached the right margin) if its last printable
+  // cell is non-blank — a strong signal the next line is a forced continuation.
+  function _rowIsFull(line) {
+    var s = line.translateToString(false);
+    return s.length > 0 && !/\s$/.test(s);
+  }
+
+  function _hardJoins(above, below) {
+    return !!above && !!below && typeof LinkDetect !== 'undefined' &&
+      _rowIsFull(above) &&
+      LinkDetect.shouldJoinHardWrap(above.translateToString(true), true, below.translateToString(true));
+  }
+
   function _getLogicalLine(buffer, bufRow) {
+    // Walk backward to the true start: up the soft-wrap chain always, and
+    // across ONE hard-newline join (Fix 10) so that the continuation row
+    // resolves to the SAME merged line as the joined row (else its standalone
+    // fragment would match as a wrong link / be unclickable).
     var startRow = bufRow;
-    while (startRow > 0) {
-      var prev = buffer.getLine(startRow);
-      if (!prev || !prev.isWrapped) break;
-      startRow--;
+    var crossedHard = false;
+    for (;;) {
+      while (startRow > 0) {
+        var prev = buffer.getLine(startRow);
+        if (!prev || !prev.isWrapped) break;
+        startRow--;
+      }
+      if (crossedHard || startRow === 0) break;
+      var above = buffer.getLine(startRow - 1);
+      var cur = buffer.getLine(startRow);
+      if (cur && !cur.isWrapped && _hardJoins(above, cur)) {
+        startRow--;            // cross the hard newline upward
+        crossedHard = true;
+        continue;              // climb the predecessor's soft-wrap chain
+      }
+      break;
     }
-    var text = '';
-    var rows = [];
-    var row = startRow;
+    // Collect forward: soft-wrapped continuations always; a single hard-newline
+    // row only when the conservative heuristic says the token was split.
+    var first = buffer.getLine(startRow);
+    if (!first) return { text: '', startRow: startRow, rows: [] };
+    var lineObjs = [{ line: first, row: startRow }];
+    var row = startRow + 1;
+    var joinedHard = false;
     while (row < buffer.length) {
       var ln = buffer.getLine(row);
       if (!ln) break;
-      if (row > startRow && !ln.isWrapped) break;
-      var rowText = ln.translateToString(false);
-      rows.push({ line: ln, row: row, strStart: text.length, strLen: rowText.length });
+      if (ln.isWrapped) { lineObjs.push({ line: ln, row: row }); row++; continue; }
+      if (joinedHard) break;   // at most one hard-newline join per logical line
+      if (!_hardJoins(lineObjs[lineObjs.length - 1].line, ln)) break;
+      lineObjs.push({ line: ln, row: row });
+      joinedHard = true;
+      row++;                   // keep collecting the joined row's soft-wrap chain
+    }
+    // Build the merged string. Non-final wrapped rows keep a trailing pad space
+    // when a wide CJK glyph could not split across the margin; trim it so the
+    // URL/path is not severed at the wrap point (D30).
+    var text = '';
+    var rows = [];
+    for (var i = 0; i < lineObjs.length; i++) {
+      var l = lineObjs[i].line;
+      var rowText = l.translateToString(i < lineObjs.length - 1);
+      rows.push({ line: l, row: lineObjs[i].row, strStart: text.length, strLen: rowText.length });
       text += rowText;
-      row++;
     }
     return { text: text, startRow: startRow, rows: rows };
   }
@@ -502,6 +587,57 @@ var FilePreview = (function () {
 
   // --- Link Provider ---
 
+  // Dispatch a matched link by kind. Web opens a browser tab; file opens the
+  // preview; ambiguous (e.g. example.com) asks the user which one (project rule:
+  // don't guess URL-vs-file — let the user choose).
+  function _activateLink(f, paneId) {
+    if (f.kind === 'web') { _openWeb(f.href); return; }
+    if (f.kind === 'ambiguous') { _showLinkChooser(f, paneId); return; }
+    openFile(f.text, paneId, { lineRef: f.lineRef });
+  }
+
+  function _openWeb(href) {
+    // Only ever open http(s) — defensive gate against a future caller passing a
+    // javascript:/data: href (detectors only ever emit http(s) today).
+    if (href && /^https?:\/\//i.test(href)) window.open(href, '_blank', 'noopener');
+  }
+
+  function _showLinkChooser(f, paneId) {
+    var ov = document.createElement('div');
+    ov.className = 'fp-overlay fp-chooser';
+    ov.addEventListener('click', function (e) { if (e.target === ov) ov.remove(); });
+    var box = document.createElement('div');
+    box.className = 'fp-chooser-box';
+    var q = document.createElement('div');
+    q.className = 'fp-chooser-q';
+    q.textContent = f.text;
+    var sub = document.createElement('div');
+    sub.className = 'fp-chooser-sub';
+    sub.textContent = '作为网址还是文件打开？';
+    var row = document.createElement('div');
+    row.className = 'fp-chooser-actions';
+    var web = document.createElement('button');
+    web.className = 'fp-btn fp-chooser-btn';
+    web.textContent = '🌐 网址';
+    web.addEventListener('click', function () {
+      ov.remove();
+      _openWeb(f.href || (typeof LinkDetect !== 'undefined' ? LinkDetect.computeHref(f.text) : 'https://' + f.text));
+    });
+    var file = document.createElement('button');
+    file.className = 'fp-btn fp-chooser-btn';
+    file.textContent = '📄 文件';
+    file.addEventListener('click', function () { ov.remove(); openFile(f.text, paneId); });
+    row.appendChild(web);
+    row.appendChild(file);
+    box.appendChild(q);
+    box.appendChild(sub);
+    box.appendChild(row);
+    ov.appendChild(box);
+    document.body.appendChild(ov);
+    web.focus();
+    ov.addEventListener('keydown', function (e) { if (e.key === 'Escape') { ov.remove(); e.stopPropagation(); } });
+  }
+
   function registerLinkProvider(term, paneId) {
     term.registerLinkProvider({
       provideLinks: function (lineNumber, callback) {
@@ -517,11 +653,14 @@ var FilePreview = (function () {
 
         var links = found.map(function (f) {
           var start = _logicalStrOffsetToTermPos(logical.rows, f.startCol);
-          var end = _logicalStrOffsetToTermPos(logical.rows, f.endCol);
+          // xterm link ranges are INCLUSIVE, so map the LAST cell (endCol-1),
+          // not the exclusive end. Mapping endCol directly lands on the next
+          // row when the span ends exactly at a wrap boundary (over-underline).
+          var end = _logicalStrOffsetToTermPos(logical.rows, f.endCol - 1);
           return {
-            range: { start: start, end: { y: end.y, x: Math.max(end.x - 1, start.x) } },
+            range: { start: start, end: { y: end.y, x: Math.max(end.x, start.x) } },
             text: f.text,
-            activate: function () { openFile(f.text, paneId); },
+            activate: function () { _activateLink(f, paneId); },
           };
         }).filter(function (link) {
           return link.range.start.y <= lineNumber && link.range.end.y >= lineNumber;
@@ -540,9 +679,19 @@ var FilePreview = (function () {
 
   // --- Open File ---
 
-  function openFile(filePath, paneId, _keepDirContext) {
+  // opts: `true` (legacy keep-dir-context) or { lineRef, keepDirContext }.
+  function openFile(filePath, paneId, opts) {
+    var keepDir = opts === true || (opts && opts.keepDirContext);
+    var targetLine = (opts && opts !== true && opts.lineRef != null) ? opts.lineRef : null;
+    // A path may still carry a :line[:col] suffix (e.g. from a mobile tap); split
+    // it off so the server gets a clean path and we still know where to jump.
+    if (targetLine == null && typeof LinkDetect !== 'undefined') {
+      var parsed = LinkDetect.parseLineRef(filePath);
+      filePath = parsed.path;
+      targetLine = parsed.lineRef;
+    }
     _currentPaneId = paneId || _currentPaneId;
-    if (!_keepDirContext) _dirContext = null;
+    if (!keepDir) _dirContext = null;
     var body = _createModal(filePath);
 
     var qs = '?path=' + encodeURIComponent(filePath);
@@ -602,7 +751,7 @@ var FilePreview = (function () {
               if (info.isMarkdown) {
                 _renderMarkdown(body, cr.data.content, info.absPath);
               } else {
-                _renderCode(body, cr.data.content, cr.data.language);
+                _renderCode(body, cr.data.content, cr.data.language, targetLine);
               }
             })
             .catch(function (err) { _showError(body, err.message); });
@@ -843,7 +992,8 @@ var FilePreview = (function () {
     return -1;
   }
 
-  // Check if a position falls on a file path.
+  // Check if a position falls on a link. Returns the full match object
+  // { kind, text, href, lineRef, ... } (dispatch via activateHit) or null.
   // For mobile: pass term + viewportRow to enable wrapped line detection.
   function hitTest(lineText, col, term, viewportRow) {
     if (term && viewportRow !== undefined) {
@@ -854,7 +1004,7 @@ var FilePreview = (function () {
       var links = _findLinks(logical.text);
       for (var i = 0; i < links.length; i++) {
         if (strOffset >= links[i].startCol && strOffset < links[i].endCol) {
-          return links[i].text;
+          return links[i];
         }
       }
       return null;
@@ -863,11 +1013,28 @@ var FilePreview = (function () {
     var simpleLinks = _findLinks(lineText);
     for (var j = 0; j < simpleLinks.length; j++) {
       if (col >= simpleLinks[j].startCol && col < simpleLinks[j].endCol) {
-        return simpleLinks[j].text;
+        return simpleLinks[j];
       }
     }
     return null;
   }
 
-  return { registerLinkProvider: registerLinkProvider, openFile: openFile, openFromBuffer: openFromBuffer, close: close, hitTest: hitTest };
+  return {
+    registerLinkProvider: registerLinkProvider, openFile: openFile,
+    openFromBuffer: openFromBuffer, close: close, hitTest: hitTest,
+    activateHit: _activateLink,
+    // Test seam (no DOM): exercised by test/file-preview-links.test.js.
+    _test: {
+      getLogicalLine: _getLogicalLine,
+      strOffsetToTermPos: _logicalStrOffsetToTermPos,
+      findLinks: _findLinks,
+      buildLinkRange: function (logical, f) {
+        var start = _logicalStrOffsetToTermPos(logical.rows, f.startCol);
+        var end = _logicalStrOffsetToTermPos(logical.rows, f.endCol - 1);
+        return { start: start, end: { y: end.y, x: Math.max(end.x, start.x) } };
+      },
+    },
+  };
 })();
+
+if (typeof window !== 'undefined') window.FilePreview = FilePreview;

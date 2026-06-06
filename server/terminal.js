@@ -12,6 +12,74 @@ const PANE_ID_PATTERN = /^%\d+$/;
 const PING_INTERVAL_MS = 30_000;
 const REAP_INTERVAL_MS = 60_000;
 
+// Cap the carry-over buffer so a runaway/never-terminated OSC 52 can't grow
+// unbounded. tmux's set-clipboard payload caps well under this.
+const OSC52_MAX_PENDING = 1024 * 1024;
+
+/**
+ * Extract complete OSC 52 sequences from a stream chunk, supporting sequences
+ * that span multiple chunks.
+ *
+ * Recognises `\x1b]52;<Pc>;<base64>\x07` and `\x1b]52;<Pc>;<base64>\x1b\\`.
+ * Any tail starting with `\x1b]52;` but without its terminator is returned in
+ * `pending` so the next call can complete it. A partial OSC 52 (no terminator
+ * yet) is NOT forwarded to the client — that would render as garbage.
+ *
+ * @param {string} buf
+ * @returns {{ clipboard: string[], cleaned: string, pending: string }}
+ */
+export function extractOsc52(buf) {
+  const clipboard = [];
+  let cleaned = '';
+  let i = 0;
+  while (i < buf.length) {
+    const start = buf.indexOf('\x1b]52;', i);
+    if (start === -1) {
+      cleaned += buf.slice(i);
+      return { clipboard, cleaned, pending: '' };
+    }
+    cleaned += buf.slice(i, start);
+
+    // Find terminator: BEL (\x07) or ST (\x1b\\)
+    const bel = buf.indexOf('\x07', start + 5);
+    const st = buf.indexOf('\x1b\\', start + 5);
+    let end = -1;
+    let termLen = 0;
+    if (bel !== -1 && (st === -1 || bel < st)) {
+      end = bel;
+      termLen = 1;
+    } else if (st !== -1) {
+      end = st;
+      termLen = 2;
+    }
+
+    if (end === -1) {
+      // Incomplete: keep tail as pending for next chunk. If absurdly large,
+      // abandon and emit as output to avoid memory blow-up.
+      const tail = buf.slice(start);
+      if (tail.length > OSC52_MAX_PENDING) {
+        cleaned += tail;
+        return { clipboard, cleaned, pending: '' };
+      }
+      return { clipboard, cleaned, pending: tail };
+    }
+
+    const inner = buf.slice(start + 5, end);
+    const semi = inner.indexOf(';');
+    if (semi !== -1) {
+      const payload = inner.slice(semi + 1);
+      try {
+        const decoded = Buffer.from(payload, 'base64').toString('utf8');
+        if (decoded) clipboard.push(decoded);
+      } catch {
+        // ignore invalid base64
+      }
+    }
+    i = end + termLen;
+  }
+  return { clipboard, cleaned, pending: '' };
+}
+
 export class TerminalManager {
   /** @param {{ maxConnectionsPerPane?: number }} [options] */
   constructor(options = {}) {
@@ -87,7 +155,10 @@ export class TerminalManager {
       shellCmd = [
         `tmux select-pane -t '${paneId}' 2>/dev/null`,
         `[ "$(tmux display-message -p -t '${paneId}' '#{window_zoomed_flag}' 2>/dev/null)" = "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
-        `tmux attach-session -t '${paneId}'`,
+        // -d: detach other clients so the tmux window follows only this web
+        // client's size (window-size=latest otherwise lets a stale/narrow
+        // client shrink the shared window into a sliver — see CLAUDE.md).
+        `tmux attach-session -d -t '${paneId}'`,
       ].join('; ');
     } else {
       // Zoom mode: zoom the target pane so only it is visible, then attach.
@@ -98,7 +169,9 @@ export class TerminalManager {
         `_WZ=$(tmux display-message -p -t '${paneId}' '#{window_zoomed_flag}' 2>/dev/null)`,
         `trap '[ "$_WZ" != "1" ] && tmux resize-pane -Z -t "'${paneId}'" 2>/dev/null; exit 0' TERM HUP`,
         `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
-        `tmux attach-session -t '${paneId}'`,
+        // -d: detach other clients so this web client alone dictates the
+        // window size (see nozoom branch / CLAUDE.md for the why).
+        `tmux attach-session -d -t '${paneId}'`,
         `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
       ].join('; ');
     }
@@ -117,32 +190,27 @@ export class TerminalManager {
       killTimer: null,
       dataDisposable: null,
       alive: true,
+      osc52Pending: '', // carry-over for OSC 52 split across PTY chunks
     };
     this.connections.set(connectionId, conn);
     this.paneConnectionCount.set(paneId, currentCount + 1);
 
     // PTY → WebSocket
-    // Also intercept OSC 52 clipboard sequences from tmux
+    // Also intercept OSC 52 clipboard sequences from tmux. Long selections can
+    // span multiple PTY reads, so a stateful parser is needed instead of a
+    // single-chunk regex.
     conn.dataDisposable = term.onData((data) => {
       if (ws.readyState !== ws.OPEN) return;
 
-      // Detect OSC 52 sequence: \x1b]52;...;base64\x07 or \x1b]52;...;base64\x1b\\
-      const osc52Re = /\x1b\]52;([^;]*);([^\x07\x1b]*?)(?:\x07|\x1b\\)/g;
-      let match;
-      while ((match = osc52Re.exec(data)) !== null) {
-        try {
-          const decoded = Buffer.from(match[2], 'base64').toString('utf8');
-          if (decoded) {
-            ws.send(JSON.stringify({ type: 'clipboard', data: decoded }));
-          }
-        } catch {
-          // ignore invalid base64
-        }
-      }
+      const { clipboard, cleaned, pending } = extractOsc52(conn.osc52Pending + data);
+      conn.osc52Pending = pending;
 
-      // Strip OSC 52 sequences from terminal output to avoid rendering artifacts
-      const cleaned = data.replace(osc52Re, '');
-      ws.send(JSON.stringify({ type: 'output', data: cleaned }));
+      for (const text of clipboard) {
+        ws.send(JSON.stringify({ type: 'clipboard', data: text }));
+      }
+      if (cleaned.length > 0) {
+        ws.send(JSON.stringify({ type: 'output', data: cleaned }));
+      }
     });  // disposable stored in conn.dataDisposable
 
     // PTY exit → close WebSocket + cleanup
@@ -223,7 +291,11 @@ export class TerminalManager {
     const conn = this.connections.get(connectionId);
     if (conn) {
       if (conn.ws.readyState === conn.ws.OPEN || conn.ws.readyState === conn.ws.CONNECTING) {
-        conn.ws.close(1000, 'Connection destroyed');
+        // 1001 (going away), not 1000: destroy() only runs on graceful server
+        // shutdown/restart. The client must auto-reconnect afterwards, so this
+        // must stay distinct from the 1000 "PTY exited / detached by -d" path
+        // that the client treats as "taken over, stop retrying".
+        conn.ws.close(1001, 'Server shutting down');
       }
     }
     this._cleanup(connectionId);
