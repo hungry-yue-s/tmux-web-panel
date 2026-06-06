@@ -516,5 +516,20 @@ describe('StatusMonitor', () => {
       await monitor.poll();
       expect(tmux.ensurePaneBorderConfig).toHaveBeenCalledTimes(2);
     });
+
+    it('retries on the next poll when a previous ensure failed', async () => {
+      const sess = [{ name: 'main', windows: 1, attached: true, lastActivity: '0' }];
+      tmux.listSessions.mockResolvedValue(sess);
+      tmux.listWindows.mockResolvedValue([]);
+      tmux.listPaneCommands.mockResolvedValue([]);
+      tmux.ensurePaneBorderConfig
+        .mockRejectedValueOnce(new Error('transient'))
+        .mockResolvedValue(undefined);
+
+      await monitor.poll();         // attempt 1 fails -> flag must reset
+      await Promise.resolve();      // let the rejection's .catch run
+      await monitor.poll();         // attempt 2 (retry)
+      expect(tmux.ensurePaneBorderConfig).toHaveBeenCalledTimes(2);
+    });
   });
 });

@@ -55,7 +55,8 @@ export class StatusMonitor {
       if (sessions.length > 0) {
         if (!this._borderConfigEnsured) {
           this._borderConfigEnsured = true;
-          tmux.ensurePaneBorderConfig().catch(() => {});
+          // On a transient failure, re-arm so the next poll retries.
+          tmux.ensurePaneBorderConfig().catch(() => { this._borderConfigEnsured = false; });
         }
       } else {
         this._borderConfigEnsured = false;

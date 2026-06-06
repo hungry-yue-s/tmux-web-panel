@@ -201,6 +201,13 @@ flatPanesRouter.put('/:paneId/label', async (req, res) => {
       return res.status(400).json({ success: false, data: null, error: '"label" must be a string' });
     }
     const value = label ?? '';
+    if (value !== '' && !tmux.validatePaneLabel(value)) {
+      return res.status(400).json({
+        success: false,
+        data: null,
+        error: 'Invalid label (max 32 chars, no control characters)',
+      });
+    }
     await tmux.setPaneLabel(paneId, value);
     res.json({ success: true, data: { paneId, label: value }, error: null });
   } catch (err) {

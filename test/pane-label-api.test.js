@@ -4,6 +4,7 @@ import request from 'supertest';
 
 vi.mock('../server/tmux.js', () => ({
   validatePaneId: (id) => /^%\d+$/.test(id),
+  validatePaneLabel: (l) => typeof l === 'string' && l.length <= 32 && !/[\x00-\x1f]/.test(l),
   setPaneLabel: vi.fn(() => Promise.resolve()),
 }));
 const tmux = await import('../server/tmux.js');
@@ -43,6 +44,19 @@ describe('PUT /api/panes/:paneId/label', () => {
 
   it('rejects non-string label with 400', async () => {
     const res = await request(makeApp()).put(pane('%3')).send({ label: 123 });
+    expect(res.status).toBe(400);
+    expect(tmux.setPaneLabel).not.toHaveBeenCalled();
+  });
+
+  it('rejects over-long label with 400 (not 500) and does not echo input', async () => {
+    const res = await request(makeApp()).put(pane('%3')).send({ label: 'x'.repeat(40) });
+    expect(res.status).toBe(400);
+    expect(tmux.setPaneLabel).not.toHaveBeenCalled();
+    expect(res.body.error).not.toContain('xxxxx'); // static message, no raw input reflected
+  });
+
+  it('rejects control-char label with 400', async () => {
+    const res = await request(makeApp()).put(pane('%3')).send({ label: 'a' + String.fromCharCode(7) + 'b' });
     expect(res.status).toBe(400);
     expect(tmux.setPaneLabel).not.toHaveBeenCalled();
   });

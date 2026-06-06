@@ -345,12 +345,12 @@ export async function selectPane(paneId) {
  */
 export async function setPaneLabel(paneId, label) {
   requireValidPaneId(paneId);
-  if (label === '' || label == null) {
+  if (label == null || (typeof label === 'string' && label.trim() === '')) {
     await tmuxExec(['set-option', '-pu', '-t', paneId, '@pane_label']);
     return;
   }
   if (!validatePaneLabel(label)) {
-    throw new Error(`Invalid pane label: ${label}`);
+    throw new Error('Invalid pane label');
   }
   await tmuxExec(['set-option', '-p', '-t', paneId, '@pane_label', label]);
 }
