@@ -6,6 +6,7 @@ vi.mock('../server/tmux.js', () => ({
   listSessions: vi.fn(),
   listWindows: vi.fn(),
   listPaneCommands: vi.fn(),
+  ensurePaneBorderConfig: vi.fn(() => Promise.resolve()),
 }));
 
 // Import mocked module
@@ -27,6 +28,7 @@ describe('StatusMonitor', () => {
     tmux.listSessions.mockReset();
     tmux.listWindows.mockReset();
     tmux.listPaneCommands.mockReset();
+    tmux.ensurePaneBorderConfig.mockClear();
   });
 
   afterEach(() => {
@@ -494,6 +496,25 @@ describe('StatusMonitor', () => {
         .map(c => JSON.parse(c[0]))
         .filter(m => m.type === 'pane-cmd');
       expect(paneCmdMsgs.length).toBe(0);
+    });
+  });
+
+  describe('pane-border config ensure', () => {
+    it('ensures once while sessions persist, re-arms after empty', async () => {
+      const sess = [{ name: 'main', windows: 1, attached: true, lastActivity: '0' }];
+      tmux.listSessions.mockResolvedValue(sess);
+      tmux.listWindows.mockResolvedValue([]);
+      tmux.listPaneCommands.mockResolvedValue([]);
+
+      await monitor.poll();
+      await monitor.poll();
+      expect(tmux.ensurePaneBorderConfig).toHaveBeenCalledTimes(1);
+
+      tmux.listSessions.mockResolvedValue([]);
+      await monitor.poll();
+      tmux.listSessions.mockResolvedValue(sess);
+      await monitor.poll();
+      expect(tmux.ensurePaneBorderConfig).toHaveBeenCalledTimes(2);
     });
   });
 });

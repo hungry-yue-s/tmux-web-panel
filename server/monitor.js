@@ -17,6 +17,7 @@ export class StatusMonitor {
     this._portCache = new Map(); // paneId → { pid, ports, timestamp }
     this._lastPaneCmds = new Map(); // paneId → cmd (for pane-cmd broadcasts)
     this._notificationStore = options.notificationStore || null;
+    this._borderConfigEnsured = false;
   }
 
   start(intervalMs) {
@@ -48,6 +49,18 @@ export class StatusMonitor {
   async poll() {
     try {
       const sessions = await tmux.listSessions();
+
+      // Re-apply the global pane-border config once whenever a tmux server
+      // (re)appears — options are runtime-only and reset on tmux restart.
+      if (sessions.length > 0) {
+        if (!this._borderConfigEnsured) {
+          this._borderConfigEnsured = true;
+          tmux.ensurePaneBorderConfig().catch(() => {});
+        }
+      } else {
+        this._borderConfigEnsured = false;
+      }
+
       const sessionsWithWindows = await Promise.all(
         sessions.map(async (session) => {
           const windows = await tmux.listWindows(session.name);
