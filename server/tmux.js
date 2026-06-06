@@ -400,6 +400,20 @@ export async function capturePane(paneId, { escape = false } = {}) {
   return stdout;
 }
 
+// Border title shown by tmux on each pane's top border (pane-border-status top).
+// [label] only when @pane_label is set; the active pane is reversed for contrast.
+export const PANE_BORDER_FORMAT =
+  '#{?pane_active,#[reverse],} #{?#{@pane_label},[#{@pane_label}] ,}#{pane_index}:#{pane_current_command} #[default]';
+
+/**
+ * Globally enables the pane border title line so pane labels render.
+ * Idempotent and best-effort — throws if no tmux server; callers should catch.
+ */
+export async function ensurePaneBorderConfig() {
+  await tmuxExec(['set-option', '-g', 'pane-border-status', 'top']);
+  await tmuxExec(['set-option', '-g', 'pane-border-format', PANE_BORDER_FORMAT]);
+}
+
 // --- by-id helpers (use window_id @N — stable across renames/moves/renumbers) ---
 
 export async function renameWindowById(windowId, newName) {
