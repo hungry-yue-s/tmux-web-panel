@@ -8,6 +8,8 @@ import {
   parseWindows,
   parsePanes,
   parsePaneCommands,
+  validatePaneLabel,
+  setPaneLabel,
 } from '../server/tmux.js';
 
 describe('validateSessionName', () => {
@@ -58,6 +60,33 @@ describe('validatePaneId', () => {
     expect(validatePaneId('%abc')).toBe(false);
     expect(validatePaneId('')).toBe(false);
     expect(validatePaneId(null)).toBe(false);
+  });
+});
+
+describe('validatePaneLabel', () => {
+  it('accepts normal short labels (incl. Unicode) and empty', () => {
+    expect(validatePaneLabel('build')).toBe(true);
+    expect(validatePaneLabel('构建服务')).toBe(true);
+    expect(validatePaneLabel('')).toBe(true);
+  });
+  it('rejects control chars, unit-separator, newlines', () => {
+    expect(validatePaneLabel('a\x1fb')).toBe(false);
+    expect(validatePaneLabel('a\nb')).toBe(false);
+    expect(validatePaneLabel('a\x00b')).toBe(false);
+  });
+  it('rejects over-long and non-string', () => {
+    expect(validatePaneLabel('x'.repeat(33))).toBe(false);
+    expect(validatePaneLabel(123)).toBe(false);
+    expect(validatePaneLabel(null)).toBe(false);
+  });
+});
+
+describe('setPaneLabel', () => {
+  it('rejects invalid pane id', async () => {
+    await expect(setPaneLabel('bad', 'x')).rejects.toThrow(/Invalid pane ID/);
+  });
+  it('rejects invalid label', async () => {
+    await expect(setPaneLabel('%0', 'x'.repeat(40))).rejects.toThrow(/Invalid pane label/);
   });
 });
 

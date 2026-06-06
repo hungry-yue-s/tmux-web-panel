@@ -44,6 +44,19 @@ export function validatePaneId(id) {
   return PANE_ID_RE.test(id);
 }
 
+const PANE_LABEL_MAX_LEN = 32;
+
+/**
+ * Validates a user-supplied pane label. Stored as the tmux per-pane user
+ * option @pane_label. Disallows control chars (incl. FIELD_SEP \x1f and
+ * newlines) so it can't corrupt list-panes parsing.
+ */
+export function validatePaneLabel(label) {
+  if (typeof label !== 'string') return false;
+  if (label.length > PANE_LABEL_MAX_LEN) return false;
+  return !/[\x00-\x1f]/.test(label);
+}
+
 /**
  * Validates a tmux window index (non-negative integer string).
  */
@@ -324,6 +337,22 @@ export async function killPane(paneId) {
 export async function selectPane(paneId) {
   requireValidPaneId(paneId);
   await tmuxExec(['select-pane', '-t', paneId]);
+}
+
+/**
+ * Sets or clears a pane's custom label via the @pane_label user option.
+ * Empty/nullish label clears it. tmux redraws the pane border automatically.
+ */
+export async function setPaneLabel(paneId, label) {
+  requireValidPaneId(paneId);
+  if (label === '' || label == null) {
+    await tmuxExec(['set-option', '-pu', '-t', paneId, '@pane_label']);
+    return;
+  }
+  if (!validatePaneLabel(label)) {
+    throw new Error(`Invalid pane label: ${label}`);
+  }
+  await tmuxExec(['set-option', '-p', '-t', paneId, '@pane_label', label]);
 }
 
 export async function sendKeys(paneId, command) {
