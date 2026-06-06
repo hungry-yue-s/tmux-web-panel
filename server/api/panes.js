@@ -189,4 +189,23 @@ flatPanesRouter.post('/:paneId/resize', async (req, res) => {
   }
 });
 
+// PUT /api/panes/:paneId/label — set or clear a pane's custom label (@pane_label)
+flatPanesRouter.put('/:paneId/label', async (req, res) => {
+  try {
+    const { paneId } = req.params;
+    if (!tmux.validatePaneId(paneId)) {
+      return res.status(400).json({ success: false, data: null, error: 'Invalid pane ID' });
+    }
+    const { label } = req.body ?? {};
+    if (label != null && typeof label !== 'string') {
+      return res.status(400).json({ success: false, data: null, error: '"label" must be a string' });
+    }
+    const value = label ?? '';
+    await tmux.setPaneLabel(paneId, value);
+    res.json({ success: true, data: { paneId, label: value }, error: null });
+  } catch (err) {
+    res.status(500).json({ success: false, data: null, error: err.message });
+  }
+});
+
 export { nestedPanesRouter, flatPanesRouter };
