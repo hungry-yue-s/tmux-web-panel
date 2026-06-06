@@ -198,40 +198,49 @@ describe('pane context menu (label)', () => {
   });
 });
 
-describe('_promptSetPaneLabelById (header button entry)', () => {
+describe('_promptSetActivePaneLabel (header button targets the active pane)', () => {
   let dom;
   beforeEach(() => { dom = createEnv(); });
 
-  it('prefills the current label from state.panes and PUTs the new one', async () => {
-    let putArgs = null;
+  it('labels the ACTIVE pane, not the first one (split-mode regression)', async () => {
+    let putUrl = null;
     let promptVal = null;
-    dom.window.state = { panes: [{ id: '%5', label: '旧' }] };
-    dom.window.api = { put: (url, body) => { putArgs = { url, body }; return Promise.resolve({}); } };
-    dom.window.showPrompt = (opts) => { promptVal = opts.value; return Promise.resolve('前端'); };
+    const panes = [
+      { id: '%1', active: false, label: 'a' },
+      { id: '%2', active: true, label: '当前' },
+      { id: '%3', active: false, label: 'c' },
+    ];
+    dom.window.api = {
+      get: () => Promise.resolve({ success: true, data: panes }),
+      put: (url) => { putUrl = url; return Promise.resolve({}); },
+    };
+    dom.window.showPrompt = (opts) => { promptVal = opts.value; return Promise.resolve('新'); };
     dom.window.showAlert = () => {};
-    dom.window._promptSetPaneLabelById('%5');
+    dom.window._promptSetActivePaneLabel('main', 2);
     await new Promise((r) => setTimeout(r, 0));
-    expect(promptVal).toBe('旧');
-    expect(putArgs.url).toContain(encodeURIComponent('%5'));
-    expect(putArgs.body).toEqual({ label: '前端' });
-    expect(dom.window.state.panes[0].label).toBe('前端'); // in-memory sync
+    await new Promise((r) => setTimeout(r, 0));
+    expect(promptVal).toBe('当前');                       // prefilled from the active pane
+    expect(putUrl).toContain(encodeURIComponent('%2'));   // PUT to active pane, NOT %1
   });
 
-  it('falls back to empty label when the pane is not in state.panes', async () => {
-    let promptVal = '__unset__';
-    dom.window.state = { panes: [] };
-    dom.window.api = { put: () => Promise.resolve({}) };
-    dom.window.showPrompt = (opts) => { promptVal = opts.value; return Promise.resolve(null); };
-    dom.window._promptSetPaneLabelById('%9');
+  it('falls back to the first pane when none is flagged active', async () => {
+    let putUrl = null;
+    dom.window.api = {
+      get: () => Promise.resolve({ success: true, data: [{ id: '%7', active: false, label: '' }] }),
+      put: (url) => { putUrl = url; return Promise.resolve({}); },
+    };
+    dom.window.showPrompt = () => Promise.resolve('x');
+    dom.window.showAlert = () => {};
+    dom.window._promptSetActivePaneLabel('main', 1);
     await new Promise((r) => setTimeout(r, 0));
-    expect(promptVal).toBe('');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(putUrl).toContain(encodeURIComponent('%7'));
   });
 
-  it('does nothing without a pane id', () => {
+  it('does nothing without a session/window', () => {
     let called = false;
-    dom.window.state = { panes: [] };
-    dom.window.showPrompt = () => { called = true; return Promise.resolve(null); };
-    dom.window._promptSetPaneLabelById(null);
+    dom.window.api = { get: () => { called = true; return Promise.resolve({}); } };
+    dom.window._promptSetActivePaneLabel(null, null);
     expect(called).toBe(false);
   });
 });

@@ -232,18 +232,25 @@ function _promptSetPaneLabel(pane) {
     });
 }
 
-// Sets the label for a pane by id, resolving its current label from state.panes
-// (so the prompt prefills correctly). Used by the always-visible header button,
-// which works for single-pane and split modes where no pane pills are shown.
-function _promptSetPaneLabelById(paneId) {
-  if (!paneId) return;
-  var panes = (typeof state !== 'undefined' && state.panes) || [];
-  var pane = null;
-  for (var i = 0; i < panes.length; i++) {
-    if (panes[i].id === paneId) { pane = panes[i]; break; }
-  }
-  if (!pane) pane = { id: paneId, label: '' };
-  _promptSetPaneLabel(pane);
+// Labels the ACTIVE (focused) pane of a window. Resolves it fresh from the
+// server because state.currentPane is a tab-mode concept — in split mode it
+// just defaults to the first pane, so using it would mislabel the wrong pane.
+// The active pane is the one the user is focused on in both tab and split modes.
+function _promptSetActivePaneLabel(session, windowIndex) {
+  if (!session || windowIndex == null) return;
+  api.get('/api/sessions/' + encodeURIComponent(session) + '/windows/' + encodeURIComponent(windowIndex) + '/panes')
+    .then(function (res) {
+      var panes = (res && res.data) || [];
+      var pane = null;
+      for (var i = 0; i < panes.length; i++) {
+        if (panes[i].active) { pane = panes[i]; break; }
+      }
+      if (!pane) pane = panes[0];
+      if (pane) _promptSetPaneLabel(pane);
+    })
+    .catch(function (err) {
+      showAlert({ title: '设置标签失败', message: err.message });
+    });
 }
 
 function _confirmClosePane(paneId) {

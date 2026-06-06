@@ -1,4 +1,4 @@
-/* global Terminal, FitAddon, WebglAddon, Theme, Auth, api, state, navigate, escapeHtml, renderPaneLayout, renderPanePills, _promptSetPaneLabelById, FilePreview, LinkDetect */
+/* global Terminal, FitAddon, WebglAddon, Theme, Auth, api, state, navigate, escapeHtml, renderPaneLayout, renderPanePills, _promptSetActivePaneLabel, FilePreview, LinkDetect */
 
 // === Clipboard Helper ===
 
@@ -802,8 +802,8 @@ function renderTerminal(container) {
   // and split modes where no pane pills are shown).
   view.querySelector('.terminal-label-btn').addEventListener('click', function (e) {
     e.stopPropagation();
-    if (typeof _promptSetPaneLabelById === 'function') {
-      _promptSetPaneLabelById(state.currentPane);
+    if (typeof _promptSetActivePaneLabel === 'function') {
+      _promptSetActivePaneLabel(state.currentSession, state.currentWindow);
     }
   });
 
