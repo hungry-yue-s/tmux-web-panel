@@ -127,10 +127,12 @@ function _bindPaneMenu(el, pane, paneCount) {
     _showPaneMenu(x, y, pane, paneCount);
   }
   function start(e) {
+    // Only left mouse button arms the long-press; right-click goes via contextmenu.
+    if (e.type === 'mousedown' && e.button !== 0) return;
     fired = false;
     var t = e.touches && e.touches[0];
-    var x = t ? t.clientX : e.clientX;
-    var y = t ? t.clientY : e.clientY;
+    var x = t ? t.pageX : e.pageX;
+    var y = t ? t.pageY : e.pageY;
     timer = setTimeout(function () { open(x, y); }, 500);
   }
   function cancel() {
@@ -151,7 +153,7 @@ function _bindPaneMenu(el, pane, paneCount) {
   el.addEventListener('contextmenu', function (e) {
     e.preventDefault();
     e.stopPropagation();
-    open(e.clientX, e.clientY);
+    open(e.pageX, e.pageY);
   });
 }
 
@@ -191,11 +193,16 @@ function _showPaneMenu(x, y, pane, paneCount) {
     if (!item) return;
     var action = item.getAttribute('data-action');
     dismiss();
-    if (action === 'label') _promptSetPaneLabel(pane.id, pane.label || '');
+    if (action === 'label') _promptSetPaneLabel(pane);
     else if (action === 'close') _confirmClosePane(pane.id);
   });
 
   document.body.appendChild(menu);
+  // Clamp to the viewport so the menu never renders partly offscreen
+  // (mirrors windows.js / sessions.js context-menu behavior).
+  var rect = menu.getBoundingClientRect();
+  if (rect.right > window.innerWidth) menu.style.left = Math.max(0, x - rect.width) + 'px';
+  if (rect.bottom > window.innerHeight) menu.style.top = Math.max(0, y - rect.height) + 'px';
   // Defer the outside-click binding so the opening event doesn't dismiss it.
   setTimeout(function () {
     document.addEventListener('click', onDoc, true);
@@ -204,16 +211,21 @@ function _showPaneMenu(x, y, pane, paneCount) {
 }
 
 // Prompts for a label and PUTs it (empty clears). tmux redraws the border.
-function _promptSetPaneLabel(paneId, currentLabel) {
+function _promptSetPaneLabel(pane) {
   showPrompt({
     title: '设置窗格标签',
     placeholder: '标签（留空清除）',
-    value: currentLabel || '',
+    value: pane.label || '',
     confirmText: '保存',
   })
     .then(function (label) {
       if (label === null) return; // cancelled
-      return api.put('/api/panes/' + encodeURIComponent(paneId) + '/label', { label: label.trim() });
+      var trimmed = label.trim();
+      return api.put('/api/panes/' + encodeURIComponent(pane.id) + '/label', { label: trimmed })
+        .then(function () {
+          // Keep the in-memory pane in sync so reopening the menu prefills the new value.
+          pane.label = trimmed;
+        });
     })
     .catch(function (err) {
       showAlert({ title: '设置标签失败', message: err.message });

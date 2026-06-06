@@ -179,12 +179,13 @@ describe('pane context menu (label)', () => {
     expect(actions).not.toContain('close');
   });
 
-  it('clicking 设置标签 prompts and PUTs the trimmed label', async () => {
+  it('clicking 设置标签 PUTs the trimmed label and updates the pane in memory', async () => {
     let putArgs = null;
     dom.window.api = { put: (url, body) => { putArgs = { url, body }; return Promise.resolve({ success: true }); } };
     dom.window.showPrompt = () => Promise.resolve('  构建  ');
     dom.window.showAlert = () => {};
-    dom.window.renderPanePills(container, samplePanes, null, null);
+    const panes = [{ id: 10, index: 0, command: 'zsh', label: '' }];
+    dom.window.renderPanePills(container, panes, null, null);
     rightClick(container.querySelector('.pane-pill'));
     dom.window.document
       .querySelector('.pane-context-menu .context-menu-item[data-action="label"]')
@@ -193,5 +194,6 @@ describe('pane context menu (label)', () => {
     expect(putArgs.url).toContain('/api/panes/');
     expect(putArgs.url).toContain('/label');
     expect(putArgs.body).toEqual({ label: '构建' });
+    expect(panes[0].label).toBe('构建'); // in-memory sync so re-open prefills new value
   });
 });
