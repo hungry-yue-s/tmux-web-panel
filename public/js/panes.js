@@ -75,8 +75,8 @@ function renderPaneLayout(container, panes, activePaneId, onPaneClick) {
       }
     });
 
-    // Long-press to close pane
-    _bindLongPressClose(box, p.id, panes.length);
+    // Long-press / right-click for pane menu (set label, close)
+    _bindPaneMenu(box, p, panes.length);
 
     layout.appendChild(box);
   });
@@ -107,8 +107,8 @@ function renderPanePills(container, panes, activePaneId, onPaneClick) {
       }
     });
 
-    // Long-press to close pane
-    _bindLongPressClose(pill, p.id, panes.length);
+    // Long-press / right-click for pane menu (set label, close)
+    _bindPaneMenu(pill, p, panes.length);
 
     row.appendChild(pill);
   });
@@ -116,28 +116,28 @@ function renderPanePills(container, panes, activePaneId, onPaneClick) {
   container.appendChild(row);
 }
 
-// Long-press (500ms) on a pane element to close it.
-// Only works when there are 2+ panes (can't close the last one).
-function _bindLongPressClose(el, paneId, paneCount) {
-  if (paneCount <= 1) return; // don't allow closing the only pane
-
+// Long-press (500ms) or right-click a pane element to open its menu
+// (set label / close pane). Works for any pane count — "close" is gated inside.
+function _bindPaneMenu(el, pane, paneCount) {
   var timer = null;
   var fired = false;
 
+  function open(x, y) {
+    fired = true;
+    _showPaneMenu(x, y, pane, paneCount);
+  }
   function start(e) {
     fired = false;
-    timer = setTimeout(function () {
-      fired = true;
-      _confirmClosePane(paneId);
-    }, 500);
+    var t = e.touches && e.touches[0];
+    var x = t ? t.clientX : e.clientX;
+    var y = t ? t.clientY : e.clientY;
+    timer = setTimeout(function () { open(x, y); }, 500);
   }
-
   function cancel() {
     if (timer) { clearTimeout(timer); timer = null; }
   }
-
   function preventClick(e) {
-    if (fired) { e.stopImmediatePropagation(); e.preventDefault(); }
+    if (fired) { e.stopImmediatePropagation(); e.preventDefault(); fired = false; }
   }
 
   el.addEventListener('mousedown', start);
@@ -148,6 +148,76 @@ function _bindLongPressClose(el, paneId, paneCount) {
   el.addEventListener('touchmove', cancel);
   // Prevent the normal click from firing after long-press
   el.addEventListener('click', preventClick, true);
+  el.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    open(e.clientX, e.clientY);
+  });
+}
+
+// Builds the per-pane action menu (reuses .context-menu styles).
+function _showPaneMenu(x, y, pane, paneCount) {
+  var existing = document.querySelector('.pane-context-menu');
+  if (existing) existing.remove();
+
+  var menu = document.createElement('div');
+  menu.className = 'context-menu pane-context-menu';
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+
+  var labelItem = document.createElement('div');
+  labelItem.className = 'context-menu-item';
+  labelItem.setAttribute('data-action', 'label');
+  labelItem.textContent = '✏ 设置标签';
+  menu.appendChild(labelItem);
+
+  if (paneCount > 1) {
+    var closeItem = document.createElement('div');
+    closeItem.className = 'context-menu-item context-menu-item-danger';
+    closeItem.setAttribute('data-action', 'close');
+    closeItem.textContent = '✕ 关闭窗格';
+    menu.appendChild(closeItem);
+  }
+
+  function dismiss() {
+    menu.remove();
+    document.removeEventListener('click', onDoc, true);
+    document.removeEventListener('touchstart', onDoc, true);
+  }
+  function onDoc(e) { if (!menu.contains(e.target)) dismiss(); }
+
+  menu.addEventListener('click', function (e) {
+    var item = e.target.closest('.context-menu-item');
+    if (!item) return;
+    var action = item.getAttribute('data-action');
+    dismiss();
+    if (action === 'label') _promptSetPaneLabel(pane.id, pane.label || '');
+    else if (action === 'close') _confirmClosePane(pane.id);
+  });
+
+  document.body.appendChild(menu);
+  // Defer the outside-click binding so the opening event doesn't dismiss it.
+  setTimeout(function () {
+    document.addEventListener('click', onDoc, true);
+    document.addEventListener('touchstart', onDoc, true);
+  }, 0);
+}
+
+// Prompts for a label and PUTs it (empty clears). tmux redraws the border.
+function _promptSetPaneLabel(paneId, currentLabel) {
+  showPrompt({
+    title: '设置窗格标签',
+    placeholder: '标签（留空清除）',
+    value: currentLabel || '',
+    confirmText: '保存',
+  })
+    .then(function (label) {
+      if (label === null) return; // cancelled
+      return api.put('/api/panes/' + encodeURIComponent(paneId) + '/label', { label: label.trim() });
+    })
+    .catch(function (err) {
+      showAlert({ title: '设置标签失败', message: err.message });
+    });
 }
 
 function _confirmClosePane(paneId) {

@@ -147,3 +147,51 @@ describe('renderPanePills', () => {
     expect(container.querySelector('.pane-pills')).toBeNull();
   });
 });
+
+describe('pane context menu (label)', () => {
+  let dom, container;
+  beforeEach(() => {
+    dom = createEnv();
+    container = dom.window.document.getElementById('c');
+  });
+
+  function rightClick(el) {
+    el.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }));
+  }
+
+  it('opens a menu with 设置标签 (+ 关闭窗格 when >1 pane) on right-click', () => {
+    dom.window.renderPanePills(container, samplePanes, null, null);
+    rightClick(container.querySelector('.pane-pill'));
+    const menu = dom.window.document.querySelector('.pane-context-menu');
+    expect(menu).not.toBeNull();
+    const actions = Array.from(menu.querySelectorAll('.context-menu-item')).map((i) => i.getAttribute('data-action'));
+    expect(actions).toContain('label');
+    expect(actions).toContain('close');
+  });
+
+  it('omits 关闭窗格 with a single pane', () => {
+    dom.window.renderPanePills(container, [samplePanes[0]], null, null);
+    rightClick(container.querySelector('.pane-pill'));
+    const actions = Array.from(
+      dom.window.document.querySelectorAll('.pane-context-menu .context-menu-item')
+    ).map((i) => i.getAttribute('data-action'));
+    expect(actions).toContain('label');
+    expect(actions).not.toContain('close');
+  });
+
+  it('clicking 设置标签 prompts and PUTs the trimmed label', async () => {
+    let putArgs = null;
+    dom.window.api = { put: (url, body) => { putArgs = { url, body }; return Promise.resolve({ success: true }); } };
+    dom.window.showPrompt = () => Promise.resolve('  构建  ');
+    dom.window.showAlert = () => {};
+    dom.window.renderPanePills(container, samplePanes, null, null);
+    rightClick(container.querySelector('.pane-pill'));
+    dom.window.document
+      .querySelector('.pane-context-menu .context-menu-item[data-action="label"]')
+      .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(putArgs.url).toContain('/api/panes/');
+    expect(putArgs.url).toContain('/label');
+    expect(putArgs.body).toEqual({ label: '构建' });
+  });
+});
