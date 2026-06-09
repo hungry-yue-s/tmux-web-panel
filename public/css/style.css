@@ -3561,6 +3561,37 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   vertical-align: top;
 }
 
+/* Per-column filter (Excel-style) */
+.fp-colfilter-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; margin-left: 6px; font-size: 0.95em; line-height: 1;
+  min-width: 18px; height: 18px; padding: 0 3px; border-radius: 4px;
+  opacity: 0.55; user-select: none; color: currentColor; vertical-align: middle;
+}
+.fp-colfilter-btn:hover { opacity: 1; background: var(--bg-hover); }
+.fp-colfilter-btn.active { opacity: 1; color: var(--accent-blue); }
+.fp-colfilter-pop {
+  position: fixed; z-index: 10000; width: 240px; padding: 6px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+.fp-colfilter-search {
+  width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 4px 6px;
+  background: var(--bg-primary); border: 1px solid var(--border-subtle);
+  border-radius: 4px; color: var(--text-primary); font-size: 0.82rem;
+}
+.fp-colfilter-list { max-height: 260px; overflow: auto; }
+.fp-colfilter-item {
+  display: flex; align-items: center; gap: 6px; padding: 3px 4px;
+  font-size: 0.82rem; color: var(--text-primary); cursor: pointer; white-space: nowrap;
+}
+.fp-colfilter-item:hover { background: var(--bg-hover); }
+.fp-colfilter-item input { flex: 0 0 auto; }
+.fp-colfilter-all {
+  border-bottom: 1px solid var(--border-subtle); margin-bottom: 4px;
+  padding-bottom: 5px; font-weight: 600;
+}
+
 /* Back button + mode toggles */
 .fp-btn-back { display: none; }
 .fp-overlay.fp-has-back .fp-btn-back { display: inline-block; }

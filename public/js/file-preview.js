@@ -236,6 +236,13 @@ var FilePreview = (function () {
       // xlsx tables) so the standalone tab carries the same theme as the modal.
       var rendered = _overlay && _overlay.querySelector('.fp-md-wrap, .fp-code-wrap, .fp-xlsx-wrap');
       if (rendered) {
+        // Strip interactive filter buttons (their handlers don't serialize);
+        // keep the current row visibility so the tab matches what's on screen.
+        var capture = rendered;
+        if (rendered.querySelector && rendered.querySelector('.fp-colfilter-btn')) {
+          capture = rendered.cloneNode(true);
+          capture.querySelectorAll('.fp-colfilter-btn').forEach(function (b) { b.remove(); });
+        }
         var title = _escapeHtml(_currentFile.filename || 'preview');
         var doc = '<!DOCTYPE html><html><head><meta charset="utf-8">'
           + '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -244,7 +251,7 @@ var FilePreview = (function () {
           + '<link rel="stylesheet" href="' + CDN.katexCss + '">'
           + '<style>' + _standaloneCss() + '</style></head><body>'
           + _fullscreenWidget()
-          + rendered.outerHTML
+          + capture.outerHTML
           + _xlsxTabScript() + '</body></html>';
         var htmlBlob = new Blob([doc], { type: 'text/html;charset=utf-8' });
         window.open(URL.createObjectURL(htmlBlob), '_blank');
@@ -516,6 +523,7 @@ var FilePreview = (function () {
         if (sheets.length > 1) wrap.appendChild(tabs);
         wrap.appendChild(panes);
         body.appendChild(wrap);
+        wrap.querySelectorAll('.fp-xlsx-table').forEach(_attachColumnFilters);
       })
       .catch(function (err) {
         _showError(body, '表格解析失败: ' + (err && err.message ? err.message : err));
@@ -600,6 +608,132 @@ var FilePreview = (function () {
       wrap.appendChild(note);
     }
     body.appendChild(wrap);
+    _attachColumnFilters(wrap.querySelector('.fp-xlsx-table'));
+  }
+
+  // --- Excel-style per-column filter (xlsx & csv flat tables) ---
+
+  function _attachColumnFilters(table) {
+    if (!table || !table.tBodies || !table.tBodies[0]) return;
+    // Merged cells break column/row indexing — skip those tables.
+    if (table.querySelector('[rowspan],[colspan]')) return;
+    var rows = Array.prototype.slice.call(table.tBodies[0].rows);
+    if (rows.length < 2) return;
+    var header = rows[0];
+    var dataRows = rows.slice(1);
+    var filters = {}; // colIndex -> Set(allowed values); absent = no filter
+    var openPop = null;
+
+    function applyFilters() {
+      for (var i = 0; i < dataRows.length; i++) {
+        var show = true, row = dataRows[i];
+        for (var col in filters) {
+          var cell = row.cells[col];
+          if (!filters[col].has(cell ? cell.textContent : '')) { show = false; break; }
+        }
+        row.style.display = show ? '' : 'none';
+      }
+    }
+
+    function distinct(col) {
+      var seen = {}, out = [];
+      for (var i = 0; i < dataRows.length; i++) {
+        var cell = dataRows[i].cells[col];
+        var v = cell ? cell.textContent : '';
+        if (!Object.prototype.hasOwnProperty.call(seen, v)) { seen[v] = 1; out.push(v); }
+      }
+      return out.sort();
+    }
+
+    function closePop() {
+      if (!openPop) return;
+      openPop.remove(); openPop = null;
+      document.removeEventListener('mousedown', onDoc, true);
+    }
+    function onDoc(e) {
+      if (openPop && !openPop.contains(e.target) && !e.target.classList.contains('fp-colfilter-btn')) closePop();
+    }
+
+    function openFilter(col, btn) {
+      var reopen = openPop && openPop._col === col;
+      closePop();
+      if (reopen) return; // clicking the same button toggles it closed
+
+      var values = distinct(col);
+      var allowed = filters[col] || null; // null = all selected
+      var pop = document.createElement('div');
+      pop.className = 'fp-colfilter-pop';
+      pop._col = col;
+
+      var search = document.createElement('input');
+      search.className = 'fp-colfilter-search';
+      search.placeholder = '搜索…';
+      pop.appendChild(search);
+
+      var list = document.createElement('div');
+      list.className = 'fp-colfilter-list';
+      pop.appendChild(list);
+
+      var allCb = document.createElement('input'); allCb.type = 'checkbox'; allCb.checked = !allowed;
+      var allLabel = document.createElement('label');
+      allLabel.className = 'fp-colfilter-item fp-colfilter-all';
+      allLabel.appendChild(allCb); allLabel.appendChild(document.createTextNode('（全选）'));
+      list.appendChild(allLabel);
+
+      var itemCbs = [];
+      values.forEach(function (v) {
+        var cb = document.createElement('input'); cb.type = 'checkbox';
+        cb.checked = !allowed || allowed.has(v); cb.value = v;
+        var label = document.createElement('label');
+        label.className = 'fp-colfilter-item';
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(v === '' ? '（空）' : v));
+        list.appendChild(label);
+        itemCbs.push(cb);
+      });
+
+      function commit() {
+        var checked = itemCbs.filter(function (c) { return c.checked; });
+        if (checked.length === itemCbs.length) { delete filters[col]; btn.classList.remove('active'); }
+        else { filters[col] = new Set(checked.map(function (c) { return c.value; })); btn.classList.add('active'); }
+        applyFilters();
+      }
+      itemCbs.forEach(function (c) {
+        c.addEventListener('change', function () {
+          allCb.checked = itemCbs.every(function (x) { return x.checked; });
+          commit();
+        });
+      });
+      allCb.addEventListener('change', function () {
+        itemCbs.forEach(function (c) { if (c.parentNode.style.display !== 'none') c.checked = allCb.checked; });
+        commit();
+      });
+      search.addEventListener('input', function () {
+        var q = search.value.toLowerCase();
+        itemCbs.forEach(function (c) {
+          c.parentNode.style.display = c.value.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+        });
+      });
+
+      document.body.appendChild(pop);
+      var r = btn.getBoundingClientRect();
+      pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) + 'px';
+      pop.style.top = Math.min(r.bottom + 2, window.innerHeight - pop.offsetHeight - 8) + 'px';
+      openPop = pop;
+      setTimeout(function () { document.addEventListener('mousedown', onDoc, true); }, 0);
+      search.focus();
+    }
+
+    for (var c = 0; c < header.cells.length; c++) {
+      (function (col) {
+        var btn = document.createElement('span');
+        btn.className = 'fp-colfilter-btn';
+        btn.textContent = '▾';
+        btn.title = '筛选此列';
+        btn.addEventListener('click', function (e) { e.stopPropagation(); openFilter(col, btn); });
+        header.cells[col].appendChild(btn);
+      })(c);
+    }
   }
 
   function _renderCode(body, content, language, targetLine) {
