@@ -46,6 +46,7 @@ var FilePreview = (function () {
     katexJs: 'https://unpkg.com/katex@0.16.21/dist/katex.min.js',
     markdownItKatex: 'https://unpkg.com/@iktakahiro/markdown-it-katex@4.0.1/dist/markdown-it-katex.min.js',
     mermaid: 'https://unpkg.com/mermaid@11.6.0/dist/mermaid.min.js',
+    exceljs: 'https://unpkg.com/exceljs@4.4.0/dist/exceljs.min.js',
   };
 
   // --- Modal ---
@@ -180,6 +181,13 @@ var FilePreview = (function () {
       '.fp-md-wrap blockquote{border-left:3px solid var(--accent-blue);margin:1em 0;padding:4px 16px;color:var(--text-muted);}',
       '.fp-md-wrap a{color:var(--accent-blue);}',
       '.fp-md-wrap .katex-display{overflow-x:auto;padding:4px 0;}',
+      '.fp-xlsx-wrap{min-height:100vh;}',
+      '.fp-xlsx-tabs{display:flex;gap:2px;padding:6px 8px 0;overflow-x:auto;border-bottom:1px solid var(--border-subtle);background:var(--bg-primary);position:sticky;top:0;}',
+      '.fp-xlsx-tab{flex:0 0 auto;padding:5px 12px;border:1px solid var(--border-subtle);border-bottom:none;border-radius:6px 6px 0 0;cursor:pointer;background:transparent;color:var(--text-muted);font-size:0.82rem;white-space:nowrap;}',
+      '.fp-xlsx-tab.active{color:var(--text-primary);background:var(--bg-card);}',
+      '.fp-xlsx-pane{display:none;}.fp-xlsx-pane.active{display:block;}',
+      '.fp-xlsx-table{border-collapse:collapse;font-size:0.82rem;background:var(--bg-card);color:var(--text-primary);}',
+      '.fp-xlsx-table td{border:1px solid var(--border-subtle);padding:3px 8px;white-space:nowrap;max-width:480px;overflow:hidden;text-overflow:ellipsis;vertical-align:top;}',
       '.fp-fs-btn{position:fixed;top:12px;right:12px;z-index:9999;width:34px;height:34px;',
       'display:flex;align-items:center;justify-content:center;font-size:16px;line-height:1;',
       'background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-subtle);',
@@ -201,6 +209,20 @@ var FilePreview = (function () {
       + 'document.addEventListener("fullscreenchange",sync);})();<\/script>';
   }
 
+  // Re-wire xlsx sheet tabs in the standalone tab — the modal's addEventListener
+  // handlers don't survive outerHTML serialization, so delegate by index.
+  function _xlsxTabScript() {
+    return '<script>document.addEventListener("click",function(e){'
+      + 'var t=e.target.closest&&e.target.closest(".fp-xlsx-tab");if(!t)return;'
+      + 'var w=t.closest(".fp-xlsx-wrap");if(!w)return;'
+      + 'var tabs=w.querySelectorAll(".fp-xlsx-tab"),panes=w.querySelectorAll(".fp-xlsx-pane");'
+      + 'var i=Array.prototype.indexOf.call(tabs,t);'
+      + 'for(var k=0;k<tabs.length;k++){tabs[k].classList.remove("active");}'
+      + 'for(var j=0;j<panes.length;j++){panes[j].classList.remove("active");}'
+      + 't.classList.add("active");if(panes[i])panes[i].classList.add("active");'
+      + '});<\/script>';
+  }
+
   function _escapeHtml(s) {
     return String(s).replace(/[&<>"]/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
@@ -209,10 +231,10 @@ var FilePreview = (function () {
 
   function _openNewTab() {
     if (!_currentFile || _currentFile.isDirectory) return;
-    if (_currentFile.isText || _currentFile.isMarkdown) {
-      // Reuse the already-rendered preview (markdown HTML / highlighted code)
-      // so the standalone tab carries the same theme as the modal.
-      var rendered = _overlay && _overlay.querySelector('.fp-md-wrap, .fp-code-wrap');
+    if (_currentFile.isText || _currentFile.isMarkdown || _currentFile.isXlsx) {
+      // Reuse the already-rendered preview (markdown HTML / highlighted code /
+      // xlsx tables) so the standalone tab carries the same theme as the modal.
+      var rendered = _overlay && _overlay.querySelector('.fp-md-wrap, .fp-code-wrap, .fp-xlsx-wrap');
       if (rendered) {
         var title = _escapeHtml(_currentFile.filename || 'preview');
         var doc = '<!DOCTYPE html><html><head><meta charset="utf-8">'
@@ -222,12 +244,15 @@ var FilePreview = (function () {
           + '<link rel="stylesheet" href="' + CDN.katexCss + '">'
           + '<style>' + _standaloneCss() + '</style></head><body>'
           + _fullscreenWidget()
-          + rendered.outerHTML + '</body></html>';
+          + rendered.outerHTML
+          + _xlsxTabScript() + '</body></html>';
         var htmlBlob = new Blob([doc], { type: 'text/html;charset=utf-8' });
         window.open(URL.createObjectURL(htmlBlob), '_blank');
         return;
       }
-      // Not rendered yet — fall back to raw text (still UTF-8 to avoid 乱码).
+      // Not rendered yet — xlsx has no text content, hand off the raw file.
+      if (_currentFile.isXlsx) { window.open(_currentFile.rawUrl, '_blank'); return; }
+      // Otherwise fall back to raw text (still UTF-8 to avoid 乱码).
       var blob = new Blob([_currentFile.rawContent || ''], { type: 'text/plain;charset=utf-8' });
       window.open(URL.createObjectURL(blob), '_blank');
     } else {
@@ -327,6 +352,253 @@ var FilePreview = (function () {
     iframe.src = url;
     iframe.title = 'PDF Preview';
     wrap.appendChild(iframe);
+    body.appendChild(wrap);
+  }
+
+  // --- xlsx (ExcelJS → styled HTML tables) ---
+
+  function _argbToCss(argb) {
+    // ExcelJS colors are 'AARRGGBB'. Theme/indexed colors lack argb → skip.
+    if (!argb || typeof argb !== 'string' || argb.length < 6) return null;
+    var hex = argb.length === 8 ? argb.slice(2) : argb;
+    if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
+    return '#' + hex;
+  }
+
+  function _xlsxColStyle(width) {
+    // ExcelJS width ≈ character units; ~7px per char is a decent approximation.
+    if (!width || !isFinite(width)) return '';
+    return ' style="width:' + Math.round(width * 7) + 'px"';
+  }
+
+  // Pick black/white text for a given background so a fill never hides its text.
+  function _contrastText(hex) {
+    var r = parseInt(hex.slice(1, 3), 16);
+    var g = parseInt(hex.slice(3, 5), 16);
+    var b = parseInt(hex.slice(5, 7), 16);
+    var lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return lum > 0.55 ? '#1f2328' : '#f5f5f5';
+  }
+
+  function _xlsxCellStyle(cell) {
+    var s = [];
+    var f = cell.font || {};
+    if (f.bold) s.push('font-weight:600');
+    if (f.italic) s.push('font-style:italic');
+    if (f.underline) s.push('text-decoration:underline');
+    if (f.size) s.push('font-size:' + f.size + 'px');
+    var fill = cell.fill;
+    var bg = (fill && fill.type === 'pattern' && fill.fgColor)
+      ? _argbToCss(fill.fgColor.argb) : null;
+    if (bg) s.push('background:' + bg);
+    var fc = f.color && _argbToCss(f.color.argb);
+    if (fc) {
+      s.push('color:' + fc);
+    } else if (bg) {
+      // Cell has a fill but no explicit font color (Excel "auto" = black on a
+      // white sheet). On our table the fill could be light or dark, so derive a
+      // contrasting color from its luminance instead of inheriting the default.
+      s.push('color:' + _contrastText(bg));
+    }
+    var a = cell.alignment || {};
+    if (a.horizontal) s.push('text-align:' + a.horizontal);
+    if (a.vertical) s.push('vertical-align:' + (a.vertical === 'middle' ? 'middle' : a.vertical));
+    if (a.wrapText) s.push('white-space:normal');
+    return s.length ? ' style="' + s.join(';') + '"' : '';
+  }
+
+  // Build a lookup of merged ranges so we emit rowspan/colspan on the
+  // top-left cell and skip the cells it covers.
+  function _xlsxMerges(ws) {
+    var masters = {}; // "r,c" -> {rowspan, colspan}
+    var covered = {}; // "r,c" -> true (non-master cells inside a merge)
+    var ranges = (ws.model && ws.model.merges) || [];
+    ranges.forEach(function (range) {
+      var m = /^([A-Z]+)(\d+):([A-Z]+)(\d+)$/.exec(range);
+      if (!m) return;
+      var c1 = _colToNum(m[1]), r1 = +m[2], c2 = _colToNum(m[3]), r2 = +m[4];
+      masters[r1 + ',' + c1] = { rowspan: r2 - r1 + 1, colspan: c2 - c1 + 1 };
+      for (var r = r1; r <= r2; r++) {
+        for (var c = c1; c <= c2; c++) {
+          if (r === r1 && c === c1) continue;
+          covered[r + ',' + c] = true;
+        }
+      }
+    });
+    return { masters: masters, covered: covered };
+  }
+
+  function _colToNum(letters) {
+    var n = 0;
+    for (var i = 0; i < letters.length; i++) {
+      n = n * 26 + (letters.charCodeAt(i) - 64);
+    }
+    return n;
+  }
+
+  function _xlsxSheetTable(ws) {
+    var merges = _xlsxMerges(ws);
+    var colCount = ws.actualColumnCount || ws.columnCount || 0;
+    var html = '<table class="fp-xlsx-table"><colgroup>';
+    for (var c = 1; c <= colCount; c++) {
+      var col = ws.getColumn(c);
+      html += '<col' + _xlsxColStyle(col && col.width) + '>';
+    }
+    html += '</colgroup><tbody>';
+    var rowCount = ws.actualRowCount || ws.rowCount || 0;
+    for (var r = 1; r <= rowCount; r++) {
+      var row = ws.getRow(r);
+      html += '<tr>';
+      for (var cc = 1; cc <= colCount; cc++) {
+        var key = r + ',' + cc;
+        if (merges.covered[key]) continue;
+        var cell = row.getCell(cc);
+        var span = merges.masters[key];
+        var attrs = _xlsxCellStyle(cell);
+        if (span) {
+          if (span.rowspan > 1) attrs += ' rowspan="' + span.rowspan + '"';
+          if (span.colspan > 1) attrs += ' colspan="' + span.colspan + '"';
+        }
+        var text = cell.text != null ? String(cell.text) : '';
+        html += '<td' + attrs + '>' + _escapeHtml(text) + '</td>';
+      }
+      html += '</tr>';
+    }
+    return html + '</tbody></table>';
+  }
+
+  function _renderXlsx(body, rawUrl) {
+    body.innerHTML = '<div class="fp-loading">Loading spreadsheet…</div>';
+    var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
+    Promise.all([
+      _loadScript(CDN.exceljs),
+      fetch(rawUrl, { headers: headers }).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.arrayBuffer();
+      }),
+    ])
+      .then(function (results) {
+        var buf = results[1];
+        var wb = new window.ExcelJS.Workbook();
+        return wb.xlsx.load(buf);
+      })
+      .then(function (wb) {
+        var sheets = [];
+        wb.eachSheet(function (ws) { sheets.push(ws); });
+        if (!sheets.length) { _showError(body, '空工作簿'); return; }
+
+        body.innerHTML = '';
+        var wrap = document.createElement('div');
+        wrap.className = 'fp-xlsx-wrap';
+
+        var tabs = document.createElement('div');
+        tabs.className = 'fp-xlsx-tabs';
+        var panes = document.createElement('div');
+        panes.className = 'fp-xlsx-panes';
+
+        sheets.forEach(function (ws, i) {
+          var tab = document.createElement('button');
+          tab.className = 'fp-xlsx-tab' + (i === 0 ? ' active' : '');
+          tab.textContent = ws.name || ('Sheet' + (i + 1));
+          var pane = document.createElement('div');
+          pane.className = 'fp-xlsx-pane' + (i === 0 ? ' active' : '');
+          pane.innerHTML = _xlsxSheetTable(ws);
+          tab.addEventListener('click', function () {
+            tabs.querySelectorAll('.fp-xlsx-tab').forEach(function (t) { t.classList.remove('active'); });
+            panes.querySelectorAll('.fp-xlsx-pane').forEach(function (p) { p.classList.remove('active'); });
+            tab.classList.add('active');
+            pane.classList.add('active');
+          });
+          tabs.appendChild(tab);
+          panes.appendChild(pane);
+        });
+
+        if (sheets.length > 1) wrap.appendChild(tabs);
+        wrap.appendChild(panes);
+        body.appendChild(wrap);
+      })
+      .catch(function (err) {
+        _showError(body, '表格解析失败: ' + (err && err.message ? err.message : err));
+      });
+  }
+
+  // --- csv / tsv (parsed → table, reusing the xlsx table styling) ---
+
+  function _isCsvPath(p) { return /\.(csv|tsv)$/i.test(p || ''); }
+
+  function _csvDelim(absPath, text) {
+    if (/\.tsv$/i.test(absPath)) return '\t';
+    var first = (text.split('\n', 1)[0] || '');
+    var cand = [',', ';', '\t'];
+    var best = ',', bestN = -1;
+    cand.forEach(function (d) {
+      var n = first.split(d).length - 1;
+      if (n > bestN) { bestN = n; best = d; }
+    });
+    return best;
+  }
+
+  // RFC 4180: handles quoted fields, escaped quotes (""), and newlines/delims
+  // inside quotes.
+  function _parseCsv(text, delim) {
+    var rows = [], row = [], field = '', inQ = false, i = 0, n = text.length;
+    while (i < n) {
+      var c = text.charAt(i);
+      if (inQ) {
+        if (c === '"') {
+          if (text.charAt(i + 1) === '"') { field += '"'; i += 2; continue; }
+          inQ = false; i++; continue;
+        }
+        field += c; i++; continue;
+      }
+      if (c === '"') { inQ = true; i++; continue; }
+      if (c === delim) { row.push(field); field = ''; i++; continue; }
+      if (c === '\r') { i++; continue; }
+      if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; i++; continue; }
+      field += c; i++;
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    return rows;
+  }
+
+  function _renderCsv(body, content, absPath) {
+    var rows = _parseCsv(content, _csvDelim(absPath, content));
+    // Drop a trailing blank row from a final newline.
+    if (rows.length && rows[rows.length - 1].length === 1 && rows[rows.length - 1][0] === '') rows.pop();
+    if (!rows.length) { _renderCode(body, content, 'plaintext'); return; }
+
+    var MAX_ROWS = 2000;
+    var truncated = rows.length > MAX_ROWS;
+    if (truncated) rows = rows.slice(0, MAX_ROWS);
+
+    var html = '<table class="fp-xlsx-table"><tbody>';
+    for (var r = 0; r < rows.length; r++) {
+      html += '<tr>';
+      var bold = r === 0 ? ' style="font-weight:600"' : '';
+      var cells = rows[r];
+      for (var c = 0; c < cells.length; c++) {
+        html += '<td' + bold + '>' + _escapeHtml(cells[c]) + '</td>';
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+
+    body.innerHTML = '';
+    var wrap = document.createElement('div');
+    wrap.className = 'fp-xlsx-wrap';
+    var panes = document.createElement('div');
+    panes.className = 'fp-xlsx-panes';
+    var pane = document.createElement('div');
+    pane.className = 'fp-xlsx-pane active';
+    pane.innerHTML = html;
+    panes.appendChild(pane);
+    wrap.appendChild(panes);
+    if (truncated) {
+      var note = document.createElement('div');
+      note.className = 'fp-dir-truncated';
+      note.textContent = '已截断显示前 ' + MAX_ROWS + ' 行';
+      wrap.appendChild(note);
+    }
     body.appendChild(wrap);
   }
 
@@ -433,14 +705,40 @@ var FilePreview = (function () {
         if (mermaidBlocks.length > 0) {
           _loadScript(CDN.mermaid)
             .then(function () {
-              window.mermaid.initialize({ startOnLoad: false, theme: 'dark' });
-              mermaidBlocks.forEach(function (block) {
-                var pre = block.parentElement;
-                var container = document.createElement('div');
-                container.className = 'mermaid';
-                container.textContent = block.textContent;
-                pre.replaceWith(container);
-                window.mermaid.run({ nodes: [container] });
+              // Pin a system font so mermaid measures text with the SAME
+              // always-available font it renders with. Otherwise a late-loading
+              // webfont reflows the text after layout is computed, pushing it
+              // past the boxes/spacing mermaid already sized — the "overlapping"
+              // render. Waiting on document.fonts.ready guards the same hazard.
+              window.mermaid.initialize({
+                startOnLoad: false,
+                theme: 'dark',
+                securityLevel: 'loose',
+                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+              });
+              var fontsReady = (document.fonts && document.fonts.ready)
+                ? document.fonts.ready : Promise.resolve();
+              return fontsReady.then(function () {
+                var jobs = Array.prototype.map.call(mermaidBlocks, function (block, i) {
+                  var code = block.textContent;
+                  var container = document.createElement('div');
+                  container.className = 'mermaid';
+                  block.parentElement.replaceWith(container);
+                  // render() lays out in mermaid's own sandbox (deterministic),
+                  // then we inject the finished SVG.
+                  var id = 'fp-mmd-' + Date.now() + '-' + i;
+                  return window.mermaid.render(id, code)
+                    .then(function (res) { container.innerHTML = res.svg; })
+                    .catch(function () {
+                      // Render failed — fall back to the raw fenced code.
+                      var p = document.createElement('pre');
+                      var c = document.createElement('code');
+                      c.textContent = code;
+                      p.appendChild(c);
+                      container.replaceWith(p);
+                    });
+                });
+                return Promise.all(jobs);
               });
             })
             .catch(function () { /* mermaid optional */ });
@@ -576,13 +874,28 @@ var FilePreview = (function () {
 
   function openFromBuffer(paneId) {
     var _authHeaders = typeof Auth !== 'undefined' ? Auth.headers() : {};
+    // No usable path → open the pane's cwd. '.' is resolved server-side against
+    // #{pane_current_path} (resolveInputPath).
+    var openCwd = function () { openFile('.', paneId); };
     fetch('/api/files/tmux-buffer', { headers: _authHeaders })
       .then(function (r) { return r.json(); })
       .then(function (res) {
-        if (!res.success || !res.data.path) return;
-        openFile(res.data.path, paneId);
+        var p = (res && res.success && res.data && res.data.path) ? res.data.path : '';
+        if (!p) { openCwd(); return; }
+        // The buffer endpoint hands back its raw text as "path" with no
+        // validation, so confirm it resolves to a real file/dir before opening;
+        // otherwise (clipboard has no matching path) fall back to the cwd.
+        var probe = (typeof LinkDetect !== 'undefined') ? LinkDetect.parseLineRef(p).path : p;
+        var qs = '?path=' + encodeURIComponent(probe)
+          + (paneId ? '&paneId=' + encodeURIComponent(paneId) : '');
+        fetch('/api/files/info' + qs, { headers: _authHeaders })
+          .then(function (r) { return r.json(); })
+          .then(function (info) {
+            if (info && info.success) { openFile(p, paneId); } else { openCwd(); }
+          })
+          .catch(openCwd);
       })
-      .catch(function () { /* ignore */ });
+      .catch(openCwd);
   }
 
   // --- Link Provider ---
@@ -733,6 +1046,7 @@ var FilePreview = (function () {
           isText: info.isText,
           isImage: info.isImage,
           isPdf: info.isPdf,
+          isXlsx: info.isXlsx,
           isMarkdown: info.isMarkdown,
           rawContent: null,
         };
@@ -742,6 +1056,8 @@ var FilePreview = (function () {
           _renderImage(body, rawUrl);
         } else if (info.isPdf) {
           _renderPdf(body, rawUrl);
+        } else if (info.isXlsx) {
+          _renderXlsx(body, rawUrl);
         } else {
           fetch('/api/files/content?path=' + encodeURIComponent(info.absPath), { headers: _authHeaders })
             .then(function (r) { return r.json(); })
@@ -750,6 +1066,8 @@ var FilePreview = (function () {
               _currentFile.rawContent = cr.data.content;
               if (info.isMarkdown) {
                 _renderMarkdown(body, cr.data.content, info.absPath);
+              } else if (_isCsvPath(info.absPath)) {
+                _renderCsv(body, cr.data.content, info.absPath);
               } else {
                 _renderCode(body, cr.data.content, cr.data.language, targetLine);
               }

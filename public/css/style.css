@@ -3535,6 +3535,32 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 .fp-md-wrap a { color: var(--accent-blue); }
 .fp-md-wrap .katex-display { overflow-x: auto; padding: 4px 0; }
 
+/* xlsx preview (ExcelJS → styled tables) */
+.fp-xlsx-wrap { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.fp-xlsx-tabs {
+  flex: 0 0 auto; display: flex; gap: 2px; padding: 6px 8px 0; overflow-x: auto;
+  border-bottom: 1px solid var(--border-subtle); background: var(--bg-primary);
+}
+.fp-xlsx-tab {
+  flex: 0 0 auto; padding: 5px 12px; border: 1px solid var(--border-subtle);
+  border-bottom: none; border-radius: 6px 6px 0 0; cursor: pointer;
+  background: transparent; color: var(--text-muted); font-size: 0.82rem; white-space: nowrap;
+}
+.fp-xlsx-tab:hover { color: var(--text-primary); background: var(--bg-hover); }
+.fp-xlsx-tab.active { color: var(--text-primary); background: var(--bg-card); border-bottom: 1px solid var(--bg-card); margin-bottom: -1px; }
+.fp-xlsx-panes { flex: 1 1 auto; overflow: auto; }
+.fp-xlsx-pane { display: none; }
+.fp-xlsx-pane.active { display: block; }
+/* Keep the table on the dark theme; only cells that carry an explicit fill get
+   coloured (+ auto-contrast text), so they read as highlighted status chips
+   rather than turning the whole sheet into a white block. */
+.fp-xlsx-table { border-collapse: collapse; font-size: 0.82rem; background: var(--bg-card); color: var(--text-primary); }
+.fp-xlsx-table td {
+  border: 1px solid var(--border-subtle); padding: 3px 8px;
+  white-space: nowrap; max-width: 480px; overflow: hidden; text-overflow: ellipsis;
+  vertical-align: top;
+}
+
 /* Back button + mode toggles */
 .fp-btn-back { display: none; }
 .fp-overlay.fp-has-back .fp-btn-back { display: inline-block; }

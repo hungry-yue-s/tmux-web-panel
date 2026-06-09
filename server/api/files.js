@@ -12,6 +12,7 @@ const SIZE_LIMITS = {
   text: 2 * 1024 * 1024,
   image: 10 * 1024 * 1024,
   pdf: 10 * 1024 * 1024,
+  xlsx: 15 * 1024 * 1024,
 };
 
 const SENSITIVE_PATTERNS = [
@@ -81,8 +82,12 @@ const MIME_MAP = {
   '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp',
   '.bmp': 'image/bmp', '.ico': 'image/x-icon',
   '.pdf': 'application/pdf',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.xlsm': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.md': 'text/markdown', '.markdown': 'text/markdown',
 };
+
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 function getFileInfo(filePath) {
   const ext = extname(filePath).toLowerCase();
@@ -90,10 +95,11 @@ function getFileInfo(filePath) {
   const mimeType = MIME_MAP[ext] || 'text/plain';
   const isImage = mimeType.startsWith('image/');
   const isPdf = mimeType === 'application/pdf';
+  const isXlsx = mimeType === XLSX_MIME;
   const isMarkdown = mimeType === 'text/markdown';
-  const isText = !isImage && !isPdf;
+  const isText = !isImage && !isPdf && !isXlsx;
   const language = LANG_MAP[ext] || BASENAME_MAP[base] || null;
-  return { mimeType, isText, isImage, isPdf, isMarkdown, language };
+  return { mimeType, isText, isImage, isPdf, isXlsx, isMarkdown, language };
 }
 
 // Detect language from shebang line (e.g. #!/usr/bin/env python3)
@@ -111,6 +117,7 @@ function detectShebangLanguage(content) {
 function getSizeLimit(info) {
   if (info.isImage) return SIZE_LIMITS.image;
   if (info.isPdf) return SIZE_LIMITS.pdf;
+  if (info.isXlsx) return SIZE_LIMITS.xlsx;
   return SIZE_LIMITS.text;
 }
 
