@@ -77,6 +77,11 @@ const __dirname = dirname(__filename);
 
 const app = express();
 
+// Share snapshots can be several MB (inlined images) — give /api/share a large
+// JSON limit BEFORE the global 100KB parser (which then no-ops on these requests).
+// The real cap is enforced in ShareStore (MAX_HTML_BYTES) with a clean 413.
+app.use('/api/share', express.json({ limit: '16mb' }));
+
 // Parse JSON request bodies (before auth routes that need it)
 app.use(express.json());
 
