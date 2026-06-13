@@ -35,6 +35,8 @@ import createClaudeUsageRouter from './api/claude-usage.js';
 import createCodexUsageRouter from './api/codex-usage.js';
 import { PinStore } from './pins.js';
 import { createPinsRouter } from './api/pins.js';
+import { ShareStore } from './share-store.js';
+import { createShareRouter } from './api/share.js';
 
 // --- CLI Argument Parsing ---
 
@@ -171,6 +173,44 @@ const pinStore = new PinStore(
 );
 await pinStore.load();
 
+// --- Share Store (file-preview snapshots shared via /s/:id, persisted) ---
+
+const shareStore = new ShareStore(
+  join(homedir(), '.config', 'tmux-web-panel', 'shares.json'),
+);
+await shareStore.load();
+
+// Public viewer for shared snapshots — registered OUTSIDE the /api auth gate so
+// recipients on the LAN need no panel login. Snapshots are self-contained
+// (images inlined), so this only ever reads the snapshot dir — never the FS.
+const SHARE_ID_RE = /^[A-Za-z0-9_-]{16,48}$/;
+app.get('/s/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!SHARE_ID_RE.test(id)) return _shareGone(res);
+    const snap = await shareStore.get(id);
+    if (!snap) return _shareGone(res);
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Referrer-Policy', 'no-referrer');
+    res.set('Cache-Control', 'no-store');
+    res.type('html').send(snap.html);
+  } catch {
+    res.status(500).type('html').send('<h1>500</h1>');
+  }
+});
+
+function _shareGone(res) {
+  res.status(410).type('html').send(
+    '<!DOCTYPE html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<title>链接已失效</title>'
+    + '<body style="margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;'
+    + 'font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0d1117;color:#c9d1d9;text-align:center">'
+    + '<div><div style="font-size:42px;margin-bottom:12px">🔗</div>'
+    + '<h2 style="margin:0 0 6px">链接已过期或不存在</h2>'
+    + '<p style="color:#8b949e;margin:0">分享可能已被回收或已超过有效期。</p></div></body>',
+  );
+}
+
 // Best-effort startup sweep — drop orphan pins from prior tmux sessions.
 try {
   const live = await tmux.listAllWindowIds();
@@ -195,6 +235,7 @@ app.use('/api/window-stats', windowStatsRouter);
 app.use('/api/notifications', createNotificationsRouter(notificationStore));
 app.use('/api/scene/discover', createSceneDiscoverRouter());
 app.use('/api/pins', createPinsRouter(pinStore));
+app.use('/api/share', createShareRouter(shareStore));
 
 // File upload (uses /tmp — cleaned by OS on reboot)
 app.use('/api/upload', createUploadRouter('/tmp/tmux-web-panel-uploads'));
@@ -271,6 +312,9 @@ function shutdown(signal) {
   // Stop token reaper
   if (tokenReapTimer) clearInterval(tokenReapTimer);
 
+  // Stop share-snapshot sweeper
+  if (shareSweepTimer) clearInterval(shareSweepTimer);
+
   // Stop status monitor polling
   statusMonitor.stop();
 
@@ -313,6 +357,9 @@ statusMonitor.start(config.pollInterval);
 terminalManager.startReaper();
 notificationStore.startReaper();
 const tokenReapTimer = config.auth ? startTokenReaper(tokenMap) : null;
+// Sweep expired shares every 10 minutes.
+const shareSweepTimer = setInterval(() => { shareStore.sweep().catch(() => {}); }, 10 * 60 * 1000);
+if (shareSweepTimer.unref) shareSweepTimer.unref();
 
 server.listen(config.port, config.host, () => {
   const proto = config.tls ? 'https' : 'http';

@@ -94,12 +94,18 @@ var FilePreview = (function () {
     });
     var btnNewTab = _btn('\u2197', 'Open in new tab', function () { _openNewTab(); });
     btnNewTab.className += ' fp-btn-file-only';
+    var btnExport = _btn('\u{1F4BE}', '\u5BFC\u51FA\u6E32\u67D3\u540E\u7684 HTML', function () { _exportHtml(); });
+    btnExport.className += ' fp-btn-file-only';
+    var btnShare = _btn('\u{1F517}', '\u751F\u6210\u5185\u7F51\u5206\u4EAB\u94FE\u63A5', function () { _openShareDialog(); });
+    btnShare.className += ' fp-btn-file-only';
     var btnDownload = _btn('\u2B07', 'Download', function () { _download(); });
     btnDownload.className += ' fp-btn-file-only';
     var btnClose = _btn('\u2715', 'Close', close);
 
     actions.appendChild(btnMaximize);
     actions.appendChild(btnNewTab);
+    actions.appendChild(btnExport);
+    actions.appendChild(btnShare);
     actions.appendChild(btnDownload);
     actions.appendChild(btnClose);
     header.appendChild(btnBack);
@@ -246,32 +252,71 @@ var FilePreview = (function () {
     });
   }
 
+  // Inline <img src="/api/files/raw…"> as data URIs on a CLONED subtree so the
+  // standalone snapshot is fully self-contained — no auth token, no live file
+  // access. Returns a promise; failures leave the original src (broken image is
+  // better than a failed export).
+  function _inlineAssets(root) {
+    var imgs = root.querySelectorAll ? root.querySelectorAll('img') : [];
+    var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
+    var jobs = Array.prototype.map.call(imgs, function (img) {
+      var src = img.getAttribute('src') || '';
+      if (src.indexOf('/api/files/raw') < 0 || src.indexOf('data:') === 0) return Promise.resolve();
+      return fetch(src, { headers: headers, credentials: 'same-origin' })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+        .then(function (blob) {
+          return new Promise(function (resolve) {
+            var fr = new FileReader();
+            fr.onload = function () { img.setAttribute('src', fr.result); resolve(); };
+            fr.onerror = function () { resolve(); };
+            fr.readAsDataURL(blob);
+          });
+        })
+        .catch(function () { /* keep original src */ });
+    });
+    return Promise.all(jobs);
+  }
+
+  // Build a self-contained HTML document from the current rendered preview.
+  // Resolves to { html, filename } or null when there's nothing to snapshot
+  // (e.g. a binary file). Shared by "open in new tab", "export HTML", "share".
+  function _buildStandaloneDoc() {
+    if (!_currentFile || _currentFile.isDirectory) return Promise.resolve(null);
+    var rendered = _overlay && _overlay.querySelector('.fp-md-wrap, .fp-code-wrap, .fp-xlsx-wrap');
+    if (!rendered) return Promise.resolve(null);
+    // Always clone: we strip interactive bits and inline images without
+    // mutating what's on screen.
+    var capture = rendered.cloneNode(true);
+    capture.querySelectorAll('.fp-colfilter-btn, .fp-table-search').forEach(function (b) { b.remove(); });
+    var base = (_currentFile.filename || 'preview').replace(/\.[^.]+$/, '');
+    return _inlineAssets(capture).then(function () {
+      var title = _escapeHtml(_currentFile.filename || 'preview');
+      var doc = '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        + '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        + '<title>' + title + '</title>'
+        + '<link rel="stylesheet" href="' + CDN.hljsCss + '">'
+        + '<link rel="stylesheet" href="' + CDN.katexCss + '">'
+        + '<style>' + _standaloneCss() + '</style></head><body>'
+        + _fullscreenWidget()
+        + capture.outerHTML
+        + _xlsxTabScript() + '</body></html>';
+      return { html: doc, filename: base + '.html' };
+    });
+  }
+
   function _openNewTab() {
     if (!_currentFile || _currentFile.isDirectory) return;
     if (_currentFile.isText || _currentFile.isMarkdown || _currentFile.isXlsx) {
-      // Reuse the already-rendered preview (markdown HTML / highlighted code /
-      // xlsx tables) so the standalone tab carries the same theme as the modal.
+      // Open the tab synchronously (popup blockers require a user-gesture-time
+      // window.open), then fill it once the self-contained doc is built.
       var rendered = _overlay && _overlay.querySelector('.fp-md-wrap, .fp-code-wrap, .fp-xlsx-wrap');
       if (rendered) {
-        // Strip interactive filter buttons (their handlers don't serialize);
-        // keep the current row visibility so the tab matches what's on screen.
-        var capture = rendered;
-        if (rendered.querySelector && rendered.querySelector('.fp-colfilter-btn, .fp-table-search')) {
-          capture = rendered.cloneNode(true);
-          capture.querySelectorAll('.fp-colfilter-btn, .fp-table-search').forEach(function (b) { b.remove(); });
-        }
-        var title = _escapeHtml(_currentFile.filename || 'preview');
-        var doc = '<!DOCTYPE html><html><head><meta charset="utf-8">'
-          + '<meta name="viewport" content="width=device-width, initial-scale=1">'
-          + '<title>' + title + '</title>'
-          + '<link rel="stylesheet" href="' + CDN.hljsCss + '">'
-          + '<link rel="stylesheet" href="' + CDN.katexCss + '">'
-          + '<style>' + _standaloneCss() + '</style></head><body>'
-          + _fullscreenWidget()
-          + capture.outerHTML
-          + _xlsxTabScript() + '</body></html>';
-        var htmlBlob = new Blob([doc], { type: 'text/html;charset=utf-8' });
-        window.open(URL.createObjectURL(htmlBlob), '_blank');
+        var win = window.open('', '_blank');
+        _buildStandaloneDoc().then(function (out) {
+          if (!out) { if (win) win.close(); return; }
+          var blobUrl = URL.createObjectURL(new Blob([out.html], { type: 'text/html;charset=utf-8' }));
+          if (win) { win.location = blobUrl; } else { window.open(blobUrl, '_blank'); }
+        });
         return;
       }
       // Not rendered yet — xlsx has no text content, hand off the raw file.
@@ -282,6 +327,175 @@ var FilePreview = (function () {
     } else {
       window.open(_currentFile.rawUrl, '_blank');
     }
+  }
+
+  // Download the rendered preview as a self-contained .html file.
+  function _exportHtml() {
+    _buildStandaloneDoc().then(function (out) {
+      if (!out) { alert('当前文件无法导出渲染结果'); return; }
+      var blobUrl = URL.createObjectURL(new Blob([out.html], { type: 'text/html;charset=utf-8' }));
+      var a = document.createElement('a');
+      a.href = blobUrl; a.download = out.filename; a.rel = 'noopener';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 60000);
+    }).catch(function (err) {
+      alert('导出失败: ' + (err && err.message ? err.message : err));
+    });
+  }
+
+  // --- Share link (server-stored snapshot with expiry) ---
+
+  var _HOUR = 3600 * 1000, _DAY = 24 * _HOUR, _MAX_TTL = 90 * _DAY;
+
+  function _shareApi(method, pathSuffix, body) {
+    var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
+    var opts = { method: method, headers: Object.assign({}, headers), credentials: 'same-origin' };
+    if (body !== undefined) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    return fetch('/api/share' + (pathSuffix || ''), opts).then(function (r) {
+      return r.json().then(function (j) {
+        if (!r.ok || !j.success) throw new Error((j && j.error) || ('HTTP ' + r.status));
+        return j.data;
+      });
+    });
+  }
+
+  function _copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).catch(function () { _copyFallback(text); });
+    }
+    _copyFallback(text);
+    return Promise.resolve();
+  }
+  function _copyFallback(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (_) {}
+    ta.remove();
+  }
+
+  function _fmtExpiry(ts) {
+    try { return new Date(ts).toLocaleString(); } catch (_) { return String(ts); }
+  }
+
+  function _openShareDialog() {
+    if (!_currentFile || _currentFile.isDirectory) return;
+
+    var ov = document.createElement('div');
+    ov.className = 'fp-share-overlay';
+    var box = document.createElement('div');
+    box.className = 'fp-share-box';
+    ov.appendChild(box);
+
+    box.innerHTML =
+      '<div class="fp-share-title">生成内网分享链接</div>'
+      + '<div class="fp-share-sub">把当前渲染结果冻结成一份快照,内网任何人凭链接即可查看(无需登录),到期自动失效。</div>'
+      + '<div class="fp-share-row">'
+      + '  <label class="fp-share-label">有效期</label>'
+      + '  <select class="fp-share-select" id="fpShareTtl">'
+      + '    <option value="' + _HOUR + '">1 小时</option>'
+      + '    <option value="' + _DAY + '" selected>1 天</option>'
+      + '    <option value="' + (7 * _DAY) + '">7 天</option>'
+      + '    <option value="' + (30 * _DAY) + '">30 天</option>'
+      + '    <option value="custom">自定义…</option>'
+      + '  </select>'
+      + '  <span class="fp-share-custom" id="fpShareCustom" style="display:none">'
+      + '    <input class="fp-share-num" id="fpShareNum" type="number" min="1" value="3">'
+      + '    <select class="fp-share-select" id="fpShareUnit"><option value="' + _HOUR + '">小时</option><option value="' + _DAY + '" selected>天</option></select>'
+      + '  </span>'
+      + '</div>'
+      + '<div class="fp-share-actions">'
+      + '  <button class="fp-share-btn" id="fpShareCancel">关闭</button>'
+      + '  <button class="fp-share-btn fp-share-primary" id="fpShareGen">生成链接</button>'
+      + '</div>'
+      + '<div class="fp-share-result" id="fpShareResult" style="display:none"></div>'
+      + '<div class="fp-share-listwrap"><div class="fp-share-listtitle">我的分享</div><div class="fp-share-list" id="fpShareList">加载中…</div></div>';
+
+    document.body.appendChild(ov);
+
+    var ttlSel = box.querySelector('#fpShareTtl');
+    var customWrap = box.querySelector('#fpShareCustom');
+    var numEl = box.querySelector('#fpShareNum');
+    var unitEl = box.querySelector('#fpShareUnit');
+    var resultEl = box.querySelector('#fpShareResult');
+    var listEl = box.querySelector('#fpShareList');
+    var genBtn = box.querySelector('#fpShareGen');
+
+    function closeDlg() { ov.remove(); }
+    box.querySelector('#fpShareCancel').addEventListener('click', closeDlg);
+    ov.addEventListener('click', function (e) { if (e.target === ov) closeDlg(); });
+
+    ttlSel.addEventListener('change', function () {
+      customWrap.style.display = ttlSel.value === 'custom' ? 'inline-flex' : 'none';
+    });
+
+    function chosenTtl() {
+      var ms = ttlSel.value === 'custom'
+        ? (Number(numEl.value) || 0) * (Number(unitEl.value) || _DAY)
+        : Number(ttlSel.value);
+      return ms;
+    }
+
+    function renderList() {
+      _shareApi('GET', '').then(function (data) {
+        var shares = (data && data.shares) || [];
+        if (!shares.length) { listEl.innerHTML = '<div class="fp-share-empty">暂无有效分享</div>'; return; }
+        listEl.innerHTML = '';
+        shares.forEach(function (s) {
+          var url = location.origin + '/s/' + s.id;
+          var row = document.createElement('div');
+          row.className = 'fp-share-item';
+          row.innerHTML = '<div class="fp-share-item-main">'
+            + '<div class="fp-share-item-name">' + _escapeHtml(s.filename) + '</div>'
+            + '<div class="fp-share-item-meta">到期 ' + _escapeHtml(_fmtExpiry(s.expiresAt)) + '</div></div>'
+            + '<button class="fp-share-mini" data-act="copy">复制</button>'
+            + '<button class="fp-share-mini fp-share-danger" data-act="revoke">回收</button>';
+          row.querySelector('[data-act="copy"]').addEventListener('click', function () {
+            _copyText(url); this.textContent = '已复制'; var b = this;
+            setTimeout(function () { b.textContent = '复制'; }, 1200);
+          });
+          row.querySelector('[data-act="revoke"]').addEventListener('click', function () {
+            _shareApi('DELETE', '/' + encodeURIComponent(s.id)).then(renderList);
+          });
+          listEl.appendChild(row);
+        });
+      }).catch(function (err) {
+        listEl.innerHTML = '<div class="fp-share-empty">列表加载失败: ' + _escapeHtml(err.message) + '</div>';
+      });
+    }
+
+    genBtn.addEventListener('click', function () {
+      var ttl = chosenTtl();
+      if (!ttl || ttl <= 0) { alert('请输入有效的有效期'); return; }
+      if (ttl > _MAX_TTL) { alert('有效期最长 90 天'); return; }
+      genBtn.disabled = true; genBtn.textContent = '生成中…';
+      _buildStandaloneDoc().then(function (out) {
+        if (!out) throw new Error('当前文件无法生成快照');
+        return _shareApi('POST', '', { html: out.html, filename: _currentFile.filename || 'preview', ttlMs: ttl });
+      }).then(function (data) {
+        var url = location.origin + data.url;
+        resultEl.style.display = 'block';
+        resultEl.innerHTML = '<div class="fp-share-ok">✅ 链接已生成(到期 ' + _escapeHtml(_fmtExpiry(data.expiresAt)) + ')</div>'
+          + '<div class="fp-share-linkrow"><input class="fp-share-link" id="fpShareLink" readonly value="' + _escapeHtml(url) + '">'
+          + '<button class="fp-share-btn fp-share-primary" id="fpShareCopy">复制</button></div>';
+        var linkInput = resultEl.querySelector('#fpShareLink');
+        linkInput.focus(); linkInput.select();
+        resultEl.querySelector('#fpShareCopy').addEventListener('click', function () {
+          _copyText(url); this.textContent = '已复制'; var b = this;
+          setTimeout(function () { b.textContent = '复制'; }, 1200);
+        });
+        renderList();
+      }).catch(function (err) {
+        alert('生成失败: ' + (err && err.message ? err.message : err));
+      }).finally(function () {
+        genBtn.disabled = false; genBtn.textContent = '生成链接';
+      });
+    });
+
+    renderList();
   }
 
   // Fetch authenticated bytes from the page's origin and trigger a local
