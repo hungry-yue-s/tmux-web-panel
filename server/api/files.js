@@ -154,7 +154,7 @@ async function resolveTarget(rawPath, allowedRoots) {
   return { linkPath, realPath, stat: fileStat };
 }
 
-async function validateFilePath(rawPath, allowedRoots) {
+async function validateFilePath(rawPath, allowedRoots, { skipSizeLimit = false } = {}) {
   const t = await resolveTarget(rawPath, allowedRoots);
   if (t.error) return t;
   if (!t.stat.isFile()) {
@@ -162,13 +162,18 @@ async function validateFilePath(rawPath, allowedRoots) {
   }
 
   const info = getFileInfo(t.realPath);
-  const limit = getSizeLimit(info);
-  if (t.stat.size > limit) {
-    return {
-      error: `File too large (${(t.stat.size / 1024 / 1024).toFixed(1)}MB, max ${limit / 1024 / 1024}MB)`,
-      status: 413,
-      info: { ...info, absPath: t.linkPath, size: t.stat.size },
-    };
+  // The size cap exists to protect endpoints that buffer the file (e.g.
+  // /content reads it into a JSON response). /raw streams via createReadStream,
+  // so it serves any size — skipping the cap lets downloads of large files work.
+  if (!skipSizeLimit) {
+    const limit = getSizeLimit(info);
+    if (t.stat.size > limit) {
+      return {
+        error: `File too large (${(t.stat.size / 1024 / 1024).toFixed(1)}MB, max ${limit / 1024 / 1024}MB)`,
+        status: 413,
+        info: { ...info, absPath: t.linkPath, size: t.stat.size },
+      };
+    }
   }
 
   // Return the link path (not realPath) as absPath so subsequent calls
@@ -407,7 +412,7 @@ export function createFilesRouter(allowedRoots) {
         return res.status(400).json({ success: false, data: null, error: 'Missing path parameter' });
       }
 
-      const result = await validateFilePath(rawPath, roots);
+      const result = await validateFilePath(rawPath, roots, { skipSizeLimit: true });
       if (result.error) {
         return res.status(result.status).json({ success: false, data: null, error: result.error });
       }
