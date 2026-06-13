@@ -180,6 +180,11 @@ var FilePreview = (function () {
       '.fp-md-wrap th{background:var(--bg-primary);}',
       '.fp-md-wrap blockquote{border-left:3px solid var(--accent-blue);margin:1em 0;padding:4px 16px;color:var(--text-muted);}',
       '.fp-md-wrap a{color:var(--accent-blue);}',
+      '.fp-md-wrap .fp-frontmatter{margin:0 0 1.2em;padding:10px 14px;border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-primary);font-size:0.84rem;}',
+      '.fp-md-wrap .fp-fm-row{display:flex;gap:10px;padding:3px 0;align-items:baseline;}',
+      '.fp-md-wrap .fp-fm-row+.fp-fm-row{border-top:1px solid var(--border-subtle);}',
+      '.fp-md-wrap .fp-fm-key{flex:0 0 110px;color:var(--text-muted);font-weight:600;}',
+      '.fp-md-wrap .fp-fm-val{flex:1 1 auto;min-width:0;word-break:break-word;}',
       '.fp-md-wrap mark.fp-hl{background:rgba(255,213,0,0.28);color:inherit;padding:0 2px;border-radius:2px;}',
       '.fp-md-wrap .fp-wikilink{color:var(--accent-blue);border-bottom:1px dashed var(--accent-blue);}',
       '.fp-md-wrap .fp-embed{color:var(--text-muted);font-style:italic;}',
@@ -959,6 +964,65 @@ var FilePreview = (function () {
     });
   }
 
+  // Pull a leading YAML frontmatter block off the content. Returns the parsed
+  // object (or null) and the body with the block removed. Deliberately a tiny
+  // parser — covers `key: scalar`, `key: [a, b]`, and the multiline `- item`
+  // list form that frontmatter actually uses; not a general YAML engine.
+  function _extractFrontmatter(content) {
+    var m = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(content);
+    if (!m) return { fm: null, body: content };
+    return { fm: _parseFrontmatter(m[1]), body: content.slice(m[0].length) };
+  }
+
+  function _stripQuotes(s) {
+    s = s.trim();
+    if ((s[0] === '"' && s[s.length - 1] === '"') || (s[0] === "'" && s[s.length - 1] === "'")) {
+      return s.slice(1, -1);
+    }
+    return s;
+  }
+
+  function _parseFrontmatter(text) {
+    var obj = {}, lines = text.split(/\r?\n/), curKey = null;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (!line.trim() || /^\s*#/.test(line)) continue;
+      var li = /^\s*-\s+(.*)$/.exec(line);
+      if (li && curKey) { (obj[curKey] = obj[curKey] || []).push(_stripQuotes(li[1])); continue; }
+      var kv = /^([\w\-]+)\s*:\s*(.*)$/.exec(line);
+      if (!kv) continue;
+      var k = kv[1], v = kv[2].trim();
+      if (v === '') { obj[k] = []; curKey = k; }
+      else if (/^\[.*\]$/.test(v)) {
+        obj[k] = v.slice(1, -1).split(',').map(function (x) { return _stripQuotes(x); }).filter(Boolean);
+        curKey = null;
+      } else { obj[k] = _stripQuotes(v); curKey = null; }
+    }
+    return obj;
+  }
+
+  // Render frontmatter as an Obsidian-style properties card; `tags`/`tag`
+  // values become the same chips as inline #tags.
+  function _renderFrontmatter(fm) {
+    var esc = _escapeHtml;
+    var rows = Object.keys(fm).map(function (k) {
+      var v = fm[k], valHtml;
+      if (/^tags?$/i.test(k)) {
+        var arr = Array.isArray(v) ? v : (v ? [v] : []);
+        valHtml = arr.map(function (t) {
+          var tag = String(t); if (tag.charAt(0) !== '#') tag = '#' + tag;
+          return '<span class="fp-tag">' + esc(tag) + '</span>';
+        }).join(' ');
+      } else if (Array.isArray(v)) {
+        valHtml = v.map(function (x) { return esc(String(x)); }).join(', ');
+      } else { valHtml = esc(String(v)); }
+      if (!valHtml) return '';
+      return '<div class="fp-fm-row"><span class="fp-fm-key">' + esc(k)
+        + '</span><span class="fp-fm-val">' + valHtml + '</span></div>';
+    }).filter(Boolean).join('');
+    return rows ? '<div class="fp-frontmatter">' + rows + '</div>' : '';
+  }
+
   function _renderMarkdown(body, content, filePath) {
     body.innerHTML = '<div class="fp-loading">Rendering Markdown\u2026</div>';
     var baseDir = filePath.substring(0, filePath.lastIndexOf('/'));
@@ -997,7 +1061,9 @@ var FilePreview = (function () {
         return katexLoaded.then(function () { return md; });
       })
       .then(function (md) {
-        var html = md.render(content);
+        var fmExtract = _extractFrontmatter(content);
+        var fmHtml = fmExtract.fm ? _renderFrontmatter(fmExtract.fm) : '';
+        var html = md.render(fmExtract.body);
 
         var _mdTp = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
         html = html.replace(
@@ -1011,7 +1077,7 @@ var FilePreview = (function () {
         body.innerHTML = '';
         var wrap = document.createElement('div');
         wrap.className = 'fp-md-wrap';
-        wrap.innerHTML = html;
+        wrap.innerHTML = fmHtml + html;
         body.appendChild(wrap);
 
         _renderCallouts(wrap);

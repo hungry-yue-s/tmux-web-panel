@@ -3537,6 +3537,14 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 .fp-mermaid-err { color: var(--accent-red); font-size: 0.8rem; margin-bottom: 6px; }
 
 /* --- Obsidian-flavored markdown --- */
+.fp-md-wrap .fp-frontmatter {
+  margin: 0 0 1.2em; padding: 10px 14px; border: 1px solid var(--border-subtle);
+  border-radius: 8px; background: var(--bg-primary); font-size: 0.84rem;
+}
+.fp-md-wrap .fp-fm-row { display: flex; gap: 10px; padding: 3px 0; align-items: baseline; }
+.fp-md-wrap .fp-fm-row + .fp-fm-row { border-top: 1px solid var(--border-subtle); }
+.fp-md-wrap .fp-fm-key { flex: 0 0 110px; color: var(--text-muted); font-weight: 600; }
+.fp-md-wrap .fp-fm-val { flex: 1 1 auto; min-width: 0; word-break: break-word; }
 .fp-md-wrap mark.fp-hl { background: rgba(255, 213, 0, 0.28); color: inherit; padding: 0 2px; border-radius: 2px; }
 .fp-md-wrap .fp-wikilink { color: var(--accent-blue); border-bottom: 1px dashed var(--accent-blue); cursor: help; }
 .fp-md-wrap .fp-embed { color: var(--text-muted); font-style: italic; }
