@@ -180,6 +180,18 @@ var FilePreview = (function () {
       '.fp-md-wrap th{background:var(--bg-primary);}',
       '.fp-md-wrap blockquote{border-left:3px solid var(--accent-blue);margin:1em 0;padding:4px 16px;color:var(--text-muted);}',
       '.fp-md-wrap a{color:var(--accent-blue);}',
+      '.fp-md-wrap mark.fp-hl{background:rgba(255,213,0,0.28);color:inherit;padding:0 2px;border-radius:2px;}',
+      '.fp-md-wrap .fp-wikilink{color:var(--accent-blue);border-bottom:1px dashed var(--accent-blue);}',
+      '.fp-md-wrap .fp-embed{color:var(--text-muted);font-style:italic;}',
+      '.fp-md-wrap .fp-embed-img{max-width:100%;border-radius:6px;}',
+      '.fp-md-wrap .fp-tag{display:inline-block;background:var(--bg-primary);color:var(--accent-blue);font-size:0.78rem;padding:0 7px;border-radius:10px;border:1px solid var(--border-subtle);line-height:1.5;white-space:nowrap;}',
+      '.fp-md-wrap .fp-callout{border-left:4px solid var(--accent-blue);border-radius:6px;margin:1em 0;padding:10px 16px;color:var(--text-primary);background:color-mix(in srgb,var(--accent-blue) 10%,transparent);}',
+      '.fp-md-wrap .fp-callout>p:last-child{margin-bottom:0;}',
+      '.fp-md-wrap .fp-callout-title{display:flex;align-items:center;gap:8px;font-weight:600;margin-bottom:6px;}',
+      '.fp-md-wrap .fp-callout-tip,.fp-md-wrap .fp-callout-success,.fp-md-wrap .fp-callout-done{border-left-color:#3fb950;background:color-mix(in srgb,#3fb950 10%,transparent);}',
+      '.fp-md-wrap .fp-callout-warning,.fp-md-wrap .fp-callout-caution,.fp-md-wrap .fp-callout-important{border-left-color:#d29922;background:color-mix(in srgb,#d29922 12%,transparent);}',
+      '.fp-md-wrap .fp-callout-danger,.fp-md-wrap .fp-callout-error,.fp-md-wrap .fp-callout-bug,.fp-md-wrap .fp-callout-failure{border-left-color:#f85149;background:color-mix(in srgb,#f85149 12%,transparent);}',
+      '.fp-md-wrap .fp-callout-question,.fp-md-wrap .fp-callout-help,.fp-md-wrap .fp-callout-example{border-left-color:#a371f7;background:color-mix(in srgb,#a371f7 12%,transparent);}',
       '.fp-md-wrap .katex-display{overflow-x:auto;padding:4px 0;}',
       '.fp-xlsx-wrap{min-height:100vh;}',
       '.fp-xlsx-tabs{display:flex;gap:2px;padding:6px 8px 0;overflow-x:auto;border-bottom:1px solid var(--border-subtle);background:var(--bg-primary);position:sticky;top:0;}',
@@ -239,9 +251,9 @@ var FilePreview = (function () {
         // Strip interactive filter buttons (their handlers don't serialize);
         // keep the current row visibility so the tab matches what's on screen.
         var capture = rendered;
-        if (rendered.querySelector && rendered.querySelector('.fp-colfilter-btn')) {
+        if (rendered.querySelector && rendered.querySelector('.fp-colfilter-btn, .fp-table-search')) {
           capture = rendered.cloneNode(true);
-          capture.querySelectorAll('.fp-colfilter-btn').forEach(function (b) { b.remove(); });
+          capture.querySelectorAll('.fp-colfilter-btn, .fp-table-search').forEach(function (b) { b.remove(); });
         }
         var title = _escapeHtml(_currentFile.filename || 'preview');
         var doc = '<!DOCTYPE html><html><head><meta charset="utf-8">'
@@ -622,17 +634,30 @@ var FilePreview = (function () {
     var header = rows[0];
     var dataRows = rows.slice(1);
     var filters = {}; // colIndex -> Set(allowed values); absent = no filter
+    var terms = [];   // global fuzzy-search terms (AND across all cells in a row)
     var openPop = null;
 
+    // Cache each row's lowercased full text so the search stays cheap on big tables.
+    var rowText = dataRows.map(function (row) { return row.textContent.toLowerCase(); });
+
     function applyFilters() {
+      var shown = 0;
       for (var i = 0; i < dataRows.length; i++) {
         var show = true, row = dataRows[i];
         for (var col in filters) {
           var cell = row.cells[col];
           if (!filters[col].has(cell ? cell.textContent : '')) { show = false; break; }
         }
+        if (show && terms.length) {
+          var hay = rowText[i];
+          for (var t = 0; t < terms.length; t++) {
+            if (hay.indexOf(terms[t]) < 0) { show = false; break; }
+          }
+        }
         row.style.display = show ? '' : 'none';
+        if (show) shown++;
       }
+      if (counter) counter.textContent = shown + ' / ' + dataRows.length + ' 行';
     }
 
     function distinct(col) {
@@ -734,6 +759,24 @@ var FilePreview = (function () {
         header.cells[col].appendChild(btn);
       })(c);
     }
+
+    // Global fuzzy search bar — matches whole rows; whitespace splits into AND terms.
+    var bar = document.createElement('div');
+    bar.className = 'fp-table-search';
+    var input = document.createElement('input');
+    input.className = 'fp-table-search-input';
+    input.type = 'search';
+    input.placeholder = '搜索全表…（空格分隔多个关键词）';
+    var counter = document.createElement('span');
+    counter.className = 'fp-table-search-count';
+    counter.textContent = dataRows.length + ' / ' + dataRows.length + ' 行';
+    bar.appendChild(input);
+    bar.appendChild(counter);
+    input.addEventListener('input', function () {
+      terms = input.value.toLowerCase().split(/\s+/).filter(Boolean);
+      applyFilters();
+    });
+    table.parentNode.insertBefore(bar, table);
   }
 
   function _renderCode(body, content, language, targetLine) {
@@ -782,6 +825,140 @@ var FilePreview = (function () {
     }
   }
 
+  // markdown-it plugin: Obsidian-flavored inline syntax.
+  // We push our own html_inline tokens (rendered verbatim regardless of the
+  // `html:false` option), so every bit of user text is escaped by hand first.
+  function _obsidianMarkdown(md) {
+    var esc = _escapeHtml;
+    var IMG_RE = /\.(png|jpe?g|gif|webp|svg|bmp|avif|ico)$/i;
+
+    // ==highlight==  ->  <mark>
+    md.inline.ruler.before('emphasis', 'obs_mark', function (state, silent) {
+      var s = state.src, p = state.pos;
+      if (s.charCodeAt(p) !== 0x3D || s.charCodeAt(p + 1) !== 0x3D) return false;
+      var hit = s.indexOf('==', p + 2);
+      if (hit < 0) return false;
+      var inner = s.slice(p + 2, hit);
+      if (!inner || inner.indexOf('\n') >= 0) return false;
+      if (!silent) {
+        var t = state.push('html_inline', '', 0);
+        t.content = '<mark class="fp-hl">' + esc(inner) + '</mark>';
+      }
+      state.pos = hit + 2;
+      return true;
+    });
+
+    // %%comment%%  ->  removed
+    md.inline.ruler.before('emphasis', 'obs_comment', function (state, silent) {
+      var s = state.src, p = state.pos;
+      if (s.charCodeAt(p) !== 0x25 || s.charCodeAt(p + 1) !== 0x25) return false;
+      var hit = s.indexOf('%%', p + 2);
+      if (hit < 0) return false;
+      state.pos = hit + 2; // swallow, emit nothing
+      return true;
+    });
+
+    // ![[embed]]  ->  inline image (relative src is rewritten to the raw API
+    // by the existing post-render pass) or a placeholder for non-images.
+    md.inline.ruler.before('image', 'obs_embed', function (state, silent) {
+      var s = state.src, p = state.pos;
+      if (s.charCodeAt(p) !== 0x21 || s.charCodeAt(p + 1) !== 0x5B || s.charCodeAt(p + 2) !== 0x5B) return false;
+      var end = s.indexOf(']]', p + 3);
+      if (end < 0) return false;
+      var inner = s.slice(p + 3, end);
+      if (!inner || inner.indexOf('\n') >= 0 || inner.indexOf('[[') >= 0) return false;
+      if (!silent) {
+        var parts = inner.split('|');
+        var target = parts[0].split('#')[0].trim();
+        var label = (parts[1] != null ? parts[1] : parts[0]).trim();
+        var t = state.push('html_inline', '', 0);
+        if (IMG_RE.test(target)) {
+          t.content = '<img class="fp-embed-img" src="' + esc(target) + '" alt="' + esc(label) + '">';
+        } else {
+          t.content = '<span class="fp-embed" title="Obsidian 嵌入: ' + esc(target) + '">\u{1F4CE} ' + esc(label) + '</span>';
+        }
+      }
+      state.pos = end + 2;
+      return true;
+    });
+
+    // [[link]] / [[link|alias]]  ->  styled (non-navigating) wikilink
+    md.inline.ruler.before('link', 'obs_wikilink', function (state, silent) {
+      var s = state.src, p = state.pos;
+      if (s.charCodeAt(p) !== 0x5B || s.charCodeAt(p + 1) !== 0x5B) return false;
+      var end = s.indexOf(']]', p + 2);
+      if (end < 0) return false;
+      var inner = s.slice(p + 2, end);
+      if (!inner || inner.indexOf('\n') >= 0 || inner.indexOf('[[') >= 0) return false;
+      if (!silent) {
+        var parts = inner.split('|');
+        var target = parts[0].trim();
+        var label = (parts[1] != null ? parts[1] : parts[0]).trim();
+        var t = state.push('html_inline', '', 0);
+        t.content = '<span class="fp-wikilink" title="Obsidian 链接: ' + esc(target) + '">' + esc(label) + '</span>';
+      }
+      state.pos = end + 2;
+      return true;
+    });
+
+    // #tag  ->  chip. Must follow start-of-line/whitespace/( and hold a non-digit.
+    var TAG_RE = /^#[A-Za-z0-9_一-鿿][\w\/\-一-鿿]*/;
+    md.inline.ruler.push('obs_tag', function (state, silent) {
+      var s = state.src, p = state.pos;
+      if (s.charCodeAt(p) !== 0x23) return false;
+      if (p > 0) {
+        var b = s.charCodeAt(p - 1);
+        if (b !== 0x20 && b !== 0x09 && b !== 0x0A && b !== 0x28) return false;
+      }
+      var m = TAG_RE.exec(s.slice(p));
+      if (!m || /^#[0-9]+$/.test(m[0])) return false;
+      if (!silent) {
+        var t = state.push('html_inline', '', 0);
+        t.content = '<span class="fp-tag">' + esc(m[0]) + '</span>';
+      }
+      state.pos = p + m[0].length;
+      return true;
+    });
+  }
+
+  // Turn `> [!type] title` blockquotes into Obsidian callouts. Done on the
+  // rendered DOM (not markdown-it) so the result is captured by the new-tab
+  // export, which clones the live .fp-md-wrap.
+  function _renderCallouts(wrap) {
+    var ICONS = {
+      note: '\u{1F5C8}', abstract: '\u{1F4CB}', summary: '\u{1F4CB}', tldr: '\u{1F4CB}',
+      info: 'ℹ️', todo: '☑️', tip: '\u{1F4A1}', hint: '\u{1F4A1}',
+      important: '❗', success: '✅', check: '✅', done: '✅',
+      question: '❓', help: '❓', faq: '❓', warning: '⚠️',
+      caution: '⚠️', attention: '⚠️', failure: '❌', fail: '❌',
+      missing: '❌', danger: '\u{1F525}', error: '\u{1F525}', bug: '\u{1F41E}',
+      example: '\u{1F4DD}', quote: '❝', cite: '❝',
+    };
+    var bqs = wrap.querySelectorAll('blockquote');
+    Array.prototype.forEach.call(bqs, function (bq) {
+      var first = bq.querySelector('p');
+      if (!first) return;
+      var m = /^\s*\[!([\w-]+)\]([+-]?)\s*([^\n]*)/.exec(first.textContent);
+      if (!m) return;
+      var type = m[1].toLowerCase();
+      var defTitle = type.charAt(0).toUpperCase() + type.slice(1);
+      bq.classList.add('fp-callout', 'fp-callout-' + type);
+
+      var html = first.innerHTML;
+      var nl = html.indexOf('\n');
+      var titleHtml = (nl >= 0 ? html.slice(0, nl) : html).replace(/^\s*\[![\w-]+\][+-]?\s*/, '').trim();
+      var restHtml = nl >= 0 ? html.slice(nl + 1) : '';
+
+      var titleEl = document.createElement('div');
+      titleEl.className = 'fp-callout-title';
+      titleEl.innerHTML = '<span class="fp-callout-icon">' + (ICONS[type] || '\u{1F5C8}') + '</span>'
+        + '<span class="fp-callout-titletext">' + (titleHtml || defTitle) + '</span>';
+
+      if (restHtml.trim()) { first.innerHTML = restHtml; } else { first.remove(); }
+      bq.insertBefore(titleEl, bq.firstChild);
+    });
+  }
+
   function _renderMarkdown(body, content, filePath) {
     body.innerHTML = '<div class="fp-loading">Rendering Markdown\u2026</div>';
     var baseDir = filePath.substring(0, filePath.lastIndexOf('/'));
@@ -804,6 +981,8 @@ var FilePreview = (function () {
             return '';
           },
         });
+
+        md.use(_obsidianMarkdown);
 
         var katexLoaded = Promise.all([
           _loadCSS(CDN.katexCss),
@@ -835,6 +1014,8 @@ var FilePreview = (function () {
         wrap.innerHTML = html;
         body.appendChild(wrap);
 
+        _renderCallouts(wrap);
+
         var mermaidBlocks = wrap.querySelectorAll('code.language-mermaid');
         if (mermaidBlocks.length > 0) {
           _loadScript(CDN.mermaid)
@@ -849,6 +1030,11 @@ var FilePreview = (function () {
                 theme: 'dark',
                 securityLevel: 'loose',
                 fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                // Reserve vertical room below subgraph titles. Mermaid only sizes
+                // for a single-line title, so a long title that WRAPS to two lines
+                // gets overlapped by the first child node. A generous bottom margin
+                // pushes the children clear of the wrapped title.
+                flowchart: { subGraphTitleMargin: { top: 6, bottom: 24 } },
               });
               var fontsReady = (document.fonts && document.fonts.ready)
                 ? document.fonts.ready : Promise.resolve();
@@ -863,13 +1049,21 @@ var FilePreview = (function () {
                   var id = 'fp-mmd-' + Date.now() + '-' + i;
                   return window.mermaid.render(id, code)
                     .then(function (res) { container.innerHTML = res.svg; })
-                    .catch(function () {
-                      // Render failed — fall back to the raw fenced code.
+                    .catch(function (err) {
+                      // Render failed (usually a syntax error) — surface the
+                      // reason above the raw source so it's clear it's not a
+                      // "type unsupported" issue.
+                      var box = document.createElement('div');
+                      var msg = document.createElement('div');
+                      msg.className = 'fp-mermaid-err';
+                      msg.textContent = 'Mermaid 渲染失败：' + (err && err.message ? err.message : err);
                       var p = document.createElement('pre');
                       var c = document.createElement('code');
                       c.textContent = code;
                       p.appendChild(c);
-                      container.replaceWith(p);
+                      box.appendChild(msg);
+                      box.appendChild(p);
+                      container.replaceWith(box);
                     });
                 });
                 return Promise.all(jobs);

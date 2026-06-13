@@ -3534,6 +3534,34 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 .fp-md-wrap blockquote { border-left: 3px solid var(--accent-blue); margin: 1em 0; padding: 4px 16px; color: var(--text-muted); }
 .fp-md-wrap a { color: var(--accent-blue); }
 .fp-md-wrap .katex-display { overflow-x: auto; padding: 4px 0; }
+.fp-mermaid-err { color: var(--accent-red); font-size: 0.8rem; margin-bottom: 6px; }
+
+/* --- Obsidian-flavored markdown --- */
+.fp-md-wrap mark.fp-hl { background: rgba(255, 213, 0, 0.28); color: inherit; padding: 0 2px; border-radius: 2px; }
+.fp-md-wrap .fp-wikilink { color: var(--accent-blue); border-bottom: 1px dashed var(--accent-blue); cursor: help; }
+.fp-md-wrap .fp-embed { color: var(--text-muted); font-style: italic; }
+.fp-md-wrap .fp-embed-img { max-width: 100%; border-radius: 6px; }
+.fp-md-wrap .fp-tag {
+  display: inline-block; background: var(--bg-primary); color: var(--accent-blue);
+  font-size: 0.78rem; padding: 0 7px; border-radius: 10px; border: 1px solid var(--border-subtle);
+  line-height: 1.5; white-space: nowrap;
+}
+.fp-md-wrap .fp-callout {
+  border-left: 4px solid var(--accent-blue); border-radius: 6px;
+  margin: 1em 0; padding: 10px 16px; color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+}
+.fp-md-wrap .fp-callout > p:last-child { margin-bottom: 0; }
+.fp-md-wrap .fp-callout-title { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 6px; }
+.fp-md-wrap .fp-callout-icon { flex: 0 0 auto; }
+.fp-md-wrap .fp-callout-tip, .fp-md-wrap .fp-callout-hint, .fp-md-wrap .fp-callout-success,
+.fp-md-wrap .fp-callout-check, .fp-md-wrap .fp-callout-done { border-left-color: #3fb950; background: color-mix(in srgb, #3fb950 10%, transparent); }
+.fp-md-wrap .fp-callout-warning, .fp-md-wrap .fp-callout-caution, .fp-md-wrap .fp-callout-attention,
+.fp-md-wrap .fp-callout-important { border-left-color: #d29922; background: color-mix(in srgb, #d29922 12%, transparent); }
+.fp-md-wrap .fp-callout-danger, .fp-md-wrap .fp-callout-error, .fp-md-wrap .fp-callout-bug,
+.fp-md-wrap .fp-callout-failure, .fp-md-wrap .fp-callout-fail, .fp-md-wrap .fp-callout-missing { border-left-color: #f85149; background: color-mix(in srgb, #f85149 12%, transparent); }
+.fp-md-wrap .fp-callout-question, .fp-md-wrap .fp-callout-help, .fp-md-wrap .fp-callout-faq,
+.fp-md-wrap .fp-callout-example { border-left-color: #a371f7; background: color-mix(in srgb, #a371f7 12%, transparent); }
 
 /* xlsx preview (ExcelJS → styled tables) */
 .fp-xlsx-wrap { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
@@ -3551,6 +3579,22 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 .fp-xlsx-panes { flex: 1 1 auto; overflow: auto; }
 .fp-xlsx-pane { display: none; }
 .fp-xlsx-pane.active { display: block; }
+
+/* Global fuzzy search bar above each table (sticks while the pane scrolls) */
+.fp-table-search {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 8px; background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.fp-table-search-input {
+  flex: 1 1 auto; min-width: 0; padding: 5px 10px;
+  background: var(--bg-card); color: var(--text-primary);
+  border: 1px solid var(--border-subtle); border-radius: 6px;
+  font-size: 0.82rem; outline: none;
+}
+.fp-table-search-input:focus { border-color: var(--accent-blue); }
+.fp-table-search-count { flex: 0 0 auto; color: var(--text-muted); font-size: 0.78rem; white-space: nowrap; }
 /* Keep the table on the dark theme; only cells that carry an explicit fill get
    coloured (+ auto-contrast text), so they read as highlighted status chips
    rather than turning the whole sheet into a white block. */
