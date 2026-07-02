@@ -24,14 +24,19 @@ Installs tmux-web-panel as a user-level auto-start service.
   macOS : launchd user agent   (~/Library/LaunchAgents/)
 
 Environment variables:
-  PORT      Listen port        (default: 7681)
-  HOST      Listen host        (default: 0.0.0.0)
-  AUTH      Auth token         (default: none)
-  NODE_BIN  Path to node       (default: auto-detect)
+  PORT      Listen port                 (default: 7681)
+  HOST      Listen host                 (default: 0.0.0.0)
+  AUTH      Auth user:password          (default: none — NO auth!)
+  TLS_CERT  Path to TLS certificate     (default: none — plain HTTP)
+  TLS_KEY   Path to TLS private key     (default: none — plain HTTP)
+  HTTP_PORT HTTP->HTTPS redirect port   (default: 7680, only when TLS set)
+  NODE_BIN  Path to node                (default: auto-detect)
 
 Examples:
   $0 install
-  PORT=8080 AUTH=secret $0 install
+  PORT=8080 AUTH=user:secret $0 install
+  # HTTPS + auth (recommended; run from repo root so \$PWD points at the certs):
+  TLS_CERT=\$PWD/cert.pem TLS_KEY=\$PWD/key.pem AUTH=user:secret $0 install
   $0 uninstall
   $0 status
   $0 logs
@@ -74,7 +79,10 @@ install_tmux_server_systemd() {
 [Unit]
 Description=tmux server (keep-alive for tmux-web-panel)
 Documentation=https://github.com/tmux-plugins/tmux-continuum
-After=default.target
+# Do NOT add After=default.target here. tmux-web-panel is WantedBy=default.target and
+# After=tmux-server.service, so ordering this unit after default.target forms a cycle
+# (web-panel -> tmux-server -> default.target -> web-panel) that systemd breaks at boot
+# by DROPPING tmux-web-panel's start job. tmux-server must be ready BEFORE default.target.
 
 [Service]
 Type=oneshot
@@ -110,6 +118,17 @@ install_systemd() {
   local env_lines="Environment=PORT=${PORT}\nEnvironment=HOST=${HOST}"
   if [[ -n "${AUTH:-}" ]]; then
     env_lines+="\nEnvironment=AUTH=${AUTH}"
+  fi
+  # TLS is optional but must be a matched cert+key pair. When set, also wire up the
+  # HTTP->HTTPS redirect port (server/index.js only starts the redirect when TLS is on).
+  if [[ -n "${TLS_CERT:-}" || -n "${TLS_KEY:-}" ]]; then
+    if [[ -z "${TLS_CERT:-}" || -z "${TLS_KEY:-}" ]]; then
+      echo "⚠ TLS_CERT and TLS_KEY must BOTH be set — skipping TLS (serving plain HTTP)" >&2
+    else
+      env_lines+="\nEnvironment=TLS_CERT=${TLS_CERT}"
+      env_lines+="\nEnvironment=TLS_KEY=${TLS_KEY}"
+      env_lines+="\nEnvironment=HTTP_PORT=${HTTP_PORT:-7680}"
+    fi
   fi
 
   cat > "$systemd_unit" <<UNIT
@@ -176,6 +195,15 @@ install_launchd() {
   env_keys+=("HOST"); env_vals+=("$HOST")
   if [[ -n "${AUTH:-}" ]]; then
     env_keys+=("AUTH"); env_vals+=("$AUTH")
+  fi
+  if [[ -n "${TLS_CERT:-}" || -n "${TLS_KEY:-}" ]]; then
+    if [[ -z "${TLS_CERT:-}" || -z "${TLS_KEY:-}" ]]; then
+      echo "⚠ TLS_CERT and TLS_KEY must BOTH be set — skipping TLS (serving plain HTTP)" >&2
+    else
+      env_keys+=("TLS_CERT"); env_vals+=("$TLS_CERT")
+      env_keys+=("TLS_KEY"); env_vals+=("$TLS_KEY")
+      env_keys+=("HTTP_PORT"); env_vals+=("${HTTP_PORT:-7680}")
+    fi
   fi
 
   local env_xml=""
