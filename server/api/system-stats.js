@@ -26,12 +26,44 @@ function getCpuPercent() {
 
 const router = Router();
 
+export function getNetworkAddresses(networkInterfaces = os.networkInterfaces()) {
+  const addresses = [];
+  for (const [name, entries] of Object.entries(networkInterfaces)) {
+    for (const entry of entries || []) {
+      const family = typeof entry.family === 'string'
+        ? entry.family
+        : entry.family === 4 ? 'IPv4' : entry.family === 6 ? 'IPv6' : String(entry.family);
+      if (entry.internal || (family !== 'IPv4' && family !== 'IPv6')) continue;
+      addresses.push({ interface: name, address: entry.address, family });
+    }
+  }
+  return addresses.sort((a, b) => {
+    if (a.family !== b.family) return a.family === 'IPv4' ? -1 : 1;
+    return a.interface.localeCompare(b.interface) || a.address.localeCompare(b.address);
+  });
+}
+
+export function getPrimaryAddress(addresses) {
+  const ipv4 = addresses.filter((item) => item.family === 'IPv4');
+  const score = (name) => {
+    if (/^en0$/.test(name)) return 0;
+    if (/^(en|eth|wlan|wl)[a-z0-9._-]*$/i.test(name)) return 1;
+    if (/^(bridge|docker|veth|virbr|vmnet|utun|tun|tap|awdl|llw)/i.test(name)) return 3;
+    return 2;
+  };
+  return [...ipv4].sort((a, b) => score(a.interface) - score(b.interface))[0]
+    ?? addresses[0]
+    ?? null;
+}
+
 router.get('/', (_req, res) => {
   const totalMem = os.totalmem();
   const freeMem = os.freemem();
   const usedMem = totalMem - freeMem;
   const load = os.loadavg();
   const cpuCount = os.cpus().length;
+  const networkAddresses = getNetworkAddresses();
+  const primaryAddress = getPrimaryAddress(networkAddresses);
 
   res.json({
     success: true,
@@ -48,6 +80,9 @@ router.get('/', (_req, res) => {
       hostname: os.hostname(),
       platform: os.platform(),
       arch: os.arch(),
+      ip: primaryAddress?.address ?? null,
+      ipInterface: primaryAddress?.interface ?? null,
+      networkAddresses,
     },
     error: null,
   });

@@ -3857,6 +3857,24 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
 .ss-gauge svg { width: 70px; height: 70px; display: block; }
 .ss-gauge-label { font-size: 0.7rem; color: var(--text-muted); margin-top: -4px; }
 
+.more-machine-ip-row { align-items: flex-start; }
+.more-machine-ip-row .more-status-value {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+  max-width: 72%;
+}
+.more-ip-address {
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--bg-deep);
+  color: var(--accent-green);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.78rem;
+  user-select: all;
+}
+
 .more-action-btn {
   width: 100%;
   padding: 12px;

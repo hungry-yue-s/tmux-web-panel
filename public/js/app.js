@@ -574,6 +574,10 @@ function renderMore(container) {
   html += '<span class="more-status-label">Host</span>';
   html += '<span class="more-status-value">' + escapeHtml(location.host) + '</span>';
   html += '</div>';
+  html += '<div class="more-status-row more-machine-ip-row">';
+  html += '<span class="more-status-label">机器 IP</span>';
+  html += '<span id="more-machine-ip" class="more-status-value">读取中…</span>';
+  html += '</div>';
   html += '</div>';
   html += '</div>';
 
@@ -657,6 +661,21 @@ function renderMore(container) {
   if (perfBtn) {
     perfBtn.addEventListener('click', function () { navigate('perf'); });
   }
+
+  api.get('/api/system-stats').then(function (resp) {
+    var target = document.getElementById('more-machine-ip');
+    if (!target || !resp || !resp.success || !resp.data) return;
+    if (resp.data.ip) {
+      var detail = resp.data.ipInterface ? resp.data.ipInterface + ' · IPv4' : '主网络地址';
+      target.innerHTML = '<span class="more-ip-address" title="' + escapeHtml(detail) + '">' +
+        escapeHtml(resp.data.ip) + '</span>';
+    } else {
+      target.textContent = '未检测到';
+    }
+  }).catch(function () {
+    var target = document.getElementById('more-machine-ip');
+    if (target) target.textContent = '读取失败';
+  });
 
   // Bind theme cards
   container.querySelectorAll('.theme-card').forEach(function (card) {
