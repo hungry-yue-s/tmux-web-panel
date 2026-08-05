@@ -146,6 +146,7 @@ describe('parseSessions', () => {
 
 describe('parseWindows', () => {
   const SEP = '\x1f';
+  const ESCAPED_SEP = '\\037';
 
   it('parses 8 fields including id and activity', () => {
     const line = ['@5', '0', 'main', '1', '80', '24', '0', '1700000000'].join(SEP);
@@ -166,6 +167,13 @@ describe('parseWindows', () => {
     expect(parsed[1].activity).toBe(1700000100);
   });
 
+  it('parses vis-escaped separators emitted by tmux 3.5a on macOS', () => {
+    const line = ['@5', '1', 'main', '1', '120', '40', '0', '1700000000'].join(ESCAPED_SEP);
+    expect(parseWindows(line)).toEqual([
+      { id: '@5', index: 1, name: 'main', active: true, width: 120, height: 40, bell: false, activity: 1700000000 },
+    ]);
+  });
+
   it('handles names containing pipe character', () => {
     const line = ['@9', '3', 'docs|notes', '0', '80', '24', '0', '0'].join(SEP);
     const parsed = parseWindows(line);
@@ -180,6 +188,7 @@ describe('parseWindows', () => {
 
 describe('parsePanes', () => {
   const SEP = '\x1f';
+  const ESCAPED_SEP = '\\037';
 
   it('parses pane lines with unit-separator and @pane_label', () => {
     const line = ['%0', '0', '0', '80', '24', '1', 'zsh', '构建服务'].join(SEP);
@@ -193,6 +202,13 @@ describe('parsePanes', () => {
     expect(parsePanes(line)[0].label).toBe('');
   });
 
+  it('parses vis-escaped separators emitted by tmux 3.5a on macOS', () => {
+    const line = ['%2', '3', '4', '80', '24', '1', 'fish', '主窗格'].join(ESCAPED_SEP);
+    expect(parsePanes(line)).toEqual([
+      { id: '%2', x: 3, y: 4, width: 80, height: 24, active: true, command: 'fish', label: '主窗格' },
+    ]);
+  });
+
   it('returns empty array on empty input', () => {
     expect(parsePanes('')).toEqual([]);
   });
@@ -200,6 +216,7 @@ describe('parsePanes', () => {
 
 describe('parsePaneCommands', () => {
   const SEP = '\x1f';
+  const ESCAPED_SEP = '\\037';
 
   it('parses pane command lines with unit-separator', () => {
     const line = ['0', '%1', 'vim', '/home/u', '1234'].join(SEP);
@@ -213,6 +230,13 @@ describe('parsePaneCommands', () => {
     const parsed = parsePaneCommands(line);
     expect(parsed[0].path).toBe('');
     expect(parsed[0].pid).toBe(0);
+  });
+
+  it('parses vis-escaped separators emitted by tmux 3.5a on macOS', () => {
+    const line = ['2', '%9', 'codex', '/tmp/project', '4321'].join(ESCAPED_SEP);
+    expect(parsePaneCommands(line)).toEqual([
+      { windowIndex: 2, paneId: '%9', command: 'codex', path: '/tmp/project', pid: 4321 },
+    ]);
   });
 });
 

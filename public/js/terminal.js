@@ -429,7 +429,8 @@ var _fontOffsets = (function () {
 
 function _fontOffsetKey() {
   if (_terminalMode === 'split') {
-    return (state.currentSession || '') + ':' + (state.currentWindow || '');
+    return (state.currentSession || '') + ':' +
+      (state.currentWindow != null ? state.currentWindow : '');
   }
   return state.currentPane || '';
 }
@@ -515,7 +516,7 @@ function _calcTerminalFontSize(paneCols, paneRows, containerEl) {
 function createTerminalInstance(paneCols, paneRows, nozoom) {
   var term = new Terminal({
     theme: Theme.getTerminalTheme(),
-    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace",
+    fontFamily: "'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace",
     fontSize: _calcTerminalFontSize(paneCols, paneRows),
     cursorBlink: true,
     scrollback: 5000,
@@ -664,7 +665,10 @@ function renderTerminal(container) {
   // the terminal header would be pushed above the visible area.
   container.scrollTop = 0;
 
-  if (!state.currentSession || !state.currentWindow) {
+  if (!state.currentSession || !_isValidWindowIndex(state.currentWindow)) {
+    state.currentWindow = null;
+    state.currentPane = null;
+    if (typeof saveNavState === 'function') saveNavState();
     container.innerHTML =
       '<div style="padding: 24px; text-align: center; color: var(--text-muted);">' +
       '<p style="font-size: 1.2rem; margin-bottom: 8px;">No terminal selected</p>' +
@@ -1340,7 +1344,16 @@ function _mountTerminal(termContainer, nozoom) {
 
       var lines = Math.trunc(ts.scrollAccum / 16);
       if (lines !== 0 && ws.readyState === WebSocket.OPEN) {
-        var seq = lines > 0 ? '\x1b[<65;1;1M' : '\x1b[<64;1;1M';
+        // Send the wheel event at the finger's terminal cell, NOT 1;1 — tmux
+        // treats the 1;1 corner as outside any pane and drops WheelUpPane, so
+        // a hard-coded 1;1 never scrolls. Cell coords are 1-based; clamp to >=2
+        // to stay clear of the dead corner. Targeting the touched cell also
+        // routes the scroll to the correct pane in split layouts.
+        var cell = _touchToCell(t.clientX, t.clientY);
+        var mx = Math.max(2, (cell ? cell.col : 1) + 1);
+        var my = Math.max(2, (cell ? cell.row : 1) + 1);
+        var btn = lines > 0 ? 65 : 64;
+        var seq = '\x1b[<' + btn + ';' + mx + ';' + my + 'M';
         var count = Math.abs(lines);
         var batch = '';
         for (var j = 0; j < count; j++) { batch += seq; }
@@ -1636,4 +1649,3 @@ function _scrollToWindowCard(windowIndex) {
     if (++attempts > 20) clearInterval(timer);
   }, 100);
 }
-

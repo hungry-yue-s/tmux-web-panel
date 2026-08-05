@@ -80,6 +80,20 @@ With custom config:
 PORT=8080 AUTH=user:pass ./scripts/install-service.sh install
 ```
 
+For HTTPS on the current machine and LAN, the installer can generate and
+reuse a self-signed certificate containing `localhost`, `127.0.0.1`, the
+hostname, and the current default-interface IP:
+
+```bash
+TLS_AUTO=1 AUTH=user:pass ./scripts/install-service.sh install
+```
+
+The certificate is stored under `~/.config/tmux-web-panel/tls/`. Re-running
+the command reuses it while it is valid and still covers the current IP;
+otherwise it is regenerated. Set `TLS_DIR` or `TLS_DAYS` to override the
+storage directory or lifetime. Other devices must trust the generated
+certificate explicitly, or their browser will show a certificate warning.
+
 | Command | Description |
 |---------|-------------|
 | `./scripts/install-service.sh install` | Install and start service |

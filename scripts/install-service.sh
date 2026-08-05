@@ -14,6 +14,9 @@ PORT="${PORT:-7681}"
 HOST="${HOST:-0.0.0.0}"
 NODE_BIN="${NODE_BIN:-$(command -v node)}"
 TMUX_BIN="${TMUX_BIN:-$(command -v tmux 2>/dev/null || true)}"
+TLS_AUTO="${TLS_AUTO:-0}"
+TLS_DIR="${TLS_DIR:-$HOME/.config/tmux-web-panel/tls}"
+TLS_DAYS="${TLS_DAYS:-825}"
 
 usage() {
   cat <<EOF
@@ -29,6 +32,9 @@ Environment variables:
   AUTH      Auth user:password          (default: none — NO auth!)
   TLS_CERT  Path to TLS certificate     (default: none — plain HTTP)
   TLS_KEY   Path to TLS private key     (default: none — plain HTTP)
+  TLS_AUTO  Generate/reuse a local certificate (1/true/yes; default: 0)
+  TLS_DIR   Auto-generated certificate directory (default: ~/.config/tmux-web-panel/tls)
+  TLS_DAYS  Auto-generated certificate lifetime (default: 825)
   HTTP_PORT HTTP->HTTPS redirect port   (default: 7680, only when TLS set)
   NODE_BIN  Path to node                (default: auto-detect)
 
@@ -37,11 +43,116 @@ Examples:
   PORT=8080 AUTH=user:secret $0 install
   # HTTPS + auth (recommended; run from repo root so \$PWD points at the certs):
   TLS_CERT=\$PWD/cert.pem TLS_KEY=\$PWD/key.pem AUTH=user:secret $0 install
+  # Generate a certificate containing localhost, hostname and the current LAN IP:
+  TLS_AUTO=1 AUTH=user:secret $0 install
   $0 uninstall
   $0 status
   $0 logs
 EOF
   exit 1
+}
+
+is_true() {
+  case "$1" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+detect_lan_ip() {
+  local ip=""
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    local iface
+    iface="$(route -n get default 2>/dev/null | awk '/interface:/{print $2; exit}')"
+    if [[ -n "$iface" ]]; then
+      ip="$(ipconfig getifaddr "$iface" 2>/dev/null || true)"
+    fi
+  else
+    ip="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+    if [[ -z "$ip" ]] && command -v hostname &>/dev/null; then
+      ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    fi
+  fi
+  printf '%s' "$ip"
+}
+
+certificate_covers() {
+  local cert="$1" key="$2" hostname_value="$3" lan_ip="$4"
+  [[ -r "$cert" && -r "$key" ]] || return 1
+  openssl x509 -in "$cert" -noout -checkend 2592000 &>/dev/null || return 1
+  local details
+  details="$(openssl x509 -in "$cert" -text -noout 2>/dev/null)" || return 1
+  grep -Fq "DNS:localhost" <<<"$details" || return 1
+  grep -Fq "DNS:${hostname_value}" <<<"$details" || return 1
+  grep -Fq "IP Address:127.0.0.1" <<<"$details" || return 1
+  if [[ -n "$lan_ip" ]]; then
+    grep -Fq "IP Address:${lan_ip}" <<<"$details" || return 1
+  fi
+  local cert_modulus key_modulus
+  cert_modulus="$(openssl x509 -in "$cert" -noout -modulus 2>/dev/null)" || return 1
+  key_modulus="$(openssl rsa -in "$key" -noout -modulus 2>/dev/null)" || return 1
+  [[ "$cert_modulus" == "$key_modulus" ]]
+}
+
+generate_local_certificate() {
+  command -v openssl &>/dev/null || {
+    echo "Error: TLS_AUTO requires openssl" >&2
+    return 1
+  }
+
+  local hostname_value lan_ip cert key config short_hostname
+  hostname_value="$(hostname)"
+  short_hostname="${hostname_value%%.*}"
+  lan_ip="$(detect_lan_ip)"
+  cert="$TLS_DIR/cert.pem"
+  key="$TLS_DIR/key.pem"
+
+  mkdir -p "$TLS_DIR"
+  chmod 700 "$TLS_DIR"
+  if certificate_covers "$cert" "$key" "$hostname_value" "$lan_ip"; then
+    echo "✓ Reusing TLS certificate: $cert"
+  else
+    config="$(mktemp "${TMPDIR:-/tmp}/tmux-web-panel-openssl.XXXXXX")"
+    {
+      printf '%s\n' '[req]' 'distinguished_name = dn' 'x509_extensions = v3_req' 'prompt = no'
+      printf '%s\n' '[dn]' "CN = ${hostname_value}"
+      printf '%s\n' '[v3_req]' 'basicConstraints = critical,CA:FALSE' \
+        'keyUsage = critical,digitalSignature,keyEncipherment' \
+        'extendedKeyUsage = serverAuth' 'subjectAltName = @alt_names'
+      printf '%s\n' '[alt_names]' 'DNS.1 = localhost' "DNS.2 = ${hostname_value}" "DNS.3 = ${short_hostname}" \
+        'IP.1 = 127.0.0.1'
+      if [[ -n "$lan_ip" ]]; then printf 'IP.2 = %s\n' "$lan_ip"; fi
+    } > "$config"
+    openssl req -x509 -nodes -newkey rsa:2048 -sha256 -days "$TLS_DAYS" \
+      -keyout "$key" -out "$cert" -config "$config" >/dev/null 2>&1
+    rm -f "$config"
+    chmod 600 "$key"
+    chmod 644 "$cert"
+    echo "✓ Generated TLS certificate: $cert"
+  fi
+
+  TLS_CERT="$cert"
+  TLS_KEY="$key"
+  echo "  SAN: localhost, 127.0.0.1${lan_ip:+, $hostname_value, $lan_ip}"
+}
+
+prepare_tls() {
+  if is_true "$TLS_AUTO"; then
+    if [[ -n "${TLS_CERT:-}" || -n "${TLS_KEY:-}" ]]; then
+      echo "Error: use TLS_AUTO or TLS_CERT/TLS_KEY, not both" >&2
+      return 1
+    fi
+    generate_local_certificate
+  elif [[ -n "${TLS_CERT:-}" || -n "${TLS_KEY:-}" ]]; then
+    if [[ -z "${TLS_CERT:-}" || -z "${TLS_KEY:-}" ]]; then
+      echo "Error: TLS_CERT and TLS_KEY must both be set" >&2
+      return 1
+    fi
+    [[ -r "$TLS_CERT" && -r "$TLS_KEY" ]] || {
+      echo "Error: TLS certificate or key is not readable" >&2
+      return 1
+    }
+  fi
 }
 
 # ---- Linux (systemd) ----
@@ -56,6 +167,8 @@ tmux_conf="$HOME/.tmux.conf"
 # before tmux-continuum auto-restore kicks in, breaking session persistence.
 ensure_tmux_exit_empty() {
   if [[ ! -f "$tmux_conf" ]]; then
+    printf '# Added by tmux-web-panel install-service.sh: keep server alive without sessions\nset -g exit-empty off\n' > "$tmux_conf"
+    echo "✓ Created $tmux_conf with 'set -g exit-empty off'"
     return 0
   fi
   if grep -qE '^[[:space:]]*set[[:space:]]+-g[[:space:]]+exit-empty[[:space:]]+off' "$tmux_conf"; then
@@ -115,7 +228,14 @@ install_systemd() {
 
   install_tmux_server_systemd
 
-  local env_lines="Environment=PORT=${PORT}\nEnvironment=HOST=${HOST}"
+  # systemd user services do not inherit the interactive shell PATH. Include
+  # the resolved Node/tmux directories for user-local runtime installations.
+  local service_path
+  service_path="$(dirname "$NODE_BIN"):/usr/local/bin:/usr/bin:/bin"
+  if [[ -n "$TMUX_BIN" ]]; then
+    service_path="$(dirname "$TMUX_BIN"):${service_path}"
+  fi
+  local env_lines="Environment=PATH=${service_path}\nEnvironment=PORT=${PORT}\nEnvironment=HOST=${HOST}\nEnvironment=LANG=C.UTF-8\nEnvironment=LC_CTYPE=C.UTF-8"
   if [[ -n "${AUTH:-}" ]]; then
     env_lines+="\nEnvironment=AUTH=${AUTH}"
   fi
@@ -191,8 +311,18 @@ install_launchd() {
 
   local env_keys=()
   local env_vals=()
+  # launchd does not inherit the interactive shell PATH. Include the resolved
+  # Node/tmux directories so Homebrew and other user-local installs work.
+  local service_path
+  service_path="$(dirname "$NODE_BIN"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  if [[ -n "$TMUX_BIN" ]]; then
+    service_path="$(dirname "$TMUX_BIN"):${service_path}"
+  fi
+  env_keys+=("PATH"); env_vals+=("$service_path")
   env_keys+=("PORT"); env_vals+=("$PORT")
   env_keys+=("HOST"); env_vals+=("$HOST")
+  env_keys+=("LANG"); env_vals+=("C.UTF-8")
+  env_keys+=("LC_CTYPE"); env_vals+=("C.UTF-8")
   if [[ -n "${AUTH:-}" ]]; then
     env_keys+=("AUTH"); env_vals+=("$AUTH")
   fi
@@ -284,9 +414,14 @@ fi
 
 case "$action" in
   install)
+    prepare_tls
     if [[ "$platform" == "linux" ]]; then install_systemd; else install_launchd; fi
     echo ""
     echo "Service will auto-start on login. Listening on ${HOST}:${PORT}"
+    ;;
+  cert)
+    TLS_AUTO=1
+    generate_local_certificate
     ;;
   uninstall)
     if [[ "$platform" == "linux" ]]; then uninstall_systemd; else uninstall_launchd; fi

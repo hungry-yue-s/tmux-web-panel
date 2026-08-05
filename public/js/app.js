@@ -260,6 +260,13 @@ var api = new ApiClient();
 
 // === State ===
 
+function _isValidWindowIndex(value) {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value >= 0;
+  }
+  return typeof value === 'string' && /^\d+$/.test(value);
+}
+
 var state = {
   currentTab: 'windows',
   currentSession: null,
@@ -297,7 +304,7 @@ var _recentWindows = (function () {
     var s = JSON.parse(saved);
     if (s.currentTab) state.currentTab = s.currentTab;
     if (s.currentSession) state.currentSession = s.currentSession;
-    if (s.currentWindow != null) state.currentWindow = s.currentWindow;
+    if (_isValidWindowIndex(s.currentWindow)) state.currentWindow = s.currentWindow;
     if (s.currentPane) state.currentPane = s.currentPane;
   } catch (_e) { /* ignore */ }
 })();
@@ -317,6 +324,16 @@ function saveNavState() {
 
 function navigate(tab, params) {
   var newParams = params || {};
+
+  // DOM attributes and old persisted state can turn null into the truthy string
+  // "null". Never let an invalid value reach a window-scoped API path.
+  if (
+    Object.prototype.hasOwnProperty.call(newParams, 'currentWindow') &&
+    !_isValidWindowIndex(newParams.currentWindow)
+  ) {
+    newParams.currentWindow = null;
+    newParams.currentPane = null;
+  }
 
   // Cleanup terminal when navigating away from terminal tab
   if (state.currentTab === 'terminal' && tab !== 'terminal') {
@@ -465,7 +482,7 @@ function renderDesktopHome(container) {
       }).then(function (result) {
         if (!result) return;
         var idx = result.data && result.data.index;
-        if (idx) navigate('terminal', { currentWindow: idx, currentPane: null });
+        if (_isValidWindowIndex(idx)) navigate('terminal', { currentWindow: idx, currentPane: null });
         else navigate('windows');
       }).catch(function (err) { showAlert({ title: '创建失败', message: err.message }); });
     });
@@ -955,7 +972,7 @@ function _bindSidebarHeaderButtons(sidebar) {
         .then(function (result) {
           if (!result) return;
           var idx = result.data && result.data.index;
-          if (idx) {
+          if (_isValidWindowIndex(idx)) {
             navigate('terminal', { currentWindow: idx, currentPane: null });
           } else {
             navigate('windows');
@@ -1911,7 +1928,7 @@ function initTopbar() {
         .then(function (result) {
           if (!result) return;
           var idx = result.data && result.data.index;
-          if (idx) {
+          if (_isValidWindowIndex(idx)) {
             navigate('terminal', { currentWindow: idx, currentPane: null });
           } else {
             navigate('windows');
@@ -1991,7 +2008,7 @@ document.addEventListener('keydown', function (e) {
   }
   // Ctrl+L: toggle layout picker (terminal view only)
   if ((e.ctrlKey || e.metaKey) && e.key === 'l' && !e.shiftKey && !e.altKey) {
-    if (state.currentTab === 'terminal' && state.currentSession && state.currentWindow) {
+    if (state.currentTab === 'terminal' && state.currentSession && _isValidWindowIndex(state.currentWindow)) {
       e.preventDefault();
       if (typeof LayoutPicker !== 'undefined') LayoutPicker.toggle();
     }

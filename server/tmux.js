@@ -15,6 +15,15 @@ const WINDOW_INDEX_RE = /^\d+$/;
 const WINDOW_ID_RE = /^@\d+$/;
 
 const FIELD_SEP = '\x1f'; // ASCII Unit Separator \u2014 cannot occur in app-created tmux names
+// tmux 3.5a on macOS renders control characters in format output using vis(3)
+// notation, so FIELD_SEP arrives as the four literal characters "\037".
+const ESCAPED_FIELD_SEP = '\\037';
+
+function splitTmuxFields(line) {
+  return line.includes(FIELD_SEP)
+    ? line.split(FIELD_SEP)
+    : line.split(ESCAPED_FIELD_SEP);
+}
 
 /**
  * Validates a tmux session or window name.
@@ -101,7 +110,7 @@ export function parseSessions(output) {
 export function parseWindows(output) {
   if (!output || output.trim().length === 0) return [];
   return output.trim().split('\n').map((line) => {
-    const [id, index, name, active, width, height, bell, activity] = line.split(FIELD_SEP);
+    const [id, index, name, active, width, height, bell, activity] = splitTmuxFields(line);
     return {
       id,
       index: Number(index),
@@ -121,7 +130,7 @@ export function parseWindows(output) {
 export function parsePanes(output) {
   if (!output || output.trim().length === 0) return [];
   return output.trim().split('\n').map((line) => {
-    const [id, x, y, width, height, active, command, label] = line.split(FIELD_SEP);
+    const [id, x, y, width, height, active, command, label] = splitTmuxFields(line);
     return {
       id,
       x: Number(x),
@@ -141,7 +150,7 @@ export function parsePanes(output) {
 export function parsePaneCommands(output) {
   if (!output || output.trim().length === 0) return [];
   return output.trim().split('\n').map((line) => {
-    const [windowIndex, paneId, command, path, pid] = line.split(FIELD_SEP);
+    const [windowIndex, paneId, command, path, pid] = splitTmuxFields(line);
     return { windowIndex: Number(windowIndex), paneId, command, path: path || '', pid: pid ? Number(pid) : 0 };
   });
 }

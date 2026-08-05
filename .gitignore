@@ -3,6 +3,7 @@ node_modules/
 .superpowers/
 *.pem
 .playwright-mcp/
+.claude/worktrees/
 docs/superpowers/
 
 # Root-level temp screenshots (project screenshots live in public/screenshots/)

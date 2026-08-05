@@ -179,6 +179,14 @@ export class TerminalManager {
       name: 'xterm-256color',
       cols: cols || 80,
       rows: rows || 24,
+      // launchd/systemd services often have no locale. tmux then treats the
+      // attached client as non-UTF-8 and replaces wide characters with `_`
+      // before they ever reach xterm.js.
+      env: {
+        ...process.env,
+        LANG: process.env.LANG || 'C.UTF-8',
+        LC_CTYPE: process.env.LC_CTYPE || process.env.LANG || 'C.UTF-8',
+      },
     });
 
     // Track connection
