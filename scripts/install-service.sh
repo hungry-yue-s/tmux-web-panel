@@ -305,9 +305,62 @@ launchd_dir="$HOME/Library/LaunchAgents"
 launchd_plist="$launchd_dir/com.${SERVICE_NAME}.plist"
 launchd_label="com.${SERVICE_NAME}"
 launchd_log_dir="$HOME/Library/Logs/${SERVICE_NAME}"
+tmux_launchd_plist="$launchd_dir/com.${SERVICE_NAME}.tmux-server.plist"
+tmux_launchd_label="com.${SERVICE_NAME}.tmux-server"
+
+install_tmux_server_launchd() {
+  if [[ -z "$TMUX_BIN" ]]; then
+    echo "⚠ tmux not found in PATH — skipping tmux server LaunchAgent"
+    echo "  Sessions will NOT auto-recover on reboot. Install tmux and re-run."
+    return 0
+  fi
+
+  ensure_tmux_exit_empty
+
+  cat > "$tmux_launchd_plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${tmux_launchd_label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${PROJECT_DIR}/scripts/run-tmux-server.sh</string>
+        <string>${TMUX_BIN}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>${launchd_log_dir}/tmux-server.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>${launchd_log_dir}/tmux-server.stderr.log</string>
+</dict>
+</plist>
+PLIST
+
+  launchctl unload "$tmux_launchd_plist" 2>/dev/null || true
+  launchctl load -w "$tmux_launchd_plist"
+  echo "✓ Installed tmux server LaunchAgent (keeps tmux alive for the web panel)"
+}
+
+uninstall_tmux_server_launchd() {
+  launchctl unload "$tmux_launchd_plist" 2>/dev/null || true
+  rm -f "$tmux_launchd_plist"
+  echo "✓ Removed tmux server LaunchAgent (~/.tmux.conf unchanged)"
+}
 
 install_launchd() {
   mkdir -p "$launchd_dir" "$launchd_log_dir"
+
+  # Load the tmux server before the panel. tmux-continuum can then restore the
+  # saved sessions while the panel starts, instead of the first API request
+  # racing a missing tmux socket after login.
+  install_tmux_server_launchd
 
   local env_keys=()
   local env_vals=()
@@ -381,6 +434,7 @@ PLIST
 uninstall_launchd() {
   launchctl unload "$launchd_plist" 2>/dev/null || true
   rm -f "$launchd_plist"
+  uninstall_tmux_server_launchd
   echo "✓ Removed launchd user agent"
 }
 

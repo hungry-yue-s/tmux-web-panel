@@ -108,7 +108,7 @@ certificate explicitly, or their browser will show a certificate warning.
 
 tmux sessions live in the `tmux` server's memory and are **lost when the computer reboots**. The web panel only reads existing sessions — it does not create or persist them. To survive reboots:
 
-1. **Linux installer ships a `tmux-server.service` companion unit** (auto-installed by `install-service.sh`) that boots the tmux server on login. The web panel's unit declares `After=tmux-server.service`, so the panel sees sessions immediately on first page load.
+1. **The installer ships a companion tmux service** that boots the tmux server on login: `tmux-server.service` on Linux and `com.tmux-web-panel.tmux-server.plist` on macOS. The tmux service is loaded before the web panel so restored sessions are available immediately.
 2. **Configure [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) + [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum)** in your `~/.tmux.conf` to actually persist session content (windows, panes, cwd, command lines) to disk:
 
    ```tmux
@@ -122,9 +122,7 @@ tmux sessions live in the `tmux` server's memory and are **lost when the compute
 
 3. **`set -g exit-empty off`** is appended to `~/.tmux.conf` automatically by the installer (idempotent). It prevents the empty server started by systemd from self-exiting before tmux-continuum's auto-restore finishes.
 
-> **macOS note**: `install-service.sh` does not install a launchd agent for the tmux server. Either start tmux manually after login, or use [`tmuxinator`](https://github.com/tmuxinator/tmuxinator)/your own LaunchAgent. The web panel still works — it just shows an empty list until a tmux server exists.
-
-> **Recovery after manual `tmux kill-server`**: tmux-continuum only auto-restores on the *first* server start. If you kill the server while the system is up, restart `tmux-server.service` will give you an empty server — press `prefix + Ctrl-r` inside any tmux session to manually restore the last snapshot.
+> **Recovery after manual `tmux kill-server`**: tmux-continuum only auto-restores on the *first* server start. If you kill the server while the system is up, restarting the companion service will give you an empty server — press `prefix + Ctrl-r` inside any tmux session to manually restore the last snapshot.
 
 ## Mobile Text Selection
 

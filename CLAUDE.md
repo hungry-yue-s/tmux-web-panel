@@ -19,12 +19,12 @@
 
 ## tmux server 守护与会话持久化
 
-`tmux-web-panel.service` 依赖 `tmux-server.service`（用户级 systemd unit）：unit 文件在 `~/.config/systemd/user/`，不在仓库内。这是为了让重启电脑后网页面板立刻能看到上次保存的会话。
+Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.tmux-server.plist`；它们都由 `install-service.sh` 生成在用户服务目录中。这是为了让重启电脑后网页面板立刻能看到上次保存的会话。
 
 工作链路：
-1. 开机 → `tmux-server.service` 跑 `tmux start-server` → 加载 `~/.tmux.conf`
+1. 开机 → tmux companion service 跑 `tmux start-server`（macOS 为 `tmux -D start-server`）→ 加载 `~/.tmux.conf`
 2. tmux-continuum 的 `@continuum-restore 'on'` 自动从 `~/.local/share/tmux/resurrect/last` 恢复 sessions/windows/panes
-3. `tmux-web-panel.service` 的 `After=tmux-server.service Wants=tmux-server.service` 保证启动顺序
+3. Linux 由 systemd dependency 保证顺序；macOS 安装时先加载 tmux LaunchAgent，再加载网页面板
 4. 网页打开 → `server/tmux.js` 的 `listSessions()` 跑 `tmux list-sessions`，看到所有 restored 会话
 
 不变量：
