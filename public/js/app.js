@@ -340,6 +340,9 @@ function navigate(tab, params) {
     if (typeof cleanupTerminal === 'function') {
       cleanupTerminal();
     }
+    if (typeof FilePreview !== 'undefined' && FilePreview.closeDocked) {
+      FilePreview.closeDocked();
+    }
   }
 
   // Auto-clear notification when navigating to a window

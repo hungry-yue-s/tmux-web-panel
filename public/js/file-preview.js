@@ -7,6 +7,151 @@ var FilePreview = (function () {
   var _currentFile = null;
   var _currentPaneId = null;
   var _dirContext = null; // parent dir abs path, set when a file is opened from the dir browser
+  var _placement = 'modal';
+  var _placementButton = null;
+  var _maximizeButton = null;
+  var _sideResizeCleanup = null;
+
+  function _canDockRight() {
+    var bounds = _sideWidthBounds();
+    return window.innerWidth >= 900
+      && !!document.querySelector('.terminal-view')
+      && bounds.max >= bounds.min;
+  }
+
+  function _sideWidthBounds() {
+    var layout = document.getElementById('main-layout');
+    var layoutWidth = layout ? layout.getBoundingClientRect().width : 0;
+    if (!layoutWidth) layoutWidth = window.innerWidth || 0;
+
+    var sidebar = layout ? layout.querySelector('#sidebar') : null;
+    var sidebarWidth = 0;
+    if (sidebar && window.getComputedStyle(sidebar).display !== 'none') {
+      sidebarWidth = sidebar.getBoundingClientRect().width || sidebar.offsetWidth || 0;
+    }
+
+    var available = Math.max(0, layoutWidth - sidebarWidth);
+    var min = 320;
+    var terminalMin = Math.min(560, Math.max(360, Math.floor(available * 0.45)));
+    var max = Math.max(0, available - terminalMin);
+    var preferred = Math.min(820, Math.max(min, Math.round(available * 0.44)));
+    return { min: min, max: max, preferred: Math.min(preferred, max) };
+  }
+
+  function _clampSideWidth(width) {
+    var bounds = _sideWidthBounds();
+    var candidate = width || bounds.preferred;
+    return Math.max(bounds.min, Math.min(bounds.max, candidate));
+  }
+
+  function _cleanupSideResize() {
+    if (_sideResizeCleanup) {
+      _sideResizeCleanup();
+      _sideResizeCleanup = null;
+    }
+  }
+
+  function _installSideResize() {
+    _cleanupSideResize();
+    if (!_overlay || _placement !== 'side') return;
+    var grip = document.createElement('div');
+    grip.className = 'fp-side-resizer';
+    grip.setAttribute('role', 'separator');
+    grip.setAttribute('aria-label', '\u8C03\u6574\u53F3\u4FA7\u9884\u89C8\u5BBD\u5EA6');
+    grip.setAttribute('aria-orientation', 'vertical');
+    _overlay.insertBefore(grip, _overlay.firstChild);
+
+    var startX = 0, startWidth = 0;
+    function onMove(e) {
+      var next = _clampSideWidth(startWidth + startX - e.clientX);
+      _overlay.style.flexBasis = next + 'px';
+    }
+    function onUp() {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.classList.remove('fp-side-resizing');
+      try { window.localStorage.setItem('tmux_file_preview_side_width', String(Math.round(_overlay.getBoundingClientRect().width))); } catch (_) {}
+    }
+    function onDown(e) {
+      e.preventDefault();
+      startX = e.clientX;
+      startWidth = _overlay.getBoundingClientRect().width;
+      document.body.classList.add('fp-side-resizing');
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    }
+    grip.addEventListener('pointerdown', onDown);
+
+    function onLayoutResize() {
+      if (!_overlay || _placement !== 'side') return;
+      if (!_canDockRight()) {
+        _setPlacement('modal');
+        return;
+      }
+      var current = parseFloat(_overlay.style.flexBasis) || _overlay.getBoundingClientRect().width;
+      _overlay.style.flexBasis = _clampSideWidth(current) + 'px';
+    }
+    window.addEventListener('resize', onLayoutResize);
+    var layoutObserver = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      layoutObserver = new ResizeObserver(onLayoutResize);
+      var mainLayout = document.getElementById('main-layout');
+      if (mainLayout) layoutObserver.observe(mainLayout);
+    }
+    _sideResizeCleanup = function () {
+      grip.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('resize', onLayoutResize);
+      if (layoutObserver) layoutObserver.disconnect();
+      document.body.classList.remove('fp-side-resizing');
+      if (grip.parentNode) grip.parentNode.removeChild(grip);
+    };
+  }
+
+  function _syncPlacementButton() {
+    if (!_placementButton) return;
+    var side = _placement === 'side';
+    _placementButton.textContent = side ? '\u25A3' : '\u25E7';
+    _placementButton.setAttribute('aria-label', side ? '\u6062\u590D\u5F39\u7A97\u9884\u89C8' : '\u5728\u53F3\u4FA7\u5206\u680F\u6253\u5F00');
+    _placementButton.title = side ? '\u6062\u590D\u5F39\u7A97\u9884\u89C8' : '\u5728\u53F3\u4FA7\u5206\u680F\u6253\u5F00';
+  }
+
+  function _syncMaximizeButton() {
+    if (!_maximizeButton) return;
+    _maximizeButton.textContent = _maximized ? '\u2612' : '\u2610';
+    _maximizeButton.setAttribute('aria-label', _maximized ? 'Restore' : 'Maximize');
+    _maximizeButton.title = _maximized ? '\u6062\u590D\u9884\u89C8' : '\u6700\u5927\u5316\u9884\u89C8';
+  }
+
+  function _setPlacement(next) {
+    if (!_overlay) return;
+    if (next === 'side' && !_canDockRight()) next = 'modal';
+    _placement = next === 'side' ? 'side' : 'modal';
+    _maximized = false;
+
+    var modal = _overlay.querySelector('.fp-modal');
+    if (modal) modal.classList.remove('fp-maximized');
+    _overlay.classList.remove('fp-side-maximized');
+    _overlay.classList.toggle('fp-side', _placement === 'side');
+    document.body.classList.toggle('fp-side-open', _placement === 'side');
+
+    if (_placement === 'side') {
+      var layout = document.getElementById('main-layout');
+      if (layout) layout.appendChild(_overlay);
+      var savedWidth = 0;
+      try { savedWidth = parseInt(window.localStorage.getItem('tmux_file_preview_side_width'), 10) || 0; } catch (_) {}
+      _overlay.style.flexBasis = _clampSideWidth(savedWidth) + 'px';
+      _installSideResize();
+    } else {
+      _cleanupSideResize();
+      _overlay.style.flexBasis = '';
+      document.body.appendChild(_overlay);
+    }
+
+    _syncPlacementButton();
+    _syncMaximizeButton();
+  }
 
   // --- Lazy loading ---
   var _loaded = {};
@@ -52,7 +197,10 @@ var FilePreview = (function () {
   // --- Modal ---
 
   function _createModal(title) {
+    var nextPlacement = _overlay ? _placement : 'modal';
     if (_overlay) _overlay.remove();
+    _cleanupSideResize();
+    document.body.classList.remove('fp-side-open');
     _maximized = false;
 
     _overlay = document.createElement('div');
@@ -89,19 +237,32 @@ var FilePreview = (function () {
     var btnMaximize = _btn('\u2610', 'Maximize', function () {
       _maximized = !_maximized;
       modal.classList.toggle('fp-maximized', _maximized);
-      btnMaximize.textContent = _maximized ? '\u2612' : '\u2610';
-      btnMaximize.setAttribute('aria-label', _maximized ? 'Restore' : 'Maximize');
+      _overlay.classList.toggle('fp-side-maximized', _maximized && _placement === 'side');
+      _syncMaximizeButton();
     });
+    _maximizeButton = btnMaximize;
+    var btnPlacement = _btn('\u25E7', '\u5728\u53F3\u4FA7\u5206\u680F\u6253\u5F00', function () {
+      _setPlacement(_placement === 'side' ? 'modal' : 'side');
+    });
+    btnPlacement.className += ' fp-btn-placement';
+    _placementButton = btnPlacement;
     var btnNewTab = _btn('\u2197', 'Open in new tab', function () { _openNewTab(); });
     btnNewTab.className += ' fp-btn-file-only';
-    var btnExport = _btn('\u{1F4BE}', '\u5BFC\u51FA\u6E32\u67D3\u540E\u7684 HTML', function () { _exportHtml(); });
+    var btnExport = _btn('', '\u5BFC\u51FA\u6E32\u67D3\u540E\u7684 HTML', function () { _exportHtml(); });
+    _setSvgIcon(btnExport,
+      '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
+      + '<path d="M14 2v6h6"/><path d="M12 11v7"/><path d="m9 15 3 3 3-3"/>');
     btnExport.className += ' fp-btn-file-only';
-    var btnShare = _btn('\u{1F517}', '\u751F\u6210\u5185\u7F51\u5206\u4EAB\u94FE\u63A5', function () { _openShareDialog(); });
+    var btnShare = _btn('', '\u751F\u6210\u5185\u7F51\u5206\u4EAB\u94FE\u63A5', function () { _openShareDialog(); });
+    _setSvgIcon(btnShare,
+      '<path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"/>'
+      + '<path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.14-1.14"/>');
     btnShare.className += ' fp-btn-file-only';
     var btnDownload = _btn('\u2B07', 'Download', function () { _download(); });
     btnDownload.className += ' fp-btn-file-only';
     var btnClose = _btn('\u2715', 'Close', close);
 
+    actions.appendChild(btnPlacement);
     actions.appendChild(btnMaximize);
     actions.appendChild(btnNewTab);
     actions.appendChild(btnExport);
@@ -120,8 +281,9 @@ var FilePreview = (function () {
     modal.appendChild(body);
     _overlay.appendChild(modal);
     document.body.appendChild(_overlay);
+    _setPlacement(nextPlacement);
 
-    btnClose.focus();
+    if (_placement !== 'side') btnClose.focus();
     _overlay.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') { close(); e.stopPropagation(); }
       if (e.key === 'Tab') {
@@ -143,6 +305,13 @@ var FilePreview = (function () {
     b.setAttribute('aria-label', label);
     b.addEventListener('click', onclick);
     return b;
+  }
+
+  function _setSvgIcon(button, paths) {
+    button.className += ' fp-btn-svg';
+    button.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+      + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'
+      + ' aria-hidden="true" focusable="false">' + paths + '</svg>';
   }
 
   // Snapshot the theme vars the main window currently has applied (Theme.apply
@@ -531,11 +700,20 @@ var FilePreview = (function () {
   }
 
   function close() {
+    _cleanupSideResize();
     if (_overlay) { _overlay.remove(); _overlay = null; }
+    document.body.classList.remove('fp-side-open');
     _maximized = false;
+    _placement = 'modal';
+    _placementButton = null;
+    _maximizeButton = null;
     _currentFile = null;
     _dirContext = null;
     _currentPaneId = null;
+  }
+
+  function closeDocked() {
+    if (_placement === 'side') close();
   }
 
   function _showError(body, message, absPath) {
@@ -1947,7 +2125,7 @@ var FilePreview = (function () {
 
   return {
     registerLinkProvider: registerLinkProvider, openFile: openFile,
-    openFromBuffer: openFromBuffer, close: close, hitTest: hitTest,
+    openFromBuffer: openFromBuffer, close: close, closeDocked: closeDocked, hitTest: hitTest,
     activateHit: _activateLink,
     // Test seam (no DOM): exercised by test/file-preview-links.test.js.
     _test: {
