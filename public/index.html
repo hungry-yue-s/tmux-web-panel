@@ -12,7 +12,7 @@
   <script src="https://unpkg.com/@xterm/xterm@6.0.0/lib/xterm.js"></script>
   <script src="https://unpkg.com/@xterm/addon-fit@0.11.0/lib/addon-fit.js"></script>
   <script src="https://unpkg.com/@xterm/addon-webgl@0.19.0/lib/addon-webgl.js"></script>
-  <link rel="stylesheet" href="/css/style.css?v=4">
+  <link rel="stylesheet" href="/css/style.css?v=7">
 </head>
 <body>
   <div id="app">
@@ -23,9 +23,9 @@
         <span class="topbar-caret">&#9662;</span>
       </button>
       <span id="status-info"></span>
-      <button id="btn-add-window" class="btn topbar-action-btn" title="New Window">&#43;</button>
-      <button class="btn topbar-action-btn notification-bell" title="Notifications" onclick="NotificationPanel.render(event)">🔔<span class="notification-bell-count" style="display:none">0</span></button>
-      <button id="btn-more" class="btn topbar-action-btn" title="More">&#9881;</button>
+      <button id="btn-add-window" class="btn topbar-action-btn" title="New Window"><svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button class="btn topbar-action-btn notification-bell" title="Notifications" onclick="NotificationPanel.render(event)"><svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg><span class="notification-bell-count" style="display:none">0</span></button>
+      <button id="btn-more" class="btn topbar-action-btn" title="More"><svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09A1.7 1.7 0 0 0 8.94 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.54-1H3v-4h.09A1.7 1.7 0 0 0 4.6 8.94a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06A1.7 1.7 0 0 0 8.97 4.6 1.7 1.7 0 0 0 10 3.06V3h4v.09a1.7 1.7 0 0 0 1.06 1.51 1.7 1.7 0 0 0 1.88-.34L17 4.2 19.83 7l-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.94 10H21v4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg></button>
     </header>
     <div id="session-dropdown" class="session-dropdown" style="display:none;"></div>
     <div id="main-layout">
@@ -40,8 +40,8 @@
   <script type="module" src="/js/sort-windows.js?v=1"></script>
   <script src="/js/windows.js?v=2"></script>
   <script src="/js/link-detect.js?v=1"></script>
-  <script src="/js/file-preview.js?v=21"></script>
-  <script src="/js/terminal.js?v=5"></script>
+  <script src="/js/file-preview.js?v=22"></script>
+  <script src="/js/terminal.js?v=6"></script>
   <script src="/js/notifications.js?v=2"></script>
   <script src="/js/system-stats.js?v=2"></script>
   <script src="/js/perf-utils.js?v=1"></script>
@@ -50,7 +50,7 @@
   <script src="/js/fab-heat.js?v=1"></script>
   <script src="/js/fab-migrate.js?v=1"></script>
   <script src="/js/fab-drawer.js?v=1"></script>
-  <script src="/js/app.js?v=5"></script>
+  <script src="/js/app.js?v=6"></script>
   <script src="/js/command-palette.js?v=2"></script>
   <script src="/js/layout-picker.js?v=2"></script>
 </body>

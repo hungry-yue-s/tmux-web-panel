@@ -689,6 +689,18 @@ function connectTerminalWs(paneId, term, nozoom) {
 
 // === Render Terminal View ===
 
+function _terminalToolIcon(paths) {
+  return '<svg class="terminal-tool-icon" viewBox="0 0 24 24" fill="none"'
+    + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round"'
+    + ' stroke-linejoin="round" aria-hidden="true" focusable="false">'
+    + paths + '</svg>';
+}
+
+function _terminalFontIcon(sign) {
+  return '<span class="terminal-font-glyph" aria-hidden="true">A'
+    + '<span>' + sign + '</span></span>';
+}
+
 function renderTerminal(container) {
   // Cleanup previous terminal resources without removing body class
   _cleanupTerminalResources();
@@ -718,22 +730,33 @@ function renderTerminal(container) {
   container.innerHTML =
     '<div class="terminal-view">' +
     '<div class="terminal-header">' +
-    '<button class="btn terminal-back-btn">&larr;</button>' +
+    '<button type="button" class="btn terminal-tool-btn terminal-back-btn" title="返回窗口列表" aria-label="返回窗口列表">' +
+    _terminalToolIcon('<path d="m15 18-6-6 6-6"/><path d="M9 12h10"/>') + '</button>' +
     '<div class="terminal-header-pills"></div>' +
     '<span class="terminal-header-title"></span>' +
-    '<div class="terminal-header-actions">' +
-    '<button class="btn terminal-refresh-btn" title="Refresh">&#10227;</button>' +
-    '<div class="terminal-mode-toggle">' +
-    '<button class="btn terminal-mode-opt' + (_terminalMode === 'tab' ? ' active' : '') + '" data-mode="tab" title="标签页模式">&#9723;</button>' +
-    '<button class="btn terminal-mode-opt' + (_terminalMode === 'split' ? ' active' : '') + '" data-mode="split" title="分屏模式 · 再点一次打开布局选择器">&#8862;</button>' +
+    '<div class="terminal-header-actions" role="toolbar" aria-label="终端控制">' +
+    '<button type="button" class="btn terminal-tool-btn terminal-refresh-btn" title="刷新终端" aria-label="刷新终端">' +
+    _terminalToolIcon('<path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/>') + '</button>' +
+    '<div class="terminal-mode-toggle" role="group" aria-label="终端布局模式">' +
+    '<button type="button" class="btn terminal-tool-btn terminal-mode-opt' + (_terminalMode === 'tab' ? ' active' : '') + '" data-mode="tab" title="标签页模式" aria-label="标签页模式" aria-pressed="' + (_terminalMode === 'tab' ? 'true' : 'false') + '">' +
+    _terminalToolIcon('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><path d="M7 6.5h4"/>') + '</button>' +
+    '<button type="button" class="btn terminal-tool-btn terminal-mode-opt' + (_terminalMode === 'split' ? ' active' : '') + '" data-mode="split" title="分屏模式 · 再点一次打开布局选择器" aria-label="分屏模式" aria-pressed="' + (_terminalMode === 'split' ? 'true' : 'false') + '">' +
+    _terminalToolIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/><path d="M3 12h18"/>') + '</button>' +
     '</div>' +
-    '<button class="btn terminal-font-btn" data-dir="-1" title="Smaller font">A&#8722;</button>' +
-    '<button class="btn terminal-font-btn" data-dir="1" title="Larger font">A&#43;</button>' +
-    '<button class="btn terminal-split-btn" title="Split pane">&#10010;</button>' +
-    '<button class="btn terminal-label-btn" title="设置当前窗格标签">&#127991;</button>' +
-    '<button class="btn terminal-open-buf-btn" title="Open file from tmux buffer (Ctrl+Shift+O)">&#128194;</button>' +
-    '<button class="btn terminal-popout-btn" title="Pop out">&#8599;</button>' +
-    '<button class="btn terminal-fullscreen-btn" title="Fullscreen">&#9634;</button>' +
+    '<div class="terminal-font-toggle" role="group" aria-label="终端字号">' +
+    '<button type="button" class="btn terminal-tool-btn terminal-font-btn" data-dir="-1" title="减小字号" aria-label="减小字号">' + _terminalFontIcon('\u2212') + '</button>' +
+    '<button type="button" class="btn terminal-tool-btn terminal-font-btn" data-dir="1" title="增大字号" aria-label="增大字号">' + _terminalFontIcon('+') + '</button>' +
+    '</div>' +
+    '<button type="button" class="btn terminal-tool-btn terminal-split-btn" title="新增分屏" aria-label="新增分屏">' +
+    _terminalToolIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/><path d="M16.5 9v6"/><path d="M13.5 12h6"/>') + '</button>' +
+    '<button type="button" class="btn terminal-tool-btn terminal-label-btn" title="设置当前窗格标签" aria-label="设置当前窗格标签">' +
+    _terminalToolIcon('<path d="M20.59 13.41 11 3.83V3H4v7h.83l9.58 9.59a2 2 0 0 0 2.82 0l3.36-3.36a2 2 0 0 0 0-2.82Z"/><circle cx="7.5" cy="6.5" r="1"/>') + '</button>' +
+    '<button type="button" class="btn terminal-tool-btn terminal-open-buf-btn" title="从 tmux 缓冲区打开文件 (Ctrl+Shift+O)" aria-label="从 tmux 缓冲区打开文件">' +
+    _terminalToolIcon('<path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M3 10h18"/>') + '</button>' +
+    '<button type="button" class="btn terminal-tool-btn terminal-popout-btn" title="在新窗口打开" aria-label="在新窗口打开">' +
+    _terminalToolIcon('<path d="M15 3h6v6"/><path d="m10 14 11-11"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>') + '</button>' +
+    '<button type="button" class="btn terminal-tool-btn terminal-fullscreen-btn" title="全屏" aria-label="全屏">' +
+    _terminalToolIcon('<path d="M8 3H3v5"/><path d="M16 3h5v5"/><path d="M8 21H3v-5"/><path d="M16 21h5v-5"/>') + '</button>' +
     '</div>' +
     '</div>' +
     '<div class="terminal-pane-switcher"></div>' +

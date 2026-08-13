@@ -125,15 +125,23 @@ var FilePreview = (function () {
   function _syncPlacementButton() {
     if (!_placementButton) return;
     var side = _placement === 'side';
-    _placementButton.textContent = side ? '\u25A3' : '\u25E7';
+    _setSvgIcon(_placementButton, side
+      ? '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/><path d="m18 9-3 3 3 3"/>'
+      : '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/><path d="m10 9 3 3-3 3"/>');
     _placementButton.setAttribute('aria-label', side ? '\u9690\u85CF\u53F3\u4FA7\u9884\u89C8' : '\u5728\u53F3\u4FA7\u5206\u680F\u6253\u5F00');
+    _placementButton.setAttribute('aria-pressed', side ? 'true' : 'false');
+    _placementButton.classList.toggle('is-active', side);
     _placementButton.title = side ? '\u9690\u85CF\u53F3\u4FA7\u9884\u89C8' : '\u5728\u53F3\u4FA7\u5206\u680F\u6253\u5F00';
   }
 
   function _syncMaximizeButton() {
     if (!_maximizeButton) return;
-    _maximizeButton.textContent = _maximized ? '\u2612' : '\u2610';
+    _setSvgIcon(_maximizeButton, _maximized
+      ? '<path d="M8 3v5H3"/><path d="M16 3v5h5"/><path d="M8 21v-5H3"/><path d="M16 21v-5h5"/>'
+      : '<path d="M8 3H3v5"/><path d="M16 3h5v5"/><path d="M8 21H3v-5"/><path d="M16 21h5v-5"/>');
     _maximizeButton.setAttribute('aria-label', _maximized ? 'Restore' : 'Maximize');
+    _maximizeButton.setAttribute('aria-pressed', _maximized ? 'true' : 'false');
+    _maximizeButton.classList.toggle('is-active', _maximized);
     _maximizeButton.title = _maximized ? '\u6062\u590D\u9884\u89C8' : '\u6700\u5927\u5316\u9884\u89C8';
   }
 
@@ -431,7 +439,7 @@ var FilePreview = (function () {
     var actions = document.createElement('div');
     actions.className = 'fp-actions';
 
-    var btnBack = _btn('\u2190', 'Back to parent directory', function () {
+    var btnBack = _btn('', 'Back to parent directory', function () {
       if (_dirContext) {
         var parent = _dirContext;
         _dirContext = null;
@@ -439,22 +447,27 @@ var FilePreview = (function () {
       }
     });
     btnBack.className += ' fp-btn-back';
+    _setSvgIcon(btnBack, '<path d="m15 18-6-6 6-6"/><path d="M9 12h10"/>');
 
-    var btnMaximize = _btn('\u2610', 'Maximize', function () {
+    var btnMaximize = _btn('', 'Maximize', function () {
       _maximized = !_maximized;
       modal.classList.toggle('fp-maximized', _maximized);
       _overlay.classList.toggle('fp-side-maximized', _maximized && _placement === 'side');
       _syncMaximizeButton();
     });
+    btnMaximize.className += ' fp-btn-maximize';
     _maximizeButton = btnMaximize;
-    var btnPlacement = _btn('\u25E7', '\u5728\u53F3\u4FA7\u5206\u680F\u6253\u5F00', function () {
+    var btnPlacement = _btn('', '\u5728\u53F3\u4FA7\u5206\u680F\u6253\u5F00', function () {
       if (_placement === 'side') _hideDock();
       else _dockCurrentPreview();
     });
     btnPlacement.className += ' fp-btn-placement';
     _placementButton = btnPlacement;
-    var btnNewTab = _btn('\u2197', 'Open in new tab', function () { _openNewTab(); });
-    btnNewTab.className += ' fp-btn-file-only';
+    var btnNewTab = _btn('', 'Open in new tab', function () { _openNewTab(); });
+    _setSvgIcon(btnNewTab,
+      '<path d="M15 3h6v6"/><path d="m10 14 11-11"/>'
+      + '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>');
+    btnNewTab.className += ' fp-btn-file-only fp-btn-newtab';
     var btnExport = _btn('', '\u5BFC\u51FA\u6E32\u67D3\u540E\u7684 HTML', function () { _exportHtml(); });
     _setSvgIcon(btnExport,
       '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
@@ -465,9 +478,13 @@ var FilePreview = (function () {
       '<path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"/>'
       + '<path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.14-1.14"/>');
     btnShare.className += ' fp-btn-file-only';
-    var btnDownload = _btn('\u2B07', 'Download', function () { _download(); });
-    btnDownload.className += ' fp-btn-file-only';
-    var btnClose = _btn('\u2715', 'Close', close);
+    var btnDownload = _btn('', 'Download', function () { _download(); });
+    _setSvgIcon(btnDownload,
+      '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>');
+    btnDownload.className += ' fp-btn-file-only fp-btn-download';
+    var btnClose = _btn('', 'Close', close);
+    _setSvgIcon(btnClose, '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
+    btnClose.className += ' fp-btn-close';
 
     actions.appendChild(btnPlacement);
     actions.appendChild(btnMaximize);
@@ -509,14 +526,16 @@ var FilePreview = (function () {
   function _btn(text, label, onclick) {
     var b = document.createElement('button');
     b.className = 'fp-btn';
+    b.type = 'button';
     b.textContent = text;
     b.setAttribute('aria-label', label);
+    b.title = label;
     b.addEventListener('click', onclick);
     return b;
   }
 
   function _setSvgIcon(button, paths) {
-    button.className += ' fp-btn-svg';
+    button.classList.add('fp-btn-svg');
     button.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
       + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'
       + ' aria-hidden="true" focusable="false">' + paths + '</svg>';

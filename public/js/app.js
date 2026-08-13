@@ -841,6 +841,21 @@ function _clearWindowNotification(session, windowIndex) {
   }
 }
 
+function _appIcon(name) {
+  var paths = {
+    notifications: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09A1.7 1.7 0 0 0 8.94 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.54-1H3v-4h.09A1.7 1.7 0 0 0 4.6 8.94a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06A1.7 1.7 0 0 0 8.97 4.6 1.7 1.7 0 0 0 10 3.06V3h4v.09a1.7 1.7 0 0 0 1.06 1.51 1.7 1.7 0 0 0 1.88-.34L17 4.2 19.83 7l-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.94 10H21v4h-.09A1.7 1.7 0 0 0 19.4 15Z"/>',
+    collapse: '<path d="m14 7-5 5 5 5"/>',
+    expand: '<path d="m10 7 5 5-5 5"/>'
+  };
+  return '<svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' + (paths[name] || '') + '</svg>';
+}
+
+function _sidebarCollapseContent(collapsed) {
+  return _appIcon(collapsed ? 'expand' : 'collapse') + (collapsed ? '' : '<span>收起侧栏</span>');
+}
+
 function updateSidebar() {
   var sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
@@ -851,8 +866,8 @@ function updateSidebar() {
     emptyHtml += '<div class="sidebar-header-row">';
     emptyHtml += '<span id="sidebar-dot" class="topbar-dot"></span>';
     emptyHtml += '<span id="sidebar-status-info" class="sidebar-status-info"></span>';
-    emptyHtml += '<button id="sidebar-btn-add-window" class="sidebar-action-btn" title="New Window">&#43;</button>';
-    emptyHtml += '<button id="sidebar-btn-more" class="sidebar-action-btn" title="More">&#9881;</button>';
+    emptyHtml += '<button id="sidebar-btn-add-window" class="sidebar-action-btn" title="New Window">' + _appIcon('plus') + '</button>';
+    emptyHtml += '<button id="sidebar-btn-more" class="sidebar-action-btn" title="More">' + _appIcon('settings') + '</button>';
     emptyHtml += '</div>';
     emptyHtml += '</div>';
     emptyHtml += '<div class="sidebar-section">' +
@@ -889,9 +904,9 @@ function _rebuildSidebar(sidebar) {
   html += '<div class="sidebar-header-row">';
   html += '<span id="sidebar-dot" class="topbar-dot"></span>';
   html += '<span id="sidebar-status-info" class="sidebar-status-info"></span>';
-  html += '<button class="sidebar-action-btn notification-bell" title="Notifications" onclick="NotificationPanel.render(event)">🔔<span class="notification-bell-count" style="display:none">0</span></button>';
-  html += '<button id="sidebar-btn-add-window" class="sidebar-action-btn" title="New Window">&#43;</button>';
-  html += '<button id="sidebar-btn-more" class="sidebar-action-btn" title="More">&#9881;</button>';
+  html += '<button class="sidebar-action-btn notification-bell" title="Notifications" onclick="NotificationPanel.render(event)">' + _appIcon('notifications') + '<span class="notification-bell-count" style="display:none">0</span></button>';
+  html += '<button id="sidebar-btn-add-window" class="sidebar-action-btn" title="New Window">' + _appIcon('plus') + '</button>';
+  html += '<button id="sidebar-btn-more" class="sidebar-action-btn" title="More">' + _appIcon('settings') + '</button>';
   html += '</div>';
   html += '</div>';
 
@@ -921,7 +936,7 @@ function _rebuildSidebar(sidebar) {
   html += '</div>';
 
   // Collapse button at bottom of sidebar
-  html += '<button class="sidebar-collapse-btn" onclick="_toggleSidebarCollapse()" title="收起侧边栏">« 收起</button>';
+  html += '<button class="sidebar-collapse-btn" onclick="_toggleSidebarCollapse()" title="收起侧边栏">' + _sidebarCollapseContent(false) + '</button>';
 
   sidebar.innerHTML = html;
 
@@ -972,8 +987,9 @@ function _toggleSidebarCollapse() {
   sidebar.classList.toggle('collapsed');
   var btn = sidebar.querySelector('.sidebar-collapse-btn');
   if (btn) {
-    btn.innerHTML = sidebar.classList.contains('collapsed') ? '»' : '« 收起';
-    btn.title = sidebar.classList.contains('collapsed') ? '展开侧边栏' : '收起侧边栏';
+    var collapsed = sidebar.classList.contains('collapsed');
+    btn.innerHTML = _sidebarCollapseContent(collapsed);
+    btn.title = collapsed ? '展开侧边栏' : '收起侧边栏';
   }
 }
 

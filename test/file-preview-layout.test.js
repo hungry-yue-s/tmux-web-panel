@@ -63,6 +63,34 @@ describe('file preview dock tabs', () => {
     expect(dock.querySelector('.fp-dock-tab').textContent).toBe('one.md');
   });
 
+  it('uses consistent SVG controls with accessible toggle states', async () => {
+    const { dom, preview } = createPreview();
+    preview.openFile('/tmp/one.md', '%1'); await flush();
+
+    const overlay = dom.window.document.querySelector('.fp-overlay');
+    ['Back to parent directory', '在右侧分栏打开', 'Maximize', 'Open in new tab',
+      '导出渲染后的 HTML', '生成内网分享链接', 'Download', 'Close'].forEach((label) => {
+      const button = overlay.querySelector(`[aria-label="${label}"]`);
+      expect(button).not.toBeNull();
+      expect(button.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+      expect(button.title).not.toBe('');
+      expect(button.type).toBe('button');
+    });
+
+    const maximize = overlay.querySelector('[aria-label="Maximize"]');
+    maximize.click();
+    expect(maximize.classList.contains('is-active')).toBe(true);
+    expect(maximize.getAttribute('aria-pressed')).toBe('true');
+    expect(maximize.querySelector('svg')).not.toBeNull();
+    maximize.click();
+    expect(maximize.classList.contains('is-active')).toBe(false);
+
+    dockCurrent(dom);
+    const placement = dom.window.document.querySelector('[aria-label="隐藏右侧预览"]');
+    expect(placement.classList.contains('is-active')).toBe(true);
+    expect(placement.getAttribute('aria-pressed')).toBe('true');
+  });
+
   it('keeps the dock open while a second file opens in a modal, then adds a tab', async () => {
     const { dom, preview } = createPreview();
     preview.openFile('/tmp/one.md', '%1');
