@@ -342,6 +342,38 @@ document.addEventListener('fullscreenchange', function () {
 
 // === Pane Switching ===
 
+// state.currentPane identifies the pane used to attach the terminal client.
+// In native split mode that client renders the entire window, so currentPane
+// may remain the first pane even after tmux focus moves elsewhere. Resolve the
+// live active pane before any action whose relative paths depend on pane cwd.
+function _resolvePreviewPaneId() {
+  var fallback = state.currentPane;
+  var useSplit = _terminalMode === 'split' && state.panes && state.panes.length > 1 && window.innerWidth >= 768;
+  if (!useSplit || !state.currentSession || state.currentWindow == null) {
+    return Promise.resolve(fallback);
+  }
+
+  return api.get(
+    '/api/sessions/' + encodeURIComponent(state.currentSession) +
+    '/windows/' + encodeURIComponent(state.currentWindow) + '/panes'
+  ).then(function (result) {
+    var panes = (result && result.data) || [];
+    for (var i = 0; i < panes.length; i++) {
+      if (panes[i].active) return panes[i].id;
+    }
+    return fallback;
+  }).catch(function () {
+    return fallback;
+  });
+}
+
+function _openFilePreviewFromBuffer() {
+  if (typeof FilePreview === 'undefined' || !state.currentPane) return Promise.resolve();
+  return _resolvePreviewPaneId().then(function (paneId) {
+    if (paneId) FilePreview.openFromBuffer(paneId);
+  });
+}
+
 function switchPane(newPaneId) {
   if (newPaneId === state.currentPane) return;
   state.currentPane = newPaneId;
@@ -830,9 +862,7 @@ function renderTerminal(container) {
 
   // Open file from tmux paste buffer
   view.querySelector('.terminal-open-buf-btn').addEventListener('click', function () {
-    if (typeof FilePreview !== 'undefined' && state.currentPane) {
-      FilePreview.openFromBuffer(state.currentPane);
-    }
+    _openFilePreviewFromBuffer();
   });
 
   // Pop-out button
@@ -924,7 +954,7 @@ function _mountTerminal(termContainer, nozoom) {
   // (public/js/link-detect.js), which merges soft-wrapped rows — something the
   // old WebLinksAddon (per display row) could not do. No web-links addon.
   if (typeof FilePreview !== 'undefined') {
-    FilePreview.registerLinkProvider(term, state.currentPane);
+    FilePreview.registerLinkProvider(term, state.currentPane, _resolvePreviewPaneId);
   }
 
   term.open(termContainer);
@@ -1393,7 +1423,9 @@ function _mountTerminal(termContainer, nozoom) {
           var tapLine = _getLineText(tapCell.row);
           var tapHit = FilePreview.hitTest(tapLine, tapCell.col, term, tapCell.row);
           if (tapHit) {
-            FilePreview.activateHit(tapHit, state.currentPane);
+            _resolvePreviewPaneId().then(function (paneId) {
+              FilePreview.activateHit(tapHit, paneId);
+            });
             return;
           }
         }

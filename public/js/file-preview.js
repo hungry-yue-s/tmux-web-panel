@@ -1782,7 +1782,21 @@ var FilePreview = (function () {
     ov.addEventListener('keydown', function (e) { if (e.key === 'Escape') { ov.remove(); e.stopPropagation(); } });
   }
 
-  function registerLinkProvider(term, paneId) {
+  function _resolvePaneForAction(paneId, resolvePaneId, action) {
+    if (typeof resolvePaneId !== 'function') return action(paneId);
+    var resolved;
+    try {
+      resolved = resolvePaneId();
+    } catch (_) {
+      return action(paneId);
+    }
+    return Promise.resolve(resolved).then(
+      function (livePaneId) { return action(livePaneId || paneId); },
+      function () { return action(paneId); }
+    );
+  }
+
+  function registerLinkProvider(term, paneId, resolvePaneId) {
     term.registerLinkProvider({
       provideLinks: function (lineNumber, callback) {
         var bufRow = lineNumber - 1;
@@ -1805,7 +1819,14 @@ var FilePreview = (function () {
             range: { start: start, end: { y: end.y,
               x: end.y === start.y ? Math.max(end.x, start.x) : end.x } },
             text: f.text,
-            activate: function () { _activateLink(f, paneId); },
+            activate: function () {
+              // Keep window.open inside the original user gesture so browsers
+              // do not block ordinary web links as async popups.
+              if (f.kind === 'web') { _activateLink(f, paneId); return; }
+              _resolvePaneForAction(paneId, resolvePaneId, function (livePaneId) {
+                _activateLink(f, livePaneId);
+              });
+            },
           };
         }).filter(function (link) {
           return link.range.start.y <= lineNumber && link.range.end.y >= lineNumber;
@@ -2181,6 +2202,7 @@ var FilePreview = (function () {
       getLogicalLine: _getLogicalLine,
       strOffsetToTermPos: _logicalStrOffsetToTermPos,
       findLinks: _findLinks,
+      resolvePaneForAction: _resolvePaneForAction,
       buildLinkRange: function (logical, f) {
         var start = _logicalStrOffsetToTermPos(logical.rows, f.startCol);
         var end = _logicalStrOffsetToTermPos(logical.rows, f.endCol - 1);

@@ -127,3 +127,24 @@ describe('F4 — hanging-indent hard wrap stays one file link', () => {
     expect(FP.getLogicalLine(mismatch, 0).rows).toHaveLength(1);
   });
 });
+
+describe('pane context resolution', () => {
+  it('uses the live active pane supplied by split mode', async () => {
+    const used = await FP.resolvePaneForAction('%1', () => Promise.resolve('%2'), (paneId) => paneId);
+    expect(used).toBe('%2');
+  });
+
+  it('falls back to the attached pane when live lookup fails', async () => {
+    const used = await FP.resolvePaneForAction('%1', () => Promise.reject(new Error('offline')), (paneId) => paneId);
+    expect(used).toBe('%1');
+  });
+
+  it('does not retry the action when the action itself fails', async () => {
+    var calls = 0;
+    await expect(FP.resolvePaneForAction('%1', () => '%2', () => {
+      calls++;
+      throw new Error('open failed');
+    })).rejects.toThrow('open failed');
+    expect(calls).toBe(1);
+  });
+});
