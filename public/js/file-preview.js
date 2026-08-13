@@ -11,6 +11,13 @@ var FilePreview = (function () {
   var _placementButton = null;
   var _maximizeButton = null;
   var _sideResizeCleanup = null;
+  var _dockOverlay = null;
+  var _dockTabs = [];
+  var _activeDockTabId = null;
+  var _nextDockTabId = 1;
+  var _dockHidden = false;
+  var _dockRestoreButton = null;
+  var _currentOpenPath = null;
 
   function _canDockRight() {
     var bounds = _sideWidthBounds();
@@ -33,8 +40,10 @@ var FilePreview = (function () {
     var available = Math.max(0, layoutWidth - sidebarWidth);
     var min = 320;
     var terminalMin = Math.min(560, Math.max(360, Math.floor(available * 0.45)));
-    var max = Math.max(0, available - terminalMin);
-    var preferred = Math.min(820, Math.max(min, Math.round(available * 0.44)));
+    // Keep the dock a secondary workspace instead of allowing a stale saved
+    // width to consume almost the entire terminal. This matches the CSS cap.
+    var max = Math.min(820, Math.max(0, available - terminalMin));
+    var preferred = Math.min(max, Math.max(min, Math.round(available * 0.44)));
     return { min: min, max: max, preferred: Math.min(preferred, max) };
   }
 
@@ -54,28 +63,30 @@ var FilePreview = (function () {
   function _installSideResize() {
     _cleanupSideResize();
     if (!_overlay || _placement !== 'side') return;
+    var sideOverlay = _overlay;
     var grip = document.createElement('div');
     grip.className = 'fp-side-resizer';
     grip.setAttribute('role', 'separator');
     grip.setAttribute('aria-label', '\u8C03\u6574\u53F3\u4FA7\u9884\u89C8\u5BBD\u5EA6');
     grip.setAttribute('aria-orientation', 'vertical');
-    _overlay.insertBefore(grip, _overlay.firstChild);
+    sideOverlay.insertBefore(grip, sideOverlay.firstChild);
 
     var startX = 0, startWidth = 0;
     function onMove(e) {
       var next = _clampSideWidth(startWidth + startX - e.clientX);
-      _overlay.style.flexBasis = next + 'px';
+      sideOverlay.style.flexBasis = next + 'px';
+      sideOverlay.style.width = next + 'px';
     }
     function onUp() {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       document.body.classList.remove('fp-side-resizing');
-      try { window.localStorage.setItem('tmux_file_preview_side_width', String(Math.round(_overlay.getBoundingClientRect().width))); } catch (_) {}
+      try { window.localStorage.setItem('tmux_file_preview_side_width', String(Math.round(sideOverlay.getBoundingClientRect().width))); } catch (_) {}
     }
     function onDown(e) {
       e.preventDefault();
       startX = e.clientX;
-      startWidth = _overlay.getBoundingClientRect().width;
+      startWidth = sideOverlay.getBoundingClientRect().width;
       document.body.classList.add('fp-side-resizing');
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
@@ -83,13 +94,15 @@ var FilePreview = (function () {
     grip.addEventListener('pointerdown', onDown);
 
     function onLayoutResize() {
-      if (!_overlay || _placement !== 'side') return;
+      if (!sideOverlay.isConnected) return;
       if (!_canDockRight()) {
-        _setPlacement('modal');
+        _hideDock();
         return;
       }
-      var current = parseFloat(_overlay.style.flexBasis) || _overlay.getBoundingClientRect().width;
-      _overlay.style.flexBasis = _clampSideWidth(current) + 'px';
+      var current = parseFloat(sideOverlay.style.flexBasis) || sideOverlay.getBoundingClientRect().width;
+      var next = _clampSideWidth(current);
+      sideOverlay.style.flexBasis = next + 'px';
+      sideOverlay.style.width = next + 'px';
     }
     window.addEventListener('resize', onLayoutResize);
     var layoutObserver = null;
@@ -113,8 +126,8 @@ var FilePreview = (function () {
     if (!_placementButton) return;
     var side = _placement === 'side';
     _placementButton.textContent = side ? '\u25A3' : '\u25E7';
-    _placementButton.setAttribute('aria-label', side ? '\u6062\u590D\u5F39\u7A97\u9884\u89C8' : '\u5728\u53F3\u4FA7\u5206\u680F\u6253\u5F00');
-    _placementButton.title = side ? '\u6062\u590D\u5F39\u7A97\u9884\u89C8' : '\u5728\u53F3\u4FA7\u5206\u680F\u6253\u5F00';
+    _placementButton.setAttribute('aria-label', side ? '\u9690\u85CF\u53F3\u4FA7\u9884\u89C8' : '\u5728\u53F3\u4FA7\u5206\u680F\u6253\u5F00');
+    _placementButton.title = side ? '\u9690\u85CF\u53F3\u4FA7\u9884\u89C8' : '\u5728\u53F3\u4FA7\u5206\u680F\u6253\u5F00';
   }
 
   function _syncMaximizeButton() {
@@ -124,33 +137,224 @@ var FilePreview = (function () {
     _maximizeButton.title = _maximized ? '\u6062\u590D\u9884\u89C8' : '\u6700\u5927\u5316\u9884\u89C8';
   }
 
-  function _setPlacement(next) {
-    if (!_overlay) return;
-    if (next === 'side' && !_canDockRight()) next = 'modal';
-    _placement = next === 'side' ? 'side' : 'modal';
-    _maximized = false;
+  function _tabTitle(tab) {
+    var path = tab.path || '';
+    return path.split('/').filter(Boolean).pop() || path || 'Preview';
+  }
 
-    var modal = _overlay.querySelector('.fp-modal');
-    if (modal) modal.classList.remove('fp-maximized');
-    _overlay.classList.remove('fp-side-maximized');
-    _overlay.classList.toggle('fp-side', _placement === 'side');
-    document.body.classList.toggle('fp-side-open', _placement === 'side');
-
-    if (_placement === 'side') {
-      var layout = document.getElementById('main-layout');
-      if (layout) layout.appendChild(_overlay);
-      var savedWidth = 0;
-      try { savedWidth = parseInt(window.localStorage.getItem('tmux_file_preview_side_width'), 10) || 0; } catch (_) {}
-      _overlay.style.flexBasis = _clampSideWidth(savedWidth) + 'px';
-      _installSideResize();
-    } else {
-      _cleanupSideResize();
-      _overlay.style.flexBasis = '';
-      document.body.appendChild(_overlay);
+  function _activeDockTab() {
+    for (var i = 0; i < _dockTabs.length; i++) {
+      if (_dockTabs[i].id === _activeDockTabId) return _dockTabs[i];
     }
+    return null;
+  }
 
+  function _saveActiveDockTab() {
+    if (_placement !== 'side') return;
+    var tab = _activeDockTab();
+    if (!tab) return;
+    tab.currentFile = _currentFile;
+    tab.paneId = _currentPaneId;
+    tab.dirContext = _dirContext;
+    tab.placementButton = _placementButton;
+    tab.maximizeButton = _maximizeButton;
+    tab.maximized = _maximized;
+    tab.modeDir = _dockOverlay && _dockOverlay.classList.contains('fp-mode-dir');
+    tab.hasBack = _dockOverlay && _dockOverlay.classList.contains('fp-has-back');
+    if (_currentFile && _currentFile.absPath) tab.path = _currentFile.absPath;
+  }
+
+  function _renderDockTabs() {
+    if (!_dockOverlay) return;
+    var bar = _dockOverlay.querySelector('.fp-dock-tabs');
+    if (!bar) return;
+    bar.innerHTML = '';
+    _dockTabs.forEach(function (tab) {
+      var item = document.createElement('div');
+      item.className = 'fp-dock-tab-item' + (tab.id === _activeDockTabId ? ' active' : '');
+      var select = document.createElement('button');
+      select.className = 'fp-dock-tab';
+      select.setAttribute('role', 'tab');
+      select.setAttribute('aria-selected', tab.id === _activeDockTabId ? 'true' : 'false');
+      select.title = tab.path || _tabTitle(tab);
+      select.textContent = _tabTitle(tab);
+      select.addEventListener('click', function () { _activateDockTab(tab.id); });
+      var closeTab = document.createElement('button');
+      closeTab.className = 'fp-dock-tab-close';
+      closeTab.setAttribute('aria-label', '\u5173\u95ED ' + _tabTitle(tab));
+      closeTab.textContent = '\u00D7';
+      closeTab.addEventListener('click', function (e) {
+        e.stopPropagation();
+        _closeDockTab(tab.id);
+      });
+      item.appendChild(select);
+      item.appendChild(closeTab);
+      bar.appendChild(item);
+    });
+  }
+
+  function _ensureDockOverlay() {
+    if (_dockOverlay) return;
+    _dockOverlay = document.createElement('div');
+    _dockOverlay.className = 'fp-overlay fp-side fp-dock';
+    var tabs = document.createElement('div');
+    tabs.className = 'fp-dock-tabs';
+    tabs.setAttribute('role', 'tablist');
+    tabs.setAttribute('aria-label', '\u6587\u4EF6\u9884\u89C8\u6807\u7B7E');
+    var panels = document.createElement('div');
+    panels.className = 'fp-dock-panels';
+    _dockOverlay.appendChild(tabs);
+    _dockOverlay.appendChild(panels);
+  }
+
+  function _removeDockRestoreButton() {
+    if (_dockRestoreButton) _dockRestoreButton.remove();
+    _dockRestoreButton = null;
+  }
+
+  function _showDock() {
+    if (!_dockOverlay || _dockTabs.length === 0 || !_canDockRight()) return;
+    _dockHidden = false;
+    _removeDockRestoreButton();
+    var layout = document.getElementById('main-layout');
+    if (layout) layout.appendChild(_dockOverlay);
+    var savedWidth = 0;
+    try { savedWidth = parseInt(window.localStorage.getItem('tmux_file_preview_side_width'), 10) || 0; } catch (_) {}
+    var dockWidth = _clampSideWidth(savedWidth);
+    _dockOverlay.style.flexBasis = dockWidth + 'px';
+    _dockOverlay.style.width = dockWidth + 'px';
+    document.body.classList.add('fp-side-open');
+    _activateDockTab(_activeDockTabId || _dockTabs[0].id);
+    _installSideResize();
+  }
+
+  function _hideDock() {
+    if (!_dockOverlay) return;
+    _saveActiveDockTab();
+    _dockHidden = true;
+    _cleanupSideResize();
+    _dockOverlay.remove();
+    document.body.classList.remove('fp-side-open');
+    _placement = 'modal';
+    _overlay = null;
+    _currentFile = null;
+    _currentPaneId = null;
+    _dirContext = null;
+    if (!_dockRestoreButton) {
+      _dockRestoreButton = document.createElement('button');
+      _dockRestoreButton.className = 'fp-dock-restore';
+      _dockRestoreButton.setAttribute('aria-label', '\u5C55\u5F00\u53F3\u4FA7\u6587\u4EF6\u9884\u89C8');
+      _dockRestoreButton.addEventListener('click', _showDock);
+      var layout = document.getElementById('main-layout');
+      if (layout) layout.appendChild(_dockRestoreButton);
+    }
+    _dockRestoreButton.textContent = '\u25E7 ' + _dockTabs.length;
+  }
+
+  function _activateDockTab(tabId) {
+    if (!_dockOverlay) return;
+    if (_placement === 'side') _saveActiveDockTab();
+    var tab = null;
+    for (var i = 0; i < _dockTabs.length; i++) {
+      if (_dockTabs[i].id === tabId) { tab = _dockTabs[i]; break; }
+    }
+    if (!tab) return;
+    _activeDockTabId = tab.id;
+    var panels = _dockOverlay.querySelector('.fp-dock-panels');
+    if (panels) {
+      panels.innerHTML = '';
+      panels.appendChild(tab.modal);
+    }
+    _overlay = _dockOverlay;
+    _placement = 'side';
+    _currentFile = tab.currentFile;
+    _currentPaneId = tab.paneId;
+    _dirContext = tab.dirContext;
+    _placementButton = tab.placementButton;
+    _maximizeButton = tab.maximizeButton;
+    _maximized = !!tab.maximized;
+    _dockOverlay.classList.toggle('fp-mode-dir', !!tab.modeDir);
+    _dockOverlay.classList.toggle('fp-has-back', !!tab.hasBack);
+    _dockOverlay.classList.toggle('fp-side-maximized', _maximized);
     _syncPlacementButton();
     _syncMaximizeButton();
+    _renderDockTabs();
+  }
+
+  function _closeDockTab(tabId) {
+    var index = -1;
+    for (var i = 0; i < _dockTabs.length; i++) {
+      if (_dockTabs[i].id === tabId) { index = i; break; }
+    }
+    if (index < 0) return;
+    var wasActive = _activeDockTabId === tabId;
+    _dockTabs[index].modal.remove();
+    _dockTabs.splice(index, 1);
+    if (_dockTabs.length === 0) {
+      _destroyDock();
+      return;
+    }
+    if (wasActive) {
+      var next = _dockTabs[Math.min(index, _dockTabs.length - 1)];
+      _activeDockTabId = next.id;
+      if (!_dockHidden) {
+        // The old active tab has already been removed; do not save its globals
+        // into the replacement tab when activating the neighbour.
+        _placement = 'modal';
+        _activateDockTab(next.id);
+      }
+    }
+    _renderDockTabs();
+    if (_dockRestoreButton) _dockRestoreButton.textContent = '\u25E7 ' + _dockTabs.length;
+  }
+
+  function _destroyDock() {
+    _cleanupSideResize();
+    if (_dockOverlay) _dockOverlay.remove();
+    _removeDockRestoreButton();
+    _dockOverlay = null;
+    _dockTabs = [];
+    _activeDockTabId = null;
+    _dockHidden = false;
+    document.body.classList.remove('fp-side-open');
+    if (_placement === 'side') {
+      _overlay = null;
+      _placement = 'modal';
+      _currentFile = null;
+      _currentPaneId = null;
+      _dirContext = null;
+    }
+  }
+
+  function _dockCurrentPreview() {
+    if (!_overlay || _placement === 'side' || !_canDockRight()) return;
+    var modalOverlay = _overlay;
+    var modal = modalOverlay.querySelector('.fp-modal');
+    if (!modal) return;
+    var path = (_currentFile && _currentFile.absPath) || _currentOpenPath || '';
+    for (var i = 0; i < _dockTabs.length; i++) {
+      if (path && _dockTabs[i].path === path) {
+        modalOverlay.remove();
+        _activeDockTabId = _dockTabs[i].id;
+        _showDock();
+        return;
+      }
+    }
+    _ensureDockOverlay();
+    modal.remove();
+    modalOverlay.remove();
+    var tab = {
+      id: _nextDockTabId++, path: path, modal: modal,
+      currentFile: _currentFile, paneId: _currentPaneId, dirContext: _dirContext,
+      placementButton: _placementButton, maximizeButton: _maximizeButton,
+      maximized: false,
+      modeDir: modalOverlay.classList.contains('fp-mode-dir'),
+      hasBack: modalOverlay.classList.contains('fp-has-back'),
+    };
+    modal.classList.remove('fp-maximized');
+    _dockTabs.push(tab);
+    _activeDockTabId = tab.id;
+    _showDock();
   }
 
   // --- Lazy loading ---
@@ -197,11 +401,13 @@ var FilePreview = (function () {
   // --- Modal ---
 
   function _createModal(title) {
-    var nextPlacement = _overlay ? _placement : 'modal';
-    if (_overlay) _overlay.remove();
-    _cleanupSideResize();
-    document.body.classList.remove('fp-side-open');
+    if (_placement === 'side') {
+      _saveActiveDockTab();
+    } else if (_overlay) {
+      _overlay.remove();
+    }
     _maximized = false;
+    _placement = 'modal';
 
     _overlay = document.createElement('div');
     _overlay.className = 'fp-overlay';
@@ -242,7 +448,8 @@ var FilePreview = (function () {
     });
     _maximizeButton = btnMaximize;
     var btnPlacement = _btn('\u25E7', '\u5728\u53F3\u4FA7\u5206\u680F\u6253\u5F00', function () {
-      _setPlacement(_placement === 'side' ? 'modal' : 'side');
+      if (_placement === 'side') _hideDock();
+      else _dockCurrentPreview();
     });
     btnPlacement.className += ' fp-btn-placement';
     _placementButton = btnPlacement;
@@ -281,9 +488,10 @@ var FilePreview = (function () {
     modal.appendChild(body);
     _overlay.appendChild(modal);
     document.body.appendChild(_overlay);
-    _setPlacement(nextPlacement);
+    _syncPlacementButton();
+    _syncMaximizeButton();
 
-    if (_placement !== 'side') btnClose.focus();
+    btnClose.focus();
     _overlay.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') { close(); e.stopPropagation(); }
       if (e.key === 'Tab') {
@@ -700,9 +908,12 @@ var FilePreview = (function () {
   }
 
   function close() {
-    _cleanupSideResize();
-    if (_overlay) { _overlay.remove(); _overlay = null; }
-    document.body.classList.remove('fp-side-open');
+    if (_placement === 'side') {
+      _closeDockTab(_activeDockTabId);
+      return;
+    }
+    if (_overlay) _overlay.remove();
+    _overlay = null;
     _maximized = false;
     _placement = 'modal';
     _placementButton = null;
@@ -710,10 +921,17 @@ var FilePreview = (function () {
     _currentFile = null;
     _dirContext = null;
     _currentPaneId = null;
+    _currentOpenPath = null;
+    if (_dockOverlay && !_dockHidden && _dockTabs.length > 0) {
+      _activateDockTab(_activeDockTabId || _dockTabs[0].id);
+      document.body.classList.add('fp-side-open');
+    } else if (!_dockOverlay) {
+      document.body.classList.remove('fp-side-open');
+    }
   }
 
   function closeDocked() {
-    if (_placement === 'side') close();
+    _destroyDock();
   }
 
   function _showError(body, message, absPath) {
@@ -1857,6 +2075,7 @@ var FilePreview = (function () {
       targetLine = parsed.lineRef;
     }
     _currentPaneId = paneId || _currentPaneId;
+    _currentOpenPath = filePath;
     if (!keepDir) _dirContext = null;
     var body = _createModal(filePath);
 

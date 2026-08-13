@@ -65,3 +65,14 @@ FAB 悬浮按钮 + 底部工具盘（drawer）在 `public/js/terminal.js` 的 `_
 - **本地选区靠 `mouseup` 复制**：xterm 选区在 canvas 上、非 DOM 文本，Cmd/Ctrl+C 抓不到，所以 `connectTerminalWs` 里给 `term.element` 挂了 `mouseup` → `term.getSelection()` → `_copyToClipboard`。裸拖 / split 模式时 xterm 选区为空，所以**不会与 OSC 52 双重复制**，split 模式下自动失效。
 - **mouseup 复制限桌面**（`window.innerWidth >= 768`）：移动端有自己的长按选择 + Copy 按钮 UI，不走这条。
 - 别给 Mac 用户建议"按 Shift 选择"——那是 Linux/Win 的行为，Mac 上无效。任何平台/任何模式下最可靠的是键盘 copy-mode：`prefix + [` → `v` 选 → `y` 复制（按 pane，且走 OSC 52）。
+
+## 文件预览分窗契约
+
+`public/js/file-preview.js` 的文件预览分成两个层次：新文件始终先进入 modal；用户点击“在右侧分栏打开”后，才把当前 `.fp-modal` 移入右侧 `.fp-dock` 并新增/激活 Tab。
+
+- 分窗 Tab 按绝对路径去重；同一路径再次加入时激活已有 Tab，不复制。
+- 每个 Tab 保存自己的 modal DOM、文件信息、pane ID、目录上下文、滚动和渲染状态；切换 Tab 不重新请求或重新渲染。
+- “隐藏右侧预览”只收起分窗，不销毁 Tab；右侧恢复按钮负责重新展开。关闭最后一个 Tab 才销毁分窗。
+- 分窗宽度必须由 JS 和 CSS 共同限制在 320–820px；左侧 12px resize 热区负责拖拽，保存值恢复时必须重新 clamp，不能让旧 localStorage 值覆盖上限并挤占终端。
+- 分窗存在时点击其中的目录项/文件链接，仍必须先弹出 modal，不能直接覆盖当前 Tab。
+- 导航离开 terminal 时 `FilePreview.closeDocked()` 会销毁整组分窗 Tab；普通 modal 的关闭语义保持独立。

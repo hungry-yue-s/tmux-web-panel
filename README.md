@@ -163,6 +163,17 @@ Long-press on the terminal to select and copy text on mobile devices.
 
 The preview panel auto-scrolls to match drag direction: dragging down shows the tail, dragging up shows the head.
 
+## File Preview Tabs
+
+Files always open in a modal first. Use the dock action in the preview header to
+move the current preview into the right-side workspace. Each different path is
+kept as its own tab; an existing path is activated instead of duplicated.
+
+The dock can be hidden without closing its tabs. Use the compact restore button
+at the right edge to expand it again. Drag the visible divider on the dock's
+left edge to resize it between 320 and 820 pixels; the chosen width is restored
+when the dock is expanded again. Closing the last tab removes the dock.
+
 ## Development
 
 ```bash
