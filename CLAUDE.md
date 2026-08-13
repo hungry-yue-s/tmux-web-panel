@@ -55,7 +55,7 @@ FAB 悬浮按钮 + 底部工具盘（drawer）在 `public/js/terminal.js` 的 `_
 
 两条选择路径，改动时不要混淆：
 
-- **裸拖（plain drag）= tmux copy-mode / 或被 pane 内程序吃掉**：copy-mode 高亮是 tmux 服务端画的反显，松手 `MouseDragEnd1Pane send -X copy-pipe` → OSC 52 → `server/terminal.js` 的 `extractOsc52` 拦截 → 浏览器剪贴板。copy-mode 是**按 pane 隔离**的（拖到 pane 边界就停，是正确行为）。pane 跑抢鼠标程序时裸拖根本进不了 copy-mode。
+- **裸拖（plain drag）= tmux copy-mode / 或被 pane 内程序吃掉**：copy-mode 高亮是 tmux 服务端画的反显，松手 `MouseDragEnd1Pane send -X copy-selection-and-cancel` → OSC 52 → `server/terminal.js` 的 `extractOsc52` 拦截 → 浏览器剪贴板。不要再并行调用 `pbcopy`，否则异步 pasteboard 写入可能在浏览器成功后把剪贴板覆盖为空。copy-mode 是**按 pane 隔离**的（拖到 pane 边界就停，是正确行为）。pane 跑抢鼠标程序时裸拖根本进不了 copy-mode。
 - **修饰键拖动 = xterm 本地选区（绕开 tmux 和程序）**：靠 `macOptionClickForcesSelection`（`createTerminalInstance`）打开。**Mac 用 Option/Alt+拖动，Linux/Win 用 Shift+拖动**。这是原生终端里"按 Shift 绕过程序鼠标"的网页等价物，不受重绘/边缘/copy-mode 状态影响，但只覆盖可见视口（不含 tmux 滚动历史）。
 
 不变量：
