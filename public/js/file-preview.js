@@ -1563,10 +1563,52 @@ var FilePreview = (function () {
     return s.length > 0 && !/\s$/.test(s);
   }
 
+  // Return the number of leading characters to omit from `below` when two
+  // physical rows form one logical line, or -1 when they must stay separate.
+  //
+  // TUIs such as Codex may render their own wrapping as real newlines instead
+  // of letting tmux/xterm mark the continuation with `isWrapped`. Their
+  // continuation is commonly a hanging indent aligned with the path's start:
+  //
+  //   Documents/.../DataAnt-Android14-
+  //   property_service-Wuying....md
+  //
+  // Accept that shape only when its trailing link begins at exactly the same
+  // indentation and the ordinary seam heuristic
+  // accepts the path characters after the indent. A TUI may wrap to its own
+  // narrower content width, so hanging-indent joins deliberately do not require
+  // the xterm row itself to be full. This keeps unrelated indented prose on a
+  // new logical line while supporting Codex/Claude-style rendered paragraphs.
+  function _hardJoinStrip(above, below) {
+    if (!above || !below || typeof LinkDetect === 'undefined') return -1;
+    var prevText = above.translateToString(true);
+    var nextText = below.translateToString(true);
+    if (_rowIsFull(above) && LinkDetect.shouldJoinHardWrap(prevText, true, nextText)) return 0;
+
+    var indentMatch = /^( +)/.exec(nextText);
+    if (!indentMatch) return -1;
+    var stripChars = indentMatch[1].length;
+    var continuation = nextText.slice(stripChars);
+    if (!continuation || !LinkDetect.shouldJoinHardWrap(prevText, true, continuation)) return -1;
+
+    var tailLinks = LinkDetect.findLinks(prevText);
+    for (var i = tailLinks.length - 1; i >= 0; i--) {
+      if (tailLinks[i].start === stripChars && tailLinks[i].end === prevText.length) {
+        // Validate the seam as a whole, not just as two individually plausible
+        // tokens. The joined result must be one file link covering both rows.
+        var joined = prevText + continuation;
+        var joinedLinks = LinkDetect.findLinks(joined);
+        for (var j = joinedLinks.length - 1; j >= 0; j--) {
+          if (joinedLinks[j].kind === 'file' && joinedLinks[j].start === stripChars &&
+              joinedLinks[j].end === joined.length) return stripChars;
+        }
+      }
+    }
+    return -1;
+  }
+
   function _hardJoins(above, below) {
-    return !!above && !!below && typeof LinkDetect !== 'undefined' &&
-      _rowIsFull(above) &&
-      LinkDetect.shouldJoinHardWrap(above.translateToString(true), true, below.translateToString(true));
+    return _hardJoinStrip(above, below) >= 0;
   }
 
   function _getLogicalLine(buffer, bufRow) {
@@ -1596,16 +1638,17 @@ var FilePreview = (function () {
     // row only when the conservative heuristic says the token was split.
     var first = buffer.getLine(startRow);
     if (!first) return { text: '', startRow: startRow, rows: [] };
-    var lineObjs = [{ line: first, row: startRow }];
+    var lineObjs = [{ line: first, row: startRow, stripChars: 0 }];
     var row = startRow + 1;
     var joinedHard = false;
     while (row < buffer.length) {
       var ln = buffer.getLine(row);
       if (!ln) break;
-      if (ln.isWrapped) { lineObjs.push({ line: ln, row: row }); row++; continue; }
+      if (ln.isWrapped) { lineObjs.push({ line: ln, row: row, stripChars: 0 }); row++; continue; }
       if (joinedHard) break;   // at most one hard-newline join per logical line
-      if (!_hardJoins(lineObjs[lineObjs.length - 1].line, ln)) break;
-      lineObjs.push({ line: ln, row: row });
+      var stripChars = _hardJoinStrip(lineObjs[lineObjs.length - 1].line, ln);
+      if (stripChars < 0) break;
+      lineObjs.push({ line: ln, row: row, stripChars: stripChars });
       joinedHard = true;
       row++;                   // keep collecting the joined row's soft-wrap chain
     }
@@ -1616,8 +1659,10 @@ var FilePreview = (function () {
     var rows = [];
     for (var i = 0; i < lineObjs.length; i++) {
       var l = lineObjs[i].line;
-      var rowText = l.translateToString(i < lineObjs.length - 1);
-      rows.push({ line: l, row: lineObjs[i].row, strStart: text.length, strLen: rowText.length });
+      var cellStart = lineObjs[i].stripChars || 0;
+      var rowText = l.translateToString(i < lineObjs.length - 1).slice(cellStart);
+      rows.push({ line: l, row: lineObjs[i].row, strStart: text.length,
+        strLen: rowText.length, cellStart: cellStart });
       text += rowText;
     }
     return { text: text, startRow: startRow, rows: rows };
@@ -1632,7 +1677,7 @@ var FilePreview = (function () {
       if (strOffset < r.strStart + r.strLen || i === rows.length - 1) {
         var strInRow = Math.max(0, Math.min(strOffset - r.strStart, r.strLen));
         // Walk cells to find terminal column for strInRow-th character
-        var col = 0;
+        var col = r.cellStart || 0;
         var chars = 0;
         var lineLen = r.line.length;
         while (chars < strInRow && col < lineLen) {
@@ -1757,7 +1802,8 @@ var FilePreview = (function () {
           // row when the span ends exactly at a wrap boundary (over-underline).
           var end = _logicalStrOffsetToTermPos(logical.rows, f.endCol - 1);
           return {
-            range: { start: start, end: { y: end.y, x: Math.max(end.x, start.x) } },
+            range: { start: start, end: { y: end.y,
+              x: end.y === start.y ? Math.max(end.x, start.x) : end.x } },
             text: f.text,
             activate: function () { _activateLink(f, paneId); },
           };
@@ -2085,6 +2131,9 @@ var FilePreview = (function () {
       var col = 0;
       var chars = 0;
       var lineLen = r.line.length;
+      var cellStart = r.cellStart || 0;
+      if (termCol < cellStart) return -1;
+      col = cellStart;
       while (col < termCol && col < lineLen) {
         var cell = r.line.getCell(col);
         var w = cell ? (cell.getWidth() || 1) : 1;
@@ -2135,7 +2184,8 @@ var FilePreview = (function () {
       buildLinkRange: function (logical, f) {
         var start = _logicalStrOffsetToTermPos(logical.rows, f.startCol);
         var end = _logicalStrOffsetToTermPos(logical.rows, f.endCol - 1);
-        return { start: start, end: { y: end.y, x: Math.max(end.x, start.x) } };
+        return { start: start, end: { y: end.y,
+          x: end.y === start.y ? Math.max(end.x, start.x) : end.x } };
       },
     },
   };

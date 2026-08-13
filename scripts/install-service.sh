@@ -13,7 +13,8 @@ TMUX_SERVER_SERVICE="tmux-server"
 PORT="${PORT:-7681}"
 HOST="${HOST:-0.0.0.0}"
 NODE_BIN="${NODE_BIN:-$(command -v node)}"
-TMUX_BIN="${TMUX_BIN:-$(command -v tmux 2>/dev/null || true)}"
+TMUX_INSTALL_PREFIX="${TMUX_INSTALL_PREFIX:-$HOME/.local/share/tmux-web-panel}"
+TMUX_BIN="$TMUX_INSTALL_PREFIX/bin/tmux"
 TLS_AUTO="${TLS_AUTO:-0}"
 TLS_DIR="${TLS_DIR:-$HOME/.config/tmux-web-panel/tls}"
 TLS_DAYS="${TLS_DAYS:-825}"
@@ -37,6 +38,9 @@ Environment variables:
   TLS_DAYS  Auto-generated certificate lifetime (default: 825)
   HTTP_PORT HTTP->HTTPS redirect port   (default: 7680, only when TLS set)
   NODE_BIN  Path to node                (default: auto-detect)
+  TMUX_INSTALL_PREFIX Project-managed tmux install prefix
+                                      (default: ~/.local/share/tmux-web-panel)
+  TMUX_BUILD_JOBS Parallel tmux build jobs (default: detected CPU count)
 
 Examples:
   $0 install
@@ -57,6 +61,15 @@ is_true() {
     1|true|TRUE|yes|YES|on|ON) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+build_project_tmux() {
+  echo "Building the project-managed tmux submodule..."
+  TMUX_INSTALL_PREFIX="$TMUX_INSTALL_PREFIX" "$SCRIPT_DIR/build-tmux.sh"
+  if [[ ! -x "$TMUX_BIN" ]]; then
+    echo "Error: project-managed tmux was not installed at $TMUX_BIN" >&2
+    return 1
+  fi
 }
 
 detect_lan_ip() {
@@ -468,6 +481,7 @@ fi
 
 case "$action" in
   install)
+    build_project_tmux
     prepare_tls
     if [[ "$platform" == "linux" ]]; then install_systemd; else install_launchd; fi
     echo ""

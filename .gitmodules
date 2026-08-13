@@ -1,0 +1,3 @@
+[submodule "vendor/tmux"]
+	path = vendor/tmux
+	url = https://github.com/tmux/tmux.git

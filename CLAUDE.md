@@ -22,13 +22,14 @@
 Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.tmux-server.plist`；它们都由 `install-service.sh` 生成在用户服务目录中。这是为了让重启电脑后网页面板立刻能看到上次保存的会话。
 
 工作链路：
-1. 开机 → tmux companion service 跑 `tmux start-server`（macOS 为 `tmux -D start-server`）→ 加载 `~/.tmux.conf`
+1. 开机 → tmux companion service 跑 `tmux start-server`（macOS 为前台模式 `tmux -D`）→ 加载 `~/.tmux.conf`
 2. tmux-continuum 的 `@continuum-restore 'on'` 自动从 `~/.local/share/tmux/resurrect/last` 恢复 sessions/windows/panes
 3. Linux 由 systemd dependency 保证顺序；macOS 安装时先加载 tmux LaunchAgent，再加载网页面板
 4. 网页打开 → `server/tmux.js` 的 `listSessions()` 跑 `tmux list-sessions`，看到所有 restored 会话
 
 不变量：
 
+- **部署必须使用 `vendor/tmux` 子模块构建的 tmux**：`install-service.sh install` 会调用 `scripts/build-tmux.sh`，原子部署到 `~/.local/share/tmux-web-panel/bin/tmux`，不得退回系统 `PATH` 中的 tmux
 - **`~/.tmux.conf` 必须保留 `set -g exit-empty off`**：否则 systemd 启动的空 server 会因 continuum auto-restore 慢一拍而自杀
 - **不要在 `tmux-server.service` 里预创建会话**（如 `tmux new-session -d -s main`）：continuum auto-restore 检测到已有 session 就不会触发，会话恢复失效
 - **`server/tmux.js` 的 `listSessions()` 是只读**：不会自动创建/启动 tmux server。如果 server 不存在，网页就是空——这是设计意图，恢复责任在 systemd + continuum

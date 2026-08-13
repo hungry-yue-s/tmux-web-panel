@@ -71,7 +71,31 @@ To uninstall: `node scripts/install-claude-hook.js --uninstall`
 Install as a user-level service that starts on login and auto-restarts on crash:
 
 ```bash
+git submodule update --init --recursive
 ./scripts/install-service.sh install
+```
+
+The installer always builds tmux from the pinned `vendor/tmux` Git submodule
+and atomically deploys it to `~/.local/share/tmux-web-panel/bin/tmux`. It does
+not fall back to a system tmux. Clone this repository with
+`--recurse-submodules`, or run the submodule command above after cloning.
+
+Build dependencies:
+
+- macOS (Homebrew): `autoconf automake pkgconf libevent ncurses utf8proc jemalloc`
+- Debian/Ubuntu: `autoconf automake pkg-config build-essential bison libevent-dev libncurses-dev libutf8proc-dev`
+
+Use `TMUX_INSTALL_PREFIX` to change the deployment prefix and
+`TMUX_BUILD_JOBS` to set build parallelism.
+
+To update the maintained tmux revision, check out the desired upstream commit
+inside `vendor/tmux`, verify it, and commit the resulting submodule pointer in
+this repository:
+
+```bash
+git -C vendor/tmux fetch origin
+git -C vendor/tmux checkout <commit>
+./scripts/build-tmux.sh
 ```
 
 With custom config:

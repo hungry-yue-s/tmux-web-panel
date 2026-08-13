@@ -76,3 +76,54 @@ describe('F3 — hard-newline continuation resolves to the joined line', () => {
     expect(FP.getLogicalLine(b, 0).rows.length).toBe(1);
   });
 });
+
+describe('F4 — hanging-indent hard wrap stays one file link', () => {
+  const first = '  Documents/Obsidian_document/DataAnt/三绿/DataAnt-Android14-';
+  const second = '  property_service-Wuying属性重写问题说明.md';
+  const fullPath = first.slice(2) + second.slice(2);
+  // Codex-like TUI wraps to a content width narrower than the xterm row, so
+  // the first physical row still has visible blank cells on the right.
+  const cols = first.length + 12;
+  const buf = () => mkBuffer([
+    { text: first },
+    { text: second },
+  ], cols);
+
+  it('joins a continuation aligned with the path start column', () => {
+    const logical = FP.getLogicalLine(buf(), 1);
+    expect(logical.startRow).toBe(0);
+    expect(logical.text.trimEnd()).toBe('  ' + fullPath);
+    const links = FP.findLinks(logical.text);
+    expect(links).toHaveLength(1);
+    expect(links[0].text).toBe(fullPath);
+  });
+
+  it('maps the joined continuation back to its indented terminal columns', () => {
+    const logical = FP.getLogicalLine(buf(), 0);
+    const link = FP.findLinks(logical.text)[0];
+    const range = FP.buildLinkRange(logical, link);
+    expect(range.start).toEqual({ y: 1, x: 3 });
+    expect(range.end).toEqual({ y: 2, x: second.length });
+  });
+
+  it('does not clamp a short continuation to the first row start column', () => {
+    const shortFirst = '      abc/defghijklmnopqrstuv-';
+    const shortSecond = '      x';
+    const shortBuf = mkBuffer([
+      { text: shortFirst },
+      { text: shortSecond },
+    ], shortFirst.length);
+    const logical = FP.getLogicalLine(shortBuf, 0);
+    const link = FP.findLinks(logical.text)[0];
+    const range = FP.buildLinkRange(logical, link);
+    expect(range.end).toEqual({ y: 2, x: shortSecond.length });
+  });
+
+  it('does not join when the continuation indentation differs', () => {
+    const mismatch = mkBuffer([
+      { text: first },
+      { text: '    property_service-Wuying属性重写问题说明.md' },
+    ], cols);
+    expect(FP.getLogicalLine(mismatch, 0).rows).toHaveLength(1);
+  });
+});

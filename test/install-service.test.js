@@ -1,10 +1,12 @@
 import { afterAll, describe, it, expect } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const script = resolve(import.meta.dirname, '../scripts/install-service.sh');
+const tmuxServerScript = resolve(import.meta.dirname, '../scripts/run-tmux-server.sh');
+const tmuxBuildScript = resolve(import.meta.dirname, '../scripts/build-tmux.sh');
 const workDir = mkdtempSync(join(tmpdir(), 'tmux-web-panel-cert-test-'));
 
 afterAll(() => rmSync(workDir, { recursive: true, force: true }));
@@ -29,5 +31,38 @@ describe('install-service TLS automation', () => {
     const second = spawnSync('bash', [script, 'cert'], { env, encoding: 'utf8' });
     expect(second.status, second.stderr).toBe(0);
     expect(second.stdout).toContain('Reusing TLS certificate');
+  });
+});
+
+describe('macOS tmux server launcher', () => {
+  it('deploys tmux from the tracked submodule instead of PATH discovery', () => {
+    const installer = readFileSync(script, 'utf8');
+    const builder = readFileSync(tmuxBuildScript, 'utf8');
+
+    expect(installer).toContain('build_project_tmux');
+    expect(installer).toContain('"$SCRIPT_DIR/build-tmux.sh"');
+    expect(installer).not.toContain('command -v tmux 2>/dev/null');
+    expect(builder).toContain('$PROJECT_DIR/vendor/tmux');
+    expect(builder).toContain('--enable-jemalloc');
+
+    const syntax = spawnSync('bash', ['-n', tmuxBuildScript], { encoding: 'utf8' });
+    expect(syntax.status, syntax.stderr).toBe(0);
+  });
+
+  it('runs tmux in foreground mode without an incompatible command', () => {
+    const fakeTmux = join(workDir, 'fake-tmux');
+    writeFileSync(fakeTmux, `#!/bin/sh
+if [ "$1" = "show-options" ]; then
+  exit 1
+fi
+printf '%s\\n' "$@"
+printf 'PATH=%s\\n' "$PATH"
+`);
+    chmodSync(fakeTmux, 0o755);
+
+    const result = spawnSync('bash', [tmuxServerScript, fakeTmux], { encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.split('\n')[0]).toBe('-D');
+    expect(result.stdout).toContain(`PATH=${workDir}:`);
   });
 });
