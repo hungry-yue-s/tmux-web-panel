@@ -255,6 +255,7 @@ var terminalState = {
   fitAddon: null,
   resizeObserver: null,
   isFullscreen: false,
+  ownsBrowserFullscreen: false,
 };
 
 // === Cleanup ===
@@ -299,19 +300,34 @@ function enterFullscreen() {
   document.body.classList.add('terminal-fullscreen');
   // Request browser fullscreen
   var el = document.documentElement;
+  var currentFullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+  terminalState.ownsBrowserFullscreen = !currentFullscreen;
   var rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
-  if (rfs) {
-    rfs.call(el).catch(function () {});
+  if (rfs && terminalState.ownsBrowserFullscreen) {
+    try {
+      var request = rfs.call(el);
+      if (request && request.catch) {
+        request.catch(function () { terminalState.ownsBrowserFullscreen = false; });
+      }
+    } catch (_err) {
+      terminalState.ownsBrowserFullscreen = false;
+    }
   }
 }
 
 function exitFullscreen() {
+  var shouldExitBrowserFullscreen = terminalState.ownsBrowserFullscreen;
   terminalState.isFullscreen = false;
+  terminalState.ownsBrowserFullscreen = false;
   document.body.classList.remove('terminal-fullscreen');
   // Exit browser fullscreen
   var efsDoc = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
-  if (efsDoc && document.fullscreenElement) {
-    efsDoc.call(document).catch(function () {});
+  var currentFullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+  if (efsDoc && currentFullscreen && shouldExitBrowserFullscreen) {
+    try {
+      var exit = efsDoc.call(document);
+      if (exit && exit.catch) exit.catch(function () {});
+    } catch (_err) {}
   }
 }
 
@@ -329,8 +345,10 @@ function toggleFullscreen() {
 
 // Sync state when user exits browser fullscreen via Escape or browser UI
 document.addEventListener('fullscreenchange', function () {
-  if (!document.fullscreenElement && terminalState.isFullscreen) {
+  var currentFullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+  if (!currentFullscreen && terminalState.isFullscreen) {
     terminalState.isFullscreen = false;
+    terminalState.ownsBrowserFullscreen = false;
     document.body.classList.remove('terminal-fullscreen');
     var btn = document.querySelector('.terminal-exit-fullscreen-btn');
     if (btn) btn.style.display = 'none';
@@ -548,6 +566,7 @@ function _calcTerminalFontSize(paneCols, paneRows, containerEl) {
 function createTerminalInstance(paneCols, paneRows, nozoom) {
   var term = new Terminal({
     theme: Theme.getTerminalTheme(),
+    allowTransparency: Theme.isTransparent(),
     fontFamily: "'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace",
     fontSize: _calcTerminalFontSize(paneCols, paneRows),
     cursorBlink: true,

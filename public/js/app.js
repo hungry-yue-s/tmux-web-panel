@@ -853,6 +853,7 @@ function _appIcon(name) {
     notifications: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09A1.7 1.7 0 0 0 8.94 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.54-1H3v-4h.09A1.7 1.7 0 0 0 4.6 8.94a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06A1.7 1.7 0 0 0 8.97 4.6 1.7 1.7 0 0 0 10 3.06V3h4v.09a1.7 1.7 0 0 0 1.06 1.51 1.7 1.7 0 0 0 1.88-.34L17 4.2 19.83 7l-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.94 10H21v4h-.09A1.7 1.7 0 0 0 19.4 15Z"/>',
+    fullscreen: '<g class="fullscreen-icon-enter"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></g><g class="fullscreen-icon-exit"><path d="M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"/></g>',
     collapse: '<path d="m14 7-5 5 5 5"/>',
     expand: '<path d="m10 7 5 5-5 5"/>'
   };
@@ -874,6 +875,7 @@ function updateSidebar() {
     emptyHtml += '<span id="sidebar-dot" class="topbar-dot"></span>';
     emptyHtml += '<span id="sidebar-status-info" class="sidebar-status-info"></span>';
     emptyHtml += '<button id="sidebar-btn-add-window" class="sidebar-action-btn" title="New Window">' + _appIcon('plus') + '</button>';
+    emptyHtml += '<button class="sidebar-action-btn app-fullscreen-btn" type="button" data-app-fullscreen title="全屏显示面板" aria-label="全屏显示面板" aria-pressed="false">' + _appIcon('fullscreen') + '</button>';
     emptyHtml += '<button id="sidebar-btn-more" class="sidebar-action-btn" title="More">' + _appIcon('settings') + '</button>';
     emptyHtml += '</div>';
     emptyHtml += '</div>';
@@ -884,6 +886,7 @@ function updateSidebar() {
     sidebar.innerHTML = emptyHtml;
     _bindSidebarHeaderButtons(sidebar);
     _syncSidebarHeader();
+    if (typeof AppFullscreen !== 'undefined') AppFullscreen.sync();
     _sidebarSessionKey = '';
     _sidebarWindowsLoaded = {};
     return;
@@ -913,6 +916,7 @@ function _rebuildSidebar(sidebar) {
   html += '<span id="sidebar-status-info" class="sidebar-status-info"></span>';
   html += '<button class="sidebar-action-btn notification-bell" title="Notifications" onclick="NotificationPanel.render(event)">' + _appIcon('notifications') + '<span class="notification-bell-count" style="display:none">0</span></button>';
   html += '<button id="sidebar-btn-add-window" class="sidebar-action-btn" title="New Window">' + _appIcon('plus') + '</button>';
+  html += '<button class="sidebar-action-btn app-fullscreen-btn" type="button" data-app-fullscreen title="全屏显示面板" aria-label="全屏显示面板" aria-pressed="false">' + _appIcon('fullscreen') + '</button>';
   html += '<button id="sidebar-btn-more" class="sidebar-action-btn" title="More">' + _appIcon('settings') + '</button>';
   html += '</div>';
   html += '</div>';
@@ -981,6 +985,7 @@ function _rebuildSidebar(sidebar) {
   // Sidebar header button handlers + sync
   _bindSidebarHeaderButtons(sidebar);
   _syncSidebarHeader();
+  if (typeof AppFullscreen !== 'undefined') AppFullscreen.sync();
 
   // Load windows for active session
   if (state.currentSession) {
@@ -1952,6 +1957,10 @@ function _handleSessionAction(action) {
 }
 
 function initTopbar() {
+  if (typeof AppFullscreen !== 'undefined') {
+    AppFullscreen.init();
+  }
+
   var switcher = document.getElementById('session-switcher');
   if (switcher) {
     switcher.addEventListener('click', toggleSessionDropdown);

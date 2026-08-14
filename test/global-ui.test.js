@@ -19,15 +19,18 @@ describe('global UI system', () => {
     expect(appSource).toContain('function _appIcon(name)');
     expect(appSource).toContain('class="app-icon"');
     expect(appSource).toContain("_appIcon('notifications')");
+    expect(appSource).toContain("_appIcon('fullscreen')");
     expect(appSource).toContain("_sidebarCollapseContent(collapsed)");
-    expect(indexSource.match(/class="app-icon"/g)).toHaveLength(3);
+    expect(indexSource.match(/class="app-icon"/g)).toHaveLength(4);
+    expect(indexSource).toContain('id="btn-app-fullscreen"');
   });
 
   it('keeps desktop and mobile navigation layouts explicitly covered', () => {
     expect(styles).toMatch(/#sidebar\.collapsed[\s\S]*?width:\s*52px/);
     expect(styles).toContain('@media (max-width: 767px)');
     expect(styles).toMatch(/#topbar[\s\S]*?min-height:\s*52px/);
-    expect(indexSource).toContain('/css/style.css?v=10');
-    expect(indexSource).toContain('/js/app.js?v=8');
+    expect(indexSource).toContain('/css/style.css?v=13');
+    expect(indexSource).toContain('/js/app-fullscreen.js?v=1');
+    expect(indexSource).toContain('/js/app.js?v=11');
   });
 });

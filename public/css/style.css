@@ -164,6 +164,34 @@ body {
   background: var(--bg-hover);
 }
 
+.app-fullscreen-btn .fullscreen-icon-exit {
+  display: none;
+}
+
+.app-fullscreen-btn.is-active {
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+.app-fullscreen-btn.is-active .fullscreen-icon-enter {
+  display: none;
+}
+
+.app-fullscreen-btn.is-active .fullscreen-icon-exit {
+  display: inline;
+}
+
+.app-fullscreen-btn.has-error {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+
+.app-fullscreen-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 /* === Session Dropdown === */
 
 .session-dropdown {
