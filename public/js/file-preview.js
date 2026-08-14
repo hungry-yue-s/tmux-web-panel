@@ -2173,6 +2173,71 @@ var FilePreview = (function () {
     }
   }
 
+  function _normalizeMarkdownHeading(text) {
+    return String(text || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  }
+
+  function _markdownHeadingSlug(text) {
+    var slug = _normalizeMarkdownHeading(text)
+      .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+    return slug || 'section';
+  }
+
+  function _wikilinkHtml(target, label, hasAlias) {
+    target = String(target || '').trim();
+    var display = String(label || '').trim();
+    if (target.charAt(0) === '#' && target.length > 1) {
+      var heading = target.slice(1).trim();
+      if (!display || !hasAlias) display = heading;
+      return '<a class="fp-wikilink fp-wikilink-heading" href="#' + _escapeHtml(_markdownHeadingSlug(heading))
+        + '" data-fp-heading-target="' + _escapeHtml(heading) + '">' + _escapeHtml(display) + '</a>';
+    }
+    return '<span class="fp-wikilink" title="Obsidian 链接: ' + _escapeHtml(target) + '">'
+      + _escapeHtml(display || target) + '</span>';
+  }
+
+  function _prepareMarkdownNavigation(wrap) {
+    if (!wrap) return;
+    var headings = Array.prototype.slice.call(wrap.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+    var ids = {};
+    var byText = {};
+    headings.forEach(function (heading) {
+      var base = _markdownHeadingSlug(heading.textContent);
+      var count = ids[base] || 0;
+      ids[base] = count + 1;
+      heading.id = count === 0 ? base : base + '-' + count;
+      heading.setAttribute('tabindex', '-1');
+      var normalized = _normalizeMarkdownHeading(heading.textContent);
+      if (!byText[normalized]) byText[normalized] = heading;
+    });
+
+    Array.prototype.forEach.call(wrap.querySelectorAll('a[href^="#"]'), function (link) {
+      link.addEventListener('click', function (event) {
+        var raw = link.getAttribute('data-fp-heading-target');
+        if (!raw) {
+          raw = (link.getAttribute('href') || '').slice(1);
+          try { raw = decodeURIComponent(raw); } catch (_) { /* keep raw fragment */ }
+        }
+        var target = byText[_normalizeMarkdownHeading(raw)] || null;
+        if (!target) {
+          var slug = _markdownHeadingSlug(raw);
+          for (var i = 0; i < headings.length; i++) {
+            if (headings[i].id === slug) { target = headings[i]; break; }
+          }
+        }
+        if (!target) return;
+        event.preventDefault();
+        try { target.focus({ preventScroll: true }); } catch (_) { target.focus(); }
+        if (typeof target.scrollIntoView === 'function') {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    });
+  }
+
   // markdown-it plugin: Obsidian-flavored inline syntax.
   // We push our own html_inline tokens (rendered verbatim regardless of the
   // `html:false` option), so every bit of user text is escaped by hand first.
@@ -2230,7 +2295,8 @@ var FilePreview = (function () {
       return true;
     });
 
-    // [[link]] / [[link|alias]]  ->  styled (non-navigating) wikilink
+    // [[#heading]] is a navigable in-document link. Other wikilinks remain
+    // styled placeholders until cross-file preview navigation is supported.
     md.inline.ruler.before('link', 'obs_wikilink', function (state, silent) {
       var s = state.src, p = state.pos;
       if (s.charCodeAt(p) !== 0x5B || s.charCodeAt(p + 1) !== 0x5B) return false;
@@ -2243,7 +2309,7 @@ var FilePreview = (function () {
         var target = parts[0].trim();
         var label = (parts[1] != null ? parts[1] : parts[0]).trim();
         var t = state.push('html_inline', '', 0);
-        t.content = '<span class="fp-wikilink" title="Obsidian 链接: ' + esc(target) + '">' + esc(label) + '</span>';
+        t.content = _wikilinkHtml(target, label, parts[1] != null);
       }
       state.pos = end + 2;
       return true;
@@ -2424,6 +2490,7 @@ var FilePreview = (function () {
         body.appendChild(wrap);
 
         _renderCallouts(wrap);
+        _prepareMarkdownNavigation(wrap);
 
         var mermaidBlocks = wrap.querySelectorAll('code.language-mermaid');
         if (mermaidBlocks.length > 0) {
@@ -3271,6 +3338,9 @@ var FilePreview = (function () {
       installMermaidInteractions: _installMermaidInteractions,
       disposeMermaid: _disposeMermaid,
       mermaidStandaloneScript: _mermaidStandaloneScript,
+      markdownHeadingSlug: _markdownHeadingSlug,
+      wikilinkHtml: _wikilinkHtml,
+      prepareMarkdownNavigation: _prepareMarkdownNavigation,
       loadDockState: _loadDockState,
       persistDockState: _persistDockState,
       dockStateKey: function (sessionName, windowIndex) {

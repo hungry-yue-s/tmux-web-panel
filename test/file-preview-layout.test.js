@@ -278,6 +278,48 @@ describe('file preview dock tabs', () => {
     expect(standalone.window.document.querySelector('.fp-mermaid-dialog')).not.toBeNull();
   });
 
+  it('renders Obsidian heading wikilinks as safe in-document anchors', () => {
+    const { preview } = createPreview();
+    expect(preview._test.markdownHeadingSlug('1. 设计目标')).toBe('1-设计目标');
+    expect(preview._test.markdownHeadingSlug('References')).toBe('references');
+
+    const direct = preview._test.wikilinkHtml('#1. 设计目标', '#1. 设计目标', false);
+    expect(direct).toContain('class="fp-wikilink fp-wikilink-heading"');
+    expect(direct).toContain('href="#1-设计目标"');
+    expect(direct).toContain('data-fp-heading-target="1. 设计目标"');
+    expect(direct).toContain('>1. 设计目标</a>');
+
+    const alias = preview._test.wikilinkHtml('#1. 设计目标', '开始阅读', true);
+    expect(alias).toContain('>开始阅读</a>');
+    expect(preview._test.wikilinkHtml('#目标', '<img src=x onerror=alert(1)>', true))
+      .not.toContain('<img');
+    expect(preview._test.wikilinkHtml('other.md', '其他文档', true)).toContain('<span');
+  });
+
+  it('jumps both Obsidian and standard Markdown anchors to generated heading ids', () => {
+    const { dom, preview } = createPreview();
+    const wrap = dom.window.document.createElement('div');
+    wrap.innerHTML = '<a class="fp-wikilink-heading" href="#1-设计目标" data-fp-heading-target="1. 设计目标">设计目标</a>'
+      + '<a href="#references">引用</a>'
+      + '<h2>1. 设计目标</h2><h2>1. 设计目标</h2><h2>References</h2>';
+    dom.window.document.body.appendChild(wrap);
+    const headings = wrap.querySelectorAll('h2');
+    const firstScroll = vi.fn();
+    const referencesScroll = vi.fn();
+    headings[0].scrollIntoView = firstScroll;
+    headings[2].scrollIntoView = referencesScroll;
+
+    preview._test.prepareMarkdownNavigation(wrap);
+    expect(Array.from(headings).map((heading) => heading.id))
+      .toEqual(['1-设计目标', '1-设计目标-1', 'references']);
+    expect(Array.from(headings).every((heading) => heading.getAttribute('tabindex') === '-1')).toBe(true);
+
+    wrap.querySelector('.fp-wikilink-heading').click();
+    expect(firstScroll).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+    wrap.querySelector('a[href="#references"]').click();
+    expect(referencesScroll).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+  });
+
   it('opens files as modals first, then docks the current preview as a tab', async () => {
     const { dom, preview } = createPreview();
     preview.openFile('/tmp/one.md', '%1');

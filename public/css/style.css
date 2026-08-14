@@ -3907,6 +3907,9 @@ body.fp-side-resizing { cursor: col-resize; user-select: none; }
 .fp-md-wrap .fp-fm-val { flex: 1 1 auto; min-width: 0; word-break: break-word; }
 .fp-md-wrap mark.fp-hl { background: rgba(255, 213, 0, 0.28); color: inherit; padding: 0 2px; border-radius: 2px; }
 .fp-md-wrap .fp-wikilink { color: var(--accent-blue); border-bottom: 1px dashed var(--accent-blue); cursor: help; }
+.fp-md-wrap a.fp-wikilink-heading { cursor: pointer; text-decoration: none; }
+.fp-md-wrap h1[id], .fp-md-wrap h2[id], .fp-md-wrap h3[id],
+.fp-md-wrap h4[id], .fp-md-wrap h5[id], .fp-md-wrap h6[id] { scroll-margin-top: 16px; }
 .fp-md-wrap .fp-embed { color: var(--text-muted); font-style: italic; }
 .fp-md-wrap .fp-embed-img { max-width: 100%; border-radius: 6px; }
 .fp-md-wrap .fp-tag {
