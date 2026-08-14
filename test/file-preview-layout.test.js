@@ -18,7 +18,7 @@ function createPreview() {
     if (String(url).includes('/api/files/info')) {
       return Promise.resolve({
         status: 200,
-        json: () => Promise.resolve({ success: true, data: { isDirectory: true, absPath: path } }),
+        json: () => Promise.resolve({ success: true, data: { isDirectory: true, absPath: path, mtimeMs: 1, size: 0 } }),
       });
     }
     return Promise.resolve({
@@ -32,6 +32,141 @@ function createPreview() {
 
   new Function('window', 'document', 'fetch', source)(dom.window, dom.window.document, fetch);
   return { dom, preview: dom.window.FilePreview };
+}
+
+function createLivePreview({ visible = false } = {}) {
+  const dom = new JSDOM(
+    '<!doctype html><body><div id="main-layout"><main id="content"><div class="terminal-view"></div></main></div></body>',
+    { url: 'https://panel.test/' }
+  );
+  Object.defineProperty(dom.window, 'innerWidth', { value: 1440, configurable: true });
+  let hidden = !visible;
+  Object.defineProperty(dom.window.document, 'hidden', { get: () => hidden, configurable: true });
+
+  let content = 'name,value\nbefore,1';
+  let mtimeMs = 1000;
+  let contentFetches = 0;
+  let infoError = null;
+  let contentFailures = 0;
+  let timerId = 0;
+  const timers = new Map();
+  dom.window.setTimeout = (fn, delay) => {
+    const id = ++timerId;
+    timers.set(id, { fn, delay });
+    return id;
+  };
+  dom.window.clearTimeout = (id) => timers.delete(id);
+
+  const fetch = vi.fn((url) => {
+    const text = String(url);
+    if (text.includes('/api/files/info')) {
+      if (infoError) {
+        return Promise.resolve({
+          status: infoError.status || 403,
+          json: () => Promise.resolve({ success: false, data: null, error: infoError.message }),
+        });
+      }
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve({
+          success: true,
+          data: {
+            absPath: '/tmp/live.csv', size: content.length, mtimeMs,
+            isText: true, isImage: false, isPdf: false, isXlsx: false,
+            isMarkdown: false, language: null,
+          },
+        }),
+      });
+    }
+    if (text.includes('/api/files/content')) {
+      contentFetches++;
+      if (contentFailures > 0) {
+        contentFailures--;
+        return Promise.resolve({
+          status: 500,
+          json: () => Promise.resolve({ success: false, data: null, error: 'temporary read failure' }),
+        });
+      }
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve({ success: true, data: { content, language: null } }),
+      });
+    }
+    throw new Error('Unexpected fetch: ' + text);
+  });
+
+  new Function('window', 'document', 'fetch', source)(dom.window, dom.window.document, fetch);
+  return {
+    dom,
+    preview: dom.window.FilePreview,
+    setFile(next, nextMtime) { content = next; mtimeMs = nextMtime; },
+    failNextContent() { contentFailures++; },
+    setInfoError(message, status = 403) { infoError = { message, status }; },
+    setHidden(next) { hidden = next; dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange')); },
+    contentFetches: () => contentFetches,
+    timers,
+  };
+}
+
+function createDirectoryPreview() {
+  const dom = new JSDOM(
+    '<!doctype html><body><div id="main-layout"><main id="content"><div class="terminal-view"></div></main></div></body>',
+    { url: 'https://panel.test/' }
+  );
+  Object.defineProperty(dom.window, 'innerWidth', { value: 1440, configurable: true });
+
+  let rootEntries = [
+    { name: 'child', type: 'dir', targetType: null, size: 0, mtime: 1000, isHidden: false },
+    { name: 'note.txt', type: 'file', targetType: null, size: 1, mtime: 1000, isHidden: false },
+  ];
+  let listFetches = 0;
+  let heldRoot = null;
+
+  const response = (data) => Promise.resolve({
+    status: 200,
+    json: () => Promise.resolve({ success: true, data }),
+  });
+  const fetch = vi.fn((url) => {
+    const parsed = new URL(String(url), 'https://panel.test/');
+    const path = parsed.searchParams.get('path');
+    if (parsed.pathname === '/api/files/info') {
+      return response({ isDirectory: true, absPath: path, size: 64, mtimeMs: 1000 });
+    }
+    if (parsed.pathname === '/api/files/list') {
+      listFetches++;
+      if (path === '/root' && heldRoot) return heldRoot.promise;
+      if (path === '/root/child') {
+        return response({
+          absPath: path, parent: '/root', truncated: false, totalCount: 1,
+          entries: [{ name: 'inside.txt', type: 'file', targetType: null, size: 7, mtime: 2000, isHidden: false }],
+        });
+      }
+      return response({
+        absPath: '/root', parent: '/', entries: rootEntries,
+        truncated: false, totalCount: rootEntries.length,
+      });
+    }
+    throw new Error('Unexpected fetch: ' + String(url));
+  });
+
+  new Function('window', 'document', 'fetch', source)(dom.window, dom.window.document, fetch);
+  return {
+    dom,
+    preview: dom.window.FilePreview,
+    listFetches: () => listFetches,
+    setNoteSize(size) { rootEntries = rootEntries.map((entry) => entry.name === 'note.txt' ? { ...entry, size, mtime: 3000 } : entry); },
+    holdNextRootList() {
+      let resolve;
+      const promise = new Promise((done) => { resolve = (data) => done(response(data)); });
+      heldRoot = { promise, resolve };
+      return heldRoot;
+    },
+    releaseRootList(data) {
+      const held = heldRoot;
+      heldRoot = null;
+      held.resolve(data);
+    },
+  };
 }
 
 async function flush() {
@@ -68,7 +203,7 @@ describe('file preview dock tabs', () => {
     preview.openFile('/tmp/one.md', '%1'); await flush();
 
     const overlay = dom.window.document.querySelector('.fp-overlay');
-    ['Back to parent directory', '在右侧分栏打开', 'Maximize', 'Open in new tab',
+    ['Back to parent directory', 'Refresh preview', '在右侧分栏打开', 'Maximize', 'Open in new tab',
       '导出渲染后的 HTML', '生成内网分享链接', 'Download', 'Close'].forEach((label) => {
       const button = overlay.querySelector(`[aria-label="${label}"]`);
       expect(button).not.toBeNull();
@@ -218,5 +353,127 @@ describe('file preview dock tabs', () => {
     dock.querySelector('[aria-label="Restore"]').click();
     expect(dock.classList.contains('fp-side-maximized')).toBe(false);
     expect(dom.window.getComputedStyle(dock).width).toBe('620px');
+  });
+
+  it('refreshes changed content in place while preserving scroll, maximize and the active dock tab', async () => {
+    const live = createLivePreview();
+    live.preview.openFile('/tmp/live.csv', '%1');
+    await flush();
+
+    const doc = live.dom.window.document;
+    dockCurrent(live.dom);
+    const dock = doc.querySelector('.fp-dock');
+    dock.querySelector('[aria-label="Maximize"]').click();
+    const body = dock.querySelector('.fp-body');
+    const scroll = body.querySelector('.fp-xlsx-wrap');
+    scroll.scrollTop = 73;
+    scroll.scrollLeft = 19;
+
+    live.setFile('name,value\nafter,2', 2000);
+    dock.querySelector('[aria-label="Refresh preview"]').click();
+    await flush();
+
+    expect(dock.querySelector('.fp-xlsx-table').textContent).toContain('after');
+    expect(scroll.isConnected).toBe(false);
+    const refreshedScroll = dock.querySelector('.fp-xlsx-wrap');
+    expect(refreshedScroll.scrollTop).toBe(73);
+    expect(refreshedScroll.scrollLeft).toBe(19);
+    expect(dock.querySelector('.fp-modal').classList.contains('fp-maximized')).toBe(true);
+    expect(dock.querySelectorAll('.fp-dock-tab-item.active')).toHaveLength(1);
+    expect(dock.querySelector('[aria-label="Refresh preview"]').getAttribute('aria-busy')).toBe('false');
+  });
+
+  it('checks only the visible preview, skips unchanged content, and pauses when hidden', async () => {
+    const live = createLivePreview({ visible: true });
+    live.preview.openFile('/tmp/live.csv', '%1');
+    await flush();
+
+    expect(live.preview._test.autoRefreshMs).toBe(1500);
+    expect(live.preview._test.hasAutoRefreshTimer()).toBe(true);
+    expect(Array.from(live.timers.values()).some((timer) => timer.delay === 1500)).toBe(true);
+    expect(live.contentFetches()).toBe(1);
+
+    await live.preview._test.refreshCurrent(false);
+    expect(live.contentFetches()).toBe(1);
+
+    live.setFile('name,value\nauto,3', 3000);
+    await live.preview._test.refreshCurrent(false);
+    expect(live.contentFetches()).toBe(2);
+    expect(live.dom.window.document.querySelector('.fp-xlsx-table').textContent).toContain('auto');
+
+    live.setHidden(true);
+    expect(live.preview._test.hasAutoRefreshTimer()).toBe(false);
+    live.setHidden(false);
+    expect(live.preview._test.hasAutoRefreshTimer()).toBe(true);
+
+    live.preview.close();
+    expect(live.preview._test.hasAutoRefreshTimer()).toBe(false);
+  });
+
+  it('retries the same changed signature after a transient render failure', async () => {
+    const live = createLivePreview();
+    live.preview.openFile('/tmp/live.csv', '%1');
+    await flush();
+
+    live.setFile('name,value\nretry,4', 4000);
+    live.failNextContent();
+    expect(await live.preview._test.refreshCurrent(false)).toBe(false);
+    expect(live.dom.window.document.querySelector('.fp-xlsx-table').textContent).toContain('before');
+
+    expect(await live.preview._test.refreshCurrent(false)).toBe(true);
+    expect(live.contentFetches()).toBe(3);
+    expect(live.dom.window.document.querySelector('.fp-xlsx-table').textContent).toContain('retry');
+  });
+
+  it('does not poll the previous file when opening the next preview fails', async () => {
+    const live = createLivePreview({ visible: true });
+    live.preview.openFile('/tmp/live.csv', '%1');
+    await flush();
+    expect(live.preview._test.hasAutoRefreshTimer()).toBe(true);
+
+    live.setInfoError('Permission denied');
+    live.preview.openFile('/tmp/denied.csv', '%1');
+    await flush();
+
+    expect(live.dom.window.document.querySelector('.fp-error').textContent).toContain('Permission denied');
+    expect(live.preview._test.hasAutoRefreshTimer()).toBe(false);
+    expect(await live.preview._test.refreshCurrent(false)).toBe(false);
+  });
+
+  it('refreshes directory rows even when the directory stat is unchanged', async () => {
+    const live = createDirectoryPreview();
+    live.preview.openFile('/root', '%1');
+    await flush();
+    expect(live.dom.window.document.querySelector('.fp-dir-size').textContent).toBe('');
+    expect(live.dom.window.document.querySelectorAll('.fp-dir-size')[2].textContent).toBe('1 B');
+
+    live.setNoteSize(99);
+    expect(await live.preview._test.refreshCurrent(false)).toBe(true);
+    expect(live.listFetches()).toBe(2);
+    expect(live.dom.window.document.querySelectorAll('.fp-dir-size')[2].textContent).toBe('99 B');
+  });
+
+  it('discards an old directory refresh after navigating to a child', async () => {
+    const live = createDirectoryPreview();
+    live.preview.openFile('/root', '%1');
+    await flush();
+
+    live.holdNextRootList();
+    const staleRefresh = live.preview._test.refreshCurrent(false);
+    await flush();
+    live.dom.window.document.querySelector('.fp-dir-isdir').click();
+    await flush();
+    expect(live.dom.window.document.querySelector('.fp-title').textContent).toBe('/root/child');
+    expect(live.dom.window.document.querySelector('.fp-dir-list').textContent).toContain('inside.txt');
+
+    live.releaseRootList({
+      absPath: '/root', parent: '/', truncated: false, totalCount: 1,
+      entries: [{ name: 'stale.txt', type: 'file', targetType: null, size: 9, mtime: 4000, isHidden: false }],
+    });
+    expect(await staleRefresh).toBe(false);
+    await flush();
+    expect(live.dom.window.document.querySelector('.fp-title').textContent).toBe('/root/child');
+    expect(live.dom.window.document.querySelector('.fp-dir-list').textContent).toContain('inside.txt');
+    expect(live.dom.window.document.querySelector('.fp-dir-list').textContent).not.toContain('stale.txt');
   });
 });

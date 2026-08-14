@@ -18,6 +18,12 @@ var FilePreview = (function () {
   var _dockHidden = false;
   var _dockRestoreButton = null;
   var _currentOpenPath = null;
+  var _refreshButton = null;
+  var _autoRefreshTimer = null;
+  var _refreshPromise = null;
+  var _previewGeneration = 0;
+  var _previewReady = false;
+  var AUTO_REFRESH_MS = 1500;
 
   function _canDockRight() {
     var bounds = _sideWidthBounds();
@@ -145,6 +151,155 @@ var FilePreview = (function () {
     _maximizeButton.title = _maximized ? '\u6062\u590D\u9884\u89C8' : '\u6700\u5927\u5316\u9884\u89C8';
   }
 
+  function _stopAutoRefresh() {
+    if (_autoRefreshTimer != null) {
+      window.clearTimeout(_autoRefreshTimer);
+      _autoRefreshTimer = null;
+    }
+  }
+
+  function _canAutoRefresh() {
+    return !document.hidden
+      && !_dockHidden
+      && _previewReady
+      && !!(_overlay && _overlay.isConnected)
+      && !!(_currentFile && _currentFile.absPath);
+  }
+
+  function _syncAutoRefresh() {
+    _stopAutoRefresh();
+    if (!_canAutoRefresh()) return;
+    _autoRefreshTimer = window.setTimeout(function () {
+      _autoRefreshTimer = null;
+      _refreshCurrent(false).finally(_syncAutoRefresh);
+    }, AUTO_REFRESH_MS);
+  }
+
+  function _setRefreshBusy(button, body, busy) {
+    if (button) {
+      button.classList.toggle('is-refreshing', busy);
+      button.setAttribute('aria-busy', busy ? 'true' : 'false');
+    }
+    if (body) body.classList.toggle('fp-refreshing', busy);
+  }
+
+  function _clearRefreshError(button) {
+    if (!button) return;
+    button.classList.remove('has-error');
+    button.title = '\u5237\u65B0\u9884\u89C8\uFF08\u6BCF 1.5 \u79D2\u81EA\u52A8\u68C0\u67E5\uFF09';
+  }
+
+  function _capturePreviewScroll(body) {
+    var selectors = [
+      '.fp-md-wrap', '.fp-code-wrap', '.fp-code-wrap pre > code',
+      '.fp-image-wrap', '.fp-xlsx-wrap', '.fp-dir-wrap',
+    ];
+    var state = [{ selector: null, top: body.scrollTop, left: body.scrollLeft }];
+    selectors.forEach(function (selector) {
+      var el = body.querySelector(selector);
+      if (el) state.push({ selector: selector, top: el.scrollTop, left: el.scrollLeft });
+    });
+    return state;
+  }
+
+  function _restorePreviewScroll(body, state) {
+    function apply() {
+      if (!body || !body.isConnected) return;
+      state.forEach(function (item) {
+        var el = item.selector ? body.querySelector(item.selector) : body;
+        if (!el) return;
+        el.scrollTop = item.top;
+        el.scrollLeft = item.left;
+      });
+    }
+    apply();
+    if (window.requestAnimationFrame) window.requestAnimationFrame(apply);
+  }
+
+  function _isPreviewRequestCurrent(requestId, body, expectedFile, expectedPath) {
+    return requestId === _previewGeneration
+      && !!(body && body.isConnected)
+      && (!expectedFile || _currentFile === expectedFile)
+      && (!expectedPath || (_currentFile && _currentFile.absPath === expectedPath));
+  }
+
+  function _replacePreviewBody(body, renderedBody) {
+    body.innerHTML = '';
+    while (renderedBody.firstChild) body.appendChild(renderedBody.firstChild);
+  }
+
+  function _setPreviewTitle(path) {
+    if (!_overlay) return;
+    var titleEl = _overlay.querySelector('.fp-title');
+    if (!titleEl) return;
+    titleEl.textContent = path;
+    titleEl.title = path;
+  }
+
+  function _refreshCurrent(force) {
+    if (_refreshPromise) return _refreshPromise;
+    if (!_overlay || !_overlay.isConnected || !_currentFile || !_currentFile.absPath) {
+      return Promise.resolve(false);
+    }
+
+    var fileAtStart = _currentFile;
+    var pathAtStart = fileAtStart.absPath;
+    var requestId = _previewGeneration;
+    var body = _overlay.querySelector('.fp-body');
+    if (!body) return Promise.resolve(false);
+    var button = _refreshButton;
+    var scroll = _capturePreviewScroll(body);
+    var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
+    var qs = '?path=' + encodeURIComponent(fileAtStart.absPath);
+    if (_currentPaneId) qs += '&paneId=' + encodeURIComponent(_currentPaneId);
+
+    _clearRefreshError(button);
+    _setRefreshBusy(button, body, true);
+    _refreshPromise = fetch('/api/files/info' + qs, {
+      headers: headers, cache: 'no-store',
+    })
+      .then(function (r) {
+        if (!_isPreviewRequestCurrent(requestId, body, fileAtStart, pathAtStart)) return null;
+        if (r.status === 401) { close(); return null; }
+        return r.json();
+      })
+      .then(function (res) {
+        if (!res) return false;
+        if (!res.success) throw new Error(res.error || '\u5237\u65B0\u5931\u8D25');
+        if (!_isPreviewRequestCurrent(requestId, body, fileAtStart, pathAtStart)) return false;
+        var info = res.data;
+        var changed = force
+          || fileAtStart.isDirectory
+          || !!info.isDirectory !== !!fileAtStart.isDirectory
+          || Number(info.mtimeMs || 0) !== Number(fileAtStart.mtimeMs || 0)
+          || Number(info.size || 0) !== Number(fileAtStart.size || 0);
+        if (!changed) return false;
+        return Promise.resolve(_renderResolvedPreview(body, info, null, {
+          reuseCurrent: true,
+          requestId: requestId,
+          expectedFile: fileAtStart,
+          expectedPath: pathAtStart,
+        })).then(function () {
+          if (!_isPreviewRequestCurrent(requestId, body, fileAtStart, pathAtStart)) return false;
+          _saveActiveDockTab();
+          _restorePreviewScroll(body, scroll);
+          return true;
+        });
+      })
+      .catch(function (err) {
+        if (_isPreviewRequestCurrent(requestId, body, fileAtStart, pathAtStart) && button) {
+          button.classList.add('has-error');
+          button.title = '\u5237\u65B0\u5931\u8D25\uFF1A' + (err && err.message ? err.message : err);
+        }
+        return false;
+      })
+      .finally(function () {
+        _setRefreshBusy(button, body, false);
+        _refreshPromise = null;
+      });
+    return _refreshPromise;
+  }
+
   function _tabTitle(tab) {
     var path = tab.path || '';
     return path.split('/').filter(Boolean).pop() || path || 'Preview';
@@ -166,6 +321,8 @@ var FilePreview = (function () {
     tab.dirContext = _dirContext;
     tab.placementButton = _placementButton;
     tab.maximizeButton = _maximizeButton;
+    tab.refreshButton = _refreshButton;
+    tab.previewReady = _previewReady;
     tab.maximized = _maximized;
     tab.modeDir = _dockOverlay && _dockOverlay.classList.contains('fp-mode-dir');
     tab.hasBack = _dockOverlay && _dockOverlay.classList.contains('fp-has-back');
@@ -220,7 +377,7 @@ var FilePreview = (function () {
     _dockRestoreButton = null;
   }
 
-  function _showDock() {
+  function _showDock(preserveRequest) {
     if (!_dockOverlay || _dockTabs.length === 0 || !_canDockRight()) return;
     _dockHidden = false;
     _removeDockRestoreButton();
@@ -232,12 +389,14 @@ var FilePreview = (function () {
     _dockOverlay.style.flexBasis = dockWidth + 'px';
     _dockOverlay.style.width = dockWidth + 'px';
     document.body.classList.add('fp-side-open');
-    _activateDockTab(_activeDockTabId || _dockTabs[0].id);
+    _activateDockTab(_activeDockTabId || _dockTabs[0].id, preserveRequest);
     _installSideResize();
   }
 
   function _hideDock() {
     if (!_dockOverlay) return;
+    _previewGeneration++;
+    _stopAutoRefresh();
     _saveActiveDockTab();
     _dockHidden = true;
     _cleanupSideResize();
@@ -252,14 +411,14 @@ var FilePreview = (function () {
       _dockRestoreButton = document.createElement('button');
       _dockRestoreButton.className = 'fp-dock-restore';
       _dockRestoreButton.setAttribute('aria-label', '\u5C55\u5F00\u53F3\u4FA7\u6587\u4EF6\u9884\u89C8');
-      _dockRestoreButton.addEventListener('click', _showDock);
+      _dockRestoreButton.addEventListener('click', function () { _showDock(); });
       var layout = document.getElementById('main-layout');
       if (layout) layout.appendChild(_dockRestoreButton);
     }
     _dockRestoreButton.textContent = '\u25E7 ' + _dockTabs.length;
   }
 
-  function _activateDockTab(tabId) {
+  function _activateDockTab(tabId, preserveRequest) {
     if (!_dockOverlay) return;
     if (_placement === 'side') _saveActiveDockTab();
     var tab = null;
@@ -267,6 +426,7 @@ var FilePreview = (function () {
       if (_dockTabs[i].id === tabId) { tab = _dockTabs[i]; break; }
     }
     if (!tab) return;
+    if (!preserveRequest) _previewGeneration++;
     _activeDockTabId = tab.id;
     var panels = _dockOverlay.querySelector('.fp-dock-panels');
     if (panels) {
@@ -280,6 +440,8 @@ var FilePreview = (function () {
     _dirContext = tab.dirContext;
     _placementButton = tab.placementButton;
     _maximizeButton = tab.maximizeButton;
+    _refreshButton = tab.refreshButton;
+    _previewReady = tab.previewReady !== false;
     _maximized = !!tab.maximized;
     _dockOverlay.classList.toggle('fp-mode-dir', !!tab.modeDir);
     _dockOverlay.classList.toggle('fp-has-back', !!tab.hasBack);
@@ -287,6 +449,7 @@ var FilePreview = (function () {
     _syncPlacementButton();
     _syncMaximizeButton();
     _renderDockTabs();
+    _syncAutoRefresh();
   }
 
   function _closeDockTab(tabId) {
@@ -317,6 +480,9 @@ var FilePreview = (function () {
   }
 
   function _destroyDock() {
+    _previewGeneration++;
+    _previewReady = false;
+    _stopAutoRefresh();
     _cleanupSideResize();
     if (_dockOverlay) _dockOverlay.remove();
     _removeDockRestoreButton();
@@ -331,6 +497,7 @@ var FilePreview = (function () {
       _currentFile = null;
       _currentPaneId = null;
       _dirContext = null;
+      _refreshButton = null;
     }
   }
 
@@ -355,6 +522,8 @@ var FilePreview = (function () {
       id: _nextDockTabId++, path: path, modal: modal,
       currentFile: _currentFile, paneId: _currentPaneId, dirContext: _dirContext,
       placementButton: _placementButton, maximizeButton: _maximizeButton,
+      refreshButton: _refreshButton,
+      previewReady: _previewReady,
       maximized: false,
       modeDir: modalOverlay.classList.contains('fp-mode-dir'),
       hasBack: modalOverlay.classList.contains('fp-has-back'),
@@ -362,7 +531,7 @@ var FilePreview = (function () {
     modal.classList.remove('fp-maximized');
     _dockTabs.push(tab);
     _activeDockTabId = tab.id;
-    _showDock();
+    _showDock(true);
   }
 
   // --- Lazy loading ---
@@ -409,6 +578,7 @@ var FilePreview = (function () {
   // --- Modal ---
 
   function _createModal(title) {
+    _stopAutoRefresh();
     if (_placement === 'side') {
       _saveActiveDockTab();
     } else if (_overlay) {
@@ -462,6 +632,14 @@ var FilePreview = (function () {
       else _dockCurrentPreview();
     });
     btnPlacement.className += ' fp-btn-placement';
+    var btnRefresh = _btn('', 'Refresh preview', function () { _refreshCurrent(true); });
+    _setSvgIcon(btnRefresh,
+      '<path d="M20 6v5h-5"/><path d="M4 18v-5h5"/>'
+      + '<path d="M6.1 9a7 7 0 0 1 11.5-2.6L20 9"/>'
+      + '<path d="m4 15 2.4 2.6A7 7 0 0 0 17.9 15"/>');
+    btnRefresh.className += ' fp-btn-refresh is-live';
+    btnRefresh.title = '刷新预览（每 1.5 秒自动检查）';
+    _refreshButton = btnRefresh;
     _placementButton = btnPlacement;
     var btnNewTab = _btn('', 'Open in new tab', function () { _openNewTab(); });
     _setSvgIcon(btnNewTab,
@@ -486,6 +664,7 @@ var FilePreview = (function () {
     _setSvgIcon(btnClose, '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
     btnClose.className += ' fp-btn-close';
 
+    actions.appendChild(btnRefresh);
     actions.appendChild(btnPlacement);
     actions.appendChild(btnMaximize);
     actions.appendChild(btnNewTab);
@@ -931,12 +1110,16 @@ var FilePreview = (function () {
       _closeDockTab(_activeDockTabId);
       return;
     }
+    _previewGeneration++;
+    _previewReady = false;
+    _stopAutoRefresh();
     if (_overlay) _overlay.remove();
     _overlay = null;
     _maximized = false;
     _placement = 'modal';
     _placementButton = null;
     _maximizeButton = null;
+    _refreshButton = null;
     _currentFile = null;
     _dirContext = null;
     _currentPaneId = null;
@@ -1123,9 +1306,9 @@ var FilePreview = (function () {
   function _renderXlsx(body, rawUrl) {
     body.innerHTML = '<div class="fp-loading">Loading spreadsheet…</div>';
     var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
-    Promise.all([
+    return Promise.all([
       _loadScript(CDN.exceljs),
-      fetch(rawUrl, { headers: headers }).then(function (r) {
+      fetch(rawUrl, { headers: headers, cache: 'no-store' }).then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.arrayBuffer();
       }),
@@ -1138,7 +1321,7 @@ var FilePreview = (function () {
       .then(function (wb) {
         var sheets = [];
         wb.eachSheet(function (ws) { sheets.push(ws); });
-        if (!sheets.length) { _showError(body, '空工作簿'); return; }
+        if (!sheets.length) throw new Error('空工作簿');
 
         body.innerHTML = '';
         var wrap = document.createElement('div');
@@ -1170,9 +1353,6 @@ var FilePreview = (function () {
         wrap.appendChild(panes);
         body.appendChild(wrap);
         wrap.querySelectorAll('.fp-xlsx-table').forEach(_attachColumnFilters);
-      })
-      .catch(function (err) {
-        _showError(body, '表格解析失败: ' + (err && err.message ? err.message : err));
       });
   }
 
@@ -1656,7 +1836,7 @@ var FilePreview = (function () {
     body.innerHTML = '<div class="fp-loading">Rendering Markdown\u2026</div>';
     var baseDir = filePath.substring(0, filePath.lastIndexOf('/'));
 
-    Promise.all([
+    return Promise.all([
       _loadScript(CDN.markdownIt),
       _loadScript(CDN.hljs),
       _loadCSS(CDN.hljsCss),
@@ -2082,6 +2262,107 @@ var FilePreview = (function () {
 
   // --- Open File ---
 
+  function _renderResolvedPreview(body, info, targetLine, options) {
+    options = options || {};
+    var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
+    var tokenQs = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
+    var requestId = options.requestId == null ? _previewGeneration : options.requestId;
+    var expectedFile = options.expectedFile || null;
+    var expectedPath = options.expectedPath || null;
+    var renderedBody = document.createElement('div');
+    var current;
+
+    function isCurrent() {
+      return _isPreviewRequestCurrent(requestId, body, expectedFile, expectedPath);
+    }
+
+    function commit(next, mode) {
+      if (!isCurrent()) return false;
+      _replacePreviewBody(body, renderedBody);
+      if (options.reuseCurrent && expectedFile) Object.assign(expectedFile, next);
+      else _currentFile = next;
+      _previewReady = true;
+      _applyMode(mode);
+      return true;
+    }
+
+    if (info.isDirectory) {
+      current = {
+        absPath: info.absPath,
+        isDirectory: true,
+        size: info.size,
+        mtimeMs: info.mtimeMs,
+      };
+      return _renderDirectory(renderedBody, info.absPath, {
+        navBody: body, requestId: requestId,
+        expectedFile: expectedFile, expectedPath: expectedPath,
+      })
+        .then(function (data) {
+          if (!data || !isCurrent()) return false;
+          current.absPath = data.absPath;
+          if (!commit(current, 'dir')) return false;
+          _dirContext = data.parent || null;
+          _applyMode('dir');
+          _setPreviewTitle(data.absPath);
+          return true;
+        });
+    }
+
+    var revision = info.mtimeMs != null ? String(Math.round(info.mtimeMs)) : '';
+    var rawUrl = '/api/files/raw?path=' + encodeURIComponent(info.absPath)
+      + (tokenQs ? '&' + tokenQs : '')
+      + (revision ? '&v=' + encodeURIComponent(revision) : '');
+    var filename = info.absPath.split('/').pop();
+
+    current = {
+      absPath: info.absPath,
+      rawUrl: rawUrl,
+      filename: filename,
+      isText: info.isText,
+      isImage: info.isImage,
+      isPdf: info.isPdf,
+      isXlsx: info.isXlsx,
+      isMarkdown: info.isMarkdown,
+      rawContent: null,
+      size: info.size,
+      mtimeMs: info.mtimeMs,
+    };
+    var renderPromise;
+    if (info.isImage) {
+      _renderImage(renderedBody, rawUrl);
+      renderPromise = Promise.resolve();
+    } else if (info.isPdf) {
+      _renderPdf(renderedBody, rawUrl);
+      renderPromise = Promise.resolve();
+    } else if (info.isXlsx) {
+      renderPromise = _renderXlsx(renderedBody, rawUrl);
+    } else {
+      renderPromise = fetch('/api/files/content?path=' + encodeURIComponent(info.absPath), {
+        headers: headers, cache: 'no-store',
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (cr) {
+          if (!cr.success) throw new Error(cr.error || '加载文件失败');
+          if (!isCurrent()) return false;
+          current.rawContent = cr.data.content;
+          if (info.isMarkdown) {
+            return _renderMarkdown(renderedBody, cr.data.content, info.absPath);
+          }
+          if (_isCsvPath(info.absPath)) {
+            _renderCsv(renderedBody, cr.data.content, info.absPath);
+          } else {
+            _renderCode(renderedBody, cr.data.content, cr.data.language, targetLine);
+          }
+          return true;
+        });
+    }
+
+    return Promise.resolve(renderPromise).then(function (rendered) {
+      if (rendered === false || !commit(current, 'file')) return false;
+      return true;
+    });
+  }
+
   // opts: `true` (legacy keep-dir-context) or { lineRef, keepDirContext }.
   function openFile(filePath, paneId, opts) {
     var keepDir = opts === true || (opts && opts.keepDirContext);
@@ -2097,76 +2378,44 @@ var FilePreview = (function () {
     _currentOpenPath = filePath;
     if (!keepDir) _dirContext = null;
     var body = _createModal(filePath);
+    var requestId = ++_previewGeneration;
+    _previewReady = false;
+    _currentFile = null;
 
     var qs = '?path=' + encodeURIComponent(filePath);
     if (paneId) qs += '&paneId=' + encodeURIComponent(paneId);
 
     var _authHeaders = typeof Auth !== 'undefined' ? Auth.headers() : {};
-    var _tokenQs = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
 
-    fetch('/api/files/info' + qs, { headers: _authHeaders })
+    fetch('/api/files/info' + qs, { headers: _authHeaders, cache: 'no-store' })
       .then(function (r) {
+        if (!_isPreviewRequestCurrent(requestId, body)) return null;
         if (r.status === 401) { close(); return null; }
         return r.json();
       })
       .then(function (res) {
         if (!res) return;
+        if (!_isPreviewRequestCurrent(requestId, body)) return false;
         if (!res.success) {
           if (res.error === 'File not found' || res.error === 'Path not found') { close(); return; }
           var errorAbsPath = (res.data && res.data.absPath) ? res.data.absPath : null;
           _showError(body, res.error, errorAbsPath);
           return;
         }
-        var info = res.data;
-
-        if (info.isDirectory) {
-          _currentFile = { absPath: info.absPath, isDirectory: true };
-          _applyMode('dir');
-          _renderDirectory(body, info.absPath);
-          return;
-        }
-
-        var rawUrl = '/api/files/raw?path=' + encodeURIComponent(info.absPath)
-          + (_tokenQs ? '&' + _tokenQs : '');
-        var filename = info.absPath.split('/').pop();
-
-        _currentFile = {
-          absPath: info.absPath,
-          rawUrl: rawUrl,
-          filename: filename,
-          isText: info.isText,
-          isImage: info.isImage,
-          isPdf: info.isPdf,
-          isXlsx: info.isXlsx,
-          isMarkdown: info.isMarkdown,
-          rawContent: null,
-        };
-        _applyMode('file');
-
-        if (info.isImage) {
-          _renderImage(body, rawUrl);
-        } else if (info.isPdf) {
-          _renderPdf(body, rawUrl);
-        } else if (info.isXlsx) {
-          _renderXlsx(body, rawUrl);
-        } else {
-          fetch('/api/files/content?path=' + encodeURIComponent(info.absPath), { headers: _authHeaders })
-            .then(function (r) { return r.json(); })
-            .then(function (cr) {
-              if (!cr.success) { _showError(body, cr.error, info.absPath); return; }
-              _currentFile.rawContent = cr.data.content;
-              if (info.isMarkdown) {
-                _renderMarkdown(body, cr.data.content, info.absPath);
-              } else if (_isCsvPath(info.absPath)) {
-                _renderCsv(body, cr.data.content, info.absPath);
-              } else {
-                _renderCode(body, cr.data.content, cr.data.language, targetLine);
-              }
-            })
-            .catch(function (err) { _showError(body, err.message); });
+        return _renderResolvedPreview(body, res.data, targetLine, { requestId: requestId });
+      })
+      .then(function (rendered) {
+        if (rendered === true) {
+          _saveActiveDockTab();
+          _syncAutoRefresh();
         }
       })
-      .catch(function (err) { _showError(body, err.message); });
+      .catch(function (err) {
+        if (_isPreviewRequestCurrent(requestId, body)) {
+          _previewReady = false;
+          _showError(body, err.message);
+        }
+      });
   }
 
   function _applyMode(mode) {
@@ -2203,39 +2452,64 @@ var FilePreview = (function () {
   }
 
   function _navDir(body, dirPath) {
-    _renderDirectory(body, dirPath);
+    _stopAutoRefresh();
+    var requestId = ++_previewGeneration;
+    var previous = _currentFile;
+    _previewReady = false;
+    _currentFile = {
+      absPath: dirPath,
+      isDirectory: true,
+      size: previous && previous.isDirectory ? previous.size : null,
+      mtimeMs: previous && previous.isDirectory ? previous.mtimeMs : null,
+    };
+    var fileAtStart = _currentFile;
+    _saveActiveDockTab();
+    body.innerHTML = '<div class="fp-loading">Loading directory…</div>';
+    var renderedBody = document.createElement('div');
+    _renderDirectory(renderedBody, dirPath, {
+      navBody: body, requestId: requestId, expectedFile: fileAtStart, expectedPath: dirPath,
+    })
+      .then(function (data) {
+        if (!data || !_isPreviewRequestCurrent(requestId, body, fileAtStart, dirPath)) return;
+        _replacePreviewBody(body, renderedBody);
+        _currentFile.absPath = data.absPath;
+        _dirContext = data.parent || null;
+        _previewReady = true;
+        _applyMode('dir');
+        _setPreviewTitle(data.absPath);
+        _saveActiveDockTab();
+        _syncAutoRefresh();
+      })
+      .catch(function (err) {
+        if (!_isPreviewRequestCurrent(requestId, body, fileAtStart, dirPath)) return;
+        _showError(body, err.message, dirPath);
+      });
   }
 
-  function _renderDirectory(body, dirPath) {
+  function _renderDirectory(body, dirPath, options) {
+    options = options || {};
+    var navBody = options.navBody || body;
     body.innerHTML = '<div class="fp-loading">Loading directory…</div>';
     var _authHeaders = typeof Auth !== 'undefined' ? Auth.headers() : {};
     var qs = '?path=' + encodeURIComponent(dirPath);
     if (_currentPaneId) qs += '&paneId=' + encodeURIComponent(_currentPaneId);
 
-    fetch('/api/files/list' + qs, { headers: _authHeaders })
+    return fetch('/api/files/list' + qs, { headers: _authHeaders, cache: 'no-store' })
       .then(function (r) {
-        if (r.status === 401) { close(); return null; }
+        if (r.status === 401) {
+          if (options.requestId == null || _isPreviewRequestCurrent(
+            options.requestId, navBody, options.expectedFile, options.expectedPath
+          )) close();
+          return null;
+        }
         return r.json();
       })
       .then(function (res) {
         if (!res) return;
         if (!res.success) {
-          _showError(body, res.error, dirPath);
-          return;
+          throw new Error(res.error || '目录加载失败');
         }
         var data = res.data;
-        if (_currentFile) _currentFile.absPath = data.absPath;
-        // Back button in dir mode goes to the parent of the currently-shown dir.
-        _dirContext = data.parent || null;
-        _applyMode('dir');
-
-        if (_overlay) {
-          var titleEl = _overlay.querySelector('.fp-title');
-          if (titleEl) {
-            titleEl.textContent = data.absPath;
-            titleEl.title = data.absPath;
-          }
-        }
 
         var wrap = document.createElement('div');
         wrap.className = 'fp-dir-wrap';
@@ -2250,7 +2524,7 @@ var FilePreview = (function () {
         rootLink.href = '#';
         rootLink.addEventListener('click', function (e) {
           e.preventDefault();
-          _navDir(body, '/');
+          _navDir(navBody, '/');
         });
         crumb.appendChild(rootLink);
         var accum = '';
@@ -2272,7 +2546,7 @@ var FilePreview = (function () {
             var target = accum;
             el.addEventListener('click', function (e) {
               e.preventDefault();
-              _navDir(body, target);
+              _navDir(navBody, target);
             });
           }
           crumb.appendChild(sep);
@@ -2293,9 +2567,9 @@ var FilePreview = (function () {
             + '<span class="fp-dir-size"></span>'
             + '<span class="fp-dir-mtime"></span>';
           var parentPath = data.parent;
-          upRow.addEventListener('click', function () { _navDir(body, parentPath); });
+          upRow.addEventListener('click', function () { _navDir(navBody, parentPath); });
           upRow.addEventListener('keydown', function (e) {
-            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _navDir(body, parentPath); }
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _navDir(navBody, parentPath); }
           });
           list.appendChild(upRow);
         }
@@ -2350,7 +2624,7 @@ var FilePreview = (function () {
           var activate = function () {
             if (entry.unreadable) return;
             if (isDir) {
-              _navDir(body, fullPath);
+              _navDir(navBody, fullPath);
             } else {
               // Remember the parent dir so the back button returns here
               _dirContext = data.absPath;
@@ -2376,8 +2650,9 @@ var FilePreview = (function () {
 
         body.innerHTML = '';
         body.appendChild(wrap);
+        return data;
       })
-      .catch(function (err) { _showError(body, err.message); });
+      ;
   }
 
   // Convert a terminal (bufRow, termCol) position to a string offset in
@@ -2431,6 +2706,10 @@ var FilePreview = (function () {
     return null;
   }
 
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', _syncAutoRefresh);
+  }
+
   return {
     registerLinkProvider: registerLinkProvider, openFile: openFile,
     openFromBuffer: openFromBuffer, close: close, closeDocked: closeDocked, hitTest: hitTest,
@@ -2441,6 +2720,10 @@ var FilePreview = (function () {
       strOffsetToTermPos: _logicalStrOffsetToTermPos,
       findLinks: _findLinks,
       resolvePaneForAction: _resolvePaneForAction,
+      refreshCurrent: _refreshCurrent,
+      syncAutoRefresh: _syncAutoRefresh,
+      hasAutoRefreshTimer: function () { return _autoRefreshTimer != null; },
+      autoRefreshMs: AUTO_REFRESH_MS,
       buildLinkRange: function (logical, f) {
         var start = _logicalStrOffsetToTermPos(logical.rows, f.startCol);
         var end = _logicalStrOffsetToTermPos(logical.rows, f.endCol - 1);

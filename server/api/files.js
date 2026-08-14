@@ -249,7 +249,12 @@ export function createFilesRouter(allowedRoots) {
       if (target.stat.isDirectory()) {
         return res.json({
           success: true,
-          data: { absPath: target.linkPath, isDirectory: true },
+          data: {
+            absPath: target.linkPath,
+            isDirectory: true,
+            size: target.stat.size,
+            mtimeMs: target.stat.mtimeMs,
+          },
           error: null,
         });
       }
@@ -263,7 +268,12 @@ export function createFilesRouter(allowedRoots) {
       if (target.stat.size > limit) {
         return res.status(413).json({
           success: false,
-          data: { ...info, absPath: target.linkPath, size: target.stat.size },
+          data: {
+            ...info,
+            absPath: target.linkPath,
+            size: target.stat.size,
+            mtimeMs: target.stat.mtimeMs,
+          },
           error: `File too large (${(target.stat.size / 1024 / 1024).toFixed(1)}MB, max ${limit / 1024 / 1024}MB)`,
         });
       }
@@ -273,6 +283,7 @@ export function createFilesRouter(allowedRoots) {
         data: {
           absPath: target.linkPath,
           size: target.stat.size,
+          mtimeMs: target.stat.mtimeMs,
           ...info,
         },
         error: null,

@@ -3603,6 +3603,48 @@ body.fp-side-resizing { cursor: col-resize; user-select: none; }
   border-color: color-mix(in srgb, var(--accent-blue) 34%, var(--border-subtle));
 }
 .fp-btn-svg svg { display: block; width: 18px; height: 18px; pointer-events: none; }
+.fp-btn-refresh {
+  position: relative;
+}
+.fp-btn-refresh.is-live::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg-deep) 82%, transparent);
+}
+.fp-btn-refresh.is-refreshing svg {
+  animation: fp-refresh-spin .75s linear infinite;
+}
+.fp-btn-refresh.is-refreshing::after {
+  background: var(--accent-blue);
+}
+.fp-btn-refresh.has-error {
+  color: var(--accent-red);
+  background: color-mix(in srgb, var(--accent-red) 12%, transparent);
+}
+.fp-body.fp-refreshing::before {
+  content: '';
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  left: 0;
+  width: 38%;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent-blue);
+  animation: fp-refresh-progress 1s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+@keyframes fp-refresh-spin { to { transform: rotate(360deg); } }
+@keyframes fp-refresh-progress {
+  from { transform: translateX(-60%); opacity: .35; }
+  to { transform: translateX(220%); opacity: 1; }
+}
 .fp-btn-back {
   flex: 0 0 32px; background: color-mix(in srgb, var(--bg-deep) 35%, transparent);
   border-color: var(--border-subtle);
