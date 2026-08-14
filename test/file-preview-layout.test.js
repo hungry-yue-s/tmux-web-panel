@@ -3,19 +3,27 @@ import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
 
 const source = fs.readFileSync('public/js/file-preview.js', 'utf8');
+const appSource = fs.readFileSync('public/js/app.js', 'utf8');
 const styles = fs.readFileSync('public/css/style.css', 'utf8');
 
-function createPreview() {
+function createPreview({ storage = {}, missingPaths = [] } = {}) {
   const dom = new JSDOM(
     '<!doctype html><body><div id="main-layout"><main id="content"><div class="terminal-view"></div></main></div></body>',
     { url: 'https://panel.test/' }
   );
   Object.defineProperty(dom.window, 'innerWidth', { value: 1440, configurable: true });
+  Object.entries(storage).forEach(([key, value]) => dom.window.localStorage.setItem(key, value));
 
   const fetch = vi.fn((url) => {
     const parsed = new URL(String(url), 'https://panel.test/');
     const path = parsed.searchParams.get('path') || '/tmp';
     if (String(url).includes('/api/files/info')) {
+      if (missingPaths.includes(path)) {
+        return Promise.resolve({
+          status: 404,
+          json: () => Promise.resolve({ success: false, data: null, error: 'File not found' }),
+        });
+      }
       return Promise.resolve({
         status: 200,
         json: () => Promise.resolve({ success: true, data: { isDirectory: true, absPath: path, mtimeMs: 1, size: 0 } }),
@@ -360,6 +368,7 @@ describe('file preview dock tabs', () => {
     expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
     expect(dom.window.document.querySelector('[aria-label="展开右侧文件预览"]')).toBeNull();
     expect(dom.window.document.body.classList.contains('fp-side-open')).toBe(false);
+    expect(dom.window.localStorage.getItem(preview._test.dockStateKey)).toBeNull();
   });
 
   it('hides and restores the entire dock while retaining tabs', async () => {
@@ -377,6 +386,98 @@ describe('file preview dock tabs', () => {
     const dock = dom.window.document.querySelector('.fp-dock');
     expect(dock).not.toBeNull();
     expect(dock.querySelectorAll('.fp-dock-tab-item')).toHaveLength(1);
+  });
+
+  it('restores persisted tabs, active tab and width after a page reload', async () => {
+    const first = createPreview();
+    first.preview.openFile('/tmp/one.md', '%1'); await flush(); dockCurrent(first.dom);
+    first.preview.openFile('/tmp/two.md', '%2'); await flush();
+    Array.from(first.dom.window.document.querySelectorAll('.fp-overlay'))
+      .find((el) => !el.classList.contains('fp-dock'))
+      .querySelector('[aria-label="在右侧分栏打开"]').click();
+    first.dom.window.document.querySelectorAll('.fp-dock-tab')[0].click();
+
+    const key = first.preview._test.dockStateKey;
+    const saved = JSON.parse(first.dom.window.localStorage.getItem(key));
+    saved.width = 510;
+    const serialized = JSON.stringify(saved);
+    expect(saved.tabs.map((tab) => tab.path)).toEqual(['/tmp/one.md', '/tmp/two.md']);
+    expect(saved.activePath).toBe('/tmp/one.md');
+    expect(saved.hidden).toBe(false);
+
+    const reloaded = createPreview({
+      storage: { [key]: serialized, tmux_file_preview_side_width: '510' },
+    });
+    expect(await reloaded.preview.restoreDocked()).toBe(true);
+
+    const dock = reloaded.dom.window.document.querySelector('.fp-dock');
+    expect(dock).not.toBeNull();
+    expect(Array.from(dock.querySelectorAll('.fp-dock-tab')).map((el) => el.textContent))
+      .toEqual(['one.md', 'two.md']);
+    expect(dock.querySelector('.fp-dock-tab-item.active .fp-dock-tab').textContent).toBe('one.md');
+    expect(dock.style.width).toBe('510px');
+    expect(dock.classList.contains('fp-restoring')).toBe(false);
+  });
+
+  it('restores a hidden dock as a collapsed button after reopening the browser', async () => {
+    const first = createPreview();
+    first.preview.openFile('/tmp/one.md', '%1'); await flush(); dockCurrent(first.dom);
+    first.preview.openFile('/tmp/two.md', '%2'); await flush();
+    Array.from(first.dom.window.document.querySelectorAll('.fp-overlay'))
+      .find((el) => !el.classList.contains('fp-dock'))
+      .querySelector('[aria-label="在右侧分栏打开"]').click();
+    first.dom.window.document.querySelector('[aria-label="隐藏右侧预览"]').click();
+
+    const key = first.preview._test.dockStateKey;
+    const serialized = first.dom.window.localStorage.getItem(key);
+    expect(JSON.parse(serialized).hidden).toBe(true);
+
+    const reopened = createPreview({ storage: { [key]: serialized } });
+    expect(await reopened.preview.restoreDocked()).toBe(true);
+    expect(reopened.dom.window.document.querySelector('.fp-dock')).toBeNull();
+    const restore = reopened.dom.window.document.querySelector('[aria-label="展开右侧文件预览"]');
+    expect(restore).not.toBeNull();
+    expect(restore.textContent).toContain('2');
+
+    restore.click();
+    expect(reopened.dom.window.document.querySelector('.fp-dock')).not.toBeNull();
+    expect(JSON.parse(reopened.dom.window.localStorage.getItem(key)).hidden).toBe(false);
+  });
+
+  it('skips missing files and prunes them from persisted dock state', async () => {
+    const key = 'tmux_file_preview_dock_v1';
+    const state = JSON.stringify({
+      version: 1,
+      tabs: [
+        { path: '/tmp/missing.md', paneId: '%1' },
+        { path: '/tmp/kept.md', paneId: '%2' },
+      ],
+      activePath: '/tmp/missing.md', hidden: false, width: 480,
+    });
+    const restored = createPreview({
+      storage: { [key]: state }, missingPaths: ['/tmp/missing.md'],
+    });
+
+    expect(await restored.preview.restoreDocked()).toBe(true);
+    const dock = restored.dom.window.document.querySelector('.fp-dock');
+    expect(dock.querySelectorAll('.fp-dock-tab-item')).toHaveLength(1);
+    expect(dock.querySelector('.fp-dock-tab').textContent).toBe('kept.md');
+    const pruned = JSON.parse(restored.dom.window.localStorage.getItem(key));
+    expect(pruned.tabs.map((tab) => tab.path)).toEqual(['/tmp/kept.md']);
+    expect(pruned.activePath).toBe('/tmp/kept.md');
+  });
+
+  it('restores the dock at app startup without destroying it on route changes', () => {
+    expect(appSource).toContain('FilePreview.restoreDocked()');
+    expect(appSource).not.toContain('FilePreview.closeDocked()');
+  });
+
+  it('ignores and removes a corrupted persisted dock snapshot', async () => {
+    const key = 'tmux_file_preview_dock_v1';
+    const restored = createPreview({ storage: { [key]: '{broken-json' } });
+    expect(await restored.preview.restoreDocked()).toBe(false);
+    expect(restored.dom.window.localStorage.getItem(key)).toBeNull();
+    expect(restored.dom.window.document.querySelector('.fp-dock')).toBeNull();
   });
 
   it('activates an existing tab instead of duplicating the same path', async () => {

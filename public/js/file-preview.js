@@ -23,12 +23,93 @@ var FilePreview = (function () {
   var _refreshPromise = null;
   var _previewGeneration = 0;
   var _previewReady = false;
+  var _restorePromise = null;
+  var _restoringDock = false;
+  var _persistenceSuspended = false;
   var AUTO_REFRESH_MS = 1500;
+  var DOCK_STATE_KEY = 'tmux_file_preview_dock_v1';
+  var DOCK_WIDTH_KEY = 'tmux_file_preview_side_width';
+  var DOCK_STATE_VERSION = 1;
+  var MAX_PERSISTED_DOCK_TABS = 12;
+
+  function _clearPersistedDock() {
+    try { window.localStorage.removeItem(DOCK_STATE_KEY); } catch (_) {}
+  }
+
+  function _loadDockState() {
+    var raw;
+    try { raw = window.localStorage.getItem(DOCK_STATE_KEY); } catch (_) { return null; }
+    if (!raw) return null;
+    try {
+      var parsed = JSON.parse(raw);
+      if (!parsed || parsed.version !== DOCK_STATE_VERSION || !Array.isArray(parsed.tabs)) {
+        _clearPersistedDock();
+        return null;
+      }
+      var seen = {};
+      var tabs = parsed.tabs.filter(function (tab) {
+        if (!tab || typeof tab.path !== 'string' || tab.path.charAt(0) !== '/') return false;
+        if (seen[tab.path]) return false;
+        seen[tab.path] = true;
+        return true;
+      }).slice(0, MAX_PERSISTED_DOCK_TABS).map(function (tab) {
+        return {
+          path: tab.path,
+          paneId: typeof tab.paneId === 'string' && /^%\d+$/.test(tab.paneId) ? tab.paneId : null,
+        };
+      });
+      if (tabs.length === 0) {
+        _clearPersistedDock();
+        return null;
+      }
+      var width = Number(parsed.width);
+      return {
+        tabs: tabs,
+        activePath: typeof parsed.activePath === 'string' ? parsed.activePath : tabs[0].path,
+        hidden: parsed.hidden === true,
+        width: isFinite(width) && width > 0 ? width : 0,
+      };
+    } catch (_) {
+      _clearPersistedDock();
+      return null;
+    }
+  }
+
+  function _persistDockState(widthOverride) {
+    if (_persistenceSuspended) return;
+    if (_dockTabs.length === 0) {
+      _clearPersistedDock();
+      return;
+    }
+    var active = _activeDockTab();
+    var width = Number(widthOverride) || 0;
+    if (!width && _dockOverlay) {
+      width = parseFloat(_dockOverlay.style.flexBasis)
+        || (_dockOverlay.isConnected ? _dockOverlay.getBoundingClientRect().width : 0);
+    }
+    if (!width) {
+      try { width = parseFloat(window.localStorage.getItem(DOCK_WIDTH_KEY)) || 0; } catch (_) {}
+    }
+    var state = {
+      version: DOCK_STATE_VERSION,
+      tabs: _dockTabs.slice(0, MAX_PERSISTED_DOCK_TABS).map(function (tab) {
+        return { path: tab.path, paneId: tab.paneId || null };
+      }).filter(function (tab) { return typeof tab.path === 'string' && tab.path.charAt(0) === '/'; }),
+      activePath: active ? active.path : null,
+      hidden: _dockHidden,
+      width: width > 0 ? Math.round(width) : 0,
+    };
+    if (state.tabs.length === 0) {
+      _clearPersistedDock();
+      return;
+    }
+    try { window.localStorage.setItem(DOCK_STATE_KEY, JSON.stringify(state)); } catch (_) {}
+  }
 
   function _canDockRight() {
     var bounds = _sideWidthBounds();
     return window.innerWidth >= 900
-      && !!document.querySelector('.terminal-view')
+      && !!document.getElementById('main-layout')
       && bounds.max >= bounds.min;
   }
 
@@ -87,7 +168,9 @@ var FilePreview = (function () {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       document.body.classList.remove('fp-side-resizing');
-      try { window.localStorage.setItem('tmux_file_preview_side_width', String(Math.round(sideOverlay.getBoundingClientRect().width))); } catch (_) {}
+      var width = Math.round(sideOverlay.getBoundingClientRect().width);
+      try { window.localStorage.setItem(DOCK_WIDTH_KEY, String(width)); } catch (_) {}
+      _persistDockState(width);
     }
     function onDown(e) {
       e.preventDefault();
@@ -328,6 +411,7 @@ var FilePreview = (function () {
     tab.modeDir = _dockOverlay && _dockOverlay.classList.contains('fp-mode-dir');
     tab.hasBack = _dockOverlay && _dockOverlay.classList.contains('fp-has-back');
     if (_currentFile && _currentFile.absPath) tab.path = _currentFile.absPath;
+    _persistDockState();
   }
 
   function _renderDockTabs() {
@@ -385,16 +469,22 @@ var FilePreview = (function () {
     var layout = document.getElementById('main-layout');
     if (layout) layout.appendChild(_dockOverlay);
     var savedWidth = 0;
-    try { savedWidth = parseInt(window.localStorage.getItem('tmux_file_preview_side_width'), 10) || 0; } catch (_) {}
+    var persisted = _loadDockState();
+    if (persisted) savedWidth = persisted.width;
+    if (!savedWidth) {
+      try { savedWidth = parseInt(window.localStorage.getItem(DOCK_WIDTH_KEY), 10) || 0; } catch (_) {}
+    }
     var dockWidth = _clampSideWidth(savedWidth);
     _dockOverlay.style.flexBasis = dockWidth + 'px';
     _dockOverlay.style.width = dockWidth + 'px';
+    _dockOverlay.classList.toggle('fp-restoring', _restoringDock);
     document.body.classList.add('fp-side-open');
     _activateDockTab(_activeDockTabId || _dockTabs[0].id, preserveRequest);
     _installSideResize();
+    _persistDockState(dockWidth);
   }
 
-  function _hideDock() {
+  function _hideDock(persistHidden) {
     if (!_dockOverlay) return;
     if (document.__fpActiveMermaidDialogClose) document.__fpActiveMermaidDialogClose();
     _previewGeneration++;
@@ -418,6 +508,7 @@ var FilePreview = (function () {
       if (layout) layout.appendChild(_dockRestoreButton);
     }
     _dockRestoreButton.textContent = '\u25E7 ' + _dockTabs.length;
+    if (persistHidden !== false) _persistDockState();
   }
 
   function _activateDockTab(tabId, preserveRequest) {
@@ -453,6 +544,7 @@ var FilePreview = (function () {
     _syncMaximizeButton();
     _renderDockTabs();
     _syncAutoRefresh();
+    _persistDockState();
   }
 
   function _closeDockTab(tabId) {
@@ -481,6 +573,7 @@ var FilePreview = (function () {
     }
     _renderDockTabs();
     if (_dockRestoreButton) _dockRestoreButton.textContent = '\u25E7 ' + _dockTabs.length;
+    _persistDockState();
   }
 
   function _destroyDock() {
@@ -496,6 +589,7 @@ var FilePreview = (function () {
     _dockTabs = [];
     _activeDockTabId = null;
     _dockHidden = false;
+    _clearPersistedDock();
     document.body.classList.remove('fp-side-open');
     if (_placement === 'side') {
       _overlay = null;
@@ -508,17 +602,19 @@ var FilePreview = (function () {
   }
 
   function _dockCurrentPreview() {
-    if (!_overlay || _placement === 'side' || !_canDockRight()) return;
+    if (!_overlay || _placement === 'side' || !_canDockRight()) return false;
     var modalOverlay = _overlay;
     var modal = modalOverlay.querySelector('.fp-modal');
-    if (!modal) return;
+    if (!modal) return false;
     var path = (_currentFile && _currentFile.absPath) || _currentOpenPath || '';
     for (var i = 0; i < _dockTabs.length; i++) {
       if (path && _dockTabs[i].path === path) {
+        _disposeMermaid(modalOverlay);
         modalOverlay.remove();
         _activeDockTabId = _dockTabs[i].id;
         _showDock();
-        return;
+        _persistDockState();
+        return true;
       }
     }
     _ensureDockOverlay();
@@ -538,6 +634,63 @@ var FilePreview = (function () {
     _dockTabs.push(tab);
     _activeDockTabId = tab.id;
     _showDock(true);
+    _persistDockState();
+    return true;
+  }
+
+  function restoreDocked() {
+    if (_restorePromise) return _restorePromise;
+    if (_dockTabs.length > 0) {
+      if (_dockHidden) _hideDock();
+      else _showDock();
+      return Promise.resolve(true);
+    }
+    var saved = _loadDockState();
+    if (!saved || !_canDockRight()) return Promise.resolve(false);
+    if (saved.width > 0) {
+      try { window.localStorage.setItem(DOCK_WIDTH_KEY, String(Math.round(saved.width))); } catch (_) {}
+    }
+
+    _restoringDock = true;
+    _persistenceSuspended = true;
+    var chain = Promise.resolve();
+    saved.tabs.forEach(function (tab) {
+      chain = chain.then(function () {
+        return openFile(tab.path, tab.paneId, { restoring: true });
+      }).then(function (opened) {
+        if (opened === true) {
+          _dockCurrentPreview();
+          return;
+        }
+        if (_placement !== 'side' && _overlay) close();
+      });
+    });
+
+    _restorePromise = chain.then(function () {
+      if (_dockTabs.length === 0) {
+        _destroyDock();
+        return false;
+      }
+      var active = null;
+      for (var i = 0; i < _dockTabs.length; i++) {
+        if (_dockTabs[i].path === saved.activePath) { active = _dockTabs[i]; break; }
+      }
+      _restoringDock = false;
+      if (_dockOverlay) _dockOverlay.classList.remove('fp-restoring');
+      _activateDockTab((active || _dockTabs[0]).id);
+      if (saved.hidden) _hideDock();
+      else _showDock();
+      return true;
+    }).catch(function () {
+      _destroyDock();
+      return false;
+    }).finally(function () {
+      _restoringDock = false;
+      _persistenceSuspended = false;
+      _restorePromise = null;
+      _persistDockState();
+    });
+    return _restorePromise;
   }
 
   // --- Lazy loading ---
@@ -596,7 +749,7 @@ var FilePreview = (function () {
     _placement = 'modal';
 
     _overlay = document.createElement('div');
-    _overlay.className = 'fp-overlay';
+    _overlay.className = 'fp-overlay' + (_restoringDock ? ' fp-restoring' : '');
     _overlay.addEventListener('click', function (e) {
       if (e.target === _overlay) close();
     });
@@ -2696,7 +2849,7 @@ var FilePreview = (function () {
 
     var _authHeaders = typeof Auth !== 'undefined' ? Auth.headers() : {};
 
-    fetch('/api/files/info' + qs, { headers: _authHeaders, cache: 'no-store' })
+    return fetch('/api/files/info' + qs, { headers: _authHeaders, cache: 'no-store' })
       .then(function (r) {
         if (!_isPreviewRequestCurrent(requestId, body)) return null;
         if (r.status === 401) { close(); return null; }
@@ -2717,13 +2870,16 @@ var FilePreview = (function () {
         if (rendered === true) {
           _saveActiveDockTab();
           _syncAutoRefresh();
+          return true;
         }
+        return false;
       })
       .catch(function (err) {
         if (_isPreviewRequestCurrent(requestId, body)) {
           _previewReady = false;
           _showError(body, err.message);
         }
+        return false;
       });
   }
 
@@ -3021,7 +3177,8 @@ var FilePreview = (function () {
 
   return {
     registerLinkProvider: registerLinkProvider, openFile: openFile,
-    openFromBuffer: openFromBuffer, close: close, closeDocked: closeDocked, hitTest: hitTest,
+    openFromBuffer: openFromBuffer, close: close, closeDocked: closeDocked,
+    restoreDocked: restoreDocked, hitTest: hitTest,
     activateHit: _activateLink,
     // Test seam (no DOM): exercised by test/file-preview-links.test.js.
     _test: {
@@ -3037,6 +3194,9 @@ var FilePreview = (function () {
       installMermaidInteractions: _installMermaidInteractions,
       disposeMermaid: _disposeMermaid,
       mermaidStandaloneScript: _mermaidStandaloneScript,
+      loadDockState: _loadDockState,
+      persistDockState: _persistDockState,
+      dockStateKey: DOCK_STATE_KEY,
       buildLinkRange: function (logical, f) {
         var start = _logicalStrOffsetToTermPos(logical.rows, f.startCol);
         var end = _logicalStrOffsetToTermPos(logical.rows, f.endCol - 1);

@@ -340,9 +340,6 @@ function navigate(tab, params) {
     if (typeof cleanupTerminal === 'function') {
       cleanupTerminal();
     }
-    if (typeof FilePreview !== 'undefined' && FilePreview.closeDocked) {
-      FilePreview.closeDocked();
-    }
   }
 
   // Auto-clear notification when navigating to a window
@@ -2030,6 +2027,9 @@ function _startApp() {
   statusSocket.connect();
   render();
   updateSidebar();
+  if (typeof FilePreview !== 'undefined' && FilePreview.restoreDocked) {
+    FilePreview.restoreDocked();
+  }
 }
 
 document.addEventListener('keydown', function (e) {

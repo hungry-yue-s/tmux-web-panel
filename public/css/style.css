@@ -3470,6 +3470,7 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   align-items: center; justify-content: center;
   animation: fpFadeIn 0.15s ease;
 }
+.fp-overlay.fp-restoring { visibility: hidden; pointer-events: none; }
 .fp-overlay.fp-side {
   position: relative; inset: auto; z-index: 30;
   flex: 0 0 clamp(320px, 44vw, 820px); width: clamp(320px, 44vw, 820px); height: 100%;
