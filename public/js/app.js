@@ -322,6 +322,15 @@ function saveNavState() {
 
 // === Router (hash-based) ===
 
+function _syncFilePreviewDockContext() {
+  if (typeof FilePreview === 'undefined' || !FilePreview.switchDockContext) return;
+  if (state.currentTab === 'terminal' && state.currentSession && _isValidWindowIndex(state.currentWindow)) {
+    FilePreview.switchDockContext(state.currentSession, state.currentWindow);
+  } else {
+    FilePreview.switchDockContext(null, null);
+  }
+}
+
 function navigate(tab, params) {
   var newParams = params || {};
 
@@ -354,6 +363,7 @@ function navigate(tab, params) {
   saveNavState();
   render();
   updateSidebar();
+  _syncFilePreviewDockContext();
 }
 
 // === Render ===
@@ -2027,9 +2037,7 @@ function _startApp() {
   statusSocket.connect();
   render();
   updateSidebar();
-  if (typeof FilePreview !== 'undefined' && FilePreview.restoreDocked) {
-    FilePreview.restoreDocked();
-  }
+  _syncFilePreviewDockContext();
 }
 
 document.addEventListener('keydown', function (e) {

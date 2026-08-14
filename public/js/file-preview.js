@@ -24,21 +24,44 @@ var FilePreview = (function () {
   var _previewGeneration = 0;
   var _previewReady = false;
   var _restorePromise = null;
+  var _restoreContextKey = null;
   var _restoringDock = false;
   var _persistenceSuspended = false;
+  var _dockContextKey = null;
+  var _dockContextGeneration = 0;
   var AUTO_REFRESH_MS = 1500;
-  var DOCK_STATE_KEY = 'tmux_file_preview_dock_v1';
-  var DOCK_WIDTH_KEY = 'tmux_file_preview_side_width';
+  var DOCK_STATE_PREFIX = 'tmux_file_preview_dock_v2:';
+  var LEGACY_DOCK_STATE_KEY = 'tmux_file_preview_dock_v1';
+  var LEGACY_DOCK_WIDTH_KEY = 'tmux_file_preview_side_width';
   var DOCK_STATE_VERSION = 1;
   var MAX_PERSISTED_DOCK_TABS = 12;
 
+  function _makeDockContextKey(sessionName, windowIndex) {
+    if (typeof sessionName !== 'string' || !sessionName) return null;
+    if (!((typeof windowIndex === 'number' && Number.isInteger(windowIndex) && windowIndex >= 0)
+      || (typeof windowIndex === 'string' && /^\d+$/.test(windowIndex)))) return null;
+    return sessionName + '\u0000' + String(windowIndex);
+  }
+
+  function _dockStateStorageKey(contextKey) {
+    return contextKey ? DOCK_STATE_PREFIX + encodeURIComponent(contextKey) : null;
+  }
+
+  function _currentDockStateKey() {
+    return _dockStateStorageKey(_dockContextKey);
+  }
+
   function _clearPersistedDock() {
-    try { window.localStorage.removeItem(DOCK_STATE_KEY); } catch (_) {}
+    var key = _currentDockStateKey();
+    if (!key) return;
+    try { window.localStorage.removeItem(key); } catch (_) {}
   }
 
   function _loadDockState() {
+    var key = _currentDockStateKey();
+    if (!key) return null;
     var raw;
-    try { raw = window.localStorage.getItem(DOCK_STATE_KEY); } catch (_) { return null; }
+    try { raw = window.localStorage.getItem(key); } catch (_) { return null; }
     if (!raw) return null;
     try {
       var parsed = JSON.parse(raw);
@@ -76,7 +99,8 @@ var FilePreview = (function () {
   }
 
   function _persistDockState(widthOverride) {
-    if (_persistenceSuspended) return;
+    var key = _currentDockStateKey();
+    if (_persistenceSuspended || !key) return;
     if (_dockTabs.length === 0) {
       _clearPersistedDock();
       return;
@@ -86,9 +110,6 @@ var FilePreview = (function () {
     if (!width && _dockOverlay) {
       width = parseFloat(_dockOverlay.style.flexBasis)
         || (_dockOverlay.isConnected ? _dockOverlay.getBoundingClientRect().width : 0);
-    }
-    if (!width) {
-      try { width = parseFloat(window.localStorage.getItem(DOCK_WIDTH_KEY)) || 0; } catch (_) {}
     }
     var state = {
       version: DOCK_STATE_VERSION,
@@ -103,13 +124,33 @@ var FilePreview = (function () {
       _clearPersistedDock();
       return;
     }
-    try { window.localStorage.setItem(DOCK_STATE_KEY, JSON.stringify(state)); } catch (_) {}
+    try { window.localStorage.setItem(key, JSON.stringify(state)); } catch (_) {}
+  }
+
+  function _migrateLegacyDockState() {
+    var key = _currentDockStateKey();
+    if (!key) return;
+    try {
+      if (window.localStorage.getItem(key) != null) return;
+      var raw = window.localStorage.getItem(LEGACY_DOCK_STATE_KEY);
+      if (!raw) return;
+      var parsed = JSON.parse(raw);
+      if ((!parsed.width || Number(parsed.width) <= 0)) {
+        var legacyWidth = parseFloat(window.localStorage.getItem(LEGACY_DOCK_WIDTH_KEY)) || 0;
+        if (legacyWidth > 0) parsed.width = legacyWidth;
+      }
+      window.localStorage.setItem(key, JSON.stringify(parsed));
+      window.localStorage.removeItem(LEGACY_DOCK_STATE_KEY);
+    } catch (_) {
+      try { window.localStorage.removeItem(LEGACY_DOCK_STATE_KEY); } catch (_ignored) {}
+    }
   }
 
   function _canDockRight() {
     var bounds = _sideWidthBounds();
     return window.innerWidth >= 900
-      && !!document.getElementById('main-layout')
+      && !!_dockContextKey
+      && !!document.querySelector('.terminal-view')
       && bounds.max >= bounds.min;
   }
 
@@ -169,7 +210,6 @@ var FilePreview = (function () {
       window.removeEventListener('pointerup', onUp);
       document.body.classList.remove('fp-side-resizing');
       var width = Math.round(sideOverlay.getBoundingClientRect().width);
-      try { window.localStorage.setItem(DOCK_WIDTH_KEY, String(width)); } catch (_) {}
       _persistDockState(width);
     }
     function onDown(e) {
@@ -471,9 +511,6 @@ var FilePreview = (function () {
     var savedWidth = 0;
     var persisted = _loadDockState();
     if (persisted) savedWidth = persisted.width;
-    if (!savedWidth) {
-      try { savedWidth = parseInt(window.localStorage.getItem(DOCK_WIDTH_KEY), 10) || 0; } catch (_) {}
-    }
     var dockWidth = _clampSideWidth(savedWidth);
     _dockOverlay.style.flexBasis = dockWidth + 'px';
     _dockOverlay.style.width = dockWidth + 'px';
@@ -576,11 +613,14 @@ var FilePreview = (function () {
     _persistDockState();
   }
 
-  function _destroyDock() {
+  function _destroyDock(preservePersisted) {
     _previewGeneration++;
     _previewReady = false;
     _stopAutoRefresh();
     _cleanupSideResize();
+    var separateOverlay = _overlay && _overlay !== _dockOverlay ? _overlay : null;
+    _disposeMermaid(separateOverlay);
+    if (separateOverlay) separateOverlay.remove();
     _dockTabs.forEach(function (tab) { _disposeMermaid(tab.modal); });
     _disposeMermaid(_dockOverlay);
     if (_dockOverlay) _dockOverlay.remove();
@@ -589,16 +629,18 @@ var FilePreview = (function () {
     _dockTabs = [];
     _activeDockTabId = null;
     _dockHidden = false;
-    _clearPersistedDock();
+    if (!preservePersisted) _clearPersistedDock();
     document.body.classList.remove('fp-side-open');
-    if (_placement === 'side') {
-      _overlay = null;
-      _placement = 'modal';
-      _currentFile = null;
-      _currentPaneId = null;
-      _dirContext = null;
-      _refreshButton = null;
-    }
+    _overlay = null;
+    _placement = 'modal';
+    _currentFile = null;
+    _currentPaneId = null;
+    _dirContext = null;
+    _currentOpenPath = null;
+    _placementButton = null;
+    _maximizeButton = null;
+    _refreshButton = null;
+    _maximized = false;
   }
 
   function _dockCurrentPreview() {
@@ -638,8 +680,40 @@ var FilePreview = (function () {
     return true;
   }
 
-  function restoreDocked() {
-    if (_restorePromise) return _restorePromise;
+  function _isDockContextCurrent(contextKey, generation) {
+    return !!contextKey
+      && contextKey === _dockContextKey
+      && generation === _dockContextGeneration;
+  }
+
+  function switchDockContext(sessionName, windowIndex) {
+    var nextContextKey = _makeDockContextKey(sessionName, windowIndex);
+    if (nextContextKey === _dockContextKey) {
+      if (!nextContextKey) return Promise.resolve(false);
+      if (_dockTabs.length > 0) return Promise.resolve(true);
+      return restoreDocked();
+    }
+
+    _dockContextGeneration++;
+    if (_dockContextKey) _persistDockState();
+    _persistenceSuspended = true;
+    _destroyDock(true);
+    _restorePromise = null;
+    _restoreContextKey = null;
+    _restoringDock = false;
+    _persistenceSuspended = false;
+    _dockContextKey = nextContextKey;
+
+    if (!nextContextKey) return Promise.resolve(false);
+    _migrateLegacyDockState();
+    return restoreDocked(_dockContextGeneration);
+  }
+
+  function restoreDocked(expectedGeneration) {
+    var contextKey = _dockContextKey;
+    var generation = expectedGeneration == null ? _dockContextGeneration : expectedGeneration;
+    if (!contextKey || !_isDockContextCurrent(contextKey, generation)) return Promise.resolve(false);
+    if (_restorePromise && _restoreContextKey === contextKey) return _restorePromise;
     if (_dockTabs.length > 0) {
       if (_dockHidden) _hideDock();
       else _showDock();
@@ -647,17 +721,16 @@ var FilePreview = (function () {
     }
     var saved = _loadDockState();
     if (!saved || !_canDockRight()) return Promise.resolve(false);
-    if (saved.width > 0) {
-      try { window.localStorage.setItem(DOCK_WIDTH_KEY, String(Math.round(saved.width))); } catch (_) {}
-    }
 
     _restoringDock = true;
     _persistenceSuspended = true;
     var chain = Promise.resolve();
     saved.tabs.forEach(function (tab) {
       chain = chain.then(function () {
+        if (!_isDockContextCurrent(contextKey, generation)) return false;
         return openFile(tab.path, tab.paneId, { restoring: true });
       }).then(function (opened) {
+        if (!_isDockContextCurrent(contextKey, generation)) return;
         if (opened === true) {
           _dockCurrentPreview();
           return;
@@ -666,7 +739,9 @@ var FilePreview = (function () {
       });
     });
 
+    _restoreContextKey = contextKey;
     _restorePromise = chain.then(function () {
+      if (!_isDockContextCurrent(contextKey, generation)) return false;
       if (_dockTabs.length === 0) {
         _destroyDock();
         return false;
@@ -682,12 +757,14 @@ var FilePreview = (function () {
       else _showDock();
       return true;
     }).catch(function () {
-      _destroyDock();
+      if (_isDockContextCurrent(contextKey, generation)) _destroyDock();
       return false;
     }).finally(function () {
+      if (!_isDockContextCurrent(contextKey, generation)) return;
       _restoringDock = false;
       _persistenceSuspended = false;
       _restorePromise = null;
+      _restoreContextKey = null;
       _persistDockState();
     });
     return _restorePromise;
@@ -3178,7 +3255,7 @@ var FilePreview = (function () {
   return {
     registerLinkProvider: registerLinkProvider, openFile: openFile,
     openFromBuffer: openFromBuffer, close: close, closeDocked: closeDocked,
-    restoreDocked: restoreDocked, hitTest: hitTest,
+    restoreDocked: restoreDocked, switchDockContext: switchDockContext, hitTest: hitTest,
     activateHit: _activateLink,
     // Test seam (no DOM): exercised by test/file-preview-links.test.js.
     _test: {
@@ -3196,7 +3273,11 @@ var FilePreview = (function () {
       mermaidStandaloneScript: _mermaidStandaloneScript,
       loadDockState: _loadDockState,
       persistDockState: _persistDockState,
-      dockStateKey: DOCK_STATE_KEY,
+      dockStateKey: function (sessionName, windowIndex) {
+        return _dockStateStorageKey(_makeDockContextKey(sessionName, windowIndex));
+      },
+      legacyDockStateKey: LEGACY_DOCK_STATE_KEY,
+      dockContextKey: function () { return _dockContextKey; },
       buildLinkRange: function (logical, f) {
         var start = _logicalStrOffsetToTermPos(logical.rows, f.startCol);
         var end = _logicalStrOffsetToTermPos(logical.rows, f.endCol - 1);
