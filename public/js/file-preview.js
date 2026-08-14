@@ -22,6 +22,7 @@ var FilePreview = (function () {
   var _autoRefreshTimer = null;
   var _refreshPromise = null;
   var _previewGeneration = 0;
+  var _mermaidThemeGeneration = 0;
   var _previewReady = false;
   var _restorePromise = null;
   var _restoreContextKey = null;
@@ -958,6 +959,95 @@ var FilePreview = (function () {
       + ' aria-hidden="true" focusable="false">' + paths + '</svg>';
   }
 
+  function _mermaidHex(value, fallback) {
+    var color = String(value || '').trim();
+    var shortHex = /^#([0-9a-f]{3})$/i.exec(color);
+    if (shortHex) {
+      return '#' + shortHex[1].split('').map(function (ch) { return ch + ch; }).join('');
+    }
+    if (/^#[0-9a-f]{6}$/i.test(color)) return color;
+    var rgb = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(color);
+    if (rgb) {
+      return '#' + rgb.slice(1, 4).map(function (channel) {
+        return Math.max(0, Math.min(255, Number(channel))).toString(16).padStart(2, '0');
+      }).join('');
+    }
+    return fallback;
+  }
+
+  function _mermaidThemeValue(styles, name, fallback) {
+    return _mermaidHex(styles.getPropertyValue(name), fallback);
+  }
+
+  function _isDarkMermaidColor(hex) {
+    var value = parseInt(hex.slice(1), 16);
+    var red = (value >> 16) & 255;
+    var green = (value >> 8) & 255;
+    var blue = value & 255;
+    return (red * 299 + green * 587 + blue * 114) / 1000 < 128;
+  }
+
+  function _mermaidThemeConfig() {
+    var styles = window.getComputedStyle(document.documentElement);
+    var background = _mermaidThemeValue(styles, '--bg-primary', '#1a1b26');
+    var deep = _mermaidThemeValue(styles, '--bg-deep', '#16161e');
+    var card = _mermaidThemeValue(styles, '--bg-card', '#24283b');
+    var hover = _mermaidThemeValue(styles, '--bg-hover', '#292e42');
+    var border = _mermaidThemeValue(styles, '--border', '#3b4261');
+    var subtleBorder = _mermaidThemeValue(styles, '--border-subtle', '#2f3450');
+    var text = _mermaidThemeValue(styles, '--text-primary', '#c0caf5');
+    var secondaryText = _mermaidThemeValue(styles, '--text-secondary', '#a9b1d6');
+    var accent = _mermaidThemeValue(styles, '--accent-blue', '#7aa2f7');
+
+    return {
+      startOnLoad: false,
+      theme: 'base',
+      securityLevel: 'loose',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      themeVariables: {
+        darkMode: _isDarkMermaidColor(background),
+        background: background,
+        primaryColor: card,
+        primaryTextColor: text,
+        primaryBorderColor: accent,
+        secondaryColor: hover,
+        secondaryTextColor: text,
+        secondaryBorderColor: border,
+        tertiaryColor: deep,
+        tertiaryTextColor: text,
+        tertiaryBorderColor: subtleBorder,
+        lineColor: accent,
+        textColor: text,
+        mainBkg: card,
+        nodeBorder: accent,
+        clusterBkg: deep,
+        clusterBorder: border,
+        defaultLinkColor: accent,
+        titleColor: text,
+        edgeLabelBackground: background,
+        nodeTextColor: text,
+        noteBkgColor: hover,
+        noteTextColor: text,
+        noteBorderColor: border,
+        actorBkg: card,
+        actorBorder: accent,
+        actorTextColor: text,
+        signalColor: secondaryText,
+        signalTextColor: text,
+        labelBoxBkgColor: hover,
+        labelBoxBorderColor: border,
+        labelTextColor: text,
+      },
+      // Reserve vertical room below subgraph titles. Mermaid only sizes for a
+      // single-line title, so a long wrapped title needs extra bottom room.
+      flowchart: { subGraphTitleMargin: { top: 6, bottom: 24 } },
+    };
+  }
+
+  function _initializeMermaidTheme() {
+    window.mermaid.initialize(_mermaidThemeConfig());
+  }
+
   // Turn Mermaid's responsive SVG into a readable, scrollable embed. Mermaid
   // emits width="100%" plus a max-width, which is useful for small diagrams but
   // makes a wide flowchart's labels unreadably tiny. Keep at least 75% of the
@@ -1232,6 +1322,36 @@ var FilePreview = (function () {
     embeds.forEach(function (embed) {
       if (embed.__fpMermaidCleanup) embed.__fpMermaidCleanup();
     });
+  }
+
+  function _refreshMermaidTheme() {
+    if (!window.mermaid || typeof window.mermaid.render !== 'function') {
+      return Promise.resolve([]);
+    }
+    var embeds = Array.prototype.slice.call(document.querySelectorAll('.fp-mermaid-embed'));
+    if (embeds.length === 0) return Promise.resolve([]);
+
+    var generation = ++_mermaidThemeGeneration;
+    _initializeMermaidTheme();
+    return Promise.all(embeds.map(function (container, i) {
+      var code = container.__fpMermaidSource;
+      if (!code) return Promise.resolve(null);
+      var id = 'fp-mmd-theme-' + Date.now() + '-' + generation + '-' + i;
+      return window.mermaid.render(id, code)
+        .then(function (res) {
+          if (generation !== _mermaidThemeGeneration || !container.isConnected) return null;
+          _disposeMermaid(container);
+          container.className = 'mermaid';
+          container.removeAttribute('data-fp-width');
+          container.removeAttribute('data-fp-height');
+          container.innerHTML = res.svg;
+          container.__fpMermaidSource = code;
+          _prepareMermaid(container);
+          _installMermaidInteractions(container);
+          return container;
+        })
+        .catch(function () { return null; });
+    }));
   }
 
   function _mermaidStandaloneScript() {
@@ -2501,17 +2621,7 @@ var FilePreview = (function () {
               // webfont reflows the text after layout is computed, pushing it
               // past the boxes/spacing mermaid already sized — the "overlapping"
               // render. Waiting on document.fonts.ready guards the same hazard.
-              window.mermaid.initialize({
-                startOnLoad: false,
-                theme: 'dark',
-                securityLevel: 'loose',
-                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                // Reserve vertical room below subgraph titles. Mermaid only sizes
-                // for a single-line title, so a long title that WRAPS to two lines
-                // gets overlapped by the first child node. A generous bottom margin
-                // pushes the children clear of the wrapped title.
-                flowchart: { subGraphTitleMargin: { top: 6, bottom: 24 } },
-              });
+              _initializeMermaidTheme();
               var fontsReady = (document.fonts && document.fonts.ready)
                 ? document.fonts.ready : Promise.resolve();
               return fontsReady.then(function () {
@@ -2519,6 +2629,7 @@ var FilePreview = (function () {
                   var code = block.textContent;
                   var container = document.createElement('div');
                   container.className = 'mermaid';
+                  container.__fpMermaidSource = code;
                   block.parentElement.replaceWith(container);
                   // render() lays out in mermaid's own sandbox (deterministic),
                   // then we inject the finished SVG.
@@ -3317,6 +3428,7 @@ var FilePreview = (function () {
 
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', _syncAutoRefresh);
+    document.addEventListener('tmux-theme-change', _refreshMermaidTheme);
   }
 
   return {
@@ -3337,6 +3449,8 @@ var FilePreview = (function () {
       prepareMermaid: _prepareMermaid,
       installMermaidInteractions: _installMermaidInteractions,
       disposeMermaid: _disposeMermaid,
+      mermaidThemeConfig: _mermaidThemeConfig,
+      refreshMermaidTheme: _refreshMermaidTheme,
       mermaidStandaloneScript: _mermaidStandaloneScript,
       markdownHeadingSlug: _markdownHeadingSlug,
       wikilinkHtml: _wikilinkHtml,

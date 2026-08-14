@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
@@ -6,6 +6,7 @@ const themeSource = readFileSync('public/js/theme.js', 'utf8');
 const appSource = readFileSync('public/js/app.js', 'utf8');
 const terminalSource = readFileSync('public/js/terminal.js', 'utf8');
 const styles = readFileSync('public/css/style.css', 'utf8');
+const indexSource = readFileSync('public/index.html', 'utf8');
 
 let dom;
 
@@ -48,6 +49,22 @@ describe('extended terminal themes', () => {
     expect(Theme.getTerminalTheme().background).toBe('#232136');
     expect(dom.window.document.documentElement.getAttribute('data-theme')).toBe('rose-pine-moon');
     expect(dom.window.document.documentElement.style.getPropertyValue('--bg-primary')).toBe('#232136');
+  });
+
+  it('announces theme changes so rendered previews can rebuild embedded colors', () => {
+    const Theme = loadTheme();
+    const listener = vi.fn();
+    dom.window.document.addEventListener('tmux-theme-change', listener);
+
+    Theme.apply('github-light');
+
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener.mock.calls[0][0].detail.themeId).toBe('github-light');
+  });
+
+  it('bumps browser caches for the theme-aware Mermaid scripts', () => {
+    expect(indexSource).toContain('/js/theme.js?v=4');
+    expect(indexSource).toContain('/js/file-preview.js?v=29');
   });
 
   it('does not expose the removed transparency UI or xterm option', () => {

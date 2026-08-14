@@ -491,6 +491,14 @@ var Theme = (function () {
 
     // Persist
     try { localStorage.setItem(STORAGE_KEY, themeId); } catch (_e) {}
+
+    // Let theme-aware rendered content (for example Mermaid SVGs) rebuild
+    // colors that were embedded at render time.
+    try {
+      document.dispatchEvent(new CustomEvent('tmux-theme-change', {
+        detail: { themeId: themeId },
+      }));
+    } catch (_e) {}
   }
 
   function getTerminalTheme(themeId) {

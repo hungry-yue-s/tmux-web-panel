@@ -191,6 +191,61 @@ function dockCurrent(dom) {
 }
 
 describe('file preview dock tabs', () => {
+  it('derives Mermaid colors from the current panel theme', () => {
+    const { dom, preview } = createPreview();
+    const root = dom.window.document.documentElement;
+    root.style.setProperty('--bg-primary', '#ffffff');
+    root.style.setProperty('--bg-deep', '#f0f2f5');
+    root.style.setProperty('--bg-card', '#f6f8fa');
+    root.style.setProperty('--bg-hover', '#eaeef2');
+    root.style.setProperty('--border', '#d0d7de');
+    root.style.setProperty('--border-subtle', '#e8ebef');
+    root.style.setProperty('--text-primary', '#1f2328');
+    root.style.setProperty('--text-secondary', '#59636e');
+    root.style.setProperty('--accent-blue', '#0969da');
+
+    expect(preview._test.mermaidThemeConfig()).toMatchObject({
+      theme: 'base',
+      themeVariables: {
+        darkMode: false,
+        background: '#ffffff',
+        primaryColor: '#f6f8fa',
+        primaryTextColor: '#1f2328',
+        primaryBorderColor: '#0969da',
+        clusterBkg: '#f0f2f5',
+        clusterBorder: '#d0d7de',
+        defaultLinkColor: '#0969da',
+        edgeLabelBackground: '#ffffff',
+      },
+    });
+  });
+
+  it('rerenders open Mermaid diagrams when the panel theme changes', async () => {
+    const { dom, preview } = createPreview();
+    const embed = dom.window.document.createElement('div');
+    embed.className = 'mermaid fp-mermaid-embed';
+    embed.__fpMermaidSource = 'flowchart TD\nA-->B';
+    embed.innerHTML = '<svg viewBox="0 0 400 200"><text>old</text></svg>';
+    dom.window.document.body.appendChild(embed);
+
+    dom.window.mermaid = {
+      initialize: vi.fn(),
+      render: vi.fn(() => Promise.resolve({
+        svg: '<svg viewBox="0 0 640 320"><text>new</text></svg>',
+      })),
+    };
+    dom.window.document.dispatchEvent(new dom.window.CustomEvent('tmux-theme-change'));
+    await flush();
+
+    expect(dom.window.mermaid.initialize).toHaveBeenCalledWith(expect.objectContaining({ theme: 'base' }));
+    expect(dom.window.mermaid.render).toHaveBeenCalledWith(
+      expect.stringContaining('fp-mmd-theme-'), 'flowchart TD\nA-->B'
+    );
+    expect(embed.querySelector('text').textContent).toBe('new');
+    expect(embed.querySelector('.fp-mermaid-open')).not.toBeNull();
+    expect(embed.getAttribute('data-fp-width')).toBe('640');
+  });
+
   it('keeps wide Mermaid diagrams readable and opens the pan and zoom viewer', () => {
     const { dom, preview } = createPreview();
     const embed = dom.window.document.createElement('div');
