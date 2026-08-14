@@ -224,6 +224,7 @@ var FilePreview = (function () {
   }
 
   function _replacePreviewBody(body, renderedBody) {
+    _disposeMermaid(body);
     body.innerHTML = '';
     while (renderedBody.firstChild) body.appendChild(renderedBody.firstChild);
   }
@@ -395,6 +396,7 @@ var FilePreview = (function () {
 
   function _hideDock() {
     if (!_dockOverlay) return;
+    if (document.__fpActiveMermaidDialogClose) document.__fpActiveMermaidDialogClose();
     _previewGeneration++;
     _stopAutoRefresh();
     _saveActiveDockTab();
@@ -420,6 +422,7 @@ var FilePreview = (function () {
 
   function _activateDockTab(tabId, preserveRequest) {
     if (!_dockOverlay) return;
+    if (document.__fpActiveMermaidDialogClose) document.__fpActiveMermaidDialogClose();
     if (_placement === 'side') _saveActiveDockTab();
     var tab = null;
     for (var i = 0; i < _dockTabs.length; i++) {
@@ -459,6 +462,7 @@ var FilePreview = (function () {
     }
     if (index < 0) return;
     var wasActive = _activeDockTabId === tabId;
+    _disposeMermaid(_dockTabs[index].modal);
     _dockTabs[index].modal.remove();
     _dockTabs.splice(index, 1);
     if (_dockTabs.length === 0) {
@@ -484,6 +488,8 @@ var FilePreview = (function () {
     _previewReady = false;
     _stopAutoRefresh();
     _cleanupSideResize();
+    _dockTabs.forEach(function (tab) { _disposeMermaid(tab.modal); });
+    _disposeMermaid(_dockOverlay);
     if (_dockOverlay) _dockOverlay.remove();
     _removeDockRestoreButton();
     _dockOverlay = null;
@@ -579,9 +585,11 @@ var FilePreview = (function () {
 
   function _createModal(title) {
     _stopAutoRefresh();
+    if (document.__fpActiveMermaidDialogClose) document.__fpActiveMermaidDialogClose();
     if (_placement === 'side') {
       _saveActiveDockTab();
     } else if (_overlay) {
+      _disposeMermaid(_overlay);
       _overlay.remove();
     }
     _maximized = false;
@@ -720,12 +728,292 @@ var FilePreview = (function () {
       + ' aria-hidden="true" focusable="false">' + paths + '</svg>';
   }
 
+  // Turn Mermaid's responsive SVG into a readable, scrollable embed. Mermaid
+  // emits width="100%" plus a max-width, which is useful for small diagrams but
+  // makes a wide flowchart's labels unreadably tiny. Keep at least 75% of the
+  // intrinsic SVG size and let the embed scroll horizontally instead.
+  function _prepareMermaid(container) {
+    var svg = container.querySelector('svg');
+    if (!svg) return false;
+    var viewBox = (svg.getAttribute('viewBox') || '').trim().split(/[ ,]+/).map(Number);
+    var width = viewBox.length === 4 && viewBox[2] > 0 ? viewBox[2]
+      : parseFloat(svg.getAttribute('width')) || 800;
+    var height = viewBox.length === 4 && viewBox[3] > 0 ? viewBox[3]
+      : parseFloat(svg.getAttribute('height')) || 450;
+
+    container.classList.add('fp-mermaid-embed');
+    container.setAttribute('data-fp-width', String(width));
+    container.setAttribute('data-fp-height', String(height));
+
+    var scroll = document.createElement('div');
+    scroll.className = 'fp-mermaid-scroll';
+    scroll.setAttribute('aria-label', '\u53EF\u6EDA\u52A8\u7684 Mermaid \u56FE\u8868');
+    var canvas = document.createElement('div');
+    canvas.className = 'fp-mermaid-canvas';
+    canvas.title = '\u70B9\u51FB\u653E\u5927\u67E5\u770B';
+    svg.removeAttribute('width');
+    svg.removeAttribute('height');
+    svg.style.maxWidth = 'none';
+    svg.style.height = 'auto';
+    canvas.appendChild(svg);
+    scroll.appendChild(canvas);
+
+    var open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'fp-mermaid-open';
+    open.setAttribute('aria-label', '\u653E\u5927\u67E5\u770B Mermaid \u56FE\u8868');
+    open.title = '\u653E\u5927\u67E5\u770B';
+    open.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+      + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'
+      + ' aria-hidden="true"><path d="M8 3H3v5"/><path d="M16 3h5v5"/>'
+      + '<path d="M8 21H3v-5"/><path d="M16 21h5v-5"/></svg>';
+
+    container.innerHTML = '';
+    container.appendChild(scroll);
+    container.appendChild(open);
+    return true;
+  }
+
+  // Self-contained on purpose: its source is also embedded into exported/new-
+  // tab HTML, so graph behavior stays the same outside the panel document.
+  function _installMermaidInteractions(root) {
+    var doc = root.nodeType === 9 ? root : root.ownerDocument;
+    var win = doc.defaultView || window;
+    var MIN_READABLE = 0.75, MIN_ZOOM = 0.2, MAX_ZOOM = 4;
+
+    function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
+    function graphSize(embed) {
+      return {
+        width: parseFloat(embed.getAttribute('data-fp-width')) || 800,
+        height: parseFloat(embed.getAttribute('data-fp-height')) || 450,
+      };
+    }
+    function graphEmbeds(scope) {
+      var list = Array.prototype.slice.call(scope.querySelectorAll('.fp-mermaid-embed'));
+      if (scope.matches && scope.matches('.fp-mermaid-embed')) list.unshift(scope);
+      return list;
+    }
+    function textButton(className, label, text) {
+      var button = doc.createElement('button');
+      button.type = 'button';
+      button.className = 'fp-mermaid-tool ' + className;
+      button.setAttribute('aria-label', label);
+      button.title = label;
+      button.textContent = text;
+      return button;
+    }
+
+    graphEmbeds(root).forEach(function (embed) {
+      if (embed.__fpMermaidBound) return;
+      embed.__fpMermaidBound = true;
+      var scroll = embed.querySelector('.fp-mermaid-scroll');
+      var canvas = embed.querySelector('.fp-mermaid-canvas');
+      var sourceSvg = embed.querySelector('svg');
+      var openButton = embed.querySelector('.fp-mermaid-open');
+      if (!scroll || !canvas || !sourceSvg || !openButton) return;
+      var size = graphSize(embed);
+      var observer = null;
+
+      function layoutInline() {
+        var available = (scroll.clientWidth || embed.clientWidth || win.innerWidth || size.width) - 32;
+        var fit = available > 0 ? available / size.width : 1;
+        var scale = fit >= MIN_READABLE ? Math.min(1, fit) : MIN_READABLE;
+        sourceSvg.style.width = Math.round(size.width * scale) + 'px';
+        sourceSvg.style.height = Math.round(size.height * scale) + 'px';
+        embed.setAttribute('data-fp-scale', String(scale));
+        embed.classList.toggle('is-wide', scale === MIN_READABLE && fit < MIN_READABLE);
+      }
+
+      function openViewer() {
+        if (doc.__fpActiveMermaidDialogClose) doc.__fpActiveMermaidDialogClose();
+        var overlay = doc.createElement('div');
+        overlay.className = 'fp-mermaid-dialog';
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
+        overlay.setAttribute('aria-label', 'Mermaid \u56FE\u8868\u67E5\u770B\u5668');
+
+        var panel = doc.createElement('div');
+        panel.className = 'fp-mermaid-dialog-panel';
+        var header = doc.createElement('div');
+        header.className = 'fp-mermaid-dialog-header';
+        var title = doc.createElement('strong');
+        title.className = 'fp-mermaid-dialog-title';
+        title.textContent = 'Mermaid \u56FE\u8868';
+        var tools = doc.createElement('div');
+        tools.className = 'fp-mermaid-dialog-tools';
+        tools.setAttribute('role', 'toolbar');
+        tools.setAttribute('aria-label', '\u56FE\u8868\u7F29\u653E\u5DE5\u5177');
+        var minus = textButton('fp-mermaid-zoom-out', '\u7F29\u5C0F\u56FE\u8868', '\u2212');
+        var percent = textButton('fp-mermaid-percent', '\u5F53\u524D\u7F29\u653E\u6BD4\u4F8B', '100%');
+        percent.disabled = true;
+        var plus = textButton('fp-mermaid-zoom-in', '\u653E\u5927\u56FE\u8868', '+');
+        var fitButton = textButton('fp-mermaid-fit', '\u9002\u5E94\u7A97\u53E3', '\u9002\u5E94');
+        var actual = textButton('fp-mermaid-actual', '\u6062\u590D 100%', '1:1');
+        var fullscreen = textButton('fp-mermaid-fullscreen', '\u5168\u5C4F\u67E5\u770B', '\u5168\u5C4F');
+        var closeButton = textButton('fp-mermaid-close', '\u5173\u95ED\u56FE\u8868\u67E5\u770B\u5668', '\u00D7');
+        [minus, percent, plus, fitButton, actual, fullscreen, closeButton]
+          .forEach(function (button) { tools.appendChild(button); });
+        header.appendChild(title);
+        header.appendChild(tools);
+
+        var viewport = doc.createElement('div');
+        viewport.className = 'fp-mermaid-dialog-viewport';
+        viewport.setAttribute('tabindex', '0');
+        viewport.setAttribute('aria-label', '\u62D6\u52A8\u67E5\u770B\u56FE\u8868\uFF0CCtrl \u6216 Command \u52A0\u6EDA\u8F6E\u53EF\u7F29\u653E');
+        var dialogCanvas = doc.createElement('div');
+        dialogCanvas.className = 'fp-mermaid-dialog-canvas';
+        var svg = sourceSvg.cloneNode(true);
+        svg.style.maxWidth = 'none';
+        svg.style.height = 'auto';
+        dialogCanvas.appendChild(svg);
+        viewport.appendChild(dialogCanvas);
+        panel.appendChild(header);
+        panel.appendChild(viewport);
+        overlay.appendChild(panel);
+        doc.body.appendChild(overlay);
+
+        var scale = 1;
+        var closed = false;
+        var drag = null;
+
+        function applyScale(next, anchorX, anchorY) {
+          var oldWidth = Math.max(1, size.width * scale);
+          var oldHeight = Math.max(1, size.height * scale);
+          var viewWidth = viewport.clientWidth || win.innerWidth || 1200;
+          var viewHeight = viewport.clientHeight || win.innerHeight || 760;
+          var x = anchorX == null ? viewWidth / 2 : anchorX;
+          var y = anchorY == null ? viewHeight / 2 : anchorY;
+          var contentX = (viewport.scrollLeft + x) / oldWidth;
+          var contentY = (viewport.scrollTop + y) / oldHeight;
+          scale = clamp(next, MIN_ZOOM, MAX_ZOOM);
+          var scaledWidth = Math.round(size.width * scale);
+          var scaledHeight = Math.round(size.height * scale);
+          svg.style.width = scaledWidth + 'px';
+          svg.style.height = scaledHeight + 'px';
+          dialogCanvas.style.width = Math.max(scaledWidth, viewWidth - 32) + 'px';
+          dialogCanvas.style.height = Math.max(scaledHeight, viewHeight - 32) + 'px';
+          percent.textContent = Math.round(scale * 100) + '%';
+          viewport.scrollLeft = Math.max(0, contentX * scaledWidth - x);
+          viewport.scrollTop = Math.max(0, contentY * scaledHeight - y);
+        }
+
+        function fitScale() {
+          var viewWidth = viewport.clientWidth || win.innerWidth || 1200;
+          var viewHeight = viewport.clientHeight || win.innerHeight || 760;
+          return clamp(Math.min((viewWidth - 48) / size.width,
+            (viewHeight - 48) / size.height), MIN_ZOOM, MAX_ZOOM);
+        }
+        function readableScale() { return Math.max(MIN_READABLE, Math.min(1, fitScale())); }
+        function onKey(e) {
+          if (e.key !== 'Escape' || doc.fullscreenElement) return;
+          e.preventDefault();
+          closeViewer();
+        }
+        function onFullscreenChange() {
+          fullscreen.textContent = doc.fullscreenElement === panel ? '\u9000\u51FA\u5168\u5C4F' : '\u5168\u5C4F';
+          fullscreen.setAttribute('aria-label', doc.fullscreenElement === panel ? '\u9000\u51FA\u5168\u5C4F' : '\u5168\u5C4F\u67E5\u770B');
+        }
+        function stopDrag() {
+          drag = null;
+          viewport.classList.remove('is-dragging');
+          win.removeEventListener('pointermove', onPointerMove);
+          win.removeEventListener('pointerup', stopDrag);
+          win.removeEventListener('pointercancel', stopDrag);
+        }
+        function onPointerMove(e) {
+          if (!drag) return;
+          viewport.scrollLeft = drag.left - (e.clientX - drag.x);
+          viewport.scrollTop = drag.top - (e.clientY - drag.y);
+        }
+        function closeViewer() {
+          if (closed) return;
+          closed = true;
+          stopDrag();
+          doc.removeEventListener('keydown', onKey, true);
+          doc.removeEventListener('fullscreenchange', onFullscreenChange);
+          if (doc.fullscreenElement === panel && doc.exitFullscreen) {
+            try { doc.exitFullscreen(); } catch (_) { /* best effort */ }
+          }
+          overlay.remove();
+          embed.__fpMermaidClose = null;
+          if (doc.__fpActiveMermaidDialogClose === closeViewer) doc.__fpActiveMermaidDialogClose = null;
+        }
+
+        minus.addEventListener('click', function () { applyScale(scale / 1.2); });
+        plus.addEventListener('click', function () { applyScale(scale * 1.2); });
+        fitButton.addEventListener('click', function () { applyScale(fitScale()); });
+        actual.addEventListener('click', function () { applyScale(1); });
+        fullscreen.addEventListener('click', function () {
+          if (doc.fullscreenElement === panel) {
+            if (doc.exitFullscreen) doc.exitFullscreen();
+          } else if (panel.requestFullscreen) panel.requestFullscreen();
+        });
+        closeButton.addEventListener('click', closeViewer);
+        overlay.addEventListener('click', function (e) { if (e.target === overlay) closeViewer(); });
+        viewport.addEventListener('pointerdown', function (e) {
+          if (e.button != null && e.button !== 0) return;
+          drag = { x: e.clientX, y: e.clientY, left: viewport.scrollLeft, top: viewport.scrollTop };
+          viewport.classList.add('is-dragging');
+          win.addEventListener('pointermove', onPointerMove);
+          win.addEventListener('pointerup', stopDrag);
+          win.addEventListener('pointercancel', stopDrag);
+        });
+        viewport.addEventListener('wheel', function (e) {
+          if (!e.ctrlKey && !e.metaKey) return;
+          e.preventDefault();
+          var rect = viewport.getBoundingClientRect();
+          applyScale(scale * (e.deltaY < 0 ? 1.12 : 1 / 1.12),
+            e.clientX - rect.left, e.clientY - rect.top);
+        }, { passive: false });
+        doc.addEventListener('keydown', onKey, true);
+        doc.addEventListener('fullscreenchange', onFullscreenChange);
+        doc.__fpActiveMermaidDialogClose = closeViewer;
+        embed.__fpMermaidClose = closeViewer;
+        applyScale(readableScale());
+        closeButton.focus();
+      }
+
+      function openFromGraph(e) {
+        if (e && e.target && e.target.closest && e.target.closest('a')) return;
+        openViewer();
+      }
+      openButton.addEventListener('click', openViewer);
+      canvas.addEventListener('click', openFromGraph);
+      if (win.ResizeObserver) {
+        observer = new win.ResizeObserver(layoutInline);
+        observer.observe(scroll);
+      }
+      layoutInline();
+      if (win.requestAnimationFrame) win.requestAnimationFrame(layoutInline);
+      embed.__fpMermaidCleanup = function () {
+        if (observer) observer.disconnect();
+        if (embed.__fpMermaidClose) embed.__fpMermaidClose();
+        openButton.removeEventListener('click', openViewer);
+        canvas.removeEventListener('click', openFromGraph);
+        embed.__fpMermaidBound = false;
+      };
+    });
+  }
+
+  function _disposeMermaid(root) {
+    if (!root || !root.querySelectorAll) return;
+    var embeds = Array.prototype.slice.call(root.querySelectorAll('.fp-mermaid-embed'));
+    if (root.matches && root.matches('.fp-mermaid-embed')) embeds.unshift(root);
+    embeds.forEach(function (embed) {
+      if (embed.__fpMermaidCleanup) embed.__fpMermaidCleanup();
+    });
+  }
+
+  function _mermaidStandaloneScript() {
+    return '<script>(' + _installMermaidInteractions.toString() + ')(document);<\/script>';
+  }
+
   // Snapshot the theme vars the main window currently has applied (Theme.apply
   // writes these onto documentElement), so the standalone tab follows whatever
   // theme — including light themes — the user has switched to.
   function _rootVars() {
-    var keys = ['--bg-primary', '--bg-card', '--border-subtle',
-      '--text-primary', '--text-muted', '--accent-blue', '--accent-red'];
+    var keys = ['--bg-primary', '--bg-secondary', '--bg-card', '--bg-deep', '--bg-hover', '--border-subtle',
+      '--text-primary', '--text-secondary', '--text-muted', '--accent-blue', '--accent-red'];
     var cs = getComputedStyle(document.documentElement);
     var out = ':root{';
     keys.forEach(function (k) {
@@ -779,6 +1067,21 @@ var FilePreview = (function () {
       '.fp-md-wrap .fp-callout-danger,.fp-md-wrap .fp-callout-error,.fp-md-wrap .fp-callout-bug,.fp-md-wrap .fp-callout-failure{border-left-color:#f85149;background:color-mix(in srgb,#f85149 12%,transparent);}',
       '.fp-md-wrap .fp-callout-question,.fp-md-wrap .fp-callout-help,.fp-md-wrap .fp-callout-example{border-left-color:#a371f7;background:color-mix(in srgb,#a371f7 12%,transparent);}',
       '.fp-md-wrap .katex-display{overflow-x:auto;padding:4px 0;}',
+      '.fp-mermaid-embed{position:relative;margin:1.2em 0;border:1px solid var(--border-subtle);border-radius:10px;background:var(--bg-primary);overflow:hidden;}',
+      '.fp-mermaid-scroll{overflow:auto;padding:16px;scrollbar-gutter:stable;}',
+      '.fp-mermaid-canvas{display:flex;width:max-content;min-width:100%;justify-content:center;align-items:flex-start;cursor:zoom-in;}',
+      '.fp-mermaid-embed svg{display:block;max-width:none!important;height:auto;flex:none;}',
+      '.fp-mermaid-open{position:absolute;top:8px;right:8px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border-subtle);border-radius:7px;background:var(--bg-card);color:var(--text-secondary);cursor:pointer;opacity:.72;}',
+      '.fp-mermaid-open:hover{opacity:1;color:var(--text-primary);}.fp-mermaid-open svg{width:17px;height:17px;}',
+      '.fp-mermaid-dialog{position:fixed;inset:0;z-index:12000;display:flex;align-items:center;justify-content:center;padding:2vh 2vw;background:rgba(0,0,0,.72);}',
+      '.fp-mermaid-dialog-panel{width:96vw;height:94vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border-subtle);border-radius:12px;background:var(--bg-card);box-shadow:0 24px 80px rgba(0,0,0,.58);}',
+      '.fp-mermaid-dialog-panel:fullscreen{width:100vw;height:100vh;border:0;border-radius:0;}',
+      '.fp-mermaid-dialog-header{display:flex;align-items:center;gap:14px;min-height:54px;padding:8px 10px 8px 16px;border-bottom:1px solid var(--border-subtle);background:var(--bg-primary);}',
+      '.fp-mermaid-dialog-title{flex:1;min-width:0;font-size:.9rem;}.fp-mermaid-dialog-tools{display:flex;align-items:center;gap:4px;}',
+      '.fp-mermaid-tool{height:34px;min-width:34px;padding:0 10px;border:1px solid var(--border-subtle);border-radius:7px;background:var(--bg-card);color:var(--text-secondary);cursor:pointer;font-size:.8rem;}',
+      '.fp-mermaid-tool:hover{color:var(--text-primary);background:var(--bg-secondary);}.fp-mermaid-percent{min-width:58px;color:var(--text-primary);cursor:default;}',
+      '.fp-mermaid-close{font-size:1.2rem;}.fp-mermaid-dialog-viewport{flex:1;overflow:auto;padding:16px;cursor:grab;outline:none;touch-action:none;background:var(--bg-primary);}',
+      '.fp-mermaid-dialog-viewport.is-dragging{cursor:grabbing;user-select:none;}.fp-mermaid-dialog-canvas{display:flex;align-items:center;justify-content:center;min-width:100%;min-height:100%;}.fp-mermaid-dialog-canvas svg{display:block;max-width:none!important;flex:none;}',
       '.fp-xlsx-wrap{min-height:100vh;}',
       '.fp-xlsx-tabs{display:flex;gap:2px;padding:6px 8px 0;overflow-x:auto;border-bottom:1px solid var(--border-subtle);background:var(--bg-primary);position:sticky;top:0;}',
       '.fp-xlsx-tab{flex:0 0 auto;padding:5px 12px;border:1px solid var(--border-subtle);border-bottom:none;border-radius:6px 6px 0 0;cursor:pointer;background:transparent;color:var(--text-muted);font-size:0.82rem;white-space:nowrap;}',
@@ -874,7 +1177,7 @@ var FilePreview = (function () {
         + '<style>' + _standaloneCss() + '</style></head><body>'
         + _fullscreenWidget()
         + capture.outerHTML
-        + _xlsxTabScript() + '</body></html>';
+        + _xlsxTabScript() + _mermaidStandaloneScript() + '</body></html>';
       return { html: doc, filename: base + '.html' };
     });
   }
@@ -1113,6 +1416,7 @@ var FilePreview = (function () {
     _previewGeneration++;
     _previewReady = false;
     _stopAutoRefresh();
+    _disposeMermaid(_overlay);
     if (_overlay) _overlay.remove();
     _overlay = null;
     _maximized = false;
@@ -1923,7 +2227,10 @@ var FilePreview = (function () {
                   // then we inject the finished SVG.
                   var id = 'fp-mmd-' + Date.now() + '-' + i;
                   return window.mermaid.render(id, code)
-                    .then(function (res) { container.innerHTML = res.svg; })
+                    .then(function (res) {
+                      container.innerHTML = res.svg;
+                      _prepareMermaid(container);
+                    })
                     .catch(function (err) {
                       // Render failed (usually a syntax error) — surface the
                       // reason above the raw source so it's clear it's not a
@@ -1941,7 +2248,9 @@ var FilePreview = (function () {
                       container.replaceWith(box);
                     });
                 });
-                return Promise.all(jobs);
+                return Promise.all(jobs).then(function () {
+                  _installMermaidInteractions(wrap);
+                });
               });
             })
             .catch(function () { /* mermaid optional */ });
@@ -2724,6 +3033,10 @@ var FilePreview = (function () {
       syncAutoRefresh: _syncAutoRefresh,
       hasAutoRefreshTimer: function () { return _autoRefreshTimer != null; },
       autoRefreshMs: AUTO_REFRESH_MS,
+      prepareMermaid: _prepareMermaid,
+      installMermaidInteractions: _installMermaidInteractions,
+      disposeMermaid: _disposeMermaid,
+      mermaidStandaloneScript: _mermaidStandaloneScript,
       buildLinkRange: function (logical, f) {
         var start = _logicalStrOffsetToTermPos(logical.rows, f.startCol);
         var end = _logicalStrOffsetToTermPos(logical.rows, f.endCol - 1);

@@ -180,6 +180,93 @@ function dockCurrent(dom) {
 }
 
 describe('file preview dock tabs', () => {
+  it('keeps wide Mermaid diagrams readable and opens the pan and zoom viewer', () => {
+    const { dom, preview } = createPreview();
+    const embed = dom.window.document.createElement('div');
+    embed.className = 'mermaid';
+    embed.innerHTML = '<svg viewBox="0 0 2000 600" width="100%" style="max-width: 2000px"></svg>';
+    dom.window.document.body.appendChild(embed);
+
+    expect(preview._test.prepareMermaid(embed)).toBe(true);
+    const scroll = embed.querySelector('.fp-mermaid-scroll');
+    Object.defineProperty(scroll, 'clientWidth', { value: 1000, configurable: true });
+    preview._test.installMermaidInteractions(embed);
+
+    const sourceSvg = embed.querySelector('svg');
+    expect(sourceSvg.style.width).toBe('1500px');
+    expect(sourceSvg.style.maxWidth).toBe('none');
+    expect(embed.classList.contains('is-wide')).toBe(true);
+    expect(embed.querySelector('[aria-label="放大查看 Mermaid 图表"]')).not.toBeNull();
+
+    embed.querySelector('[aria-label="放大查看 Mermaid 图表"]').click();
+    const dialog = dom.window.document.querySelector('.fp-mermaid-dialog');
+    expect(dialog).not.toBeNull();
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(dialog.querySelector('.fp-mermaid-percent').textContent).toBe('75%');
+
+    dialog.querySelector('.fp-mermaid-zoom-in').click();
+    expect(dialog.querySelector('.fp-mermaid-percent').textContent).toBe('90%');
+    dialog.querySelector('.fp-mermaid-actual').click();
+    expect(dialog.querySelector('.fp-mermaid-percent').textContent).toBe('100%');
+
+    const viewport = dialog.querySelector('.fp-mermaid-dialog-viewport');
+    viewport.dispatchEvent(new dom.window.WheelEvent('wheel', {
+      bubbles: true, cancelable: true, ctrlKey: true, deltaY: -100,
+    }));
+    expect(dialog.querySelector('.fp-mermaid-percent').textContent).toBe('112%');
+    viewport.scrollLeft = 300;
+    viewport.scrollTop = 100;
+    viewport.dispatchEvent(new dom.window.MouseEvent('pointerdown', {
+      bubbles: true, button: 0, clientX: 100, clientY: 80,
+    }));
+    dom.window.dispatchEvent(new dom.window.MouseEvent('pointermove', {
+      bubbles: true, clientX: 40, clientY: 30,
+    }));
+    expect(viewport.scrollLeft).toBe(360);
+    expect(viewport.scrollTop).toBe(150);
+    dom.window.dispatchEvent(new dom.window.MouseEvent('pointerup', { bubbles: true }));
+
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+      key: 'Escape', bubbles: true, cancelable: true,
+    }));
+    expect(dom.window.document.querySelector('.fp-mermaid-dialog')).toBeNull();
+  });
+
+  it('closes an open Mermaid viewer when its preview is disposed', () => {
+    const { dom, preview } = createPreview();
+    const root = dom.window.document.createElement('div');
+    root.innerHTML = '<div class="mermaid"><svg viewBox="0 0 1200 500"></svg></div>';
+    dom.window.document.body.appendChild(root);
+    const embed = root.querySelector('.mermaid');
+
+    preview._test.prepareMermaid(embed);
+    preview._test.installMermaidInteractions(root);
+    embed.querySelector('.fp-mermaid-open').click();
+    expect(dom.window.document.querySelector('.fp-mermaid-dialog')).not.toBeNull();
+
+    preview._test.disposeMermaid(root);
+    expect(dom.window.document.querySelector('.fp-mermaid-dialog')).toBeNull();
+    expect(embed.__fpMermaidBound).toBe(false);
+  });
+
+  it('ships the Mermaid interaction runtime with standalone HTML previews', () => {
+    const { preview } = createPreview();
+    const runtime = preview._test.mermaidStandaloneScript();
+    expect(runtime).toContain('fp-mermaid-dialog');
+    expect(runtime).toContain('ResizeObserver');
+    expect(runtime).toContain('Ctrl');
+
+    const standalone = new JSDOM('<!doctype html><body>'
+      + '<div class="fp-mermaid-embed" data-fp-width="1600" data-fp-height="500">'
+      + '<div class="fp-mermaid-scroll"><div class="fp-mermaid-canvas">'
+      + '<svg viewBox="0 0 1600 500"></svg></div></div>'
+      + '<button class="fp-mermaid-open">open</button></div></body>');
+    const js = runtime.replace(/^<script>/, '').replace(/<\/script>$/, '');
+    new Function('window', 'document', js)(standalone.window, standalone.window.document);
+    standalone.window.document.querySelector('.fp-mermaid-open').click();
+    expect(standalone.window.document.querySelector('.fp-mermaid-dialog')).not.toBeNull();
+  });
+
   it('opens files as modals first, then docks the current preview as a tab', async () => {
     const { dom, preview } = createPreview();
     preview.openFile('/tmp/one.md', '%1');
