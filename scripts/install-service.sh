@@ -342,6 +342,13 @@ install_tmux_server_launchd() {
         <string>${PROJECT_DIR}/scripts/run-tmux-server.sh</string>
         <string>${TMUX_BIN}</string>
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>LANG</key>
+        <string>C.UTF-8</string>
+        <key>LC_CTYPE</key>
+        <string>C.UTF-8</string>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

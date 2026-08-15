@@ -35,6 +35,17 @@ describe('install-service TLS automation', () => {
 });
 
 describe('macOS tmux server launcher', () => {
+  it('starts the companion server with a UTF-8 locale', () => {
+    const installer = readFileSync(script, 'utf8');
+    const launcherStart = installer.indexOf('install_tmux_server_launchd()');
+    const launcherEnd = installer.indexOf('uninstall_tmux_server_launchd()');
+    const launcher = installer.slice(launcherStart, launcherEnd);
+
+    expect(launcher).toContain('<key>EnvironmentVariables</key>');
+    expect(launcher).toContain('<key>LANG</key>\n        <string>C.UTF-8</string>');
+    expect(launcher).toContain('<key>LC_CTYPE</key>\n        <string>C.UTF-8</string>');
+  });
+
   it('deploys tmux from the tracked submodule instead of PATH discovery', () => {
     const installer = readFileSync(script, 'utf8');
     const builder = readFileSync(tmuxBuildScript, 'utf8');
