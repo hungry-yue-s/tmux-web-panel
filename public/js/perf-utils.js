@@ -64,28 +64,36 @@ function sparkPath(values, w, h, opts = {}) {
 }
 
 // item: { cpuPercent, memBytes, ioBps }; total: { cpuCount, systemMemTotal, windowIoBps }
-function pressureScore(item, total) {
+function pressureScore(item, total, capabilities) {
   const cpuShare = total.cpuCount > 0 ? item.cpuPercent / (total.cpuCount * 100) : 0;
   const memShare = total.systemMemTotal > 0 ? item.memBytes / total.systemMemTotal : 0;
   const ioShare  = total.windowIoBps > 0 ? item.ioBps / total.windowIoBps : 0;
-  return (cpuShare * 0.5 + memShare * 0.35 + ioShare * 0.15) * 100;
+  const ioWeight = capabilities && capabilities.processIo === false ? 0 : 0.15;
+  const weightTotal = 0.5 + 0.35 + ioWeight;
+  return ((cpuShare * 0.5 + memShare * 0.35 + ioShare * ioWeight) / weightTotal) * 100;
 }
 
 // Returns { critical: [...], warn: [...] }; each entry: { kind, message, severity }.
 function detectAlerts(snap) {
   const out = { critical: [], warn: [] };
   const t = snap.total;
-  const cpuMachinePct = t.cpuCount > 0 ? (t.windowCpuPercent / (t.cpuCount * 100)) * 100 : 0;
+  const cpuMachinePct = Number.isFinite(t.systemCpuPercent)
+    ? t.systemCpuPercent
+    : (t.cpuCount > 0 ? (t.windowCpuPercent / (t.cpuCount * 100)) * 100 : 0);
   const memMachinePct = t.systemMemTotal > 0 ? (t.systemMemUsed / t.systemMemTotal) * 100 : 0;
   const loadPerCore = t.cpuCount > 0 ? t.load1 / t.cpuCount : 0;
 
   const push = (bucket, kind, message) => out[bucket].push({ kind, message, severity: bucket });
 
-  if (cpuMachinePct >= ALERT_THRESHOLDS.cpuMachine.critical) push('critical', 'cpu-machine', `机器 CPU ${cpuMachinePct.toFixed(0)}%`);
-  else if (cpuMachinePct >= ALERT_THRESHOLDS.cpuMachine.warn) push('warn', 'cpu-machine', `机器 CPU ${cpuMachinePct.toFixed(0)}%`);
+  if (!snap.capabilities || snap.capabilities.systemCpu !== false) {
+    if (cpuMachinePct >= ALERT_THRESHOLDS.cpuMachine.critical) push('critical', 'cpu-machine', `机器 CPU ${cpuMachinePct.toFixed(0)}%`);
+    else if (cpuMachinePct >= ALERT_THRESHOLDS.cpuMachine.warn) push('warn', 'cpu-machine', `机器 CPU ${cpuMachinePct.toFixed(0)}%`);
+  }
 
-  if (memMachinePct >= ALERT_THRESHOLDS.memMachine.critical) push('critical', 'mem-machine', `内存 ${memMachinePct.toFixed(0)}%`);
-  else if (memMachinePct >= ALERT_THRESHOLDS.memMachine.warn) push('warn', 'mem-machine', `内存 ${memMachinePct.toFixed(0)}%`);
+  if (!snap.capabilities || snap.capabilities.systemMemory !== false) {
+    if (memMachinePct >= ALERT_THRESHOLDS.memMachine.critical) push('critical', 'mem-machine', `内存 ${memMachinePct.toFixed(0)}%`);
+    else if (memMachinePct >= ALERT_THRESHOLDS.memMachine.warn) push('warn', 'mem-machine', `内存 ${memMachinePct.toFixed(0)}%`);
+  }
 
   if (loadPerCore >= ALERT_THRESHOLDS.loadPerCore.critical) push('critical', 'load', `load ${t.load1.toFixed(2)} / ${t.cpuCount} cores`);
   else if (loadPerCore >= ALERT_THRESHOLDS.loadPerCore.warn) push('warn', 'load', `load ${t.load1.toFixed(2)}`);

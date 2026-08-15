@@ -2,75 +2,24 @@
 
 import { Router } from 'express';
 import os from 'node:os';
-import { readFile } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import * as tmux from '../tmux.js';
+import * as procStats from '../process-stats.js';
 import {
-  sampleTree,
-  pruneStaleSamples,
-  cpuCount,
-  collectPids,
-  sampleNonTmuxByComm,
-  readDiskIo,
-} from '../proc-stats.js';
+  platformCapabilities,
+  readDiskStats,
+  readSystemDiskIo,
+  readSystemMemory,
+  readSystemSwap,
+  sampleSystemCpuPercent,
+} from '../platform-system-stats.js';
 
-const execFileAsync = promisify(execFile);
+const SNAPSHOT_CACHE_MS = 1_750;
 
-async function readSystemSwap() {
-  try {
-    const buf = await readFile('/proc/meminfo', 'utf8');
-    const t = buf.match(/^SwapTotal:\s+(\d+)\s+kB/m);
-    const f = buf.match(/^SwapFree:\s+(\d+)\s+kB/m);
-    const total = t ? Number(t[1]) * 1024 : 0;
-    const free = f ? Number(f[1]) * 1024 : 0;
-    return { total, used: Math.max(0, total - free) };
-  } catch {
-    return { total: 0, used: 0 };
-  }
-}
+let _cachedSnapshot = null;
+let _cachedAt = 0;
+let _samplePromise = null;
 
-// Filesystem types to exclude from disk stats
-const EXCLUDED_FS = new Set([
-  'tmpfs', 'devtmpfs', 'sysfs', 'proc', 'devpts', 'securityfs',
-  'cgroup', 'cgroup2', 'pstore', 'debugfs', 'hugetlbfs', 'mqueue',
-  'configfs', 'fusectl', 'tracefs', 'bpf', 'efivarfs', 'autofs',
-  'overlay', 'squashfs', 'nsfs', 'binfmt_misc',
-]);
-
-async function readDiskStats() {
-  try {
-    const { stdout } = await execFileAsync('df', [
-      '-B1', '--output=source,fstype,size,used,avail,pcent,target',
-    ]);
-    const lines = stdout.trim().split('\n').slice(1); // skip header
-    const disks = [];
-    for (const line of lines) {
-      const parts = line.trim().split(/\s+/);
-      if (parts.length < 7) continue;
-      const [source, fstype, size, used, avail, pcent, ...mountParts] = parts;
-      const mount = mountParts.join(' ');
-      if (EXCLUDED_FS.has(fstype)) continue;
-      if (source.startsWith('/dev/loop')) continue;
-      const total = Number(size);
-      if (total <= 0) continue;
-      disks.push({
-        device: source,
-        fstype,
-        mount,
-        total,
-        used: Number(used),
-        avail: Number(avail),
-        percent: parseFloat(pcent),
-      });
-    }
-    return disks;
-  } catch {
-    return [];
-  }
-}
-
-export async function sampleWindowStats() {
+async function collectWindowStats() {
   const sessions = await tmux.listSessions();
   const windowMap = new Map();
 
@@ -95,7 +44,7 @@ export async function sampleWindowStats() {
 
   const windowStats = await Promise.all(
     Array.from(windowMap.values()).map(async (w) => {
-      const samples = await Promise.all(w.paneRoots.map((pid) => sampleTree(pid)));
+      const samples = await Promise.all(w.paneRoots.map((pid) => procStats.sampleTree(pid)));
       let cpu = 0, mem = 0, swap = 0, io = 0, procs = 0;
       for (const s of samples) {
         cpu += s.cpuPercent;
@@ -120,33 +69,52 @@ export async function sampleWindowStats() {
   const tmuxPids = new Set();
   for (const w of windowMap.values()) {
     for (const root of w.paneRoots) {
-      const pids = await collectPids(root);
+      const pids = await procStats.collectPids(root);
       pids.forEach((p) => tmuxPids.add(p));
     }
   }
 
-  const totalMem = os.totalmem();
-  const freeMem = os.freemem();
-  const [sysSwap, disks, external] = await Promise.all([
+  const [systemMemory, sysSwap, disks, externalAll, darwinDiskIo] = await Promise.all([
+    readSystemMemory(),
     readSystemSwap(),
     readDiskStats(),
-    sampleNonTmuxByComm(tmuxPids),
+    procStats.sampleNonTmuxByComm(tmuxPids),
+    readSystemDiskIo(),
   ]);
-  const diskIo = await readDiskIo();
+  const diskIo = await procStats.readDiskIo();
   disks.forEach((d) => {
     const devName = (d.device || '').replace(/^\/dev\//, '');
     const io = diskIo.get(devName);
-    d.readBps = io ? io.readBps : 0;
-    d.writeBps = io ? io.writeBps : 0;
+    d.readBps = io ? io.readBps : null;
+    d.writeBps = io ? io.writeBps : null;
   });
   const sumCpu = windowStats.reduce((a, w) => a + w.cpuPercent, 0);
   const sumMem = windowStats.reduce((a, w) => a + w.memBytes, 0);
   const sumSwap = windowStats.reduce((a, w) => a + w.swapBytes, 0);
   const sumIo = windowStats.reduce((a, w) => a + w.ioBps, 0);
+  const external = externalAll
+    .sort((a, b) => {
+      const aScore = a.cpuPercent / (procStats.cpuCount * 100) + a.memBytes / systemMemory.total;
+      const bScore = b.cpuPercent / (procStats.cpuCount * 100) + b.memBytes / systemMemory.total;
+      return bScore - aScore;
+    })
+    .slice(0, 50);
 
-  pruneStaleSamples(30_000);
+  procStats.pruneStaleSamples(30_000);
+
+  const perDiskIo = disks.reduce((sum, d) => {
+    return sum + (Number(d.readBps) || 0) + (Number(d.writeBps) || 0);
+  }, 0);
+  const systemDiskIoBps = Number.isFinite(darwinDiskIo)
+    ? darwinDiskIo
+    : (platformCapabilities.diskIoPerDevice ? perDiskIo : null);
+  const capabilities = {
+    ...platformCapabilities,
+    systemDiskIo: Number.isFinite(systemDiskIoBps),
+  };
 
   return {
+    capabilities,
     windows: windowStats,
     external,
     disks,
@@ -155,16 +123,44 @@ export async function sampleWindowStats() {
       windowMemBytes: sumMem,
       windowSwapBytes: sumSwap,
       windowIoBps: sumIo,
-      systemMemTotal: totalMem,
-      systemMemUsed: totalMem - freeMem,
+      systemCpuPercent: sampleSystemCpuPercent(),
+      systemMemTotal: systemMemory.total,
+      systemMemUsed: systemMemory.used,
+      systemMemAvailablePercent: systemMemory.availablePercent,
+      systemMemoryMetric: systemMemory.metric,
       systemSwapTotal: sysSwap.total,
       systemSwapUsed: sysSwap.used,
-      cpuCount,
+      systemDiskIoBps,
+      externalGroupCount: externalAll.length,
+      cpuCount: procStats.cpuCount,
       hostname: os.hostname(),
       uptime: os.uptime(),
       load1: os.loadavg()[0],
     },
   };
+}
+
+// The history sampler and the visible panel both poll every two seconds. Share
+// one in-flight/recent snapshot so Linux delta counters are not consumed twice
+// and Darwin does not run duplicate ps/iostat commands.
+export async function sampleWindowStats() {
+  const now = Date.now();
+  if (_cachedSnapshot && now - _cachedAt < SNAPSHOT_CACHE_MS) return _cachedSnapshot;
+  if (_samplePromise) return _samplePromise;
+  _samplePromise = collectWindowStats()
+    .then((snapshot) => {
+      _cachedSnapshot = snapshot;
+      _cachedAt = Date.now();
+      return snapshot;
+    })
+    .finally(() => { _samplePromise = null; });
+  return _samplePromise;
+}
+
+export function _resetWindowStatsCacheForTests() {
+  _cachedSnapshot = null;
+  _cachedAt = 0;
+  _samplePromise = null;
 }
 
 const router = Router();

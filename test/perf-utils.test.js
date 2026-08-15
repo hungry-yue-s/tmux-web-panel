@@ -60,6 +60,15 @@ describe('pressureScore', () => {
     const r = pressureScore({ cpuPercent: 0, memBytes: 0, ioBps: 0 }, { ...total, windowIoBps: 0 });
     expect(Number.isFinite(r)).toBe(true);
   });
+  it('renormalizes weights when per-process IO is unavailable', () => {
+    const r = pressureScore(
+      { cpuPercent: 200, memBytes: 4e9, ioBps: 0 },
+      total,
+      { processIo: false },
+    );
+    const expected = ((200 / 400) * 0.5 + (4e9 / 8e9) * 0.35) / 0.85 * 100;
+    expect(r).toBeCloseTo(expected, 5);
+  });
 });
 
 describe('detectAlerts', () => {

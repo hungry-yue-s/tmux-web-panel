@@ -34,6 +34,10 @@ var PerfPanel = (function () {
     });
   }
 
+  function hasCapability(snapshot, name) {
+    return !snapshot.capabilities || snapshot.capabilities[name] !== false;
+  }
+
   // === Skeleton ===
   function renderSkeleton() {
     return [
@@ -76,15 +80,19 @@ var PerfPanel = (function () {
   }
 
   // === Renderers (filled in by Tasks 8–12) ===
-  function renderDiskKpi(disks) {
+  function renderDiskKpi(disks, capabilities) {
     var count = disks.length;
     var rows = disks.map(function(d) {
-      var pct = d.percent || 0;
+      var pct = Number.isFinite(Number(d.percent)) ? Number(d.percent) : 0;
       var color = pct >= 95 ? 'var(--accent-red)' : pct >= 80 ? 'var(--accent-yellow)' : 'var(--accent-green)';
       var ioParts = [];
-      if (d.readBps > 100) ioParts.push('R ' + U.fmtBps(d.readBps));
-      if (d.writeBps > 100) ioParts.push('W ' + U.fmtBps(d.writeBps));
-      var ioLine = ioParts.join(' · ');
+      if (capabilities.diskIoPerDevice === false) {
+        ioParts.push('I/O —（仅提供整机吞吐）');
+      } else {
+        if (d.readBps > 100) ioParts.push('R ' + U.fmtBps(d.readBps));
+        if (d.writeBps > 100) ioParts.push('W ' + U.fmtBps(d.writeBps));
+      }
+      var ioLine = ioParts.join(' · ') || 'I/O 0 B/s';
       return '<div class="pp-disk-row">' +
         '<div class="pp-disk-head">' +
           '<span class="pp-disk-mount" title="' + escapeHtml(d.mount) + '">' + escapeHtml(d.mount) + '</span>' +
@@ -105,7 +113,8 @@ var PerfPanel = (function () {
 
   function renderHero(s, alerts) {
     var t = s.total;
-    var cpuMachinePct = t.cpuCount > 0 ? (t.windowCpuPercent / (t.cpuCount * 100)) * 100 : 0;
+    var capabilities = s.capabilities || {};
+    var cpuMachinePct = Number.isFinite(t.systemCpuPercent) ? t.systemCpuPercent : null;
     var memPct = t.systemMemTotal > 0 ? (t.systemMemUsed / t.systemMemTotal) * 100 : 0;
 
     var rangeOptions = [{v:60,l:'1分'},{v:600,l:'10分'},{v:3600,l:'1小时'}];
@@ -129,10 +138,12 @@ var PerfPanel = (function () {
 
     // KPI hero
     var historyTotals = (state.history.points || []);
-    var sparkCpu = historyTotals.map(function (p) { return p.total.cpu / (t.cpuCount * 100); });
+    var sparkCpu = historyTotals.map(function (p) { return p.total.cpu / 100; });
     var sparkMem = historyTotals.map(function (p) { return p.total.mem / t.systemMemTotal; });
     var sparkIo  = historyTotals.map(function (p) { return p.total.io; });
-    var ioCurrent = sparkIo.length ? sparkIo[sparkIo.length - 1] : t.windowIoBps;
+    var ioCurrent = Number.isFinite(t.systemDiskIoBps)
+      ? t.systemDiskIoBps
+      : (sparkIo.length ? sparkIo[sparkIo.length - 1] : null);
 
     function kpi(cls, label, valueText, unit, sub, sparkValues, color, bar) {
       var sp = sparkValues && sparkValues.length ? U.sparkPath(sparkValues, 160, 32, { pad: 2 }) : null;
@@ -148,19 +159,24 @@ var PerfPanel = (function () {
     }
 
     html += '<div class="pp-kpis">';
-    html += kpi('cpu',  'CPU', cpuMachinePct.toFixed(0), '% of cores', t.windowCpuPercent.toFixed(0) + '% / ' + (t.cpuCount * 100) + '%',
+    html += kpi('cpu', 'CPU', cpuMachinePct == null ? '—' : cpuMachinePct.toFixed(0), cpuMachinePct == null ? '' : '%',
+                '整机 · tmux ' + t.windowCpuPercent.toFixed(0) + '% / ' + (t.cpuCount * 100) + '%',
                 sparkCpu, 'var(--accent-red)', cpuMachinePct);
-    html += kpi('mem',  'MEM', memPct.toFixed(0), '%', U.fmtBytes(t.systemMemUsed) + ' / ' + U.fmtBytes(t.systemMemTotal),
+    var memSub = U.fmtBytes(t.systemMemUsed) + ' / ' + U.fmtBytes(t.systemMemTotal);
+    if (t.systemMemoryMetric === 'pressure') memSub += ' · 内存压力口径';
+    html += kpi('mem',  'MEM', memPct.toFixed(0), '%', memSub,
                 sparkMem, 'var(--accent-blue)', memPct);
-    html += kpi('io',   'IO',  U.fmtBps(ioCurrent).split(' ')[0], U.fmtBps(ioCurrent).split(' ').slice(1).join(' '),
-                '累计 ' + U.fmtBytes(ioCurrent * 60) + ' / 1min', sparkIo, 'var(--accent-yellow)', null);
-    html += renderDiskKpi(s.disks || []);
+    var ioText = ioCurrent == null ? ['—', ''] : [U.fmtBps(ioCurrent).split(' ')[0], U.fmtBps(ioCurrent).split(' ').slice(1).join(' ')];
+    html += kpi('io', 'IO', ioText[0], ioText[1],
+                ioCurrent == null ? '当前平台不可用' : '整机磁盘吞吐', sparkIo, 'var(--accent-yellow)', null);
+    html += renderDiskKpi(s.disks || [], capabilities);
     html += '</div>';
     return html;
   }
 
   function renderPressureList(s) {
     var t = s.total;
+    var processIoAvailable = hasCapability(s, 'processIo');
     var items = [];
     (s.windows || []).forEach(function (w) {
       items.push({
@@ -171,7 +187,7 @@ var PerfPanel = (function () {
         mem: w.memBytes,
         io: w.ioBps,
         procs: w.procCount,
-        score: U.pressureScore({ cpuPercent: w.cpuPercent, memBytes: w.memBytes, ioBps: w.ioBps }, t),
+        score: U.pressureScore({ cpuPercent: w.cpuPercent, memBytes: w.memBytes, ioBps: w.ioBps }, t, s.capabilities),
       });
     });
     (s.external || []).forEach(function (e) {
@@ -183,7 +199,7 @@ var PerfPanel = (function () {
         mem: e.memBytes,
         io: e.ioBps,
         procs: e.procCount,
-        score: U.pressureScore({ cpuPercent: e.cpuPercent, memBytes: e.memBytes, ioBps: e.ioBps }, t),
+        score: U.pressureScore({ cpuPercent: e.cpuPercent, memBytes: e.memBytes, ioBps: e.ioBps }, t, s.capabilities),
       });
     });
     items.sort(function (a, b) { return b.score - a.score; });
@@ -198,7 +214,7 @@ var PerfPanel = (function () {
           '<div class="pp-pr-metrics">' +
             '<span class="pp-pr-m"><span class="pp-sw" style="background:var(--accent-red)"></span>' + it.cpu.toFixed(0) + '% CPU</span>' +
             '<span class="pp-pr-m"><span class="pp-sw" style="background:var(--accent-blue)"></span>' + U.fmtBytes(it.mem) + '</span>' +
-            '<span class="pp-pr-m"><span class="pp-sw" style="background:var(--accent-yellow)"></span>' + U.fmtBps(it.io) + '</span>' +
+            '<span class="pp-pr-m"><span class="pp-sw" style="background:var(--accent-yellow)"></span>' + (processIoAvailable ? U.fmtBps(it.io) : 'IO —') + '</span>' +
           '</div>' +
         '</div>' +
         '<div class="pp-pr-score"><div class="pp-pr-score-num">' + it.score.toFixed(1) + '</div><div class="pp-pr-score-lbl">压力分</div></div>' +
@@ -211,12 +227,11 @@ var PerfPanel = (function () {
       return '<svg viewBox="0 0 540 200" preserveAspectRatio="none" class="pp-trend-svg"><text x="270" y="100" text-anchor="middle" fill="var(--text-muted)" font-size="12">采样中…</text></svg>';
     }
     var t = (state.snapshot && state.snapshot.total) || {};
-    var cpuMax = (t.cpuCount || 1) * 100;
     var memMax = t.systemMemTotal || 1;
     var ioPeak = Math.max(1, Math.max.apply(null, pts.map(function (p) { return p.total.io; })));
 
     var series = [
-      { color: 'var(--accent-red)',    name: 'cpu', values: pts.map(function (p) { return p.total.cpu / cpuMax; }) },
+      { color: 'var(--accent-red)',    name: 'cpu', values: pts.map(function (p) { return p.total.cpu / 100; }) },
       { color: 'var(--accent-blue)',   name: 'mem', values: pts.map(function (p) { return p.total.mem / memMax; }) },
       { color: 'var(--accent-yellow)', name: 'io',  values: pts.map(function (p) { return p.total.io / ioPeak; }) },
     ];
@@ -239,6 +254,7 @@ var PerfPanel = (function () {
   }
   function renderTable(s) {
     var t = s.total;
+    var processIoAvailable = hasCapability(s, 'processIo');
     var rows = [];
     (s.windows || []).forEach(function (w) {
       rows.push({
@@ -261,7 +277,7 @@ var PerfPanel = (function () {
     rows.sort(function (a, b) { return b.cpu - a.cpu; });
     if (rows.length === 0) return '<div class="pp-empty">暂无活动 tmux 窗口</div>';
 
-    var maxMem = Math.max.apply(null, rows.map(function (r) { return r.mem; }));
+    var maxMem = Math.max.apply(null, rows.map(function (r) { return r.mem; })) || 1;
     var maxIO = Math.max.apply(null, rows.map(function (r) { return r.io; })) || 1;
     // Per-key recent history from state.history.points
     var perKeyHist = {};
@@ -289,7 +305,7 @@ var PerfPanel = (function () {
         '<div class="pp-wt-cpu-val ' + cpuCls + '">' + r.cpu.toFixed(0) + '%</div>' +
         (sp ? '<svg class="pp-wt-spark" viewBox="0 0 90 22" preserveAspectRatio="none"><path d="' + sp.line + '" fill="none" stroke="' + color + '" stroke-width="1.4"/></svg>' : '<span class="pp-wt-spark">—</span>') +
         '<div class="pp-wt-bar" data-l="MEM"><div class="pp-wt-tr"><div class="pp-wt-fl" style="width:' + Math.min(100,(r.mem/maxMem)*100) + '%;background:var(--accent-blue)"></div></div><span class="pp-wt-lbl">' + U.fmtBytes(r.mem) + '</span></div>' +
-        '<div class="pp-wt-bar" data-l="IO"><div class="pp-wt-tr"><div class="pp-wt-fl" style="width:' + Math.min(100,(r.io/maxIO)*100) + '%;background:var(--accent-yellow)"></div></div><span class="pp-wt-lbl">' + U.fmtBps(r.io) + '</span></div>' +
+        '<div class="pp-wt-bar" data-l="IO"><div class="pp-wt-tr"><div class="pp-wt-fl" style="width:' + (processIoAvailable ? Math.min(100,(r.io/maxIO)*100) : 0) + '%;background:var(--accent-yellow)"></div></div><span class="pp-wt-lbl">' + (processIoAvailable ? U.fmtBps(r.io) : '—') + '</span></div>' +
         '<span class="pp-wt-procs">' + r.procs + 'p</span>' +
         '<span class="pp-wt-arrow">›</span>' +
       '</div>';
@@ -380,10 +396,13 @@ var PerfPanel = (function () {
     if (!state.snapshot) { root.innerHTML = '<div class="pp-loading">加载机器与窗口性能…</div>'; return; }
     var s = state.snapshot;
     var alerts = U.detectAlerts(s);
+    var pressureHint = hasCapability(s, 'processIo')
+      ? 'CPU 50% · MEM 35% · IO 15% 加权'
+      : 'CPU 59% · MEM 41% 加权 · 进程 IO 不可用';
     var html = '';
     html += renderHero(s, alerts);
     html += '<div class="pp-row-2col">';
-    html += '  <div class="pp-card pp-pressure-card"><div class="pp-card-title"><h3>⚡ Top 压力来源</h3><span class="pp-hint">CPU 50% · MEM 35% · IO 15% 加权</span></div><div class="pp-pressure-list" id="pp-pressure-list">' + renderPressureList(s) + '</div></div>';
+    html += '  <div class="pp-card pp-pressure-card"><div class="pp-card-title"><h3>⚡ Top 压力来源</h3><span class="pp-hint">' + pressureHint + '</span></div><div class="pp-pressure-list" id="pp-pressure-list">' + renderPressureList(s) + '</div></div>';
     html += '  <div class="pp-card pp-trend-card"><div class="pp-card-title"><h3>📈 历史趋势</h3><span class="pp-hint">最近 ' + state.range + ' 秒</span></div><div class="pp-trend-legend"><span class="pp-li"><span class="pp-sw" style="background:var(--accent-red)"></span>CPU</span><span class="pp-li"><span class="pp-sw" style="background:var(--accent-blue)"></span>MEM</span><span class="pp-li"><span class="pp-sw" style="background:var(--accent-yellow)"></span>IO</span></div><div class="pp-trend" id="pp-trend">' + renderTrendChart() + '</div></div>';
     html += '</div>';
     html += '<div class="pp-card pp-wt-card"><div class="pp-card-title"><h3>🪟 Windows & 系统进程</h3><span class="pp-hint">点击行展开进程详情 · 按 CPU 排序</span></div>' + renderTable(s) + '</div>';

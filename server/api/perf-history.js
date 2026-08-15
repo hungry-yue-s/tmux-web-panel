@@ -24,9 +24,13 @@ function compactSnapshot(snap) {
   return {
     ts: Date.now(),
     total: {
-      cpu: t.windowCpuPercent,
+      cpu: Number.isFinite(t.systemCpuPercent)
+        ? t.systemCpuPercent
+        : (t.cpuCount > 0 ? (t.windowCpuPercent / (t.cpuCount * 100)) * 100 : 0),
+      tmuxCpu: t.windowCpuPercent,
       mem: t.systemMemUsed,
-      io: t.windowIoBps,
+      io: Number.isFinite(t.systemDiskIoBps) ? t.systemDiskIoBps : t.windowIoBps,
+      tmuxIo: t.windowIoBps,
       load1: t.load1,
     },
     top: windows.slice(0, TOP_N),

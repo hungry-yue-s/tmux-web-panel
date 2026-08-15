@@ -5,12 +5,12 @@ import request from 'supertest';
 vi.mock('../../server/tmux.js', () => ({
   listSessions: vi.fn(async () => [{ name: 'main' }]),
   listPaneCommands: vi.fn(async (name) => name === 'main'
-    ? [{ pid: 1234, windowIndex: '0' }]
+    ? [{ pid: 1234, windowIndex: 0 }]
     : []),
-  listWindows: vi.fn(async () => [{ index: '0', name: 'zsh' }]),
+  listWindows: vi.fn(async () => [{ index: 0, name: 'zsh' }]),
 }));
 
-vi.mock('../../server/proc-stats.js', () => ({
+vi.mock('../../server/process-stats.js', () => ({
   collectPids: vi.fn(async (root) => [root, root + 1]),
   samplePidDetail: vi.fn(async (pid) => ({
     pid,

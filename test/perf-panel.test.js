@@ -62,4 +62,35 @@ describe('PerfPanel skeleton', () => {
     expect(w.document.getElementById('view-codex').classList.contains('pp-active')).toBe(true);
     w.PerfPanel.stop();
   });
+
+  it('renders Darwin capabilities without fake process IO or NaN widths', () => {
+    w.document.getElementById('root').innerHTML = w.PerfPanel.renderSkeleton();
+    w.PerfPanel._state.snapshot = {
+      capabilities: { processIo: false, diskIoPerDevice: false, systemCpu: true, systemMemory: true },
+      total: {
+        cpuCount: 14, systemCpuPercent: 23, windowCpuPercent: 140,
+        systemMemTotal: 24 * 1024 ** 3, systemMemUsed: 10 * 1024 ** 3,
+        systemMemoryMetric: 'pressure', systemDiskIoBps: 1024 ** 2,
+        windowIoBps: 0, hostname: 'mac.test', load1: 2, uptime: 3600,
+      },
+      windows: [{
+        session: 'main', windowIndex: 1, windowName: 'zsh', cpuPercent: 50,
+        memBytes: 512 * 1024 ** 2, swapBytes: 0, ioBps: 0, procCount: 3,
+      }],
+      external: [],
+      disks: [{ mount: '/', percent: 44, readBps: null, writeBps: null }],
+    };
+    w.PerfPanel._state.history = { points: [] };
+    w.PerfPanel.start();
+    w.document.querySelector('[data-view="perf"]').click();
+
+    const text = w.document.getElementById('perf-view-root').textContent;
+    const html = w.document.getElementById('perf-view-root').innerHTML;
+    expect(text).toContain('23%');
+    expect(text).toContain('内存压力口径');
+    expect(text).toContain('进程 IO 不可用');
+    expect(text).toContain('I/O —（仅提供整机吞吐）');
+    expect(html).not.toContain('NaN%');
+    w.PerfPanel.stop();
+  });
 });

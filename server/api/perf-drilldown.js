@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import * as tmux from '../tmux.js';
-import { collectPids, samplePidDetail } from '../proc-stats.js';
+import * as procStats from '../process-stats.js';
 
 const router = Router();
 
@@ -25,7 +25,10 @@ router.get('/', async (req, res) => {
 
     // Find pane roots for the requested window
     const panes = await tmux.listPaneCommands(session);
-    const roots = panes.filter((p) => p.windowIndex === String(windowIndex) && p.pid).map((p) => p.pid);
+    const requestedIndex = Number(windowIndex);
+    const roots = panes
+      .filter((p) => Number(p.windowIndex) === requestedIndex && p.pid)
+      .map((p) => p.pid);
     if (roots.length === 0) {
       return res.status(404).json({
         success: false, data: null,
@@ -34,16 +37,16 @@ router.get('/', async (req, res) => {
     }
 
     const windows = await tmux.listWindows(session);
-    const windowName = (windows.find((w) => w.index === String(windowIndex)) || {}).name || String(windowIndex);
+    const windowName = (windows.find((w) => Number(w.index) === requestedIndex) || {}).name || String(windowIndex);
 
     // Collect all descendant PIDs across pane roots
     const allPids = new Set();
     for (const r of roots) {
-      const pids = await collectPids(r);
+      const pids = await procStats.collectPids(r);
       pids.forEach((p) => allPids.add(p));
     }
 
-    const details = await Promise.all(Array.from(allPids).map((p) => samplePidDetail(p)));
+    const details = await Promise.all(Array.from(allPids).map((p) => procStats.samplePidDetail(p)));
     const procs = details.filter(Boolean).sort((a, b) => b.cpuPercent - a.cpuPercent);
 
     res.json({
