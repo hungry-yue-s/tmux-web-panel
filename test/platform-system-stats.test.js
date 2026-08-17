@@ -4,7 +4,7 @@ import {
   parseDarwinDf,
   parseDarwinIostat,
   parseDarwinSwap,
-  parseMemoryPressure,
+  parseDarwinVmStat,
   sampleSystemCpuPercent,
 } from '../server/platform-system-stats.js';
 
@@ -16,10 +16,25 @@ describe('Darwin host metric parsers', () => {
     });
   });
 
-  it('turns memory availability into an explicit pressure metric', () => {
-    expect(parseMemoryPressure('System-wide memory free percentage: 57%', 1000)).toEqual({
-      total: 1000, used: 430, availablePercent: 57, metric: 'pressure',
+  it('matches Activity Monitor memory-used semantics from vm_stat pages', () => {
+    const pageSize = 4096;
+    const total = 1000 * pageSize;
+    expect(parseDarwinVmStat([
+      `Mach Virtual Memory Statistics: (page size of ${pageSize} bytes)`,
+      'Pages free: 10.',
+      'Pages speculative: 5.',
+      'File-backed pages: 100.',
+    ].join('\n'), total)).toEqual({
+      total,
+      used: 885 * pageSize,
+      cached: 115 * pageSize,
+      availablePercent: 11.5,
+      metric: 'activity-monitor',
     });
+  });
+
+  it('rejects incomplete vm_stat output instead of inventing usage', () => {
+    expect(parseDarwinVmStat('Mach Virtual Memory Statistics: (page size of 4096 bytes)', 4096000)).toBeNull();
   });
 
   it('parses BSD df and filters internal APFS helper mounts', () => {

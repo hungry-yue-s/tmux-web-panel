@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import os from 'node:os';
+import { readSystemMemory } from '../platform-system-stats.js';
 
 // CPU usage requires sampling between two snapshots.
 let prevCpu = sampleCpu();
@@ -56,10 +57,8 @@ export function getPrimaryAddress(addresses) {
     ?? null;
 }
 
-router.get('/', (_req, res) => {
-  const totalMem = os.totalmem();
-  const freeMem = os.freemem();
-  const usedMem = totalMem - freeMem;
+router.get('/', async (_req, res) => {
+  const systemMemory = await readSystemMemory();
   const load = os.loadavg();
   const cpuCount = os.cpus().length;
   const networkAddresses = getNetworkAddresses();
@@ -70,9 +69,13 @@ router.get('/', (_req, res) => {
     data: {
       cpuPercent: getCpuPercent(),
       cpuCount,
-      memTotal: totalMem,
-      memUsed: usedMem,
-      memPercent: (usedMem / totalMem) * 100,
+      memTotal: systemMemory.total,
+      memUsed: systemMemory.used,
+      memCached: systemMemory.cached,
+      memPercent: systemMemory.total > 0
+        ? (systemMemory.used / systemMemory.total) * 100
+        : 0,
+      memMetric: systemMemory.metric,
       load1: load[0],
       load5: load[1],
       load15: load[2],

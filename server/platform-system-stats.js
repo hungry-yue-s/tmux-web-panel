@@ -29,16 +29,43 @@ export function parseDarwinSwap(output) {
   return { total: bytesFromUnit(total[1], total[2]), used: bytesFromUnit(used[1], used[2]) };
 }
 
-export function parseMemoryPressure(output, totalBytes) {
-  const m = String(output || '').match(/free percentage:\s*([\d.]+)%/i);
-  if (!m) return null;
-  const freePercent = Math.max(0, Math.min(100, Number(m[1])));
-  if (!Number.isFinite(freePercent)) return null;
+export function parseDarwinVmStat(output, totalBytes) {
+  const text = String(output || '');
+  const pageSizeMatch = text.match(/page size of\s+(\d+)\s+bytes/i);
+  if (!pageSizeMatch || !Number.isFinite(totalBytes) || totalBytes <= 0) return null;
+
+  const pageCounts = new Map();
+  for (const line of text.split('\n')) {
+    const m = line.match(/^([^:]+):\s+(\d+)\.?\s*$/);
+    if (m) pageCounts.set(m[1].trim(), Number(m[2]));
+  }
+
+  const pageSize = Number(pageSizeMatch[1]);
+  const freePages = pageCounts.get('Pages free');
+  const speculativePages = pageCounts.get('Pages speculative');
+  const fileBackedPages = pageCounts.get('File-backed pages');
+  if (
+    !Number.isFinite(pageSize) || pageSize <= 0 ||
+    !Number.isFinite(freePages) ||
+    !Number.isFinite(speculativePages) ||
+    !Number.isFinite(fileBackedPages)
+  ) return null;
+
+  // Activity Monitor presents file-backed/cache and currently reclaimable pages
+  // outside "Memory Used". `memory_pressure -Q` reports a pressure-derived
+  // availability score, not physical free bytes, so it must not be multiplied by
+  // total RAM to manufacture an in-use byte count.
+  const cached = Math.max(0, Math.min(
+    totalBytes,
+    (freePages + speculativePages + fileBackedPages) * pageSize,
+  ));
+  const used = Math.max(0, totalBytes - cached);
   return {
     total: totalBytes,
-    used: Math.round(totalBytes * (1 - freePercent / 100)),
-    availablePercent: freePercent,
-    metric: 'pressure',
+    used,
+    cached,
+    availablePercent: (cached / totalBytes) * 100,
+    metric: 'activity-monitor',
   };
 }
 
@@ -98,13 +125,19 @@ export async function readSystemMemory() {
   const total = os.totalmem();
   if (IS_DARWIN) {
     try {
-      const { stdout } = await execFileAsync('/usr/bin/memory_pressure', ['-Q'], { timeout: 3_000 });
-      const parsed = parseMemoryPressure(stdout, total);
+      const { stdout } = await execFileAsync('/usr/bin/vm_stat', [], { timeout: 3_000 });
+      const parsed = parseDarwinVmStat(stdout, total);
       if (parsed) return parsed;
     } catch {}
   }
   const free = os.freemem();
-  return { total, used: Math.max(0, total - free), availablePercent: total > 0 ? (free / total) * 100 : null, metric: 'allocated' };
+  return {
+    total,
+    used: Math.max(0, total - free),
+    cached: null,
+    availablePercent: total > 0 ? (free / total) * 100 : null,
+    metric: IS_DARWIN ? 'os-free-fallback' : 'allocated',
+  };
 }
 
 export async function readSystemSwap() {

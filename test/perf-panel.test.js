@@ -70,7 +70,8 @@ describe('PerfPanel skeleton', () => {
       total: {
         cpuCount: 14, systemCpuPercent: 23, windowCpuPercent: 140,
         systemMemTotal: 24 * 1024 ** 3, systemMemUsed: 10 * 1024 ** 3,
-        systemMemoryMetric: 'pressure', systemDiskIoBps: 1024 ** 2,
+        systemMemCached: 2 * 1024 ** 3,
+        systemMemoryMetric: 'activity-monitor', systemDiskIoBps: 1024 ** 2,
         windowIoBps: 0, hostname: 'mac.test', load1: 2, uptime: 3600,
       },
       windows: [{
@@ -87,7 +88,8 @@ describe('PerfPanel skeleton', () => {
     const text = w.document.getElementById('perf-view-root').textContent;
     const html = w.document.getElementById('perf-view-root').innerHTML;
     expect(text).toContain('23%');
-    expect(text).toContain('内存压力口径');
+    expect(text).toContain('缓存 2.0 GB');
+    expect(text).not.toContain('内存压力口径');
     expect(text).toContain('进程 IO 不可用');
     expect(text).toContain('I/O —（仅提供整机吞吐）');
     expect(html).not.toContain('NaN%');

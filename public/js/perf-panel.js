@@ -163,7 +163,8 @@ var PerfPanel = (function () {
                 '整机 · tmux ' + t.windowCpuPercent.toFixed(0) + '% / ' + (t.cpuCount * 100) + '%',
                 sparkCpu, 'var(--accent-red)', cpuMachinePct);
     var memSub = U.fmtBytes(t.systemMemUsed) + ' / ' + U.fmtBytes(t.systemMemTotal);
-    if (t.systemMemoryMetric === 'pressure') memSub += ' · 内存压力口径';
+    if (Number.isFinite(t.systemMemCached)) memSub += ' · 缓存 ' + U.fmtBytes(t.systemMemCached);
+    if (t.systemMemoryMetric === 'os-free-fallback') memSub += ' · 估算值';
     html += kpi('mem',  'MEM', memPct.toFixed(0), '%', memSub,
                 sparkMem, 'var(--accent-blue)', memPct);
     var ioText = ioCurrent == null ? ['—', ''] : [U.fmtBps(ioCurrent).split(' ')[0], U.fmtBps(ioCurrent).split(' ').slice(1).join(' ')];

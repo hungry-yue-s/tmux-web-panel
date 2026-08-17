@@ -126,6 +126,7 @@ async function collectWindowStats() {
       systemCpuPercent: sampleSystemCpuPercent(),
       systemMemTotal: systemMemory.total,
       systemMemUsed: systemMemory.used,
+      systemMemCached: systemMemory.cached,
       systemMemAvailablePercent: systemMemory.availablePercent,
       systemMemoryMetric: systemMemory.metric,
       systemSwapTotal: sysSwap.total,

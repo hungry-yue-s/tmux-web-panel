@@ -38,6 +38,9 @@ describe('system network addresses', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.data).toHaveProperty('ip');
     expect(res.body.data).toHaveProperty('ipInterface');
+    expect(res.body.data.memUsed).toBeLessThanOrEqual(res.body.data.memTotal);
+    expect(res.body.data).toHaveProperty('memCached');
+    expect(res.body.data).toHaveProperty('memMetric');
     expect(Array.isArray(res.body.data.networkAddresses)).toBe(true);
     for (const item of res.body.data.networkAddresses) {
       expect(item).toEqual(expect.objectContaining({

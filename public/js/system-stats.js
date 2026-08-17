@@ -112,7 +112,10 @@ var SystemStats = (function () {
     html += '<div class="ss-panel-body">';
     html += '<div class="ss-panel-title">内存使用率</div>';
     html += sparkline(memHistory, '#9ece6a');
-    html += '<div class="ss-panel-sub">' + fmtBytes(d.memUsed) + ' / ' + fmtBytes(d.memTotal) + '</div>';
+    var memSub = fmtBytes(d.memUsed) + ' / ' + fmtBytes(d.memTotal);
+    if (Number.isFinite(d.memCached)) memSub += ' · 缓存 ' + fmtBytes(d.memCached);
+    if (d.memMetric === 'os-free-fallback') memSub += ' · 估算值';
+    html += '<div class="ss-panel-sub">' + memSub + '</div>';
     html += '</div></div></div>';
 
     html += '</div>';
