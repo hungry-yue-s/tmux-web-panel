@@ -1115,15 +1115,31 @@ function _mountTerminal(termContainer, nozoom) {
   var LONG_PRESS_MS = 500;
   var LONG_PRESS_MOVE_TOLERANCE = 10; // px
 
-  // Convert touch clientX/Y to terminal col/row
-  function _touchToCell(clientX, clientY) {
+  // Cell metrics in on-screen px. Cached per gesture: getBoundingClientRect()
+  // forces synchronous layout, and touchmove fires on every frame.
+  var cellCache = null;
+
+  function _cellMetrics() {
+    if (cellCache) return cellCache;
     var screen = termContainer.querySelector('.xterm-screen');
     if (!screen) return null;
     var rect = screen.getBoundingClientRect();
-    var cellW = rect.width / term.cols;
-    var cellH = rect.height / term.rows;
-    var col = Math.floor((clientX - rect.left) / cellW);
-    var row = Math.floor((clientY - rect.top) / cellH);
+    if (!rect.height || !term.cols || !term.rows) return null;
+    cellCache = {
+      left: rect.left,
+      top: rect.top,
+      w: rect.width / term.cols,
+      h: rect.height / term.rows,
+    };
+    return cellCache;
+  }
+
+  // Convert touch clientX/Y to terminal col/row
+  function _touchToCell(clientX, clientY) {
+    var m = _cellMetrics();
+    if (!m) return null;
+    var col = Math.floor((clientX - m.left) / m.w);
+    var row = Math.floor((clientY - m.top) / m.h);
     col = Math.max(0, Math.min(term.cols - 1, col));
     row = Math.max(0, Math.min(term.rows - 1, row));
     return { col: col, row: row };
@@ -1281,12 +1297,110 @@ function _mountTerminal(termContainer, nozoom) {
     if (btn) btn.remove();
   }
 
+  // Emit `lines` worth of SGR wheel events at the given screen point.
+  // Shared by finger-tracking drag and inertial fling.
+  function _sendWheelLines(lines, clientX, clientY) {
+    if (ws.readyState !== WebSocket.OPEN) return false;
+    // Send the wheel event at the finger's terminal cell, NOT 1;1 — tmux
+    // treats the 1;1 corner as outside any pane and drops WheelUpPane, so
+    // a hard-coded 1;1 never scrolls. Cell coords are 1-based; clamp to >=2
+    // to stay clear of the dead corner. Targeting the touched cell also
+    // routes the scroll to the correct pane in split layouts.
+    var cell = _touchToCell(clientX, clientY);
+    var mx = Math.max(2, (cell ? cell.col : 1) + 1);
+    var my = Math.max(2, (cell ? cell.row : 1) + 1);
+    var btn = lines > 0 ? 65 : 64;
+    var seq = '\x1b[<' + btn + ';' + mx + ';' + my + 'M';
+    var batch = '';
+    for (var j = 0; j < Math.abs(lines); j++) { batch += seq; }
+    ws.send(JSON.stringify({ type: 'input', data: batch }));
+    return true;
+  }
+
+  // Inertial scrolling. Without it the view stops dead the instant the finger
+  // lifts, which is the bulk of what reads as "not smooth" on touch.
+  // Decay is exponential: v(t) = v0 * e^(-t/tau), so the glide distance is
+  // tau * (v0 - FLING_MIN_V). 0.9672 per frame puts tau near 500ms, matching
+  // UIScrollView's normal deceleration rate.
+  var FLING_START_V = 0.08;        // px/ms — below this a lift is not a flick
+  var FLING_MIN_V = 0.015;         // px/ms — decay floor, stop here
+  var FLING_DECAY = 0.9672;        // per 16.67ms frame => tau ~500ms
+  var FLING_IDLE_CANCEL_MS = 100;  // finger paused before lifting = no fling
+  var FLING_VELOCITY_WINDOW_MS = 90;
+  var FLING_MAX_LINES_PER_FRAME = 8;
+  var flingRaf = null;
+
+  function _stopFling() {
+    if (flingRaf !== null) {
+      cancelAnimationFrame(flingRaf);
+      flingRaf = null;
+    }
+  }
+
+  // Velocity from a short trailing window rather than an exponential average:
+  // an EMA starts at zero and chases the finger's natural slow-down just before
+  // release, which underestimates the launch velocity.
+  var vSamples = [];
+
+  function _trackVelocity(now, clientY) {
+    vSamples.push({ t: now, y: clientY });
+    while (vSamples.length > 2 && now - vSamples[0].t > FLING_VELOCITY_WINDOW_MS) {
+      vSamples.shift();
+    }
+  }
+
+  function _windowVelocity() {
+    if (vSamples.length < 2) return 0;
+    var first = vSamples[0];
+    var last = vSamples[vSamples.length - 1];
+    var span = last.t - first.t;
+    if (span <= 0) return 0;
+    return (first.y - last.y) / span;
+  }
+
+  function _startFling(initialVelocity, clientX, clientY) {
+    _stopFling();
+    var velocity = initialVelocity;
+    var accum = 0;
+    var lastT = 0;
+
+    function step(t) {
+      flingRaf = null;
+      if (ws.readyState !== WebSocket.OPEN) return;
+      if (!lastT) {
+        lastT = t;
+        flingRaf = requestAnimationFrame(step);
+        return;
+      }
+      var dt = t - lastT;
+      lastT = t;
+
+      accum += velocity * dt;
+      var m = _cellMetrics();
+      var lineH = m ? m.h : 16;
+      var lines = Math.trunc(accum / lineH);
+      if (lines !== 0) {
+        var capped = Math.max(-FLING_MAX_LINES_PER_FRAME,
+          Math.min(FLING_MAX_LINES_PER_FRAME, lines));
+        if (!_sendWheelLines(capped, clientX, clientY)) return;
+        accum -= lines * lineH;
+      }
+
+      velocity *= Math.pow(FLING_DECAY, dt / 16.67);
+      if (Math.abs(velocity) < FLING_MIN_V) return;
+      flingRaf = requestAnimationFrame(step);
+    }
+
+    flingRaf = requestAnimationFrame(step);
+  }
+
   // Unified touch handler: vertical = tmux scroll, horizontal = swipe back
   var ts = {
     startX: 0, startY: 0, lastY: 0,
     moved: false, scrollAccum: 0,
     direction: null,  // null | 'vertical' | 'horizontal'
     startTime: 0, currentDx: 0,
+    lastMoveTime: 0,
   };
   var LOCK_DISTANCE = 12;         // px before direction locks
   var swipeIndicator = termContainer.closest('.terminal-view')
@@ -1306,6 +1420,7 @@ function _mountTerminal(termContainer, nozoom) {
   }
 
   overlay.addEventListener('touchstart', function (e) {
+    _stopFling();
     if (e.touches.length === 2) {
       // Start pinch-to-zoom
       clearTimeout(longPress.timer);
@@ -1318,6 +1433,7 @@ function _mountTerminal(termContainer, nozoom) {
     }
     if (e.touches.length === 1) {
       pinch.active = false;
+      cellCache = null;
       var t = e.touches[0];
       ts.startX = t.clientX;
       ts.startY = t.clientY;
@@ -1327,6 +1443,8 @@ function _mountTerminal(termContainer, nozoom) {
       ts.direction = null;
       ts.startTime = Date.now();
       ts.currentDx = 0;
+      vSamples.length = 0;
+      ts.lastMoveTime = ts.startTime;
       if (swipeIndicator) {
         swipeIndicator.style.transition = 'none';
         swipeIndicator.style.opacity = '0';
@@ -1376,6 +1494,7 @@ function _mountTerminal(termContainer, nozoom) {
         _setFontOffset(_getFontOffset() + delta);
         term.options.fontSize = newSize;
         fitAddon.fit();
+        cellCache = null;
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
         }
@@ -1413,23 +1532,22 @@ function _mountTerminal(termContainer, nozoom) {
       ts.lastY = t.clientY;
       ts.scrollAccum += scrollDy;
 
-      var lines = Math.trunc(ts.scrollAccum / 16);
-      if (lines !== 0 && ws.readyState === WebSocket.OPEN) {
-        // Send the wheel event at the finger's terminal cell, NOT 1;1 — tmux
-        // treats the 1;1 corner as outside any pane and drops WheelUpPane, so
-        // a hard-coded 1;1 never scrolls. Cell coords are 1-based; clamp to >=2
-        // to stay clear of the dead corner. Targeting the touched cell also
-        // routes the scroll to the correct pane in split layouts.
-        var cell = _touchToCell(t.clientX, t.clientY);
-        var mx = Math.max(2, (cell ? cell.col : 1) + 1);
-        var my = Math.max(2, (cell ? cell.row : 1) + 1);
-        var btn = lines > 0 ? 65 : 64;
-        var seq = '\x1b[<' + btn + ';' + mx + ';' + my + 'M';
-        var count = Math.abs(lines);
-        var batch = '';
-        for (var j = 0; j < count; j++) { batch += seq; }
-        ws.send(JSON.stringify({ type: 'input', data: batch }));
-        ts.scrollAccum -= lines * 16;
+      var mvNow = Date.now();
+      if (mvNow > ts.lastMoveTime) {
+        _trackVelocity(mvNow, t.clientY);
+        ts.lastMoveTime = mvNow;
+      }
+
+      // One wheel event scrolls tmux by exactly one row, so the threshold must
+      // be the row's real on-screen height. A fixed 16px drifts from the finger
+      // because mobile font sizes land at 10-12px (row height ~12-14px).
+      var metrics = _cellMetrics();
+      var lineH = metrics ? metrics.h : 16;
+      var lines = Math.trunc(ts.scrollAccum / lineH);
+      if (lines !== 0) {
+        if (_sendWheelLines(lines, t.clientX, t.clientY)) {
+          ts.scrollAccum -= lines * lineH;
+        }
       }
       e.preventDefault();
     }
@@ -1477,6 +1595,17 @@ function _mountTerminal(termContainer, nozoom) {
       var el = document.elementFromPoint(touch.clientX, touch.clientY);
       if (el) { el.focus(); el.click(); }
       setTimeout(function () { overlay.style.pointerEvents = ''; }, 300);
+      return;
+    }
+
+    if (ts.direction === 'vertical') {
+      // A finger that paused before lifting is a deliberate stop, not a flick.
+      var idleMs = Date.now() - ts.lastMoveTime;
+      var launchV = _windowVelocity();
+      if (idleMs < FLING_IDLE_CANCEL_MS && Math.abs(launchV) >= FLING_START_V) {
+        var ft = e.changedTouches[0];
+        _startFling(launchV, ft.clientX, ft.clientY);
+      }
       return;
     }
 
