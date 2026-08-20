@@ -176,9 +176,7 @@ function _createFabPanel(container) {
         try { terminalState.fitAddon.fit(); } catch (_e) { /* ignore */ }
       }
       var tws = terminalState.ws, tterm = terminalState.term;
-      if (tws && tws.readyState === WebSocket.OPEN && tterm) {
-        tws.send(JSON.stringify({ type: 'resize', cols: tterm.cols, rows: tterm.rows }));
-      }
+      _syncTerminalSize(tws, tterm);
     }, 270);
   }
 
@@ -248,6 +246,30 @@ function _createFabPanel(container) {
 }
 
 // === Terminal State ===
+
+var RESIZE_DEBOUNCE_MS = 120;
+
+// Single funnel for pty resize. TUIs that keep a full transcript (qodercli,
+// codex) reprint everything on SIGWINCH, so a redundant resize costs a full
+// replay. Never send a no-op, and collapse bursts into one send.
+function _syncTerminalSize(ws, term, immediate) {
+  if (!ws || !term) return;
+  clearTimeout(ws._resizeTimer);
+  ws._resizeTimer = null;
+
+  function flush() {
+    ws._resizeTimer = null;
+    if (ws.readyState !== WebSocket.OPEN) return;
+    if (!term.cols || !term.rows) return;
+    if (term.cols === ws._sentCols && term.rows === ws._sentRows) return;
+    ws._sentCols = term.cols;
+    ws._sentRows = term.rows;
+    ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+  }
+
+  if (immediate) flush();
+  else ws._resizeTimer = setTimeout(flush, RESIZE_DEBOUNCE_MS);
+}
 
 var terminalState = {
   term: null,
@@ -527,13 +549,7 @@ function _adjustFontSize(dir) {
   _setFontOffset(offset);
   terminalState.term.options.fontSize = next;
   terminalState.fitAddon.fit();
-  if (terminalState.ws && terminalState.ws.readyState === WebSocket.OPEN) {
-    terminalState.ws.send(JSON.stringify({
-      type: 'resize',
-      cols: terminalState.term.cols,
-      rows: terminalState.term.rows,
-    }));
-  }
+  _syncTerminalSize(terminalState.ws, terminalState.term);
 }
 
 // === Terminal View Mode (tab / split) ===
@@ -606,9 +622,7 @@ function connectTerminalWs(paneId, term, nozoom) {
 
   ws.onopen = function () {
     // Send initial resize
-    if (term.cols && term.rows) {
-      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-    }
+    _syncTerminalSize(ws, term, true);
   };
 
   ws.onmessage = function (e) {
@@ -1495,9 +1509,7 @@ function _mountTerminal(termContainer, nozoom) {
         term.options.fontSize = newSize;
         fitAddon.fit();
         cellCache = null;
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-        }
+        _syncTerminalSize(ws, term);
       }
       e.preventDefault();
       return;
@@ -1631,9 +1643,8 @@ function _mountTerminal(termContainer, nozoom) {
   // ResizeObserver for auto-fit
   var resizeObserver = new ResizeObserver(function () {
     fitAddon.fit();
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-    }
+    cellCache = null;
+    _syncTerminalSize(ws, term);
   });
   resizeObserver.observe(termContainer);
 
@@ -1708,9 +1719,7 @@ function _mountTerminal(termContainer, nozoom) {
         }
       }
       fitAddon.fit();
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      }
+      _syncTerminalSize(ws, term);
     };
     window.visualViewport.addEventListener('resize', vpHandler);
     window.visualViewport.addEventListener('scroll', vpHandler);
@@ -1780,9 +1789,7 @@ function _showReconnectOverlay(term, paneId, nozoom) {
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
       terminalState.ws = ws;
       // Re-send resize
-      if (term.cols && term.rows) {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      }
+      _syncTerminalSize(ws, term, true);
     };
 
     ws.onclose = function (event) {
