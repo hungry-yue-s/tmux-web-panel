@@ -33,6 +33,27 @@ var NotificationPanel = (function () {
     api.delete('/api/notifications').catch(function () { /* ignore */ });
   }
 
+  // The macOS shell registers this WKScriptMessageHandler. Browsers do not
+  // expose it, so the bridge is inert outside the native app.
+  function _postNativeNotification(notification) {
+    try {
+      var webkit = window.webkit;
+      var handlers = webkit && webkit.messageHandlers;
+      var handler = handlers && handlers.tmuxPanelNotification;
+      if (!handler || typeof handler.postMessage !== 'function') return;
+
+      handler.postMessage({
+        id: String(notification.id || ''),
+        session: String(notification.session || ''),
+        windowIndex: String(notification.windowIndex ?? ''),
+        windowName: String(notification.windowName || ''),
+        command: String(notification.command || ''),
+      });
+    } catch (_err) {
+      // Native notification delivery must never break the in-page panel.
+    }
+  }
+
   // NOTE: Do not call _fetchAll() here — this IIFE runs before app.js
   // creates the `api` object. Instead, app.js calls NotificationPanel.refresh()
   // after the StatusSocket connects.
@@ -48,6 +69,7 @@ var NotificationPanel = (function () {
       // Skip if already exists (dedup by id)
       var exists = _notifications.some(function (existing) { return existing.id === n.id; });
       if (!exists) {
+        var isCurrentWindow = false;
         // Auto-mark as read if user is currently viewing this window
         if (
           typeof state !== 'undefined' &&
@@ -55,11 +77,13 @@ var NotificationPanel = (function () {
           state.currentSession === n.session &&
           String(state.currentWindow) === String(n.windowIndex)
         ) {
+          isCurrentWindow = true;
           n.read = true;
           n.readAt = Date.now();
           _serverMarkRead(n.id);
         }
         _notifications.unshift(n);
+        if (!isCurrentWindow) _postNativeNotification(n);
       }
     }
     _updateBadge();

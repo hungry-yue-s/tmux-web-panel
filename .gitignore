@@ -5,6 +5,8 @@ node_modules/
 .playwright-mcp/
 .claude/worktrees/
 docs/superpowers/
+/dist/
+/macos/TmuxPanel/.build/
 
 # Root-level temp screenshots (project screenshots live in public/screenshots/)
 /*.png

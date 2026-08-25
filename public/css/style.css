@@ -1,3 +1,25 @@
+/* === Monospace accent font === */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+/* === Bundled terminal font ======================================== */
+/* Use one exact Maple Mono build in every browser engine instead of
+   letting Chrome and WKWebView resolve the installed family separately. */
+@font-face {
+  font-family: 'Tmux Panel Mono';
+  src: url('/fonts/TmuxPanelMono-Regular.woff2?v=1') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Tmux Panel Mono';
+  src: url('/fonts/TmuxPanelMono-Bold.woff2?v=1') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+
 /* === Nerd Font Symbols (icon fallback for terminal) === */
 @font-face {
   font-family: 'Symbols Nerd Font Mono';
@@ -6,9 +28,6 @@
   font-style: normal;
   font-display: swap;
 }
-
-/* === Monospace accent font === */
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 /* === Theme colors are applied dynamically by theme.js === */
 /* === Fallback values match Tokyo Night (default theme) === */
@@ -4746,6 +4765,14 @@ body {
     var(--bg-primary);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* WKWebView renders forced antialiasing noticeably thinner than Chrome.
+   Keep the browser appearance unchanged and restore the macOS default only
+   for the native Swift shell. */
+html.tmux-native-shell body {
+  -webkit-font-smoothing: auto;
+  text-rendering: auto;
 }
 
 button,

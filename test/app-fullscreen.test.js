@@ -103,4 +103,30 @@ describe('global app fullscreen', () => {
     expect(button.disabled).toBe(true);
     expect(button.title).toBe('当前浏览器不支持全屏显示');
   });
+
+  it('uses the macOS shell bridge when browser fullscreen is unavailable', async () => {
+    dom = new JSDOM(markup, { runScripts: 'outside-only' });
+    const postMessage = vi.fn();
+    dom.window.webkit = {
+      messageHandlers: {
+        tmuxPanelAction: { postMessage },
+      },
+    };
+    dom.window.eval(source);
+    dom.window.AppFullscreen.init();
+
+    const button = dom.window.document.getElementById('btn-app-fullscreen');
+    expect(button.disabled).toBe(false);
+
+    button.click();
+    await Promise.resolve();
+    expect(postMessage).toHaveBeenCalledWith({ action: 'toggleFullscreen' });
+
+    dom.window.document.dispatchEvent(new dom.window.CustomEvent(
+      'tmux-panel-native-fullscreen',
+      { detail: { active: true } },
+    ));
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+    expect(button.title).toBe('退出全屏显示');
+  });
 });

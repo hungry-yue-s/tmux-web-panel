@@ -1,5 +1,6 @@
 var AppFullscreen = (function () {
   var initialized = false;
+  var nativeFullscreenActive = false;
 
   function _buttons() {
     return Array.prototype.slice.call(document.querySelectorAll('[data-app-fullscreen]'));
@@ -18,7 +19,18 @@ var AppFullscreen = (function () {
     return document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
   }
 
+  function _nativeHandler() {
+    try {
+      var handlers = window.webkit && window.webkit.messageHandlers;
+      var handler = handlers && handlers.tmuxPanelAction;
+      return handler && typeof handler.postMessage === 'function' ? handler : null;
+    } catch (_err) {
+      return null;
+    }
+  }
+
   function isActive() {
+    if (_nativeHandler()) return nativeFullscreenActive;
     return _fullscreenElement() === document.documentElement;
   }
 
@@ -37,7 +49,7 @@ var AppFullscreen = (function () {
 
   function sync() {
     var active = isActive();
-    var supported = !!_requestMethod();
+    var supported = !!_nativeHandler() || !!_requestMethod();
     _buttons().forEach(function (button) {
       button.disabled = !supported;
       button.classList.toggle('is-active', active);
@@ -74,6 +86,17 @@ var AppFullscreen = (function () {
   }
 
   function toggle() {
+    var nativeHandler = _nativeHandler();
+    if (nativeHandler) {
+      try {
+        nativeHandler.postMessage({ action: 'toggleFullscreen' });
+        return Promise.resolve(true);
+      } catch (err) {
+        _showFailure(err);
+        return Promise.resolve(false);
+      }
+    }
+
     var current = _fullscreenElement();
     var method = current ? _exitMethod() : _requestMethod();
     var context = current ? document : document.documentElement;
@@ -107,6 +130,10 @@ var AppFullscreen = (function () {
     });
     document.addEventListener('fullscreenchange', sync);
     document.addEventListener('webkitfullscreenchange', sync);
+    document.addEventListener('tmux-panel-native-fullscreen', function (event) {
+      nativeFullscreenActive = !!(event.detail && event.detail.active);
+      sync();
+    });
     sync();
   }
 

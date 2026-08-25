@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "test": "vitest run",
-    "dev": "node server/index.js"
+    "dev": "node server/index.js",
+    "test:macos": "bash scripts/test-macos-shell.sh",
+    "build:macos": "bash scripts/build-macos-app.sh"
   },
   "keywords": [],
   "author": "",

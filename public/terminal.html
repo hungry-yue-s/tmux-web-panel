@@ -5,12 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Terminal</title>
   <link rel="stylesheet" href="https://unpkg.com/@xterm/xterm@6.0.0/css/xterm.css">
+  <link rel="preload" href="/fonts/TmuxPanelMono-Regular.woff2?v=1" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/TmuxPanelMono-Bold.woff2?v=1" as="font" type="font/woff2" crossorigin>
   <script src="https://unpkg.com/@xterm/xterm@6.0.0/lib/xterm.js"></script>
   <script src="https://unpkg.com/@xterm/addon-fit@0.11.0/lib/addon-fit.js"></script>
   <script src="/js/theme.js"></script>
   <script src="/js/link-detect.js"></script>
   <script src="/js/file-preview.js"></script>
   <style>
+    @font-face {
+      font-family: 'Tmux Panel Mono';
+      src: url('/fonts/TmuxPanelMono-Regular.woff2?v=1') format('woff2');
+      font-weight: 400;
+      font-style: normal;
+      font-display: block;
+    }
+    @font-face {
+      font-family: 'Tmux Panel Mono';
+      src: url('/fonts/TmuxPanelMono-Bold.woff2?v=1') format('woff2');
+      font-weight: 700;
+      font-style: normal;
+      font-display: block;
+    }
     @font-face {
       font-family: 'Symbols Nerd Font Mono';
       src: url('/fonts/SymbolsNerdFontMono-Regular.ttf') format('truetype');
@@ -41,7 +57,7 @@
 
       var term = new Terminal({
         theme: Theme.getTerminalTheme(),
-        fontFamily: "'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace",
+        fontFamily: "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace",
         fontSize: 14,
         cursorBlink: true,
       });
