@@ -2,6 +2,18 @@
 
 // === Clipboard Helper ===
 
+function _postNativeClipboard(text) {
+  try {
+    var handlers = window.webkit && window.webkit.messageHandlers;
+    var handler = handlers && handlers.tmuxPanelClipboard;
+    if (!handler || typeof handler.postMessage !== 'function') return false;
+    handler.postMessage({ text: String(text) });
+    return true;
+  } catch (_err) {
+    return false;
+  }
+}
+
 function _execCommandCopy(text) {
   var ta = document.createElement('textarea');
   ta.value = text;
@@ -21,6 +33,15 @@ function _copyToClipboard(text, opts) {
   var n = text ? text.length : 0;
   function ok() { if (!silent) _showToast('已复制 ' + n + ' 字符'); }
   function fail(reason) { if (!silent) _showToast('复制失败' + (reason ? ' (' + reason + ')' : '')); }
+
+  // WKWebView rejects async Clipboard API writes (notably tmux OSC 52) once
+  // the original user gesture is gone. The macOS shell exposes a same-origin
+  // native bridge that writes NSPasteboard directly; browsers stay on the
+  // standard Clipboard API and execCommand fallback below.
+  if (_postNativeClipboard(text)) {
+    ok();
+    return;
+  }
 
   if (navigator.clipboard && window.isSecureContext) {
     navigator.clipboard.writeText(text).then(ok).catch(function (err) {

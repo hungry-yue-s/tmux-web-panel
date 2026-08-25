@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Security
 import SwiftUI
@@ -25,6 +26,10 @@ struct PanelWebView: NSViewRepresentable {
             context.coordinator,
             name: Coordinator.actionHandlerName
         )
+        configuration.userContentController.add(
+            context.coordinator,
+            name: Coordinator.clipboardHandlerName
+        )
         configuration.websiteDataStore = .default()
 
         let webView = PanelWKWebView(frame: .zero, configuration: configuration)
@@ -45,12 +50,17 @@ struct PanelWebView: NSViewRepresentable {
         webView.configuration.userContentController.removeScriptMessageHandler(
             forName: Coordinator.actionHandlerName
         )
+        webView.configuration.userContentController.removeScriptMessageHandler(
+            forName: Coordinator.clipboardHandlerName
+        )
     }
 
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         static let notificationHandlerName = "tmuxPanelNotification"
         static let actionHandlerName = "tmuxPanelAction"
+        static let clipboardHandlerName = "tmuxPanelClipboard"
+        static let maximumClipboardBytes = 1_048_576
 
         private weak var model: AppModel?
         private let endpoint: PanelEndpoint
@@ -105,6 +115,16 @@ struct PanelWebView: NSViewRepresentable {
                let body = message.body as? [String: Any],
                body["action"] as? String == "toggleFullscreen" {
                 model?.toggleFullScreen()
+                return
+            }
+            if message.name == Self.clipboardHandlerName,
+               let body = message.body as? [String: Any],
+               let text = body["text"] as? String,
+               !text.isEmpty,
+               text.utf8.count <= Self.maximumClipboardBytes {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(text, forType: .string)
             }
         }
 

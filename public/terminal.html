@@ -100,6 +100,15 @@
       };
 
       function _copyToClipboard(text) {
+        try {
+          var handlers = window.webkit && window.webkit.messageHandlers;
+          var nativeHandler = handlers && handlers.tmuxPanelClipboard;
+          if (nativeHandler && typeof nativeHandler.postMessage === 'function') {
+            nativeHandler.postMessage({ text: String(text) });
+            return;
+          }
+        } catch (_err) { /* fall through to browser clipboard paths */ }
+
         if (navigator.clipboard && window.isSecureContext) {
           navigator.clipboard.writeText(text).catch(function () {});
           return;
