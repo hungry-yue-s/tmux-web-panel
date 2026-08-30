@@ -1122,6 +1122,90 @@ var FilePreview = (function () {
       button.textContent = text;
       return button;
     }
+    function renderPng(svg, size) {
+      return new Promise(function (resolve, reject) {
+        var settled = false;
+        var timer = win.setTimeout(function () {
+          finish(new Error('PNG 生成超时'));
+        }, 10000);
+        function finish(error, blob) {
+          if (settled) return;
+          settled = true;
+          win.clearTimeout(timer);
+          if (error) reject(error); else resolve(blob);
+        }
+        var copy = svg.cloneNode(true);
+        copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        copy.setAttribute('width', String(size.width));
+        copy.setAttribute('height', String(size.height));
+        copy.style.width = size.width + 'px';
+        copy.style.height = size.height + 'px';
+
+        var svgText = new win.XMLSerializer().serializeToString(copy);
+        var image = new win.Image();
+        image.onerror = function () {
+          finish(new Error('SVG 转换失败'));
+        };
+        image.onload = function () {
+          try {
+            var outputScale = Math.min(2, 8192 / Math.max(size.width, size.height));
+            var canvas = doc.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(size.width * outputScale));
+            canvas.height = Math.max(1, Math.round(size.height * outputScale));
+            var context = canvas.getContext('2d');
+            if (!context) { finish(new Error('浏览器不支持图片导出')); return; }
+            context.fillStyle = win.getComputedStyle(doc.documentElement)
+              .getPropertyValue('--bg-primary').trim() || '#ffffff';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.drawImage(image, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob(function (blob) {
+              finish(blob ? null : new Error('PNG 生成失败'), blob);
+            }, 'image/png');
+          } catch (error) {
+            finish(error);
+          }
+        };
+        image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgText);
+      });
+    }
+    function downloadPng(blob, filename) {
+      var pngUrl = win.URL.createObjectURL(blob);
+      var link = doc.createElement('a');
+      link.href = pngUrl;
+      link.download = filename;
+      link.rel = 'noopener';
+      doc.body.appendChild(link);
+      link.click();
+      link.remove();
+      win.setTimeout(function () { win.URL.revokeObjectURL(pngUrl); }, 60000);
+    }
+    function copyPng(blobPromise) {
+      var handlers = win.webkit && win.webkit.messageHandlers;
+      if (handlers && handlers.tmuxPanelClipboard) {
+        return blobPromise.then(function (blob) {
+          if (blob.size > 16 * 1024 * 1024) throw new Error('图片超过 16 MB');
+          return new Promise(function (resolve, reject) {
+            var reader = new win.FileReader();
+            reader.onerror = function () { reject(new Error('读取 PNG 失败')); };
+            reader.onload = function () {
+              var result = String(reader.result || '');
+              var comma = result.indexOf(',');
+              if (comma < 0) { reject(new Error('PNG 编码失败')); return; }
+              handlers.tmuxPanelClipboard.postMessage({ pngBase64: result.slice(comma + 1) });
+              resolve();
+            };
+            reader.readAsDataURL(blob);
+          });
+        });
+      }
+      if (win.navigator.clipboard && typeof win.navigator.clipboard.write === 'function'
+          && typeof win.ClipboardItem === 'function') {
+        return win.navigator.clipboard.write([
+          new win.ClipboardItem({ 'image/png': blobPromise }),
+        ]);
+      }
+      return Promise.reject(new Error('当前环境不支持图片剪贴板'));
+    }
 
     graphEmbeds(root).forEach(function (embed) {
       if (embed.__fpMermaidBound) return;
@@ -1162,16 +1246,18 @@ var FilePreview = (function () {
         var tools = doc.createElement('div');
         tools.className = 'fp-mermaid-dialog-tools';
         tools.setAttribute('role', 'toolbar');
-        tools.setAttribute('aria-label', '\u56FE\u8868\u7F29\u653E\u5DE5\u5177');
+        tools.setAttribute('aria-label', '\u56FE\u8868\u5DE5\u5177');
         var minus = textButton('fp-mermaid-zoom-out', '\u7F29\u5C0F\u56FE\u8868', '\u2212');
         var percent = textButton('fp-mermaid-percent', '\u5F53\u524D\u7F29\u653E\u6BD4\u4F8B', '100%');
         percent.disabled = true;
         var plus = textButton('fp-mermaid-zoom-in', '\u653E\u5927\u56FE\u8868', '+');
         var fitButton = textButton('fp-mermaid-fit', '\u9002\u5E94\u7A97\u53E3', '\u9002\u5E94');
         var actual = textButton('fp-mermaid-actual', '\u6062\u590D 100%', '1:1');
+        var exportButton = textButton('fp-mermaid-export', '\u4E0B\u8F7D PNG \u56FE\u7247', '\u4E0B\u8F7D');
+        var copyButton = textButton('fp-mermaid-copy', '\u590D\u5236 PNG \u5230\u526A\u8D34\u677F', '\u590D\u5236');
         var fullscreen = textButton('fp-mermaid-fullscreen', '\u5168\u5C4F\u67E5\u770B', '\u5168\u5C4F');
         var closeButton = textButton('fp-mermaid-close', '\u5173\u95ED\u56FE\u8868\u67E5\u770B\u5668', '\u00D7');
-        [minus, percent, plus, fitButton, actual, fullscreen, closeButton]
+        [minus, percent, plus, fitButton, actual, exportButton, copyButton, fullscreen, closeButton]
           .forEach(function (button) { tools.appendChild(button); });
         header.appendChild(title);
         header.appendChild(tools);
@@ -1263,6 +1349,36 @@ var FilePreview = (function () {
         plus.addEventListener('click', function () { applyScale(scale * 1.2); });
         fitButton.addEventListener('click', function () { applyScale(fitScale()); });
         actual.addEventListener('click', function () { applyScale(1); });
+        exportButton.addEventListener('click', function () {
+          exportButton.disabled = true;
+          exportButton.textContent = '\u4E0B\u8F7D\u4E2D\u2026';
+          renderPng(sourceSvg, size)
+            .then(function (blob) {
+              downloadPng(blob,
+                embed.getAttribute('data-fp-export-name') || 'mermaid-diagram.png');
+            })
+            .catch(function (err) {
+              win.alert('\u4E0B\u8F7D\u5931\u8D25: ' + (err && err.message ? err.message : err));
+            })
+            .finally(function () {
+              exportButton.disabled = false;
+              exportButton.textContent = '\u4E0B\u8F7D';
+            });
+        });
+        copyButton.addEventListener('click', function () {
+          copyButton.disabled = true;
+          copyButton.textContent = '\u590D\u5236\u4E2D\u2026';
+          copyPng(renderPng(sourceSvg, size))
+            .then(function () {
+              copyButton.textContent = '\u5DF2\u590D\u5236';
+              win.setTimeout(function () { copyButton.textContent = '\u590D\u5236'; }, 1200);
+            })
+            .catch(function (err) {
+              copyButton.textContent = '\u590D\u5236';
+              win.alert('\u590D\u5236\u5931\u8D25: ' + (err && err.message ? err.message : err));
+            })
+            .finally(function () { copyButton.disabled = false; });
+        });
         fullscreen.addEventListener('click', function () {
           if (doc.fullscreenElement === panel) {
             if (doc.exitFullscreen) doc.exitFullscreen();
@@ -1534,16 +1650,35 @@ var FilePreview = (function () {
 
   function _openNewTab() {
     if (!_currentFile || _currentFile.isDirectory) return;
+    var nativeWindow = null;
+    try {
+      var handlers = window.webkit && window.webkit.messageHandlers;
+      nativeWindow = handlers && handlers.tmuxPanelOpenWindow;
+    } catch (_) { /* browser path below */ }
     if (_currentFile.isText || _currentFile.isMarkdown || _currentFile.isXlsx) {
       // Open the tab synchronously (popup blockers require a user-gesture-time
       // window.open), then fill it once the self-contained doc is built.
       var rendered = _overlay && _overlay.querySelector('.fp-md-wrap, .fp-code-wrap, .fp-xlsx-wrap');
       if (rendered) {
+        if (nativeWindow && typeof nativeWindow.postMessage === 'function') {
+          _buildStandaloneDoc().then(function (out) {
+            if (out) nativeWindow.postMessage({
+              html: out.html, title: _currentFile.filename || 'Preview', width: 1100, height: 760,
+            });
+          });
+          return;
+        }
         var win = window.open('', '_blank');
         _buildStandaloneDoc().then(function (out) {
           if (!out) { if (win) win.close(); return; }
           var blobUrl = URL.createObjectURL(new Blob([out.html], { type: 'text/html;charset=utf-8' }));
           if (win) { win.location = blobUrl; } else { window.open(blobUrl, '_blank'); }
+        });
+        return;
+      }
+      if (nativeWindow && typeof nativeWindow.postMessage === 'function') {
+        nativeWindow.postMessage({
+          url: _currentFile.rawUrl, title: _currentFile.filename || 'Preview', width: 1100, height: 760,
         });
         return;
       }
@@ -2630,6 +2765,7 @@ var FilePreview = (function () {
                   var container = document.createElement('div');
                   container.className = 'mermaid';
                   container.__fpMermaidSource = code;
+                  container.setAttribute('data-fp-export-name', 'mermaid-diagram-' + (i + 1) + '.png');
                   block.parentElement.replaceWith(container);
                   // render() lays out in mermaid's own sandbox (deterministic),
                   // then we inject the finished SVG.

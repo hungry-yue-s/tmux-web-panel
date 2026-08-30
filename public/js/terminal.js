@@ -944,11 +944,14 @@ function renderTerminal(container) {
   // Pop-out button
   view.querySelector('.terminal-popout-btn').addEventListener('click', function () {
     if (state.currentPane) {
-      window.open(
-        '/terminal.html?pane=' + encodeURIComponent(state.currentPane),
-        '_blank',
-        'width=800,height=600'
-      );
+      var url = '/terminal.html?pane=' + encodeURIComponent(state.currentPane);
+      var nativeWindow = window.webkit && window.webkit.messageHandlers
+        && window.webkit.messageHandlers.tmuxPanelOpenWindow;
+      if (nativeWindow && typeof nativeWindow.postMessage === 'function') {
+        nativeWindow.postMessage({ url: url, title: 'Tmux Terminal', width: 800, height: 600 });
+      } else {
+        window.open(url, '_blank', 'width=800,height=600');
+      }
     }
   });
 

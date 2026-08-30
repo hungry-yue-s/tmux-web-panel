@@ -30,12 +30,18 @@ struct PanelWebView: NSViewRepresentable {
             context.coordinator,
             name: Coordinator.clipboardHandlerName
         )
+        configuration.userContentController.add(
+            context.coordinator,
+            name: Coordinator.openWindowHandlerName
+        )
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
         configuration.websiteDataStore = .default()
 
         let webView = PanelWKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.allowsMagnification = true
+        context.coordinator.attachPrimary(webView)
         model.attach(webView: webView)
         context.coordinator.load(model.endpoint.url, in: webView)
         return webView
@@ -53,17 +59,27 @@ struct PanelWebView: NSViewRepresentable {
         webView.configuration.userContentController.removeScriptMessageHandler(
             forName: Coordinator.clipboardHandlerName
         )
+        webView.configuration.userContentController.removeScriptMessageHandler(
+            forName: Coordinator.openWindowHandlerName
+        )
     }
 
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate,
+        WKScriptMessageHandler, WKDownloadDelegate, NSWindowDelegate {
         static let notificationHandlerName = "tmuxPanelNotification"
         static let actionHandlerName = "tmuxPanelAction"
         static let clipboardHandlerName = "tmuxPanelClipboard"
+        static let openWindowHandlerName = "tmuxPanelOpenWindow"
         static let maximumClipboardBytes = 1_048_576
+        static let maximumClipboardImageBytes = 16_777_216
+        static let maximumWindowHTMLBytes = 67_108_864
 
         private weak var model: AppModel?
+        private weak var primaryWebView: WKWebView?
         private let endpoint: PanelEndpoint
+        private var childWindows: [ObjectIdentifier: NSWindowController] = [:]
+        private var downloadDestinations: [ObjectIdentifier: (temporary: URL, final: URL)] = [:]
 
         init(model: AppModel, endpoint: PanelEndpoint) {
             self.model = model
@@ -74,12 +90,17 @@ struct PanelWebView: NSViewRepresentable {
             webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
         }
 
+        func attachPrimary(_ webView: WKWebView) {
+            primaryWebView = webView
+        }
+
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            guard webView === primaryWebView else { return }
             model?.markLoading()
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            model?.markReady()
+            if webView === primaryWebView { model?.markReady() }
             (webView as? PanelWKWebView)?.publishFullscreenState()
         }
 
@@ -88,6 +109,7 @@ struct PanelWebView: NSViewRepresentable {
             didFail navigation: WKNavigation!,
             withError error: Error
         ) {
+            guard webView === primaryWebView else { return }
             model?.markFailed(error.localizedDescription)
         }
 
@@ -96,6 +118,7 @@ struct PanelWebView: NSViewRepresentable {
             didFailProvisionalNavigation navigation: WKNavigation!,
             withError error: Error
         ) {
+            guard webView === primaryWebView else { return }
             model?.markFailed(error.localizedDescription)
         }
 
@@ -118,13 +141,13 @@ struct PanelWebView: NSViewRepresentable {
                 return
             }
             if message.name == Self.clipboardHandlerName,
-               let body = message.body as? [String: Any],
-               let text = body["text"] as? String,
-               !text.isEmpty,
-               text.utf8.count <= Self.maximumClipboardBytes {
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.setString(text, forType: .string)
+               let body = message.body as? [String: Any] {
+                copyToPasteboard(body)
+                return
+            }
+            if message.name == Self.openWindowHandlerName,
+               let body = message.body as? [String: Any] {
+                openNativeWindow(body)
             }
         }
 
@@ -138,8 +161,13 @@ struct PanelWebView: NSViewRepresentable {
                 return
             }
 
+            if navigationAction.shouldPerformDownload, isTrusted(webView) {
+                decisionHandler(.download)
+                return
+            }
+
             if navigationAction.targetFrame?.isMainFrame == true,
-               PanelEndpointResolver.isSameOrigin(url, as: endpoint.url) {
+               isInternal(url, in: webView) {
                 decisionHandler(.allow)
                 return
             }
@@ -159,11 +187,181 @@ struct PanelWebView: NSViewRepresentable {
             for navigationAction: WKNavigationAction,
             windowFeatures: WKWindowFeatures
         ) -> WKWebView? {
-            if navigationAction.targetFrame == nil,
-               let url = navigationAction.request.url {
+            guard navigationAction.targetFrame == nil,
+                  isTrusted(webView) else { return nil }
+            if let url = navigationAction.request.url,
+               !isInternal(url, in: webView) {
                 openExternalHTTPURL(url)
+                return nil
             }
-            return nil
+
+            let width = max(640, windowFeatures.width?.doubleValue ?? 1000)
+            let height = max(480, windowFeatures.height?.doubleValue ?? 720)
+            return makeChildWindow(
+                configuration: configuration,
+                title: "Tmux Panel",
+                width: width,
+                height: height
+            )
+        }
+
+        func webViewDidClose(_ webView: WKWebView) {
+            webView.window?.close()
+        }
+
+        func windowWillClose(_ notification: Notification) {
+            guard let window = notification.object as? NSWindow,
+                  let webView = window.contentView as? WKWebView else { return }
+            childWindows.removeValue(forKey: ObjectIdentifier(webView))
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            navigationAction: WKNavigationAction,
+            didBecome download: WKDownload
+        ) {
+            download.delegate = self
+        }
+
+        func download(
+            _ download: WKDownload,
+            decideDestinationUsing response: URLResponse,
+            suggestedFilename: String,
+            completionHandler: @escaping @MainActor @Sendable (URL?) -> Void
+        ) {
+            let panel = NSSavePanel()
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = suggestedFilename
+            panel.begin { [weak self] result in
+                guard let self, result == .OK, let finalURL = panel.url else {
+                    completionHandler(nil)
+                    return
+                }
+                let temporaryURL = finalURL.deletingLastPathComponent()
+                    .appendingPathComponent(".\(UUID().uuidString).download")
+                self.downloadDestinations[ObjectIdentifier(download)] = (temporaryURL, finalURL)
+                completionHandler(temporaryURL)
+            }
+        }
+
+        func downloadDidFinish(_ download: WKDownload) {
+            guard let destination = downloadDestinations.removeValue(
+                forKey: ObjectIdentifier(download)
+            ) else { return }
+            do {
+                if FileManager.default.fileExists(atPath: destination.final.path) {
+                    _ = try FileManager.default.replaceItemAt(
+                        destination.final,
+                        withItemAt: destination.temporary
+                    )
+                } else {
+                    try FileManager.default.moveItem(
+                        at: destination.temporary,
+                        to: destination.final
+                    )
+                }
+            } catch {
+                showDownloadError(error.localizedDescription)
+            }
+        }
+
+        func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+            if let destination = downloadDestinations.removeValue(
+                forKey: ObjectIdentifier(download)
+            ) {
+                try? FileManager.default.removeItem(at: destination.temporary)
+            }
+            showDownloadError(error.localizedDescription)
+        }
+
+        private func isTrusted(_ webView: WKWebView) -> Bool {
+            webView === primaryWebView || childWindows[ObjectIdentifier(webView)] != nil
+        }
+
+        private func copyToPasteboard(_ body: [String: Any]) {
+            let pasteboard = NSPasteboard.general
+            if let text = body["text"] as? String,
+               !text.isEmpty,
+               text.utf8.count <= Self.maximumClipboardBytes {
+                pasteboard.clearContents()
+                pasteboard.setString(text, forType: .string)
+                return
+            }
+            let maximumBase64Bytes = Self.maximumClipboardImageBytes * 4 / 3 + 4
+            guard let base64 = body["pngBase64"] as? String,
+                  base64.utf8.count <= maximumBase64Bytes,
+                  let data = Data(base64Encoded: base64),
+                  data.count <= Self.maximumClipboardImageBytes else { return }
+            pasteboard.clearContents()
+            pasteboard.setData(data, forType: .png)
+        }
+
+        private func isInternal(_ url: URL, in webView: WKWebView) -> Bool {
+            if PanelEndpointResolver.isSameOrigin(url, as: endpoint.url) { return true }
+            guard isTrusted(webView) else { return false }
+            return url.scheme?.lowercased() == "about" || url.scheme?.lowercased() == "blob"
+        }
+
+        private func openNativeWindow(_ body: [String: Any]) {
+            guard let primaryWebView else { return }
+            let width = max(640, min(2400, (body["width"] as? NSNumber)?.doubleValue ?? 1000))
+            let height = max(480, min(1600, (body["height"] as? NSNumber)?.doubleValue ?? 720))
+            let title = String((body["title"] as? String ?? "Tmux Panel").prefix(200))
+            let configuration = WKWebViewConfiguration()
+            configuration.userContentController = primaryWebView.configuration.userContentController
+            configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+            configuration.websiteDataStore = .default()
+
+            if let html = body["html"] as? String,
+               html.utf8.count <= Self.maximumWindowHTMLBytes {
+                makeChildWindow(configuration: configuration, title: title, width: width, height: height)
+                    .loadHTMLString(html, baseURL: endpoint.url)
+                return
+            }
+            guard let rawURL = body["url"] as? String,
+                  let url = URL(string: rawURL, relativeTo: endpoint.url)?.absoluteURL,
+                  PanelEndpointResolver.isSameOrigin(url, as: endpoint.url) else { return }
+            makeChildWindow(configuration: configuration, title: title, width: width, height: height)
+                .load(URLRequest(url: url))
+        }
+
+        private func makeChildWindow(
+            configuration: WKWebViewConfiguration,
+            title: String,
+            width: Double,
+            height: Double
+        ) -> WKWebView {
+            let child = PanelWKWebView(frame: .zero, configuration: configuration)
+            child.navigationDelegate = self
+            child.uiDelegate = self
+            child.allowsMagnification = true
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = title
+            window.contentView = child
+            window.delegate = self
+            window.center()
+            let controller = NSWindowController(window: window)
+            childWindows[ObjectIdentifier(child)] = controller
+            controller.showWindow(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return child
+        }
+
+        private func showDownloadError(_ message: String) {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "文件导出失败"
+            alert.informativeText = message
+            if let window = NSApp.keyWindow {
+                alert.beginSheetModal(for: window)
+            } else {
+                alert.runModal()
+            }
         }
 
         private func openExternalHTTPURL(_ url: URL) {

@@ -298,6 +298,124 @@ describe('file preview dock tabs', () => {
     expect(dom.window.document.querySelector('.fp-mermaid-dialog')).toBeNull();
   });
 
+  it('exports a Mermaid diagram as a high-resolution PNG', async () => {
+    const { dom, preview } = createPreview();
+    const embed = dom.window.document.createElement('div');
+    embed.className = 'mermaid';
+    embed.setAttribute('data-fp-export-name', 'mermaid-diagram-2.png');
+    embed.innerHTML = '<svg viewBox="0 0 1200 500"></svg>';
+    dom.window.document.body.appendChild(embed);
+
+    const drawImage = vi.fn();
+    const fillRect = vi.fn();
+    const getContext = vi.spyOn(dom.window.HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue({ drawImage, fillRect, fillStyle: '' });
+    const toBlob = vi.spyOn(dom.window.HTMLCanvasElement.prototype, 'toBlob')
+      .mockImplementation(function (callback) {
+        callback(new dom.window.Blob(['png'], { type: 'image/png' }));
+      });
+    dom.window.URL.createObjectURL = vi.fn().mockReturnValue('blob:mermaid-png');
+    dom.window.URL.revokeObjectURL = vi.fn();
+    dom.window.Image = class {
+      set src(value) { this.onload(); }
+    };
+    let downloaded = '';
+    const click = vi.spyOn(dom.window.HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(function () { downloaded = this.download; });
+
+    preview._test.prepareMermaid(embed);
+    preview._test.installMermaidInteractions(embed);
+    embed.querySelector('.fp-mermaid-open').click();
+    dom.window.document.querySelector('.fp-mermaid-export').click();
+    await flush();
+
+    expect(drawImage).toHaveBeenCalledWith(expect.anything(), 0, 0, 2400, 1000);
+    expect(fillRect).toHaveBeenCalledWith(0, 0, 2400, 1000);
+    expect(downloaded).toBe('mermaid-diagram-2.png');
+    expect(dom.window.URL.createObjectURL).toHaveBeenCalledTimes(1);
+    expect(dom.window.document.querySelector('.fp-mermaid-export').textContent).toBe('下载');
+
+    getContext.mockRestore();
+    toBlob.mockRestore();
+    click.mockRestore();
+  });
+
+  it('restores Mermaid actions when canvas rendering throws', async () => {
+    const { dom, preview } = createPreview();
+    const embed = dom.window.document.createElement('div');
+    embed.className = 'mermaid';
+    embed.innerHTML = '<svg viewBox="0 0 400 200"></svg>';
+    dom.window.document.body.appendChild(embed);
+
+    const getContext = vi.spyOn(dom.window.HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue({
+        drawImage() { throw new Error('canvas failed'); },
+        fillRect: vi.fn(),
+        fillStyle: '',
+      });
+    dom.window.Image = class {
+      set src(value) { this.onload(); }
+    };
+    dom.window.alert = vi.fn();
+
+    preview._test.prepareMermaid(embed);
+    preview._test.installMermaidInteractions(embed);
+    embed.querySelector('.fp-mermaid-open').click();
+    const exportButton = dom.window.document.querySelector('.fp-mermaid-export');
+    exportButton.click();
+    await flush();
+
+    expect(exportButton.disabled).toBe(false);
+    expect(exportButton.textContent).toBe('下载');
+    expect(dom.window.alert).toHaveBeenCalledWith('下载失败: canvas failed');
+
+    getContext.mockRestore();
+  });
+
+  it('copies a Mermaid PNG through the macOS clipboard bridge', async () => {
+    const { dom, preview } = createPreview();
+    const embed = dom.window.document.createElement('div');
+    embed.className = 'mermaid';
+    embed.innerHTML = '<svg viewBox="0 0 400 200"></svg>';
+    dom.window.document.body.appendChild(embed);
+
+    const postMessage = vi.fn();
+    dom.window.webkit = {
+      messageHandlers: { tmuxPanelClipboard: { postMessage } },
+    };
+    const getContext = vi.spyOn(dom.window.HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue({ drawImage: vi.fn(), fillRect: vi.fn(), fillStyle: '' });
+    const toBlob = vi.spyOn(dom.window.HTMLCanvasElement.prototype, 'toBlob')
+      .mockImplementation(function (callback) {
+        callback(new dom.window.Blob(['png'], { type: 'image/png' }));
+      });
+    dom.window.URL.createObjectURL = vi.fn().mockReturnValue('blob:mermaid-svg');
+    dom.window.URL.revokeObjectURL = vi.fn();
+    dom.window.Image = class {
+      set src(value) { this.onload(); }
+    };
+    dom.window.FileReader = class {
+      readAsDataURL() {
+        this.result = 'data:image/png;base64,cG5n';
+        this.onload();
+      }
+    };
+
+    preview._test.prepareMermaid(embed);
+    preview._test.installMermaidInteractions(embed);
+    embed.querySelector('.fp-mermaid-open').click();
+    const copyButton = dom.window.document.querySelector('.fp-mermaid-copy');
+    copyButton.click();
+    await flush();
+
+    expect(postMessage).toHaveBeenCalledWith({ pngBase64: 'cG5n' });
+    expect(copyButton.disabled).toBe(false);
+    expect(copyButton.textContent).toBe('已复制');
+
+    getContext.mockRestore();
+    toBlob.mockRestore();
+  });
+
   it('closes an open Mermaid viewer when its preview is disposed', () => {
     const { dom, preview } = createPreview();
     const root = dom.window.document.createElement('div');
@@ -319,6 +437,8 @@ describe('file preview dock tabs', () => {
     const { preview } = createPreview();
     const runtime = preview._test.mermaidStandaloneScript();
     expect(runtime).toContain('fp-mermaid-dialog');
+    expect(runtime).toContain('fp-mermaid-export');
+    expect(runtime).toContain('fp-mermaid-copy');
     expect(runtime).toContain('ResizeObserver');
     expect(runtime).toContain('Ctrl');
 
