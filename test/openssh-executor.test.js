@@ -15,6 +15,7 @@ import {
   normalizeHostForCompare,
   parseKeyscanOutput,
   parseSshConfigDump,
+  powerShellCommand,
   quoteArgv,
   shellQuote,
   targetIdentity,
@@ -96,6 +97,42 @@ describe('baseSshOptions', () => {
     expect(options).toContain('ControlPersist=60');
     expect(options).toContain('ControlPath=/cfg/ssh-control/%C');
     expect(options.join(' ')).not.toMatch(/StrictHostKeyChecking=(no|accept-new)/);
+  });
+});
+
+describe('powerShellCommand', () => {
+  it('encodes the script as base64 of UTF-16LE', () => {
+    const command = powerShellCommand('Write-Output "hi"');
+    const encoded = command.split(' ').pop();
+
+    expect(Buffer.from(encoded, 'base64').toString('utf16le')).toBe('Write-Output "hi"');
+  });
+
+  it('leaves cmd.exe nothing to interpret', () => {
+    // The whole point of -EncodedCommand: a Windows host answers with cmd.exe,
+    // whose quoting rules share nothing with POSIX.
+    const command = powerShellCommand('Write-Output "a b"; $x = 1 | Out-Null & echo %PATH%');
+
+    expect(command).toMatch(/^pwsh (?:-[A-Za-z]+ )+-EncodedCommand [A-Za-z0-9+/=]+$/);
+    expect(command).not.toMatch(/["'&|<>%^]/);
+  });
+
+  it('keeps an interactive session open but a probe non-interactive', () => {
+    expect(powerShellCommand('x', { interactive: true })).toContain('-NoExit');
+    expect(powerShellCommand('x', { interactive: true })).not.toContain('-NonInteractive');
+    expect(powerShellCommand('x')).toContain('-NonInteractive');
+    expect(powerShellCommand('x')).not.toContain('-NoExit');
+  });
+
+  it('carries a UTF-8 encoding setup for interactive shells', () => {
+    const executor = new OpenSSHExecutor({ server: REMOTE, configDir: '/cfg' });
+    const argv = executor.powerShellPtyArgs();
+    const script = Buffer.from(argv[argv.length - 1].split(' ').pop(), 'base64').toString('utf16le');
+
+    expect(argv[0]).toBe('-tt');
+    // Without this the console keeps the legacy code page and the browser
+    // terminal, which decodes UTF-8, shows garbage.
+    expect(script).toContain('UTF8Encoding');
   });
 });
 
@@ -362,6 +399,17 @@ describe('OpenSSHExecutor', () => {
     await executor.runScript('echo hi');
 
     expect(calls[0].argv[calls[0].argv.length - 1]).toBe('LC_ALL=C.UTF-8 LANG=C.UTF-8 /bin/sh -s');
+  });
+
+  it('sends a Windows probe without a POSIX locale prefix', async () => {
+    const { executor, calls } = make(REMOTE, { ssh: { stdout: 'kernel=Windows' } });
+
+    await executor.execPowerShell('Write-Output "hi"');
+
+    const remoteCommand = calls[0].argv[calls[0].argv.length - 1];
+    expect(remoteCommand.startsWith('pwsh ')).toBe(true);
+    // cmd.exe would treat LC_ALL=... as the name of a program to run.
+    expect(remoteCommand).not.toContain('LC_ALL');
   });
 
   it('closes stdin even when there is no input to send', async () => {

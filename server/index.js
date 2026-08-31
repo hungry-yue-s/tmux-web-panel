@@ -312,7 +312,13 @@ const workspaceService = new WorkspaceService({
   // fixed template; nothing from the client reaches this argv.
   spawnSshPty: ({ serverId, cols, rows }) => {
     const executor = executorPool.get(serverId);
-    return pty.spawn('ssh', executor.ptyArgs('exec ${SHELL:-/bin/sh} -l'), {
+    // A Windows host answers with cmd.exe and has no POSIX shell, so the login
+    // shell template would fail; it gets an interactive UTF-8 PowerShell.
+    const isWindows = healthService.getStatus(serverId).facts.platform === 'windows';
+    const argv = isWindows
+      ? executor.powerShellPtyArgs()
+      : executor.ptyArgs('exec ${SHELL:-/bin/sh} -l');
+    return pty.spawn('ssh', argv, {
       name: 'xterm-256color',
       cols: cols || 80,
       rows: rows || 24,

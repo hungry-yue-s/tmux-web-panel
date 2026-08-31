@@ -53,6 +53,29 @@ export function quoteArgv(argv) {
 }
 
 /**
+ * Wraps a PowerShell script for a Windows host.
+ *
+ * A Windows host answers ssh with cmd.exe, whose quoting rules share nothing
+ * with POSIX, so the script travels as base64 of UTF-16LE via -EncodedCommand.
+ * That wire form is alphanumeric, leaving cmd.exe nothing to interpret.
+ */
+export function powerShellCommand(script, { interactive = false } = {}) {
+  const encoded = Buffer.from(String(script), 'utf16le').toString('base64');
+  const flags = interactive ? '-NoLogo -NoExit' : '-NoLogo -NonInteractive';
+  return `pwsh ${flags} -EncodedCommand ${encoded}`;
+}
+
+/**
+ * Pins UTF-8 on an interactive Windows shell. Without it the console keeps the
+ * legacy code page — GBK on this machine — and the browser terminal, which
+ * decodes UTF-8, renders every non-ASCII byte as garbage.
+ */
+const POWERSHELL_PTY_SETUP = [
+  '[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new()',
+  '$OutputEncoding=[System.Text.UTF8Encoding]::new()',
+].join('; ');
+
+/**
  * Builds the ssh option list shared by every invocation.
  * StrictHostKeyChecking stays on: an unknown or changed key must fail closed.
  */
@@ -427,16 +450,21 @@ export class OpenSSHExecutor {
    */
   async exec(command, args = [], options = {}) {
     const remoteCommand = quoteArgv([command, ...args]);
-    return this.execRemoteCommand(remoteCommand, options);
+    return this.execRemoteCommand(`${REMOTE_LOCALE} ${remoteCommand}`, options);
   }
 
+  /**
+   * Sends a command to whatever shell the host answers ssh with. The caller owns
+   * the shell dialect — a POSIX locale prefix here would be a command name to
+   * cmd.exe — so nothing shell-specific is added.
+   */
   async execRemoteCommand(remoteCommand, options = {}) {
     await this._ensureControlDir();
     // Everything after the destination is the remote command, so nothing else
     // may be appended here.
     const argv = [
       ...this.sshArgs({ connectTimeout: options.connectTimeout }),
-      `${REMOTE_LOCALE} ${remoteCommand}`,
+      remoteCommand,
     ];
     return this._semaphore.run(
       () => new Promise((resolve, reject) => {
@@ -474,12 +502,25 @@ export class OpenSSHExecutor {
    * Nothing is written to the remote filesystem and no agent is installed.
    */
   async runScript(script, options = {}) {
-    return this.execRemoteCommand('/bin/sh -s', { ...options, input: script });
+    return this.execRemoteCommand(`${REMOTE_LOCALE} /bin/sh -s`, { ...options, input: script });
+  }
+
+  /**
+   * Runs a built-in read-only PowerShell script on a Windows host. Nothing is
+   * written to the remote filesystem; the script only travels on the command line.
+   */
+  async execPowerShell(script, options = {}) {
+    return this.execRemoteCommand(powerShellCommand(script), options);
   }
 
   /** argv for node-pty: an interactive remote command over a tty. */
   ptyArgs(remoteCommand) {
     return [...this.sshArgs({ tty: true }), remoteCommand];
+  }
+
+  /** argv for node-pty on a Windows host: an interactive UTF-8 PowerShell. */
+  powerShellPtyArgs() {
+    return this.ptyArgs(powerShellCommand(POWERSHELL_PTY_SETUP, { interactive: true }));
   }
 
   /**

@@ -42,6 +42,20 @@ export const FACTS_SCRIPT = [
   'fi',
 ].join('\n');
 
+/**
+ * The Windows equivalent, for hosts that answer ssh with cmd.exe and have no
+ * POSIX shell at all. Same key=value shape, and read-only for the same reason.
+ * UTF-8 is pinned so a non-ASCII hostname is not mangled by the legacy code page.
+ */
+export const WINDOWS_FACTS_SCRIPT = [
+  '[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new()',
+  'Write-Output "kernel=Windows"',
+  'Write-Output ("arch=" + $env:PROCESSOR_ARCHITECTURE)',
+  'Write-Output ("hostname=" + [System.Net.Dns]::GetHostName())',
+  // tmux has no native Windows build, so an SSH workspace is the only option.
+  'Write-Output "tmux_found=0"',
+].join('\n');
+
 export function parseFacts(stdout) {
   const facts = {};
   for (const line of String(stdout || '').split('\n')) {
@@ -58,6 +72,7 @@ export function normalizePlatform(kernel) {
   const value = String(kernel || '').toLowerCase();
   if (value.includes('darwin')) return 'darwin';
   if (value.includes('linux')) return 'linux';
+  if (value.includes('windows')) return 'windows';
   if (!value || value === 'unknown') return null;
   return value;
 }
@@ -292,11 +307,32 @@ export class HealthService {
     };
   }
 
+  /**
+   * Collects facts, falling back to PowerShell for hosts with no POSIX shell.
+   *
+   * ssh reserves exit code 255 for its own failures, so any other numeric code
+   * means a remote shell answered and merely rejected `/bin/sh`. Retrying only
+   * in that case keeps an unreachable host from paying a second timeout.
+   */
+  async _collectFacts(executor) {
+    try {
+      const { stdout } = await executor.runScript(FACTS_SCRIPT, { timeout: 12_000 });
+      return parseFacts(stdout);
+    } catch (err) {
+      const shellAnswered = typeof err?.exitCode === 'number' && err.exitCode !== 255;
+      if (!shellAnswered || typeof executor.execPowerShell !== 'function') throw err;
+      const { stdout } = await executor.execPowerShell(WINDOWS_FACTS_SCRIPT, { timeout: 12_000 });
+      const facts = parseFacts(stdout);
+      // A shell that answers but reports nothing useful is still a failed probe.
+      if (!facts.kernel) throw err;
+      return facts;
+    }
+  }
+
   async _probeRemote(server, startedAt) {
     const executor = this.pool.get(server.id);
-    const { stdout } = await executor.runScript(FACTS_SCRIPT, { timeout: 12_000 });
+    const facts = await this._collectFacts(executor);
     const latencyMs = this._now() - startedAt;
-    const facts = parseFacts(stdout);
 
     const platform = normalizePlatform(facts.kernel);
     const arch = normalizeArch(facts.arch);
@@ -304,7 +340,8 @@ export class HealthService {
     const version = tmuxFound ? parseTmuxVersion(facts.tmux_version) : null;
 
     let tmuxReason = null;
-    if (!tmuxFound) tmuxReason = 'command_not_found';
+    // tmux has no native Windows build, so say so instead of "not installed".
+    if (!tmuxFound) tmuxReason = platform === 'windows' ? 'unsupported_platform' : 'command_not_found';
     else if (!version) tmuxReason = 'version_unparseable';
 
     // tmux present but unusable is a degraded server, not a healthy one: fall

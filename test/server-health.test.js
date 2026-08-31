@@ -7,6 +7,7 @@ import {
   HealthService,
   ServerState,
   FACTS_SCRIPT,
+  WINDOWS_FACTS_SCRIPT,
   IDLE_POLL_MS,
   VIEWED_POLL_MS,
   normalizeArch,
@@ -29,6 +30,10 @@ function factsOutput({ kernel = 'Linux', arch = 'x86_64', hostname = 'api-01', t
   if (tmux === null) lines.push('tmux_found=0');
   else lines.push('tmux_found=1', `tmux_version=${tmux}`);
   return lines.join('\n') + '\n';
+}
+
+function windowsFactsOutput({ arch = 'AMD64', hostname = 'LAPTOP-01' } = {}) {
+  return ['kernel=Windows', `arch=${arch}`, `hostname=${hostname}`, 'tmux_found=0'].join('\r\n') + '\r\n';
 }
 
 function deferred() {
@@ -83,6 +88,7 @@ describe('HealthService', () => {
   let now;
   let statuses;
   let runScript;
+  let execPowerShell;
   let tmuxVersion;
   let pool;
 
@@ -93,9 +99,10 @@ describe('HealthService', () => {
     now = 1_000_000;
     statuses = [];
     runScript = vi.fn(async () => ({ stdout: factsOutput(), stderr: '' }));
+    execPowerShell = vi.fn(async () => ({ stdout: windowsFactsOutput(), stderr: '' }));
     tmuxVersion = vi.fn(async () => '3.5a');
     pool = {
-      get: vi.fn(() => ({ runScript })),
+      get: vi.fn(() => ({ runScript, execPowerShell })),
       tmuxFor: vi.fn(() => ({ version: tmuxVersion })),
     };
   });
@@ -201,6 +208,58 @@ describe('HealthService', () => {
       runScript.mockResolvedValue({ stdout: factsOutput({ kernel: 'SunOS' }), stderr: '' });
       const status = await makeService().probe('api-linux');
       expect(status.capabilities.metrics).toEqual({ available: false, level: 'none' });
+    });
+
+    describe('windows host', () => {
+      /** cmd.exe rejects `/bin/sh` with its own exit code; ssh uses 255 for its failures. */
+      function shellRejected() {
+        return Object.assign(new AppError(ErrorCode.SERVER_OFFLINE, 'not found'), { exitCode: 1 });
+      }
+
+      it('falls back to PowerShell when the remote shell has no /bin/sh', async () => {
+        runScript.mockRejectedValue(shellRejected());
+
+        const status = await makeService().probe('api-linux');
+
+        expect(execPowerShell).toHaveBeenCalledWith(
+          WINDOWS_FACTS_SCRIPT,
+          expect.objectContaining({ timeout: expect.any(Number) }),
+        );
+        expect(status.state).toBe(ServerState.ONLINE);
+        expect(status.facts).toEqual({ hostname: 'LAPTOP-01', platform: 'windows', arch: 'x64' });
+      });
+
+      it('offers an ssh workspace and calls tmux unsupported, not missing', async () => {
+        runScript.mockRejectedValue(shellRejected());
+
+        const status = await makeService().probe('api-linux');
+
+        expect(status.capabilities.tmux).toMatchObject({ available: false, reason: 'unsupported_platform' });
+        expect(status.capabilities.metrics).toEqual({ available: false, level: 'none' });
+        expect(status.workspace).toEqual({ provider: 'ssh', transport: 'ssh', persistence: 'process-memory' });
+      });
+
+      it('does not retry when ssh itself failed, so an offline host pays one timeout', async () => {
+        runScript.mockRejectedValue(
+          Object.assign(new AppError(ErrorCode.SSH_TIMEOUT, 'timed out'), { exitCode: 255 }),
+        );
+
+        const status = await makeService().probe('api-linux');
+
+        expect(execPowerShell).not.toHaveBeenCalled();
+        expect(status.state).toBe(ServerState.OFFLINE);
+      });
+
+      it('surfaces the original failure when the fallback reports nothing useful', async () => {
+        runScript.mockRejectedValue(shellRejected());
+        execPowerShell.mockResolvedValue({ stdout: '', stderr: '' });
+
+        const status = await makeService().probe('api-linux');
+
+        expect(status.state).toBe(ServerState.OFFLINE);
+        expect(status.error.code).toBe(ErrorCode.SERVER_OFFLINE);
+        expect(status.workspace.provider).toBe('unavailable');
+      });
     });
 
     const errorCases = [
