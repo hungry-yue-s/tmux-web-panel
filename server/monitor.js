@@ -18,6 +18,8 @@ export class StatusMonitor {
     this._lastPaneCmds = new Map(); // paneId → cmd (for pane-cmd broadcasts)
     this._notificationStore = options.notificationStore || null;
     this._borderConfigEnsured = false;
+    /** serverId -> latest health status, replayed to new subscribers. */
+    this._serverStatuses = new Map();
   }
 
   start(intervalMs) {
@@ -40,10 +42,28 @@ export class StatusMonitor {
     if (this.previousState) {
       this._send(ws, this.previousState);
     }
+    // Server status is edge-triggered, so replay the latest per server or a new
+    // tab would show nothing until something changes.
+    for (const status of this._serverStatuses.values()) {
+      this._send(ws, JSON.stringify({ type: 'server-status', serverId: status.serverId, data: status }));
+    }
   }
 
   unsubscribe(ws) {
     this.subscribers.delete(ws);
+  }
+
+  /** Health result for one server. */
+  broadcastServerStatus(status) {
+    if (!status || !status.serverId) return;
+    this._serverStatuses.set(status.serverId, status);
+    this._broadcast(JSON.stringify({ type: 'server-status', serverId: status.serverId, data: status }));
+  }
+
+  /** One server's workspace tree changed; clients refetch by revision. */
+  broadcastWorkspaceChanged(serverId, revision) {
+    if (!serverId) return;
+    this._broadcast(JSON.stringify({ type: 'workspace-changed', serverId, revision }));
   }
 
   async poll() {

@@ -147,16 +147,22 @@ var FilePreview = (function () {
     }
   }
 
+  function _dockLayout() {
+    return document.querySelector('.ms-app.mode-terminal .ms-main')
+      || document.getElementById('main-layout');
+  }
+
   function _canDockRight() {
     var bounds = _sideWidthBounds();
     return window.innerWidth >= 900
       && !!_dockContextKey
+      && !!_dockLayout()
       && !!document.querySelector('.terminal-view')
       && bounds.max >= bounds.min;
   }
 
   function _sideWidthBounds() {
-    var layout = document.getElementById('main-layout');
+    var layout = _dockLayout();
     var layoutWidth = layout ? layout.getBoundingClientRect().width : 0;
     if (!layoutWidth) layoutWidth = window.innerWidth || 0;
 
@@ -507,7 +513,7 @@ var FilePreview = (function () {
     if (!_dockOverlay || _dockTabs.length === 0 || !_canDockRight()) return;
     _dockHidden = false;
     _removeDockRestoreButton();
-    var layout = document.getElementById('main-layout');
+    var layout = _dockLayout();
     if (layout) layout.appendChild(_dockOverlay);
     var savedWidth = 0;
     var persisted = _loadDockState();
@@ -542,7 +548,7 @@ var FilePreview = (function () {
       _dockRestoreButton.className = 'fp-dock-restore';
       _dockRestoreButton.setAttribute('aria-label', '\u5C55\u5F00\u53F3\u4FA7\u6587\u4EF6\u9884\u89C8');
       _dockRestoreButton.addEventListener('click', function () { _showDock(); });
-      var layout = document.getElementById('main-layout');
+      var layout = _dockLayout();
       if (layout) layout.appendChild(_dockRestoreButton);
     }
     _dockRestoreButton.textContent = '\u25E7 ' + _dockTabs.length;

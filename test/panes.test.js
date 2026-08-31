@@ -8,9 +8,17 @@ const panesScript = readFileSync(
   'utf-8'
 );
 
+// panes.js addresses panes through the server-scoped adapter, so the real one is
+// loaded here rather than stubbed — that keeps the wiring under test.
+const targetScript = readFileSync(
+  resolve(import.meta.dirname, '../public/js/terminal-target.js'),
+  'utf-8'
+);
+
 function createEnv() {
   const dom = new JSDOM('<!DOCTYPE html><html><body><div id="c"></div></body></html>', {
     runScripts: 'dangerously',
+    url: 'http://localhost/',
   });
   // Provide escapeHtml global
   dom.window.eval(`
@@ -20,6 +28,7 @@ function createEnv() {
       return d.innerHTML;
     }
   `);
+  dom.window.eval(targetScript);
   dom.window.eval(panesScript);
   return dom;
 }

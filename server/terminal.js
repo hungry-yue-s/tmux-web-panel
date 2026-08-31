@@ -80,6 +80,38 @@ export function extractOsc52(buf) {
   return { clipboard, cleaned, pending: '' };
 }
 
+/**
+ * Builds the tmux attach command. Runs verbatim under `sh -c` locally and as the
+ * remote command of `ssh -tt`, so local and remote attach cannot drift apart.
+ */
+export function buildTmuxAttachCommand(paneId, { nozoom = false } = {}) {
+  if (nozoom) {
+    // No-zoom mode: show the full window with native tmux split layout.
+    // Force unzoom first (previous tab-mode connection may have left it zoomed).
+    return [
+      `tmux select-pane -t '${paneId}' 2>/dev/null`,
+      `[ "$(tmux display-message -p -t '${paneId}' '#{window_zoomed_flag}' 2>/dev/null)" = "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
+      // -d: detach other clients so the tmux window follows only this web
+      // client's size (window-size=latest otherwise lets a stale/narrow
+      // client shrink the shared window into a sliver — see CLAUDE.md).
+      `tmux attach-session -d -t '${paneId}'`,
+    ].join('; ');
+  }
+  // Zoom mode: zoom the target pane so only it is visible, then attach.
+  // Trap TERM/HUP to attempt unzoom before exit. _killPty sends SIGTERM first
+  // (giving the trap 500ms to run), then SIGKILL as a hard guarantee.
+  return [
+    `tmux select-pane -t '${paneId}' 2>/dev/null`,
+    `_WZ=$(tmux display-message -p -t '${paneId}' '#{window_zoomed_flag}' 2>/dev/null)`,
+    `trap '[ "$_WZ" != "1" ] && tmux resize-pane -Z -t "'${paneId}'" 2>/dev/null; exit 0' TERM HUP`,
+    `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
+    // -d: detach other clients so this web client alone dictates the
+    // window size (see nozoom branch / CLAUDE.md for the why).
+    `tmux attach-session -d -t '${paneId}'`,
+    `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
+  ].join('; ');
+}
+
 export class TerminalManager {
   /** @param {{ maxConnectionsPerPane?: number }} [options] */
   constructor(options = {}) {
@@ -123,6 +155,11 @@ export class TerminalManager {
     }
   }
 
+  /** Attached client count for one pane on one server. */
+  scopedCount(serverId, paneId) {
+    return this.paneConnectionCount.get(`${serverId || 'local'}:${paneId}`) ?? 0;
+  }
+
   /**
    * Create a new PTY ↔ WebSocket bridge for the given pane.
    *
@@ -130,52 +167,45 @@ export class TerminalManager {
    * @param {string} paneId - e.g. "%0", "%1"
    * @param {number} [cols=80]
    * @param {number} [rows=24]
+   * @param {boolean} [nozoom=false]
+   * @param {{spawn?: {file: string, args: string[]}}} [options] remote spawn override
    * @returns {string} connectionId
    */
-  create(ws, paneId, cols = 80, rows = 24, nozoom = false) {
+  create(ws, paneId, cols = 80, rows = 24, nozoom = false, options = {}) {
+    // Pane ids are only unique within one host, so the quota is per server.
+    const serverId = options.serverId || 'local';
+    const connectionKey = `${serverId}:${paneId}`;
+    const reject = (code, closeCode, message) => {
+      // Reported before the close so a caller can send a structured frame; the
+      // legacy caller passes nothing and just sees the close.
+      if (typeof options.onReject === 'function') {
+        try {
+          options.onReject({ code, message });
+        } catch {
+          // A reporting failure must not leave the socket open.
+        }
+      }
+      ws.close(closeCode, message);
+      return null;
+    };
+
     // Validate paneId format
     if (!PANE_ID_PATTERN.test(paneId)) {
-      ws.close(1008, `Invalid paneId format: ${paneId}`);
-      return null;
+      return reject('VALIDATION_ERROR', 1008, `Invalid paneId format: ${paneId}`);
     }
 
     // Check connection limit
-    const currentCount = this.paneConnectionCount.get(paneId) ?? 0;
+    const currentCount = this.paneConnectionCount.get(connectionKey) ?? 0;
     if (currentCount >= this.maxConnectionsPerPane) {
-      ws.close(1013, `Connection limit reached for pane ${paneId}`);
-      return null;
+      return reject('CONNECTION_LIMIT', 1013, `Connection limit reached for pane ${paneId}`);
     }
 
     const connectionId = randomUUID();
 
-    let shellCmd;
-    if (nozoom) {
-      // No-zoom mode: show the full window with native tmux split layout.
-      // Force unzoom first (previous tab-mode connection may have left it zoomed).
-      shellCmd = [
-        `tmux select-pane -t '${paneId}' 2>/dev/null`,
-        `[ "$(tmux display-message -p -t '${paneId}' '#{window_zoomed_flag}' 2>/dev/null)" = "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
-        // -d: detach other clients so the tmux window follows only this web
-        // client's size (window-size=latest otherwise lets a stale/narrow
-        // client shrink the shared window into a sliver — see CLAUDE.md).
-        `tmux attach-session -d -t '${paneId}'`,
-      ].join('; ');
-    } else {
-      // Zoom mode: zoom the target pane so only it is visible, then attach.
-      // Trap TERM/HUP to attempt unzoom before exit. _killPty sends SIGTERM first
-      // (giving the trap 500ms to run), then SIGKILL as a hard guarantee.
-      shellCmd = [
-        `tmux select-pane -t '${paneId}' 2>/dev/null`,
-        `_WZ=$(tmux display-message -p -t '${paneId}' '#{window_zoomed_flag}' 2>/dev/null)`,
-        `trap '[ "$_WZ" != "1" ] && tmux resize-pane -Z -t "'${paneId}'" 2>/dev/null; exit 0' TERM HUP`,
-        `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
-        // -d: detach other clients so this web client alone dictates the
-        // window size (see nozoom branch / CLAUDE.md for the why).
-        `tmux attach-session -d -t '${paneId}'`,
-        `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
-      ].join('; ');
-    }
-    const term = pty.spawn('sh', ['-c', shellCmd], {
+    const shellCmd = buildTmuxAttachCommand(paneId, { nozoom });
+    // A remote host runs the same template as the remote command of ssh -tt.
+    const spawnSpec = options.spawn || { file: 'sh', args: ['-c', shellCmd] };
+    const term = pty.spawn(spawnSpec.file, spawnSpec.args, {
       name: 'xterm-256color',
       cols: cols || 80,
       rows: rows || 24,
@@ -194,6 +224,7 @@ export class TerminalManager {
       ws,
       pty: term,
       paneId,
+      connectionKey,
       pingTimer: null,
       killTimer: null,
       dataDisposable: null,
@@ -201,7 +232,7 @@ export class TerminalManager {
       osc52Pending: '', // carry-over for OSC 52 split across PTY chunks
     };
     this.connections.set(connectionId, conn);
-    this.paneConnectionCount.set(paneId, currentCount + 1);
+    this.paneConnectionCount.set(connectionKey, currentCount + 1);
 
     // PTY → WebSocket
     // Also intercept OSC 52 clipboard sequences from tmux. Long selections can
@@ -222,7 +253,17 @@ export class TerminalManager {
     });  // disposable stored in conn.dataDisposable
 
     // PTY exit → close WebSocket + cleanup
-    term.onExit(({ exitCode }) => {
+    term.onExit(({ exitCode, signal }) => {
+      // The new server-scoped entry point emits a structured exit frame here so
+      // tmux and SSH panes speak the same protocol; the legacy caller passes
+      // nothing and keeps the original close-only behavior.
+      if (typeof options.onPtyExit === 'function') {
+        try {
+          options.onPtyExit({ code: exitCode ?? null, signal: signal ?? null, reason: 'tmux_client_exit' });
+        } catch {
+          // A reporting failure must not block cleanup.
+        }
+      }
       if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) {
         ws.close(1000, `PTY exited with code ${exitCode}`);
       }
@@ -383,12 +424,13 @@ export class TerminalManager {
       conn.dataDisposable = null;
     }
 
-    // Decrement pane connection count
-    const count = this.paneConnectionCount.get(conn.paneId) ?? 0;
+    // Decrement pane connection count under the same server-scoped key
+    const key = conn.connectionKey || `local:${conn.paneId}`;
+    const count = this.paneConnectionCount.get(key) ?? 0;
     if (count <= 1) {
-      this.paneConnectionCount.delete(conn.paneId);
+      this.paneConnectionCount.delete(key);
     } else {
-      this.paneConnectionCount.set(conn.paneId, count - 1);
+      this.paneConnectionCount.set(key, count - 1);
     }
 
     this.connections.delete(connectionId);

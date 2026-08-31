@@ -37,6 +37,18 @@ import { PinStore } from './pins.js';
 import { createPinsRouter } from './api/pins.js';
 import { ShareStore } from './share-store.js';
 import { createShareRouter } from './api/share.js';
+import pty from 'node-pty';
+import { ServerRegistry } from './servers/registry.js';
+import { HealthService } from './servers/health-service.js';
+import { ServerService } from './servers/server-service.js';
+import { ExecutorPool } from './transport/executor-pool.js';
+import { WorkspaceService } from './workspace/service.js';
+import { MetricsService } from './metrics/service.js';
+import { collectLocalMetrics } from './metrics/local-collector.js';
+import { TerminalGateway } from './terminal/gateway.js';
+import { createServersRouter } from './api/servers.js';
+import { createWorkspaceRouter } from './api/workspace.js';
+import { createServerMetricsRouter } from './api/metrics.js';
 
 // --- CLI Argument Parsing ---
 
@@ -260,13 +272,86 @@ const server = config.tls
     )
   : createServer(app);
 
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({
+  noServer: true,
+  // A terminal frame is keystrokes or a paste; nothing legitimate is larger.
+  maxPayload: 1024 * 1024,
+});
 
 const terminalManager = new TerminalManager({
   maxConnectionsPerPane: config.maxConnections,
 });
 
 const statusMonitor = new StatusMonitor({ notificationStore });
+
+// --- Multi-server stack ---
+//
+// Built after the legacy pieces so existing routes keep their behavior. The
+// registry synthesizes the built-in `local` server, so a fresh install already
+// has one working entry with no configuration.
+
+const configDir = join(homedir(), '.config', 'tmux-web-panel');
+
+const serverRegistry = new ServerRegistry({ configDir });
+await serverRegistry.load();
+
+const executorPool = new ExecutorPool({ registry: serverRegistry, configDir });
+
+const healthService = new HealthService({
+  registry: serverRegistry,
+  pool: executorPool,
+  onStatus: (status) => statusMonitor.broadcastServerStatus(status),
+});
+
+const workspaceService = new WorkspaceService({
+  registry: serverRegistry,
+  pool: executorPool,
+  health: healthService,
+  onChange: (serverId, revision) => statusMonitor.broadcastWorkspaceChanged(serverId, revision),
+  // One `ssh -tt` PTY per SSH pane, running a login shell. The command is a
+  // fixed template; nothing from the client reaches this argv.
+  spawnSshPty: ({ serverId, cols, rows }) => {
+    const executor = executorPool.get(serverId);
+    return pty.spawn('ssh', executor.ptyArgs('exec ${SHELL:-/bin/sh} -l'), {
+      name: 'xterm-256color',
+      cols: cols || 80,
+      rows: rows || 24,
+      env: {
+        ...process.env,
+        LANG: process.env.LANG || 'C.UTF-8',
+        LC_CTYPE: process.env.LC_CTYPE || process.env.LANG || 'C.UTF-8',
+      },
+    });
+  },
+});
+
+const metricsService = new MetricsService({
+  registry: serverRegistry,
+  pool: executorPool,
+  health: healthService,
+  localCollector: collectLocalMetrics,
+});
+
+const serverService = new ServerService({
+  registry: serverRegistry,
+  pool: executorPool,
+  health: healthService,
+  workspace: workspaceService,
+  metrics: metricsService,
+});
+
+const terminalGateway = new TerminalGateway({
+  registry: serverRegistry,
+  workspace: workspaceService,
+  pool: executorPool,
+  terminalManager,
+});
+
+// Order matters: the metrics and workspace routers own the deeper paths and must
+// be consulted before `/:serverId` can swallow them.
+app.use('/api/servers', createServerMetricsRouter({ metricsService }));
+app.use('/api/servers', createWorkspaceRouter({ workspaceService }));
+app.use('/api/servers', createServersRouter({ serverService }));
 
 server.on('upgrade', (req, socket, head) => {
   const proto = config.tls ? 'https' : 'http';
@@ -282,16 +367,16 @@ server.on('upgrade', (req, socket, head) => {
   }
 
   if (url.pathname.startsWith('/ws/terminal/')) {
-    // Extract paneId (URL decode %250 → %0)
-    const paneId = decodeURIComponent(url.pathname.split('/ws/terminal/')[1]);
-
-    // Parse optional cols/rows/nozoom from query string
-    const cols = Number(url.searchParams.get('cols')) || 80;
-    const rows = Number(url.searchParams.get('rows')) || 24;
-    const nozoom = url.searchParams.get('nozoom') === '1';
-
     wss.handleUpgrade(req, socket, head, (ws) => {
-      terminalManager.create(ws, paneId, cols, rows, nozoom);
+      // The gateway resolves serverId/paneId, verifies ownership and picks the
+      // provider. It never throws: a bad address closes just this socket.
+      terminalGateway.handle(ws, url.pathname, url.searchParams).catch(() => {
+        try {
+          ws.close(1011, 'terminal setup failed');
+        } catch {
+          // Socket already gone.
+        }
+      });
     });
     return;
   }
@@ -329,6 +414,13 @@ function shutdown(signal) {
   // Destroy all terminal PTY connections
   terminalManager.destroyAll();
 
+  // Stop server health polling and the SSH pane reaper
+  healthService.stop();
+  if (typeof paneReapTimer !== 'undefined' && paneReapTimer) clearInterval(paneReapTimer);
+  // SSH workspaces live only in this process, so end their PTYs rather than
+  // orphaning the ssh clients.
+  workspaceService.destroyAll('server_shutdown');
+
   // Close all WebSocket connections
   for (const client of wss.clients) {
     client.close(1001, 'Server shutting down');
@@ -361,6 +453,17 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 statusMonitor.start(config.pollInterval);
 terminalManager.startReaper();
 notificationStore.startReaper();
+// Server liveness and capability detection, with its own per-server backoff.
+healthService.start(5000);
+// Reclaim SSH panes whose detached TTL has elapsed.
+const paneReapTimer = setInterval(() => {
+  try {
+    workspaceService.reapIdlePanes();
+  } catch {
+    // A reap failure must not stop the interval.
+  }
+}, 60 * 1000);
+if (paneReapTimer.unref) paneReapTimer.unref();
 const tokenReapTimer = config.auth ? startTokenReaper(tokenMap) : null;
 // Sweep expired shares every 10 minutes.
 const shareSweepTimer = setInterval(() => { shareStore.sweep().catch(() => {}); }, 10 * 60 * 1000);

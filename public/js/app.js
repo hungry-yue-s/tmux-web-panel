@@ -372,6 +372,12 @@ function render() {
   var content = document.getElementById('content');
   if (!content) return;
 
+  // The multi-server shell owns the page and calls renderTerminal directly.
+  // Painting the hidden legacy views here duplicates element ids such as
+  // #perf-panel and #perf-view-root; getElementById then resolves to the hidden
+  // copy and the visible component stays stuck on its loading placeholder.
+  if (document.querySelector('.ms-app')) return;
+
   // Ensure terminal classes are removed for non-terminal tabs so topbar stays visible
   if (state.currentTab !== 'terminal') {
     document.body.classList.remove('terminal-active', 'terminal-fullscreen');
@@ -639,7 +645,7 @@ function renderMore(container) {
   html += '<div class="card more-about-card">';
   html += '<div class="more-about-name">Tmux Web Panel v1.0.0</div>';
   html += '<div class="more-about-desc">A mobile-friendly web UI for tmux session management.</div>';
-  html += '<a class="more-about-link" href="http://192.168.230.230/yuebiao/tmux-web-panel" target="_blank" rel="noopener">GitLab &rarr;</a>';
+  html += '<a class="more-about-link" href="https://github.com/hungry-yue-s/tmux-web-panel" target="_blank" rel="noopener">GitHub &rarr;</a>';
   html += '</div>';
   html += '</div>';
 
@@ -867,6 +873,10 @@ function _sidebarCollapseContent(collapsed) {
 function updateSidebar() {
   var sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
+
+  // The multi-server shell renders its own sidebar; this one is inside the
+  // hidden legacy tree and would only duplicate ids.
+  if (document.querySelector('.ms-app')) return;
 
   if (state.sessions.length === 0) {
     // Preserve sidebar header for desktop

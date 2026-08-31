@@ -14,37 +14,89 @@
   <script src="https://unpkg.com/@xterm/xterm@6.0.0/lib/xterm.js"></script>
   <script src="https://unpkg.com/@xterm/addon-fit@0.11.0/lib/addon-fit.js"></script>
   <script src="https://unpkg.com/@xterm/addon-webgl@0.19.0/lib/addon-webgl.js"></script>
-  <link rel="stylesheet" href="/css/style.css?v=17">
+  <link rel="stylesheet" href="/css/style.css?v=29">
 </head>
 <body>
-  <div id="app">
-    <header id="topbar">
-      <span id="status-dot" class="topbar-dot"></span>
-      <button id="session-switcher" class="topbar-session-btn">
-        <span id="session-name">—</span>
-        <span class="topbar-caret">&#9662;</span>
-      </button>
-      <span id="status-info"></span>
-      <button id="btn-add-window" class="btn topbar-action-btn" title="New Window"><svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
-      <button class="btn topbar-action-btn notification-bell" title="Notifications" onclick="NotificationPanel.render(event)"><svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg><span class="notification-bell-count" style="display:none">0</span></button>
-      <button id="btn-app-fullscreen" class="btn topbar-action-btn app-fullscreen-btn" type="button" data-app-fullscreen title="全屏显示面板" aria-label="全屏显示面板" aria-pressed="false"><svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="fullscreen-icon-enter"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></g><g class="fullscreen-icon-exit"><path d="M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"/></g></svg></button>
-      <button id="btn-more" class="btn topbar-action-btn" title="More"><svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09A1.7 1.7 0 0 0 8.94 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.54-1H3v-4h.09A1.7 1.7 0 0 0 4.6 8.94a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06A1.7 1.7 0 0 0 8.97 4.6 1.7 1.7 0 0 0 10 3.06V3h4v.09a1.7 1.7 0 0 0 1.06 1.51 1.7 1.7 0 0 0 1.88-.34L17 4.2 19.83 7l-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.94 10H21v4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg></button>
-    </header>
-    <div id="session-dropdown" class="session-dropdown" style="display:none;"></div>
-    <div id="main-layout">
-      <aside id="sidebar"></aside>
-      <main id="content"></main>
+  <div id="legacy-shell" hidden>
+    <div id="app">
+      <header id="topbar">
+        <span id="status-dot" class="topbar-dot"></span>
+        <button id="session-switcher" class="topbar-session-btn">
+          <span id="session-name">—</span>
+          <span class="topbar-caret">&#9662;</span>
+        </button>
+        <span id="status-info"></span>
+        <button id="btn-add-window" class="btn topbar-action-btn" title="New Window"><svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button class="btn topbar-action-btn notification-bell" title="Notifications" onclick="NotificationPanel.render(event)"><svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg><span class="notification-bell-count" style="display:none">0</span></button>
+        <button id="btn-app-fullscreen" class="btn topbar-action-btn app-fullscreen-btn" type="button" data-app-fullscreen title="全屏显示面板" aria-label="全屏显示面板" aria-pressed="false"><svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="fullscreen-icon-enter"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></g><g class="fullscreen-icon-exit"><path d="M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"/></g></svg></button>
+        <button id="btn-more" class="btn topbar-action-btn" title="More"><svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09A1.7 1.7 0 0 0 8.94 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.54-1H3v-4h.09A1.7 1.7 0 0 0 4.6 8.94a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06A1.7 1.7 0 0 0 8.97 4.6 1.7 1.7 0 0 0 10 3.06V3h4v.09a1.7 1.7 0 0 0 1.06 1.51 1.7 1.7 0 0 0 1.88-.34L17 4.2 19.83 7l-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.94 10H21v4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg></button>
+      </header>
+      <div id="session-dropdown" class="session-dropdown" style="display:none;"></div>
+      <div id="main-layout">
+        <aside id="sidebar"></aside>
+        <main id="content"></main>
+      </div>
     </div>
   </div>
+
+  <div class="ms-app sidebar-collapsed">
+    <aside class="ms-sidebar">
+      <div class="sidebar-resizer" role="separator" aria-label="调整侧边栏宽度" aria-orientation="vertical" aria-valuemin="220" aria-valuemax="360" aria-valuenow="248" tabindex="0"></div>
+      <div class="brand">
+        <div class="brand-mark">&gt;_</div>
+        <div class="brand-copy">
+          <div class="brand-name"><span class="brand-long">Tmux Panel</span><span class="brand-short">Tmux</span></div>
+          <div class="brand-meta">CONTROL CENTER</div>
+        </div>
+        <button class="icon-btn" data-action="notifications" aria-label="通知" title="通知"><svg class="ms-icon" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></button>
+        <button class="sidebar-toggle" data-action="sidebar-toggle" aria-label="展开侧边栏" aria-expanded="false" title="展开侧边栏">›</button>
+      </div>
+      <div class="server-context" id="ms-server-context"></div>
+      <div class="sidebar-footer">
+        <button class="nav-item" data-route="#/terminal/local" data-terminal-home aria-label="终端" title="终端"><svg class="ms-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg><span>终端</span></button>
+        <button class="nav-item" data-route="#/servers" aria-label="状态" title="状态"><svg class="ms-icon" viewBox="0 0 24 24"><path d="M20 13a8 8 0 1 0-16 0"/><path d="m12 13 4-4"/><path d="M5 19h14"/></svg><span>状态</span></button>
+        <button class="nav-item" data-route="#/settings" aria-label="设置" title="设置"><svg class="ms-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .4 1.9l-2.9 2.9a1.7 1.7 0 0 0-1.9-.4 1.7 1.7 0 0 0-1 1.6h-4a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.4l-2.9-2.9a1.7 1.7 0 0 0 .4-1.9A1.7 1.7 0 0 0 3 14v-4a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.4-1.9l2.9-2.9a1.7 1.7 0 0 0 1.9.4A1.7 1.7 0 0 0 10 3h4a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.4l2.9 2.9a1.7 1.7 0 0 0-.4 1.9 1.7 1.7 0 0 0 1.6 1v4a1.7 1.7 0 0 0-1.6 1Z"/></svg><span>设置</span></button>
+      </div>
+    </aside>
+
+    <main class="ms-main">
+      <header class="mobile-header">
+        <button class="icon-btn" data-action="mobile-server" aria-label="切换服务器"><svg class="ms-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01M17 7h1M17 17h1"/></svg></button>
+        <div class="mobile-title"><strong id="ms-mobile-title">终端工作台</strong><small id="ms-mobile-subtitle">本机</small></div>
+        <button class="icon-btn" data-action="notifications" aria-label="通知"><svg class="ms-icon" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></button>
+        <div class="mobile-tools" id="ms-mobile-tools"></div>
+      </header>
+      <header class="ms-topbar" id="ms-topbar">
+        <div class="crumbs"><div class="crumb" id="ms-crumb">本机</div><h1 class="page-title" id="ms-page-title">终端工作台</h1></div>
+        <div class="top-actions" id="ms-top-actions"></div>
+      </header>
+      <div class="ms-content" id="ms-view"></div>
+    </main>
+  </div>
+
+  <nav class="bottom-nav" aria-label="移动端主导航">
+    <button data-route="#/terminal/local" data-terminal-home><svg class="ms-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg><span>工作区</span></button>
+    <button data-route="#/servers"><svg class="ms-icon" viewBox="0 0 24 24"><path d="M20 13a8 8 0 1 0-16 0"/><path d="m12 13 4-4"/><path d="M5 19h14"/></svg><span>状态</span></button>
+    <button data-action="notifications"><svg class="ms-icon" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg><span>通知</span></button>
+    <button data-route="#/settings"><svg class="ms-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .4 1.9l-2.9 2.9a1.7 1.7 0 0 0-1.9-.4 1.7 1.7 0 0 0-1 1.6h-4a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.4l-2.9-2.9a1.7 1.7 0 0 0 .4-1.9A1.7 1.7 0 0 0 3 14v-4a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.4-1.9l2.9-2.9a1.7 1.7 0 0 0 1.9.4A1.7 1.7 0 0 0 10 3h4a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.4l2.9 2.9a1.7 1.7 0 0 0-.4 1.9 1.7 1.7 0 0 0 1.6 1v4a1.7 1.7 0 0 0-1.6 1Z"/></svg><span>设置</span></button>
+  </nav>
+
+  <div class="ms-popover" id="ms-server-popover" hidden></div>
+  <div class="ms-modal-backdrop" id="ms-modal" hidden></div>
+  <div class="ms-toast" id="ms-toast" role="status" aria-live="polite"></div>
   <script src="/js/auth.js?v=2"></script>
   <script src="/js/theme.js?v=4"></script>
-  <script src="/js/panes.js?v=2"></script>
+  <script src="/js/router.js?v=2"></script>
+  <script src="/js/store.js?v=3"></script>
+  <script src="/js/api.js?v=2"></script>
+  <script src="/js/terminal-target.js?v=3"></script>
+  <script src="/js/panes.js?v=3"></script>
   <script src="/js/sessions.js?v=2"></script>
   <script type="module" src="/js/sort-windows.js?v=1"></script>
   <script src="/js/windows.js?v=2"></script>
   <script src="/js/link-detect.js?v=1"></script>
-  <script src="/js/file-preview.js?v=33"></script>
-  <script src="/js/terminal.js?v=11"></script>
+  <script src="/js/file-preview.js?v=35"></script>
+  <script src="/js/terminal.js?v=16"></script>
   <script src="/js/notifications.js?v=3"></script>
   <script src="/js/system-stats.js?v=2"></script>
   <script src="/js/perf-utils.js?v=1"></script>
@@ -54,8 +106,22 @@
   <script src="/js/fab-migrate.js?v=1"></script>
   <script src="/js/fab-drawer.js?v=1"></script>
   <script src="/js/app-fullscreen.js?v=2"></script>
-  <script src="/js/app.js?v=11"></script>
+  <script src="/js/app.js?v=13"></script>
   <script src="/js/command-palette.js?v=2"></script>
   <script src="/js/layout-picker.js?v=2"></script>
+  <script src="/js/app-shell.js?v=6"></script>
+  <script src="/js/servers.js?v=4"></script>
+  <script src="/js/ms-app.js?v=8"></script>
+  <script>
+    (function () {
+      function boot() {
+        Promise.resolve(window.MsApp.start()).catch(function (err) {
+          console.error('[MsApp] startup failed:', err);
+        });
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+      else boot();
+    })();
+  </script>
 </body>
 </html>

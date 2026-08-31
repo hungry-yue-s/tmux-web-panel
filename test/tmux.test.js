@@ -8,6 +8,7 @@ import {
   parseWindows,
   parsePanes,
   parsePaneCommands,
+  parsePaneAddress,
   validatePaneLabel,
   setPaneLabel,
 } from '../server/tmux.js';
@@ -126,16 +127,37 @@ describe('validateWindowId', () => {
 });
 
 describe('parseSessions', () => {
-  it('parses tmux session list output', () => {
+  const SEP = '\x1f';
+  const ESCAPED_SEP = '\\037';
+
+  it('parses 5 separated fields including the stable session id', () => {
+    const output = [
+      ['$0', 'main', '3', '1', '2025-03-20T10:00:00'].join(SEP),
+      ['$4', 'dev', '1', '0', '2025-03-20T11:00:00'].join(SEP),
+    ].join('\n');
+
+    expect(parseSessions(output)).toEqual([
+      { id: '$0', name: 'main', windows: 3, attached: true, lastActivity: '2025-03-20T10:00:00' },
+      { id: '$4', name: 'dev', windows: 1, attached: false, lastActivity: '2025-03-20T11:00:00' },
+    ]);
+  });
+
+  it('parses the vis(3)-escaped separator emitted by tmux on macOS', () => {
+    const line = ['$7', 'main', '2', '1', '2025-03-20T10:00:00'].join(ESCAPED_SEP);
+    expect(parseSessions(line)).toEqual([
+      { id: '$7', name: 'main', windows: 2, attached: true, lastActivity: '2025-03-20T10:00:00' },
+    ]);
+  });
+
+  it('still parses legacy pipe-delimited output with a null id', () => {
     const output = [
       'main|3|1|2025-03-20T10:00:00',
       'dev|1|0|2025-03-20T11:00:00',
     ].join('\n');
 
-    const result = parseSessions(output);
-    expect(result).toEqual([
-      { name: 'main', windows: 3, attached: true, lastActivity: '2025-03-20T10:00:00' },
-      { name: 'dev', windows: 1, attached: false, lastActivity: '2025-03-20T11:00:00' },
+    expect(parseSessions(output)).toEqual([
+      { id: null, name: 'main', windows: 3, attached: true, lastActivity: '2025-03-20T10:00:00' },
+      { id: null, name: 'dev', windows: 1, attached: false, lastActivity: '2025-03-20T11:00:00' },
     ]);
   });
 
@@ -237,6 +259,16 @@ describe('parsePaneCommands', () => {
     expect(parsePaneCommands(line)).toEqual([
       { windowIndex: 2, paneId: '%9', command: 'codex', path: '/tmp/project', pid: 4321 },
     ]);
+  });
+});
+
+describe('parsePaneAddress', () => {
+  it('parses one stable pane address and falls back to the session name', () => {
+    expect(parsePaneAddress(['%12', '$1', 'DataAnt', '@5', '2'].join('\x1f'))).toEqual({
+      paneId: '%12', sessionId: '$1', sessionName: 'DataAnt', windowId: '@5', windowIndex: 2,
+    });
+    expect(parsePaneAddress(['%12', '', 'legacy', '@5', '2'].join('\\037')).sessionId).toBe('legacy');
+    expect(parsePaneAddress('')).toBeNull();
   });
 });
 

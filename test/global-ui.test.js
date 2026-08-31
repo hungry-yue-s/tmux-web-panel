@@ -29,8 +29,14 @@ describe('global UI system', () => {
     expect(styles).toMatch(/#sidebar\.collapsed[\s\S]*?width:\s*52px/);
     expect(styles).toContain('@media (max-width: 767px)');
     expect(styles).toMatch(/#topbar[\s\S]*?min-height:\s*52px/);
-    expect(indexSource).toContain('/css/style.css?v=17');
+    expect(indexSource).toContain('/css/style.css?v=29');
     expect(indexSource).toContain('/js/app-fullscreen.js?v=2');
-    expect(indexSource).toContain('/js/app.js?v=11');
+    expect(indexSource).toContain('/js/app.js?v=13');
+  });
+
+  it('keeps the new-shell terminal inside the exact remaining content height', () => {
+    expect(styles).toMatch(/\.ms-content\.terminal-mode \.terminal-view\s*\{[\s\S]*?height:\s*100%;[\s\S]*?max-height:\s*100%/);
+    expect(styles).toMatch(/\.ms-app\.mode-terminal \.ms-main\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto/);
+    expect(styles).toMatch(/\.ms-app\.mode-terminal \.ms-content\.terminal-mode\s*\{[\s\S]*?grid-column:\s*1;[\s\S]*?grid-row:\s*2;[\s\S]*?height:\s*auto/);
   });
 });

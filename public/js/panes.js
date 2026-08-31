@@ -221,7 +221,7 @@ function _promptSetPaneLabel(pane) {
     .then(function (label) {
       if (label === null) return; // cancelled
       var trimmed = label.trim();
-      return api.put('/api/panes/' + encodeURIComponent(pane.id) + '/label', { label: trimmed })
+      return TerminalTarget.setPaneLabel(pane.id, trimmed)
         .then(function () {
           // Keep the in-memory pane in sync so reopening the menu prefills the new value.
           pane.label = trimmed;
@@ -238,9 +238,8 @@ function _promptSetPaneLabel(pane) {
 // The active pane is the one the user is focused on in both tab and split modes.
 function _promptSetActivePaneLabel(session, windowIndex) {
   if (!session || windowIndex == null) return;
-  api.get('/api/sessions/' + encodeURIComponent(session) + '/windows/' + encodeURIComponent(windowIndex) + '/panes')
-    .then(function (res) {
-      var panes = (res && res.data) || [];
+  TerminalTarget.listPanes(session, windowIndex)
+    .then(function (panes) {
       var pane = null;
       for (var i = 0; i < panes.length; i++) {
         if (panes[i].active) { pane = panes[i]; break; }
@@ -257,11 +256,7 @@ function _confirmClosePane(paneId) {
   showConfirm({ title: '关闭窗格', message: '确定关闭此窗格？', confirmText: '关闭', danger: true })
     .then(function (confirmed) {
       if (!confirmed) return;
-      return api.delete(
-        '/api/sessions/' + encodeURIComponent(state.currentSession) +
-        '/windows/' + encodeURIComponent(state.currentWindow) +
-        '/panes/' + encodeURIComponent(paneId)
-      );
+      return TerminalTarget.closePane(state.currentSession, state.currentWindow, paneId);
     })
     .then(function (result) {
       if (!result) return;
@@ -269,7 +264,9 @@ function _confirmClosePane(paneId) {
         delete _fontOffsets[paneId];
         _saveFontOffsets();
       }
-      var content = document.getElementById('content');
+      var content = typeof _terminalContainer === 'function'
+        ? _terminalContainer()
+        : document.getElementById('content');
       if (content && typeof renderTerminal === 'function') {
         state.currentPane = null;
         renderTerminal(content);

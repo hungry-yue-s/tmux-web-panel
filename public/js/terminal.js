@@ -299,7 +299,21 @@ var terminalState = {
   resizeObserver: null,
   isFullscreen: false,
   ownsBrowserFullscreen: false,
+  // The element renderTerminal was given. In the multi-server shell this is not
+  // #content, which is hidden, so re-renders must go through _terminalContainer.
+  mountContainer: null,
 };
+
+/**
+ * The element the terminal is mounted in. Falls back to the legacy #content so
+ * the old shell keeps working.
+ */
+function _terminalContainer() {
+  if (terminalState.mountContainer && terminalState.mountContainer.isConnected) {
+    return terminalState.mountContainer;
+  }
+  return document.getElementById('content');
+}
 
 // === Cleanup ===
 
@@ -409,16 +423,13 @@ document.addEventListener('fullscreenchange', function () {
 // live active pane before any action whose relative paths depend on pane cwd.
 function _resolvePreviewPaneId() {
   var fallback = state.currentPane;
-  var useSplit = _terminalMode === 'split' && state.panes && state.panes.length > 1 && window.innerWidth >= 768;
+  var useSplit = _terminalMode === 'split' && state.panes && state.panes.length > 1
+    && window.innerWidth >= 768 && TerminalTarget.supportsTmuxActions();
   if (!useSplit || !state.currentSession || state.currentWindow == null) {
     return Promise.resolve(fallback);
   }
 
-  return api.get(
-    '/api/sessions/' + encodeURIComponent(state.currentSession) +
-    '/windows/' + encodeURIComponent(state.currentWindow) + '/panes'
-  ).then(function (result) {
-    var panes = (result && result.data) || [];
+  return TerminalTarget.listPanes(state.currentSession, state.currentWindow).then(function (panes) {
     for (var i = 0; i < panes.length; i++) {
       if (panes[i].active) return panes[i].id;
     }
@@ -440,7 +451,7 @@ function switchPane(newPaneId) {
   state.currentPane = newPaneId;
 
   // Always do full reconnect so the new pane gets zoomed
-  var content = document.getElementById('content');
+  var content = _terminalContainer();
   if (content) {
     cleanupTerminal();
     renderTerminal(content);
@@ -579,7 +590,20 @@ var _terminalMode = (function () {
   try { return localStorage.getItem('tmux_terminal_mode') || 'tab'; } catch (_e) { return 'tab'; }
 })();
 
+/** Readable starting point on phones, where fitting to a pane's geometry is wrong. */
+var MOBILE_BASE_FONT_SIZE = 13;
+var MOBILE_MIN_FONT_SIZE = 11;
+
 function _calcTerminalFontSize(paneCols, paneRows, containerEl) {
+  // On a phone the pane's cols/rows come from a desktop-sized tmux window, so
+  // fitting to them yields unreadable ~8px text. FitAddon resizes the terminal
+  // and reports the real dimensions to tmux regardless, so start from a
+  // readable base instead and only honor the user's own offset.
+  if (window.innerWidth < 768) {
+    var mobileSize = MOBILE_BASE_FONT_SIZE + _getFontOffset();
+    return Math.max(MOBILE_MIN_FONT_SIZE, Math.min(22, mobileSize));
+  }
+
   var container = containerEl || document.querySelector('.terminal-container');
   var w = container ? container.clientWidth : window.innerWidth;
   var h = container ? container.clientHeight : window.innerHeight;
@@ -631,13 +655,9 @@ function createTerminalInstance(paneCols, paneRows, nozoom) {
 // === Connect WebSocket ===
 
 function connectTerminalWs(paneId, term, nozoom) {
-  var wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  var wsUrl = wsProtocol + '//' + location.host + '/ws/terminal/' + encodeURIComponent(paneId);
-  var queryParts = [];
-  if (nozoom) queryParts.push('nozoom=1');
-  var tokenParam = Auth.wsTokenParam();
-  if (tokenParam) queryParts.push(tokenParam);
-  if (queryParts.length > 0) wsUrl += '?' + queryParts.join('&');
+  // The adapter decides between the server-scoped and the legacy address; a
+  // hardcoded /ws/terminal/:paneId would always attach to the local host.
+  var wsUrl = TerminalTarget.wsUrl(paneId, nozoom);
 
   var ws = new WebSocket(wsUrl);
 
@@ -653,6 +673,13 @@ function connectTerminalWs(paneId, term, nozoom) {
         term.write(msg.data);
       } else if (msg.type === 'clipboard') {
         _copyToClipboard(msg.data);
+      } else if (msg.type === 'ready') {
+        // `open` fires before the async pane check has installed the server's
+        // message listener, so an early resize can be lost. At `ready` the PTY
+        // is guaranteed to accept the final fitted dimensions.
+        ws._sentCols = null;
+        ws._sentRows = null;
+        _syncTerminalSize(ws, term, true);
       }
     } catch (_err) {
       // Ignore parse errors
@@ -757,6 +784,9 @@ function _terminalFontIcon(sign) {
 function renderTerminal(container) {
   // Cleanup previous terminal resources without removing body class
   _cleanupTerminalResources();
+  // Remember where we were mounted; cleanup leaves this alone so re-renders and
+  // the resize handler can find the real container instead of hidden #content.
+  if (container) terminalState.mountContainer = container;
 
   // Reset scroll position — if #content was scrolled (e.g. long window list),
   // the terminal header would be pushed above the visible area.
@@ -820,6 +850,9 @@ function renderTerminal(container) {
   var view = container.querySelector('.terminal-view');
   if (window.innerWidth < 768) _createFabPanel(view);
   var titleEl = view.querySelector('.terminal-header-title');
+  // Captured now rather than re-queried later: the shell may relocate this node
+  // into the single Window Bar before the asynchronous pane fetch resolves.
+  var headerPillsEl = view.querySelector('.terminal-header-pills');
   var paneSwitcher = view.querySelector('.terminal-pane-switcher');
   var termContainer = view.querySelector('.terminal-container');
   terminalState.termContainer = termContainer;
@@ -850,12 +883,7 @@ function renderTerminal(container) {
 
   // Split button
   function doSplit(direction) {
-    api
-      .post(
-        '/api/sessions/' + encodeURIComponent(state.currentSession) +
-        '/windows/' + encodeURIComponent(state.currentWindow) + '/panes',
-        { paneId: state.currentPane, direction: direction }
-      )
+    TerminalTarget.splitPane(state.currentSession, state.currentWindow, state.currentPane, direction)
       .then(function () {
         renderTerminal(container);
       })
@@ -865,6 +893,12 @@ function renderTerminal(container) {
   }
 
   view.querySelector('.terminal-refresh-btn').addEventListener('click', function () {
+    // In the multi-server shell, refetch this server's workspace and re-render
+    // in place. render()/updateSidebar() would jump back to the hidden old UI.
+    if (window.MsApp && typeof window.MsApp.refreshCurrentTerminal === 'function') {
+      window.MsApp.refreshCurrentTerminal();
+      return;
+    }
     _sidebarSessionKey = '';
     render();
     updateSidebar();
@@ -943,6 +977,12 @@ function renderTerminal(container) {
 
   // Pop-out button
   view.querySelector('.terminal-popout-btn').addEventListener('click', function () {
+    // terminal.html addresses a pane by id alone, which only means anything on
+    // the local server.
+    if (TerminalTarget.isRemote()) {
+      _showToast('远端服务器暂不支持在新窗口打开');
+      return;
+    }
     if (state.currentPane) {
       var url = '/terminal.html?pane=' + encodeURIComponent(state.currentPane);
       var nativeWindow = window.webkit && window.webkit.messageHandlers
@@ -970,14 +1010,16 @@ function renderTerminal(container) {
     }
   });
 
+  // The shell owns the single Window Bar. This runs on every render — including
+  // the re-renders triggered by pane switch, split, close and viewport changes —
+  // so a second header can never reappear.
+  if (window.MsApp && typeof window.MsApp.embedTerminalChrome === 'function') {
+    window.MsApp.embedTerminalChrome(view);
+  }
+
   // Fetch panes and set up terminal
-  api
-    .get(
-      '/api/sessions/' + encodeURIComponent(state.currentSession) +
-      '/windows/' + encodeURIComponent(state.currentWindow) + '/panes'
-    )
-    .then(function (result) {
-      var panes = result.data || [];
+  TerminalTarget.listPanes(state.currentSession, state.currentWindow)
+    .then(function (panes) {
       state.panes = panes;
 
       // Clean up font offsets for panes that no longer exist
@@ -988,12 +1030,12 @@ function renderTerminal(container) {
         state.currentPane = panes.length > 0 ? panes[0].id : null;
       }
 
-      var useSplit = _terminalMode === 'split' && panes.length > 1 && window.innerWidth >= 768;
+      var useSplit = _terminalMode === 'split' && panes.length > 1 && window.innerWidth >= 768
+        && TerminalTarget.supportsTmuxActions();
 
       // Render pane pills only in tab mode — split mode shows all panes natively
       if (panes.length > 1 && !useSplit) {
-        var headerPills = view.querySelector('.terminal-header-pills');
-        renderPanePills(headerPills, panes, state.currentPane, switchPane);
+        renderPanePills(headerPillsEl, panes, state.currentPane, switchPane);
       }
 
       // Hide mode toggle when only 1 pane
@@ -1032,7 +1074,9 @@ function _mountTerminal(termContainer, nozoom) {
   // URL + file-path links are both handled by FilePreview's unified provider
   // (public/js/link-detect.js), which merges soft-wrapped rows — something the
   // old WebLinksAddon (per display row) could not do. No web-links addon.
-  if (typeof FilePreview !== 'undefined') {
+  if (typeof FilePreview !== 'undefined' && !TerminalTarget.isRemote()) {
+    // File preview reads the panel host's filesystem, so a remote pane's paths
+    // must not be resolved through it.
     FilePreview.registerLinkProvider(term, state.currentPane, _resolvePreviewPaneId);
   }
 
@@ -1124,12 +1168,16 @@ function _mountTerminal(termContainer, nozoom) {
   // Small delay to ensure DOM is ready for fitting
   setTimeout(function () {
     fitAddon.fit();
+    // The socket can open before this final fit. Send the fitted dimensions
+    // again so tmux never keeps drawing at the default/narrow PTY width.
+    _syncTerminalSize(ws, term, true);
     // On mobile, don't auto-focus to avoid browser scroll-to-focus pushing header away
     if (window.innerWidth >= 768) {
       term.focus();
     }
-    // Reset #content scroll after mount — focus or xterm layout may have caused scroll
-    var contentEl = document.getElementById('content');
+    // Reset the mount container's scroll after mount — focus or xterm layout
+    // may have caused scroll.
+    var contentEl = _terminalContainer();
     if (contentEl) contentEl.scrollTop = 0;
   }, 50);
 
@@ -1764,7 +1812,7 @@ function _mountTerminal(termContainer, nozoom) {
       _lastIsDesktop = isDesktop;
       // Viewport crossed 768px threshold — re-render to switch tab/split layout
       if (state.currentTab === 'terminal' && terminalState.term === term) {
-        var content = document.getElementById('content');
+        var content = _terminalContainer();
         if (content) renderTerminal(content);
       }
     }

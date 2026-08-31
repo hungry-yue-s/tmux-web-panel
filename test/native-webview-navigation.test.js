@@ -35,8 +35,8 @@ describe('macOS native WebView navigation', () => {
     expect(previewSource).toContain('handlers.tmuxPanelOpenWindow');
     expect(previewSource).toContain('html: out.html');
     expect(terminalSource).toContain('messageHandlers.tmuxPanelOpenWindow');
-    expect(indexSource).toContain('/js/file-preview.js?v=33');
-    expect(indexSource).toContain('/js/terminal.js?v=11');
+    expect(indexSource).toContain('/js/file-preview.js?v=35');
+    expect(indexSource).toContain('/js/terminal.js?v=16');
   });
 
   it('copies Mermaid PNG data through the native pasteboard bridge', () => {

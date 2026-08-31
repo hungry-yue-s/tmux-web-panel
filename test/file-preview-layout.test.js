@@ -4,6 +4,7 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync('public/js/file-preview.js', 'utf8');
 const appSource = fs.readFileSync('public/js/app.js', 'utf8');
+const msAppSource = fs.readFileSync('public/js/ms-app.js', 'utf8');
 const styles = fs.readFileSync('public/css/style.css', 'utf8');
 
 function createPreview({ storage = {}, missingPaths = [], context = ['test-session', 0] } = {}) {
@@ -513,6 +514,33 @@ describe('file preview dock tabs', () => {
     expect(dock.querySelector('.fp-dock-tab').textContent).toBe('one.md');
   });
 
+  it('docks into the visible multi-server terminal shell', async () => {
+    const dom = new JSDOM(
+      '<!doctype html><body><div id="legacy-shell" hidden><div id="main-layout"></div></div>'
+      + '<div class="ms-app mode-terminal"><main class="ms-main"><header class="ms-topbar"></header>'
+      + '<div class="ms-content terminal-mode"><section class="terminal-stage">'
+      + '<div class="terminal-view"></div></section></div></main></div></body>',
+      { url: 'https://panel.test/' },
+    );
+    Object.defineProperty(dom.window, 'innerWidth', { value: 1440, configurable: true });
+    const fetch = vi.fn((url) => Promise.resolve({
+      status: 200,
+      json: () => Promise.resolve(String(url).includes('/api/files/info')
+        ? { success: true, data: { isDirectory: true, absPath: '/tmp/one.md', mtimeMs: 1, size: 0 } }
+        : { success: true, data: { absPath: '/tmp/one.md', parent: '/', entries: [], truncated: false } }),
+    }));
+    new Function('window', 'document', 'fetch', source)(dom.window, dom.window.document, fetch);
+    dom.window.FilePreview.switchDockContext('test-session', 0);
+    dom.window.FilePreview.openFile('/tmp/one.md', '%1');
+    await flush();
+    dockCurrent(dom);
+
+    expect(dom.window.document.querySelector('.fp-dock').parentElement)
+      .toBe(dom.window.document.querySelector('.ms-main'));
+    expect(dom.window.document.querySelector('#main-layout .fp-dock')).toBeNull();
+    expect(styles).toMatch(/\.ms-app\.mode-terminal \.fp-dock\s*\{[\s\S]*?grid-column:\s*2;[\s\S]*?grid-row:\s*1 \/ 3/);
+  });
+
   it('uses consistent SVG controls with accessible toggle states', async () => {
     const { dom, preview } = createPreview();
     preview.openFile('/tmp/one.md', '%1'); await flush();
@@ -743,6 +771,7 @@ describe('file preview dock tabs', () => {
   it('switches the dock context with the active tmux window', () => {
     expect(appSource).toContain('FilePreview.switchDockContext(state.currentSession, state.currentWindow)');
     expect(appSource).toContain('FilePreview.switchDockContext(null, null)');
+    expect(msAppSource).toContain('FilePreview.switchDockContext(session.name, win.index)');
   });
 
   it('ignores and removes a corrupted persisted dock snapshot', async () => {
