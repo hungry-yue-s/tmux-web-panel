@@ -47,6 +47,8 @@ describe('ssh argv shape', () => {
 });
 
 describe('remote command as a real ssh binary would receive it', () => {
+  /** execRemoteCommand pins a UTF-8 locale; see REMOTE_LOCALE. */
+  const LOCALE = 'LC_ALL=C.UTF-8 LANG=C.UTF-8';
   let dir;
   let fakeSsh;
   let capture;
@@ -118,8 +120,19 @@ echo ok
 
     expect(seen.dest).toBe('deploy@10.0.0.21');
     // The bug this guards: the remote shell used to receive "-- tmux ...".
-    expect(seen.cmd).toBe("tmux list-sessions -F '#{session_id}'");
+    expect(seen.cmd).toBe(`${LOCALE} tmux list-sessions -F '#{session_id}'`);
     expect(seen.cmd.startsWith('--')).toBe(false);
+  });
+
+  it('pins a UTF-8 locale so tmux does not mangle non-ASCII names', async () => {
+    const executor = makeExecutor();
+
+    await executor.exec('tmux', ['list-sessions', '-F', '#{session_name}']);
+    const seen = await captured();
+
+    // Under the default C locale tmux rewrites every non-ASCII byte of its -F
+    // output to "_", which silently destroyed remote session names.
+    expect(seen.cmd.startsWith(`${LOCALE} `)).toBe(true);
   });
 
   it('sends the probe shell command without a stray terminator', async () => {
@@ -128,7 +141,7 @@ echo ok
     await executor.runScript('echo hello');
     const seen = await captured();
 
-    expect(seen.cmd).toBe('/bin/sh -s');
+    expect(seen.cmd).toBe(`${LOCALE} /bin/sh -s`);
     // The fake captures stdin verbatim; a real remote shell would run it.
     expect(seen.stdin.trim()).toBe('echo hello');
   });
@@ -144,7 +157,7 @@ echo ok
     const seen = await captured();
 
     expect(seen.dest).toBe('build-mac');
-    expect(seen.cmd).toBe('tmux -V');
+    expect(seen.cmd).toBe(`${LOCALE} tmux -V`);
   });
 
   it('keeps an injected pane id inert on the remote side', async () => {
@@ -153,7 +166,7 @@ echo ok
     await executor.exec('tmux', ['kill-pane', '-t', '%1; rm -rf /']);
     const seen = await captured();
 
-    expect(seen.cmd).toBe("tmux kill-pane -t '%1; rm -rf /'");
+    expect(seen.cmd).toBe(`${LOCALE} tmux kill-pane -t '%1; rm -rf /'`);
   });
 
   it('pty argv also carries no terminator after the destination', () => {

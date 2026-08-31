@@ -20,7 +20,7 @@ function fakeExecutor(responses = {}) {
   return { executor, calls };
 }
 
-const SEP = '\x1f';
+const SEP = '=:=';
 
 describe('createTmuxApi', () => {
   it('rejects an executor without exec()', () => {

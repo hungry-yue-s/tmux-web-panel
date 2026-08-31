@@ -8,6 +8,7 @@ import {
   baseSshOptions,
   buildSshArgs,
   classifySshError,
+  controlSocketName,
   fingerprintFromBase64Key,
   keyBlobAlgorithm,
   knownHostsEntryName,
@@ -95,6 +96,43 @@ describe('baseSshOptions', () => {
     expect(options).toContain('ControlPersist=60');
     expect(options).toContain('ControlPath=/cfg/ssh-control/%C');
     expect(options.join(' ')).not.toMatch(/StrictHostKeyChecking=(no|accept-new)/);
+  });
+});
+
+describe('control socket path', () => {
+  /** macOS sun_path limit, minus the temp suffix ssh adds while creating the master. */
+  const BINDABLE_MAX = 104 - 17;
+
+  it('stays bindable under a realistic config dir', () => {
+    const configDir = path.join(os.homedir(), '.config', 'tmux-web-panel');
+    const executor = new OpenSSHExecutor({ server: REMOTE, configDir });
+
+    expect(executor.controlPath).not.toBeNull();
+    expect(executor.controlPath.length).toBeLessThanOrEqual(BINDABLE_MAX);
+    // %C alone expands to 40 hex chars and was what overran the limit.
+    expect(executor.controlPath).not.toContain('%C');
+  });
+
+  it('changes when the connection target changes', () => {
+    const base = controlSocketName(REMOTE);
+    const otherHost = controlSocketName({ ...REMOTE, address: { ...REMOTE.address, host: '10.0.0.22' } });
+    const otherPort = controlSocketName({ ...REMOTE, address: { ...REMOTE.address, port: 2222 } });
+    const otherUser = controlSocketName({ ...REMOTE, address: { ...REMOTE.address, user: 'root' } });
+    const otherJump = controlSocketName({ ...REMOTE, ssh: { ...REMOTE.ssh, proxyJump: 'bastion' } });
+
+    expect(new Set([base, otherHost, otherPort, otherUser, otherJump]).size).toBe(5);
+  });
+
+  it('is unchanged by a rename, so multiplexing survives it', () => {
+    expect(controlSocketName({ ...REMOTE, name: 'Renamed', id: 'renamed' })).toBe(controlSocketName(REMOTE));
+  });
+
+  it('drops multiplexing rather than failing every connection when unbindable', () => {
+    const configDir = '/' + 'd'.repeat(120);
+    const executor = new OpenSSHExecutor({ server: REMOTE, configDir });
+
+    expect(executor.controlPath).toBeNull();
+    expect(executor.sshArgs().join(' ')).not.toContain('ControlMaster');
   });
 });
 
@@ -294,7 +332,7 @@ describe('OpenSSHExecutor', () => {
     // The terminator belongs before the destination; the command is last.
     const argv = calls[0].argv;
     expect(argv[argv.indexOf('--') + 1]).toBe('deploy@10.0.0.21');
-    expect(argv[argv.length - 1]).toBe("tmux list-sessions -F '#{session_id}'");
+    expect(argv[argv.length - 1]).toBe("LC_ALL=C.UTF-8 LANG=C.UTF-8 tmux list-sessions -F '#{session_id}'");
   });
 
   it('creates the control directory with 0700 and tightens an existing one', async () => {
@@ -323,7 +361,7 @@ describe('OpenSSHExecutor', () => {
 
     await executor.runScript('echo hi');
 
-    expect(calls[0].argv[calls[0].argv.length - 1]).toBe('/bin/sh -s');
+    expect(calls[0].argv[calls[0].argv.length - 1]).toBe('LC_ALL=C.UTF-8 LANG=C.UTF-8 /bin/sh -s');
   });
 
   it('closes stdin even when there is no input to send', async () => {

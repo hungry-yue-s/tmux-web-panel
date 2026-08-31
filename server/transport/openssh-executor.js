@@ -20,6 +20,12 @@ const KEYSCAN_BIN = 'ssh-keyscan';
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BUFFER = 1024 * 1024;
 const STDERR_KEEP = 2048;
+/**
+ * Remote commands inherit no locale from ssh, and under the default C locale
+ * tmux replaces every non-ASCII byte of its -F output with "_", which destroys
+ * session and window names. Fixed constants, so nothing here is injectable.
+ */
+const REMOTE_LOCALE = 'LC_ALL=C.UTF-8 LANG=C.UTF-8';
 /** A confirmed fingerprint only counts for the scan the user was shown. */
 const SCAN_TTL_MS = 10 * 60 * 1000;
 
@@ -63,6 +69,36 @@ export function baseSshOptions({ knownHostsPath, controlPath, connectTimeout = 5
     options.push('ControlMaster=auto', `ControlPersist=${controlPersist}`, `ControlPath=${controlPath}`);
   }
   return options;
+}
+
+/** sizeof(sun_path) on macOS; Linux allows 108. */
+const SUN_PATH_MAX = 104;
+/** ssh appends ".XXXXXXXXXXXXXXXX" to ControlPath while creating the master. */
+const CONTROL_TEMP_SUFFIX = 17;
+
+/**
+ * Names the multiplexing socket for a connection.
+ *
+ * OpenSSH's own %C expands to 40 hex chars, which together with the temp suffix
+ * ssh adds while creating the master overruns sun_path under a normal config dir
+ * — every connection then dies with "too long for Unix domain socket". Hashing
+ * the identity to 12 chars keeps it bindable. Like %C, the name must change
+ * whenever the target changes, or a socket left over from a previous edit would
+ * silently reroute to the old host.
+ */
+export function controlSocketName(server) {
+  const address = server.address || {};
+  const ssh = server.ssh || {};
+  const identity = JSON.stringify([
+    address.host || null,
+    Number(address.port) || 22,
+    address.user || null,
+    ssh.configHost || null,
+    ssh.identityFile || null,
+    ssh.proxyJump || null,
+    ssh.knownHostAlias || null,
+  ]);
+  return createHash('sha256').update(identity).digest('hex').slice(0, 12);
 }
 
 /**
@@ -277,7 +313,10 @@ export class OpenSSHExecutor {
     this.configDir = configDir;
     this.knownHostsPath = join(configDir, 'known_hosts');
     this.controlDir = join(configDir, 'ssh-control');
-    this.controlPath = join(this.controlDir, '%C');
+    const controlPath = join(this.controlDir, controlSocketName(server));
+    // Multiplexing is an optimization, so a path that cannot be bound degrades to
+    // plain connections rather than failing every one of them.
+    this.controlPath = controlPath.length + CONTROL_TEMP_SUFFIX <= SUN_PATH_MAX ? controlPath : null;
     this._semaphore = new Semaphore(maxConcurrent);
     this._execFile = execFileImpl;
     this._now = now;
@@ -395,7 +434,10 @@ export class OpenSSHExecutor {
     await this._ensureControlDir();
     // Everything after the destination is the remote command, so nothing else
     // may be appended here.
-    const argv = [...this.sshArgs({ connectTimeout: options.connectTimeout }), remoteCommand];
+    const argv = [
+      ...this.sshArgs({ connectTimeout: options.connectTimeout }),
+      `${REMOTE_LOCALE} ${remoteCommand}`,
+    ];
     return this._semaphore.run(
       () => new Promise((resolve, reject) => {
         const child = this._execFile(

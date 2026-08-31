@@ -70,10 +70,11 @@ describe('validatePaneLabel', () => {
     expect(validatePaneLabel('构建服务')).toBe(true);
     expect(validatePaneLabel('')).toBe(true);
   });
-  it('rejects control chars, unit-separator, newlines', () => {
+  it('rejects control chars, newlines and the field separator', () => {
     expect(validatePaneLabel('a\x1fb')).toBe(false);
     expect(validatePaneLabel('a\nb')).toBe(false);
     expect(validatePaneLabel('a\x00b')).toBe(false);
+    expect(validatePaneLabel('a=:=b')).toBe(false);
   });
   it('rejects over-long and non-string', () => {
     expect(validatePaneLabel('x'.repeat(33))).toBe(false);
@@ -127,8 +128,7 @@ describe('validateWindowId', () => {
 });
 
 describe('parseSessions', () => {
-  const SEP = '\x1f';
-  const ESCAPED_SEP = '\\037';
+  const SEP = '=:=';
 
   it('parses 5 separated fields including the stable session id', () => {
     const output = [
@@ -142,10 +142,10 @@ describe('parseSessions', () => {
     ]);
   });
 
-  it('parses the vis(3)-escaped separator emitted by tmux on macOS', () => {
-    const line = ['$7', 'main', '2', '1', '2025-03-20T10:00:00'].join(ESCAPED_SEP);
+  it('keeps the id and counters exact when the name contains the separator', () => {
+    const line = ['$7', `a${SEP}b`, '2', '1', '2025-03-20T10:00:00'].join(SEP);
     expect(parseSessions(line)).toEqual([
-      { id: '$7', name: 'main', windows: 2, attached: true, lastActivity: '2025-03-20T10:00:00' },
+      { id: '$7', name: `a${SEP}b`, windows: 2, attached: true, lastActivity: '2025-03-20T10:00:00' },
     ]);
   });
 
@@ -167,8 +167,7 @@ describe('parseSessions', () => {
 });
 
 describe('parseWindows', () => {
-  const SEP = '\x1f';
-  const ESCAPED_SEP = '\\037';
+  const SEP = '=:=';
 
   it('parses 8 fields including id and activity', () => {
     const line = ['@5', '0', 'main', '1', '80', '24', '0', '1700000000'].join(SEP);
@@ -189,10 +188,10 @@ describe('parseWindows', () => {
     expect(parsed[1].activity).toBe(1700000100);
   });
 
-  it('parses vis-escaped separators emitted by tmux 3.5a on macOS', () => {
-    const line = ['@5', '1', 'main', '1', '120', '40', '0', '1700000000'].join(ESCAPED_SEP);
+  it('keeps ids and numbers exact when the name contains the separator', () => {
+    const line = ['@5', '1', `plan${SEP}b`, '1', '120', '40', '0', '1700000000'].join(SEP);
     expect(parseWindows(line)).toEqual([
-      { id: '@5', index: 1, name: 'main', active: true, width: 120, height: 40, bell: false, activity: 1700000000 },
+      { id: '@5', index: 1, name: `plan${SEP}b`, active: true, width: 120, height: 40, bell: false, activity: 1700000000 },
     ]);
   });
 
@@ -209,10 +208,9 @@ describe('parseWindows', () => {
 });
 
 describe('parsePanes', () => {
-  const SEP = '\x1f';
-  const ESCAPED_SEP = '\\037';
+  const SEP = '=:=';
 
-  it('parses pane lines with unit-separator and @pane_label', () => {
+  it('parses pane lines with the field separator and @pane_label', () => {
     const line = ['%0', '0', '0', '80', '24', '1', 'zsh', '构建服务'].join(SEP);
     expect(parsePanes(line)).toEqual([
       { id: '%0', x: 0, y: 0, width: 80, height: 24, active: true, command: 'zsh', label: '构建服务' },
@@ -224,10 +222,10 @@ describe('parsePanes', () => {
     expect(parsePanes(line)[0].label).toBe('');
   });
 
-  it('parses vis-escaped separators emitted by tmux 3.5a on macOS', () => {
-    const line = ['%2', '3', '4', '80', '24', '1', 'fish', '主窗格'].join(ESCAPED_SEP);
+  it('lets the command absorb a separator while id, geometry and label stay exact', () => {
+    const line = ['%2', '3', '4', '80', '24', '1', `fi${SEP}sh`, '主窗格'].join(SEP);
     expect(parsePanes(line)).toEqual([
-      { id: '%2', x: 3, y: 4, width: 80, height: 24, active: true, command: 'fish', label: '主窗格' },
+      { id: '%2', x: 3, y: 4, width: 80, height: 24, active: true, command: `fi${SEP}sh`, label: '主窗格' },
     ]);
   });
 
@@ -237,10 +235,9 @@ describe('parsePanes', () => {
 });
 
 describe('parsePaneCommands', () => {
-  const SEP = '\x1f';
-  const ESCAPED_SEP = '\\037';
+  const SEP = '=:=';
 
-  it('parses pane command lines with unit-separator', () => {
+  it('parses pane command lines', () => {
     const line = ['0', '%1', 'vim', '/home/u', '1234'].join(SEP);
     expect(parsePaneCommands(line)).toEqual([
       { windowIndex: 0, paneId: '%1', command: 'vim', path: '/home/u', pid: 1234 },
@@ -254,20 +251,20 @@ describe('parsePaneCommands', () => {
     expect(parsed[0].pid).toBe(0);
   });
 
-  it('parses vis-escaped separators emitted by tmux 3.5a on macOS', () => {
-    const line = ['2', '%9', 'codex', '/tmp/project', '4321'].join(ESCAPED_SEP);
+  it('lets the path absorb a separator while ids and pid stay exact', () => {
+    const line = ['2', '%9', 'codex', `/tmp/a${SEP}b`, '4321'].join(SEP);
     expect(parsePaneCommands(line)).toEqual([
-      { windowIndex: 2, paneId: '%9', command: 'codex', path: '/tmp/project', pid: 4321 },
+      { windowIndex: 2, paneId: '%9', command: 'codex', path: `/tmp/a${SEP}b`, pid: 4321 },
     ]);
   });
 });
 
 describe('parsePaneAddress', () => {
   it('parses one stable pane address and falls back to the session name', () => {
-    expect(parsePaneAddress(['%12', '$1', 'DataAnt', '@5', '2'].join('\x1f'))).toEqual({
+    expect(parsePaneAddress(['%12', '$1', 'DataAnt', '@5', '2'].join('=:='))).toEqual({
       paneId: '%12', sessionId: '$1', sessionName: 'DataAnt', windowId: '@5', windowIndex: 2,
     });
-    expect(parsePaneAddress(['%12', '', 'legacy', '@5', '2'].join('\\037')).sessionId).toBe('legacy');
+    expect(parsePaneAddress(['%12', '', 'legacy', '@5', '2'].join('=:=')).sessionId).toBe('legacy');
     expect(parsePaneAddress('')).toBeNull();
   });
 });

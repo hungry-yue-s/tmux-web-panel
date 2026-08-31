@@ -16,15 +16,33 @@ const WINDOW_INDEX_RE = /^\d+$/;
 const WINDOW_ID_RE = /^@\d+$/;
 const SESSION_ID_RE = /^\$\d+$/;
 
-const FIELD_SEP = '\x1f'; // ASCII Unit Separator — cannot occur in app-created tmux names
-// tmux 3.5a on macOS renders control characters in format output using vis(3)
-// notation, so FIELD_SEP arrives as the four literal characters "\037".
-const ESCAPED_FIELD_SEP = '\\037';
+/**
+ * Field separator for `-F` output.
+ *
+ * It has to be printable. tmux 3.6a replaces every control character in format
+ * output with "_", which destroyed the previous \x1f separator — and did so
+ * irreversibly, since a real "_" in a name is indistinguishable from a rewritten
+ * separator. Printable characters pass through every tmux version unchanged.
+ */
+const FIELD_SEP = '=:=';
 
-function splitTmuxFields(line) {
-  return line.includes(FIELD_SEP)
-    ? line.split(FIELD_SEP)
-    : line.split(ESCAPED_FIELD_SEP);
+/**
+ * Splits one `-F` line into `count` fields, reassembling the free-text field at
+ * `textIndex` from whatever the anchored fields around it do not claim.
+ *
+ * A window name or working directory may legitimately contain FIELD_SEP, so the
+ * fields carrying identity — ids, indices, numbers — are read at fixed offsets
+ * from both ends and stay exact no matter what the text field holds.
+ */
+function splitTmuxFields(line, count, textIndex) {
+  const parts = line.split(FIELD_SEP);
+  if (parts.length <= count) return parts;
+  const trailing = count - textIndex - 1;
+  return [
+    ...parts.slice(0, textIndex),
+    parts.slice(textIndex, parts.length - trailing).join(FIELD_SEP),
+    ...parts.slice(parts.length - trailing),
+  ];
 }
 
 /**
@@ -68,12 +86,13 @@ const PANE_LABEL_MAX_LEN = 32;
 
 /**
  * Validates a user-supplied pane label. Stored as the tmux per-pane user
- * option @pane_label. Disallows control chars (incl. FIELD_SEP \x1f and
- * newlines) so it can't corrupt list-panes parsing.
+ * option @pane_label. Rejects control chars and FIELD_SEP: parsePanes anchors
+ * the label as the last field, so a separator inside it would shift every field.
  */
 export function validatePaneLabel(label) {
   if (typeof label !== 'string') return false;
   if (label.length > PANE_LABEL_MAX_LEN) return false;
+  if (label.includes(FIELD_SEP)) return false;
   return !/[\x00-\x1f]/.test(label);
 }
 
@@ -99,7 +118,8 @@ export function validateWindowId(id) {
 // --- Parsing ---
 
 /**
- * Parses `tmux list-sessions -F '#{session_id}\x1f#{session_name}\x1f#{session_windows}\x1f#{session_attached}\x1f#{session_last_attached}'`
+ * Parses `tmux list-sessions -F` output:
+ * 5 fields: session_id, session_name, session_windows, session_attached, session_last_attached.
  *
  * Also accepts the legacy pipe-delimited 4-field output (no session_id), which
  * yields `id: null`.
@@ -107,7 +127,7 @@ export function validateWindowId(id) {
 export function parseSessions(output) {
   if (!output || output.trim().length === 0) return [];
   return output.trim().split('\n').map((line) => {
-    const fields = splitTmuxFields(line);
+    const fields = splitTmuxFields(line, 5, 1);
     if (fields.length < 5) {
       const [name, windows, attached, lastActivity] = line.split('|');
       return { id: null, name, windows: Number(windows), attached: attached === '1', lastActivity };
@@ -124,13 +144,13 @@ export function parseSessions(output) {
 }
 
 /**
- * Parses `tmux list-windows -F '#{window_id}\x1f#{window_index}\x1f...'`
+ * Parses `tmux list-windows -F` output.
  * 8 fields: id, index, name, active, width, height, bell, activity.
  */
 export function parseWindows(output) {
   if (!output || output.trim().length === 0) return [];
   return output.trim().split('\n').map((line) => {
-    const [id, index, name, active, width, height, bell, activity] = splitTmuxFields(line);
+    const [id, index, name, active, width, height, bell, activity] = splitTmuxFields(line, 8, 2);
     return {
       id,
       index: Number(index),
@@ -145,12 +165,16 @@ export function parseWindows(output) {
 }
 
 /**
- * Parses `tmux list-panes -F '#{pane_id}\x1f#{pane_left}\x1f...'`
+ * Parses `tmux list-panes -F` output.
+ * 8 fields: id, x, y, width, height, active, command, label.
+ *
+ * The label is anchored last because validatePaneLabel rejects FIELD_SEP, so the
+ * command is the only field that may absorb a separator.
  */
 export function parsePanes(output) {
   if (!output || output.trim().length === 0) return [];
   return output.trim().split('\n').map((line) => {
-    const [id, x, y, width, height, active, command, label] = splitTmuxFields(line);
+    const [id, x, y, width, height, active, command, label] = splitTmuxFields(line, 8, 6);
     return {
       id,
       x: Number(x),
@@ -165,12 +189,16 @@ export function parsePanes(output) {
 }
 
 /**
- * Parses `tmux list-panes -s -F '#{window_index}\x1f#{pane_id}\x1f...'`
+ * Parses `tmux list-panes -s -F` output.
+ * 5 fields: window_index, pane_id, command, path, pid.
+ *
+ * The working directory is the field allowed to absorb a separator; the ids and
+ * the pid around it stay exact.
  */
 export function parsePaneCommands(output) {
   if (!output || output.trim().length === 0) return [];
   return output.trim().split('\n').map((line) => {
-    const [windowIndex, paneId, command, path, pid] = splitTmuxFields(line);
+    const [windowIndex, paneId, command, path, pid] = splitTmuxFields(line, 5, 3);
     return { windowIndex: Number(windowIndex), paneId, command, path: path || '', pid: pid ? Number(pid) : 0 };
   });
 }
@@ -178,7 +206,7 @@ export function parsePaneCommands(output) {
 /** Parses the stable address returned by `display-message -t %pane`. */
 export function parsePaneAddress(output) {
   if (!output || output.trim().length === 0) return null;
-  const [paneId, sessionId, sessionName, windowId, windowIndex] = splitTmuxFields(output.trim());
+  const [paneId, sessionId, sessionName, windowId, windowIndex] = splitTmuxFields(output.trim(), 5, 2);
   if (!paneId || !windowId) return null;
   return {
     paneId,

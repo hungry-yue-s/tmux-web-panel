@@ -10,7 +10,7 @@ import { ServerRegistry, LOCAL_SERVER_ID } from '../server/servers/registry.js';
 import { HealthService, ServerState } from '../server/servers/health-service.js';
 import { AppError, ErrorCode } from '../server/servers/errors.js';
 
-const SEP = '\x1f';
+const SEP = '=:=';
 
 const REMOTE = {
   id: 'api-linux',
