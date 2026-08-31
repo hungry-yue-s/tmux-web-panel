@@ -325,9 +325,10 @@ function saveNavState() {
 function _syncFilePreviewDockContext() {
   if (typeof FilePreview === 'undefined' || !FilePreview.switchDockContext) return;
   if (state.currentTab === 'terminal' && state.currentSession && _isValidWindowIndex(state.currentWindow)) {
-    FilePreview.switchDockContext(state.currentSession, state.currentWindow);
+    // This shell only ever addresses the panel's own machine.
+    FilePreview.switchDockContext('local', state.currentSession, state.currentWindow);
   } else {
-    FilePreview.switchDockContext(null, null);
+    FilePreview.switchDockContext(null, null, null);
   }
 }
 

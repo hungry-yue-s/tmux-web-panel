@@ -385,12 +385,12 @@ describe('MsApp status mode routing', () => {
     const ctx = loadStatusShell();
     const calls = [];
     ctx.win.FilePreview = {
-      switchDockContext: (session, windowIndex) => calls.push([session, windowIndex]),
+      switchDockContext: (serverId, session, windowIndex) => calls.push([serverId, session, windowIndex]),
     };
 
     await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'api-linux', section: 'overview' } });
 
-    expect(calls).toEqual([[null, null]]);
+    expect(calls).toEqual([[null, null, null]]);
     expect(ctx.document.getElementById('ms-view').querySelector('.server-hero')).toBeTruthy();
   });
 

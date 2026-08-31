@@ -37,11 +37,20 @@ var FilePreview = (function () {
   var DOCK_STATE_VERSION = 1;
   var MAX_PERSISTED_DOCK_TABS = 12;
 
-  function _makeDockContextKey(sessionName, windowIndex) {
+  /**
+   * Identifies one window's dock state.
+   *
+   * The serverId belongs in the key because session names and window indices
+   * repeat across machines. Keyed on those alone, two servers shared a context,
+   * so switching machines saw an unchanged key and kept the previous machine's
+   * dock — and both wrote the same localStorage snapshot.
+   */
+  function _makeDockContextKey(serverId, sessionName, windowIndex) {
+    if (typeof serverId !== 'string' || !serverId) return null;
     if (typeof sessionName !== 'string' || !sessionName) return null;
     if (!((typeof windowIndex === 'number' && Number.isInteger(windowIndex) && windowIndex >= 0)
       || (typeof windowIndex === 'string' && /^\d+$/.test(windowIndex)))) return null;
-    return sessionName + '\u0000' + String(windowIndex);
+    return serverId + '\u0000' + sessionName + '\u0000' + String(windowIndex);
   }
 
   function _dockStateStorageKey(contextKey) {
@@ -693,8 +702,8 @@ var FilePreview = (function () {
       && generation === _dockContextGeneration;
   }
 
-  function switchDockContext(sessionName, windowIndex) {
-    var nextContextKey = _makeDockContextKey(sessionName, windowIndex);
+  function switchDockContext(serverId, sessionName, windowIndex) {
+    var nextContextKey = _makeDockContextKey(serverId, sessionName, windowIndex);
     if (nextContextKey === _dockContextKey) {
       if (!nextContextKey) return Promise.resolve(false);
       if (_dockTabs.length > 0) return Promise.resolve(true);
@@ -3599,8 +3608,8 @@ var FilePreview = (function () {
       prepareMarkdownNavigation: _prepareMarkdownNavigation,
       loadDockState: _loadDockState,
       persistDockState: _persistDockState,
-      dockStateKey: function (sessionName, windowIndex) {
-        return _dockStateStorageKey(_makeDockContextKey(sessionName, windowIndex));
+      dockStateKey: function (serverId, sessionName, windowIndex) {
+        return _dockStateStorageKey(_makeDockContextKey(serverId, sessionName, windowIndex));
       },
       legacyDockStateKey: LEGACY_DOCK_STATE_KEY,
       dockContextKey: function () { return _dockContextKey; },
