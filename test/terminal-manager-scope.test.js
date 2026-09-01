@@ -237,6 +237,23 @@ describe('TerminalManager refusal reporting', () => {
     expect(ws.close).toHaveBeenCalledWith(1013, expect.any(String));
   });
 
+  it('contains a synchronous PTY spawn failure to this socket', () => {
+    spawn.mockImplementation(() => { throw new Error('posix_spawnp failed'); });
+    const manager = new TerminalManager();
+    const ws = fakeWs();
+    const rejections = [];
+
+    expect(() => manager.create(ws, '%0', 80, 24, false, {
+      onReject: (info) => rejections.push(info),
+    })).not.toThrow();
+    expect(rejections).toEqual([{
+      code: 'TERMINAL_SPAWN_FAILED',
+      message: 'Terminal process could not be started',
+    }]);
+    expect(ws.close).toHaveBeenCalledWith(1011, 'Terminal process could not be started');
+    expect(manager.connections.size).toBe(0);
+  });
+
   it('scopedCount reports per-server attachment', () => {
     const manager = new TerminalManager({ maxConnectionsPerPane: 3 });
     manager.create(fakeWs(), '%0', 80, 24, false, { serverId: 'api-linux' });

@@ -205,19 +205,24 @@ export class TerminalManager {
     const shellCmd = buildTmuxAttachCommand(paneId, { nozoom });
     // A remote host runs the same template as the remote command of ssh -tt.
     const spawnSpec = options.spawn || { file: 'sh', args: ['-c', shellCmd] };
-    const term = pty.spawn(spawnSpec.file, spawnSpec.args, {
-      name: 'xterm-256color',
-      cols: cols || 80,
-      rows: rows || 24,
-      // launchd/systemd services often have no locale. tmux then treats the
-      // attached client as non-UTF-8 and replaces wide characters with `_`
-      // before they ever reach xterm.js.
-      env: {
-        ...process.env,
-        LANG: process.env.LANG || 'C.UTF-8',
-        LC_CTYPE: process.env.LC_CTYPE || process.env.LANG || 'C.UTF-8',
-      },
-    });
+    let term;
+    try {
+      term = pty.spawn(spawnSpec.file, spawnSpec.args, {
+        name: 'xterm-256color',
+        cols: cols || 80,
+        rows: rows || 24,
+        // launchd/systemd services often have no locale. tmux then treats the
+        // attached client as non-UTF-8 and replaces wide characters with `_`
+        // before they ever reach xterm.js.
+        env: {
+          ...process.env,
+          LANG: process.env.LANG || 'C.UTF-8',
+          LC_CTYPE: process.env.LC_CTYPE || process.env.LANG || 'C.UTF-8',
+        },
+      });
+    } catch {
+      return reject('TERMINAL_SPAWN_FAILED', 1011, 'Terminal process could not be started');
+    }
 
     // Track connection
     const conn = {
