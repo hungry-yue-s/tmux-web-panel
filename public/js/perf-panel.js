@@ -15,7 +15,6 @@ var PerfPanel = (function () {
   var colorFor   = U.colorFor;
 
   var state = {
-    activeTab: 'perf',
     range: DEFAULT_RANGE,
     snapshot: null,
     history: { points: [] },
@@ -39,44 +38,32 @@ var PerfPanel = (function () {
   }
 
   // === Skeleton ===
-  function renderSkeleton() {
-    return [
-      '<div id="perf-panel" class="pp-card">',
-      '  <div class="pp-toptabs">',
-      '    <div class="pp-toptabs-l">',
-      '      <button class="pp-tt pp-active" data-view="perf">📊 机器性能<span class="pp-tt-badge" id="pp-badge-perf" hidden></span></button>',
-      '      <button class="pp-tt" data-view="claude">💰 Claude 用量<span class="pp-tt-badge" id="pp-badge-claude" hidden></span></button>',
-      '      <button class="pp-tt" data-view="codex">⌘ Codex 用量<span class="pp-tt-badge" id="pp-badge-codex" hidden></span></button>',
-      '    </div>',
-      '  </div>',
-      '  <div class="pp-view pp-active" id="view-perf"><div id="perf-view-root"><div class="pp-loading">加载机器与窗口性能…</div></div></div>',
-      '  <div class="pp-view" id="view-claude"><div id="claude-view-root"><div class="pp-loading">加载 Claude 用量…</div></div></div>',
-      '  <div class="pp-view" id="view-codex"><div id="codex-view-root"><div class="pp-loading">加载 Codex 用量…</div></div></div>',
-      '</div>',
-    ].join('');
+  function panelMode(mode) {
+    return mode === 'performance' || mode === 'codex' ? mode : 'all';
   }
 
-  function bindTopTabs() {
-    var btns = document.querySelectorAll('#perf-panel .pp-tt');
-    for (var i = 0; i < btns.length; i++) {
-      btns[i].addEventListener('click', function (e) {
-        switchTab(e.currentTarget.getAttribute('data-view'));
-      });
+  /**
+   * Builds only the sections owned by this route. The legacy shell omits mode
+   * and keeps the complete dashboard; the multi-server shell splits Codex into
+   * its own top-level section without copying any renderer code.
+   */
+  function renderSkeleton(mode) {
+    var selected = panelMode(mode);
+    var sections = [];
+    if (selected !== 'codex') {
+      sections.push(panelSection('perf', '机器性能', '加载机器与窗口性能…'));
+      sections.push(panelSection('claude', 'Claude 用量', '加载 Claude 用量…'));
     }
+    if (selected !== 'performance') {
+      sections.push(panelSection('codex', 'Codex 用量', '加载 Codex 用量…'));
+    }
+    return '<div id="perf-panel" class="pp-card">' + sections.join('') + '</div>';
   }
 
-  function switchTab(name) {
-    state.activeTab = name;
-    document.querySelectorAll('#perf-panel .pp-tt').forEach(function (b) {
-      b.classList.toggle('pp-active', b.getAttribute('data-view') === name);
-    });
-    document.querySelectorAll('#perf-panel .pp-view').forEach(function (v) {
-      v.classList.toggle('pp-active', v.id === 'view-' + name);
-    });
-    // Repaint the now-visible tab immediately so the user doesn't wait for next poll.
-    if (name === 'perf' && state.snapshot) paintPerf();
-    if (name === 'claude' && claudeState.data) paintClaude(document.getElementById('claude-view-root'));
-    if (name === 'codex' && codexState.data) paintCodex(document.getElementById('codex-view-root'));
+  function panelSection(name, title, loading) {
+    return '<div class="section"><div class="section-head"><h3>' + title + '</h3>'
+      + '<span class="ms-badge" id="pp-badge-' + name + '" hidden></span></div>'
+      + '<div id="' + name + '-view-root"><div class="pp-loading">' + loading + '</div></div></div>';
   }
 
   // === Renderers (filled in by Tasks 8–12) ===
@@ -956,7 +943,7 @@ var PerfPanel = (function () {
         if (!resp || !resp.success) return;
         state.snapshot = resp.data;
         updatePerfBadge();
-        if (state.activeTab === 'perf') paintPerf();
+        paintPerf();
       })
       .catch(function () { /* swallow transient */ });
   }
@@ -967,9 +954,20 @@ var PerfPanel = (function () {
       .then(function (resp) {
         if (!resp || !resp.success) return;
         state.history = resp.data;
-        if (state.activeTab === 'perf') paintPerf();
+        paintPerf();
       })
       .catch(function () {});
+  }
+
+  /**
+   * These panels are always on screen, so a load message left behind by a failed
+   * poll reads as a hang. Say there is no data instead — but only before the first
+   * successful paint, so a transient failure keeps the last good render.
+   */
+  function markNoUsageData(rootId, label) {
+    var root = document.getElementById(rootId);
+    if (!root) return;
+    root.innerHTML = '<div class="pp-empty">' + label + '不可用：未配置或本机没有用量数据</div>';
   }
 
   function tickClaude() {
@@ -979,12 +977,18 @@ var PerfPanel = (function () {
     api.get('/api/claude-usage')
       .then(function (resp) {
         claudeState.loading = false;
-        if (!resp || !resp.success) return;
+        if (!resp || !resp.success) {
+          if (!claudeState.data) markNoUsageData('claude-view-root', 'Claude 用量');
+          return;
+        }
         claudeState.data = resp.data;
         updateClaudeBadge();
-        if (state.activeTab === 'claude') paintClaude(document.getElementById('claude-view-root'));
+        paintClaude(document.getElementById('claude-view-root'));
       })
-      .catch(function () { claudeState.loading = false; });
+      .catch(function () {
+        claudeState.loading = false;
+        if (!claudeState.data) markNoUsageData('claude-view-root', 'Claude 用量');
+      });
   }
 
   function tickCodex() {
@@ -994,58 +998,71 @@ var PerfPanel = (function () {
     api.get('/api/codex-usage')
       .then(function (resp) {
         codexState.loading = false;
-        if (!resp || !resp.success) return;
+        if (!resp || !resp.success) {
+          if (!codexState.data) markNoUsageData('codex-view-root', 'Codex 用量');
+          return;
+        }
         codexState.data = resp.data;
         updateCodexBadge();
-        if (state.activeTab === 'codex') paintCodex(document.getElementById('codex-view-root'));
+        paintCodex(document.getElementById('codex-view-root'));
       })
-      .catch(function () { codexState.loading = false; });
+      .catch(function () {
+        codexState.loading = false;
+        if (!codexState.data) markNoUsageData('codex-view-root', 'Codex 用量');
+      });
+  }
+
+  /** Both usage badges read as percentages, so they share one severity scale. */
+  function usageTone(pct) {
+    return pct >= 85 ? 'red' : pct >= 60 ? 'yellow' : 'green';
+  }
+
+  function paintBadge(id, text, toneName) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (text === null) { el.hidden = true; return; }
+    el.hidden = false;
+    el.textContent = text;
+    el.className = 'ms-badge ' + toneName;
   }
 
   function updatePerfBadge() {
     if (!state.snapshot || !U) return;
-    var a = U.detectAlerts(state.snapshot);
-    var el = document.getElementById('pp-badge-perf');
-    if (!el) return;
-    if (a.critical.length === 0) { el.hidden = true; return; }
-    el.hidden = false;
-    el.textContent = String(a.critical.length);
-    el.className = 'pp-tt-badge pp-badge-bad';
+    var critical = U.detectAlerts(state.snapshot).critical.length;
+    // Carries a unit: this is a count, unlike the two usage percentages below.
+    paintBadge('pp-badge-perf', critical === 0 ? null : critical + ' 项告警', 'red');
   }
 
   function updateClaudeBadge() {
     var d = claudeState.data;
-    var el = document.getElementById('pp-badge-claude');
-    if (!el) return;
-    if (!d || !d.utilization || !d.utilization.seven_day) { el.hidden = true; return; }
+    if (!d || !d.utilization || !d.utilization.seven_day) { paintBadge('pp-badge-claude', null); return; }
     var pct = Math.floor(d.utilization.seven_day.utilization);
-    el.hidden = false;
-    el.textContent = '7d ' + pct + '%';
-    el.className = 'pp-tt-badge ' + (pct >= 85 ? 'pp-badge-bad' : pct >= 60 ? 'pp-badge-warn' : 'pp-badge-ok');
+    paintBadge('pp-badge-claude', '7d ' + pct + '%', usageTone(pct));
   }
 
   function updateCodexBadge() {
     var d = codexState.data;
-    var el = document.getElementById('pp-badge-codex');
-    if (!el) return;
-    if (!d || !d.utilization || !d.utilization.primary) { el.hidden = true; return; }
+    if (!d || !d.utilization || !d.utilization.primary) { paintBadge('pp-badge-codex', null); return; }
     var pct = Math.floor(d.utilization.primary.used_percent || 0);
-    el.hidden = false;
-    el.textContent = '5h ' + pct + '%';
-    el.className = 'pp-tt-badge ' + (pct >= 85 ? 'pp-badge-bad' : pct >= 60 ? 'pp-badge-warn' : 'pp-badge-ok');
+    paintBadge('pp-badge-codex', '5h ' + pct + '%', usageTone(pct));
   }
 
-  function start() {
-    bindTopTabs();
-    tickSnap();
-    tickHist();
-    tickClaude();
-    tickCodex();
+  function start(mode) {
+    var selected = panelMode(mode);
     stop();
-    state.timers.snap = setInterval(tickSnap, POLL_MS);
-    state.timers.hist = setInterval(tickHist, HISTORY_POLL_MS);
-    state.timers.claude = setInterval(tickClaude, CLAUDE_POLL_MS);
-    state.timers.codex = setInterval(tickCodex, CODEX_POLL_MS);
+
+    if (selected !== 'codex') {
+      tickSnap();
+      tickHist();
+      tickClaude();
+      state.timers.snap = setInterval(tickSnap, POLL_MS);
+      state.timers.hist = setInterval(tickHist, HISTORY_POLL_MS);
+      state.timers.claude = setInterval(tickClaude, CLAUDE_POLL_MS);
+    }
+    if (selected !== 'performance') {
+      tickCodex();
+      state.timers.codex = setInterval(tickCodex, CODEX_POLL_MS);
+    }
   }
 
   function stop() {

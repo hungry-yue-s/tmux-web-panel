@@ -1,7 +1,7 @@
 (function (global) {
   var DEFAULT_SERVER_ID = 'local';
   var TERMINAL_KEYS = ['serverId', 'sessionId', 'windowId', 'paneId'];
-  var SERVER_SECTIONS = ['overview', 'performance', 'connection'];
+  var SERVER_SECTIONS = ['performance', 'codex', 'connection'];
 
   var CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
@@ -48,7 +48,7 @@
     if (rest.length === 0) return { name: 'servers', params: {} };
     if (rest.length === 1) {
       if (rest[0] === 'new') return { name: 'servers', params: { intent: 'new' } };
-      return { name: 'server', params: { serverId: rest[0], section: 'overview' } };
+      return { name: 'server', params: { serverId: rest[0], section: 'performance' } };
     }
     if (rest.length === 2) {
       if (rest[1] === 'tmux') return { name: 'terminal', params: { serverId: rest[0] } };
@@ -94,7 +94,7 @@
     }
     if (r.name === 'server') {
       if (!p.serverId) return '#/servers';
-      var section = SERVER_SECTIONS.indexOf(p.section) >= 0 ? p.section : 'overview';
+      var section = SERVER_SECTIONS.indexOf(p.section) >= 0 ? p.section : 'performance';
       return '#/servers/' + enc(p.serverId) + '/' + section;
     }
     if (r.name === 'settings') return '#/settings';

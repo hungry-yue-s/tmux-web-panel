@@ -37,8 +37,8 @@ describe('Router.parse / Router.serialize round trip', () => {
     ],
     ['#/servers', { name: 'servers', params: {} }],
     ['#/servers/new', { name: 'servers', params: { intent: 'new' } }],
-    ['#/servers/prod/overview', { name: 'server', params: { serverId: 'prod', section: 'overview' } }],
     ['#/servers/prod/performance', { name: 'server', params: { serverId: 'prod', section: 'performance' } }],
+    ['#/servers/local/codex', { name: 'server', params: { serverId: 'local', section: 'codex' } }],
     ['#/servers/prod/connection', { name: 'server', params: { serverId: 'prod', section: 'connection' } }],
     ['#/settings', { name: 'settings', params: {} }],
   ];
@@ -98,9 +98,9 @@ describe('Router.parse partial terminal targets', () => {
 
 describe('Router.parse aliases', () => {
   it('accepts the singular /server/:id/:section form', () => {
-    expect(Router.parse('#/server/prod/overview')).toEqual({
+    expect(Router.parse('#/server/prod/connection')).toEqual({
       name: 'server',
-      params: { serverId: 'prod', section: 'overview' },
+      params: { serverId: 'prod', section: 'connection' },
     });
     expect(Router.parse('#/server/prod/performance')).toEqual({
       name: 'server',
@@ -112,11 +112,17 @@ describe('Router.parse aliases', () => {
     expect(Router.parse('#/server/prod/tmux')).toEqual({ name: 'terminal', params: { serverId: 'prod' } });
   });
 
-  it('defaults a missing section to overview', () => {
+  it('defaults a missing section to performance', () => {
     expect(Router.parse('#/servers/prod')).toEqual({
       name: 'server',
-      params: { serverId: 'prod', section: 'overview' },
+      params: { serverId: 'prod', section: 'performance' },
     });
+  });
+
+  it('no longer accepts overview, whose content moved to the rail and connection', () => {
+    expect(Router.parse('#/servers/prod/overview')).toEqual(DEFAULT);
+    expect(Router.serialize({ name: 'server', params: { serverId: 'prod', section: 'overview' } }))
+      .toBe('#/servers/prod/performance');
   });
 
   it('treats #/home, #/ and empty as the default route', () => {
@@ -127,7 +133,7 @@ describe('Router.parse aliases', () => {
   });
 
   it('never serializes an alias', () => {
-    expect(Router.serialize(Router.parse('#/server/prod/overview'))).toBe('#/servers/prod/overview');
+    expect(Router.serialize(Router.parse('#/server/prod/connection'))).toBe('#/servers/prod/connection');
     expect(Router.serialize(Router.parse('#/server/prod/tmux'))).toBe('#/terminal/prod');
     expect(Router.serialize(Router.parse('#/home'))).toBe('#/terminal/local');
   });

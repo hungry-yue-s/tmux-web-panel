@@ -127,7 +127,7 @@
         const target = global.AppShell.statusServerId(route);
         if (route.params && route.params.intent === 'new') this.openAddServer();
         global.Router.go(
-          { name: 'server', params: { serverId: target, section: 'overview' } },
+          { name: 'server', params: { serverId: target, section: 'performance' } },
           { replace: true },
         );
         return;
@@ -140,6 +140,14 @@
       }
 
       if (route.name === 'server') {
+        const routedServer = global.AppShell.server(serverId);
+        if ((route.params || {}).section === 'codex' && (!routedServer || routedServer.kind !== 'local')) {
+          global.Router.go(
+            { name: 'server', params: { serverId, section: 'performance' } },
+            { replace: true },
+          );
+          return;
+        }
         global.Store.setUi({ lastStatusServerId: serverId });
         view.classList.remove('terminal-mode');
         view.innerHTML = global.ServersPage.renderServer(route);
@@ -158,22 +166,21 @@
       await this._renderTerminal(route, serverId, view);
     },
 
-    /**
-     * The local performance section reuses PerfPanel, which polls on its own
-     * timers and only while its DOM root exists.
-     */
-    _isLocalPerformance(route) {
-      if (!route || route.name !== 'server') return false;
-      if ((route.params || {}).section !== 'performance') return false;
+    /** Returns the PerfPanel mode owned by this local status route. */
+    _localPerfMode(route) {
+      if (!route || route.name !== 'server') return null;
+      const section = (route.params || {}).section;
+      if (section !== 'performance' && section !== 'codex') return null;
       const server = global.AppShell.server((route.params || {}).serverId);
-      return Boolean(server && server.kind === 'local');
+      return server && server.kind === 'local' ? section : null;
     },
 
     _mountPerfPanel(route) {
-      if (!this._isLocalPerformance(route)) return;
+      const mode = this._localPerfMode(route);
+      if (!mode) return;
       if (!global.PerfPanel || typeof global.PerfPanel.start !== 'function') return;
       if (!global.document.getElementById('perf-panel')) return;
-      global.PerfPanel.start();
+      global.PerfPanel.start(mode);
       this._perfPanelMounted = true;
     },
 
@@ -414,7 +421,7 @@
         + '<div class="workspace-fact"><span>工作区</span><strong>未创建</strong></div></div>'
         + '<div class="workspace-onboarding-actions">' + repair
         + '<button class="ms-btn" data-route="'
-        + global.AppShell.escape(global.Router.serialize({ name: 'server', params: { serverId, section: 'overview' } }))
+        + global.AppShell.escape(global.Router.serialize({ name: 'server', params: { serverId, section: 'performance' } }))
         + '">服务器详情</button></div></div></div>';
     },
 

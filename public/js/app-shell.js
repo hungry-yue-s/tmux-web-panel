@@ -171,16 +171,17 @@
     _renderServerRail: function (route) {
       var self = this;
       var selectedId = this.statusServerId(route);
-      var section = (route && route.params && route.params.section) || 'overview';
+      var section = (route && route.params && route.params.section) || 'performance';
       var metricsById = global.Store.getState().entities.metricsByServerId;
 
       var rows = this.servers().map(function (server) {
         var health = self.health(server.id);
         var stateTone = tone(health.state);
         var metrics = metricsById[server.id] || {};
-        // Keep the section when switching servers: a user comparing performance
-        // should not be thrown back to the overview tab.
-        var target = { name: 'server', params: { serverId: server.id, section: section } };
+        // Keep comparable sections when switching servers. Codex data belongs to
+        // the panel host, so a remote row falls back to its performance page.
+        var targetSection = section === 'codex' && server.kind !== 'local' ? 'performance' : section;
+        var target = { name: 'server', params: { serverId: server.id, section: targetSection } };
         return '<button class="server-rail-item' + (server.id === selectedId ? ' selected' : '') + '"'
           + ' data-route="' + esc(global.Router.serialize(target)) + '"'
           + ' data-rail-server="' + esc(server.id) + '"'
@@ -388,8 +389,7 @@
       if (route.name === 'servers') return '状态';
       if (route.name === 'settings') return '设置';
       if (route.name === 'server') {
-        return ({ overview: '服务器概览', performance: '性能', connection: '连接' })[route.params.section]
-          || '服务器概览';
+        return ({ performance: '性能', codex: 'Codex 用量', connection: '连接' })[route.params.section] || '性能';
       }
       return '终端工作台';
     },

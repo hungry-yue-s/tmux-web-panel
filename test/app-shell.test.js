@@ -417,7 +417,7 @@ describe('AppShell shell modes', () => {
     seedTwoServers(ctx.Store);
     const app = ctx.document.querySelector('.ms-app');
 
-    ctx.Store.setRoute({ name: 'server', params: { serverId: 'local', section: 'overview' } });
+    ctx.Store.setRoute({ name: 'server', params: { serverId: 'local', section: 'performance' } });
     ctx.Shell.render();
     expect(app.classList.contains('mode-status')).toBe(true);
     expect(app.classList.contains('mode-terminal')).toBe(false);
@@ -455,7 +455,7 @@ describe('AppShell status server rail', () => {
   beforeEach(() => {
     ctx = loadShell();
     seedTwoServers(ctx.Store);
-    ctx.Store.setRoute({ name: 'server', params: { serverId: 'api-linux', section: 'overview' } });
+    ctx.Store.setRoute({ name: 'server', params: { serverId: 'api-linux', section: 'performance' } });
     ctx.Shell.render();
   });
 
@@ -499,6 +499,14 @@ describe('AppShell status server rail', () => {
     const routes = [...ctx.document.querySelectorAll('.server-rail-item')].map((n) => n.dataset.route);
     // Switching servers while comparing performance must stay on performance.
     expect(routes).toEqual(['#/servers/local/performance', '#/servers/api-linux/performance']);
+  });
+
+  it('keeps Codex only for the local row and falls remote rows back to performance', () => {
+    ctx.Store.setRoute({ name: 'server', params: { serverId: 'local', section: 'codex' } });
+    ctx.Shell.render();
+    const routes = [...ctx.document.querySelectorAll('.server-rail-item')].map((n) => n.dataset.route);
+    expect(routes).toEqual(['#/servers/local/codex', '#/servers/api-linux/performance']);
+    expect(ctx.Shell._titleFor({ name: 'server', params: { section: 'codex' } })).toBe('Codex 用量');
   });
 
   it('offers an add-server entry', () => {

@@ -48,9 +48,9 @@ describe('PerfPanel real load', () => {
     const win = loadRealPerfPanel();
     const html = win.PerfPanel.renderSkeleton();
     expect(html).toContain('id="perf-panel"');
-    expect(html).toContain('data-view="perf"');
-    expect(html).toContain('data-view="claude"');
-    expect(html).toContain('data-view="codex"');
+    expect(html).toContain('机器性能');
+    expect(html).toContain('Claude 用量');
+    expect(html).toContain('Codex 用量');
     // The drill-down and history views mount into these roots.
     expect(html).toContain('id="perf-view-root"');
     expect(html).toContain('id="claude-view-root"');

@@ -4504,23 +4504,6 @@ body.fp-side-resizing { cursor: col-resize; user-select: none; }
 /* === Perf Panel — Observatory layout === */
 #perf-panel.pp-card { background: transparent; padding: 0; border: 0; }
 
-/* Top-level tab strip */
-.pp-toptabs { display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  margin-bottom: 14px; border-bottom: 1px solid var(--border-subtle); }
-.pp-toptabs-l { display: flex; gap: 2px; }
-.pp-tt { background: transparent; border: 0; color: var(--text-muted); padding: 10px 18px 11px;
-  font-size: 14px; cursor: pointer; font-family: inherit; font-weight: 600; letter-spacing: .2px;
-  display: flex; align-items: center; gap: 6px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
-.pp-tt:hover { color: var(--text-secondary); }
-.pp-tt.pp-active { color: var(--accent-blue); border-bottom-color: var(--accent-blue); }
-.pp-tt-badge { font-size: 10px; background: var(--bg-deep); color: var(--text-muted);
-  padding: 1px 6px; border-radius: 999px; font-weight: 600; border: 1px solid var(--border-subtle); }
-.pp-tt-badge.pp-badge-ok { color: var(--accent-green); border-color: var(--accent-green); }
-.pp-tt-badge.pp-badge-warn { color: var(--accent-yellow); border-color: var(--accent-yellow); }
-.pp-tt-badge.pp-badge-bad { color: var(--accent-red); border-color: var(--accent-red); }
-.pp-view { display: none; }
-.pp-view.pp-active { display: block; }
-
 /* Header */
 .pp-hdr { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
   gap: 12px; margin-bottom: 14px; }
@@ -4665,8 +4648,6 @@ body.fp-side-resizing { cursor: col-resize; user-select: none; }
 
 /* Mobile */
 @media (max-width: 760px) {
-  .pp-toptabs { margin-bottom: 10px; }
-  .pp-tt { padding: 9px 12px 10px; font-size: 13px; }
   .pp-hdr { margin-bottom: 12px; gap: 8px; }
   .pp-hdr-l, .pp-hdr-r { width: 100%; }
   .pp-kpis { grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -5207,21 +5188,6 @@ textarea:focus-visible {
 .dh-tips-side {
   border-top-color: var(--ui-border-soft);
   opacity: .72;
-}
-
-.pp-toptabs {
-  margin-bottom: 16px;
-  border-bottom-color: var(--ui-border-soft);
-}
-
-.pp-tt {
-  min-height: 42px;
-  border-radius: var(--ui-radius-sm) var(--ui-radius-sm) 0 0;
-}
-
-.pp-tt:hover {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--bg-hover) 48%, transparent);
 }
 
 .pp-host-badge,
@@ -6397,6 +6363,20 @@ textarea:focus-visible {
   min-height: 100vh;
 }
 
+/* The body is intentionally locked for terminal sizing, so non-terminal pages
+   own their vertical scroll. Without this, stacked status sections extend below
+   the viewport but wheel/touch input has no scroll container to move. */
+@media (min-width: 761px) {
+  .ms-app.mode-status .ms-main,
+  .ms-app.mode-settings .ms-main {
+    height: 100vh;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
+  }
+}
+
 .ms-topbar {
   position: sticky;
   z-index: 20;
@@ -7507,6 +7487,14 @@ button.list-row:hover {
 
   .ms-main {
     min-height: calc(100vh - 64px);
+  }
+
+  .ms-app.mode-status .ms-main,
+  .ms-app.mode-settings .ms-main {
+    height: calc(100dvh - 64px);
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .mobile-header {

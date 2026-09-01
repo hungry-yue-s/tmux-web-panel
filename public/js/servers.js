@@ -26,12 +26,6 @@
       + '<div class="kpi-note">' + esc(note) + '</div></div>';
   }
 
-  function capability(name, state, toneName, note) {
-    return '<div class="ms-card capability"><div class="capability-head"><strong>' + esc(name) + '</strong>'
-      + '<span class="ms-badge ' + toneName + '">' + esc(state) + '</span></div>'
-      + '<p>' + esc(note) + '</p></div>';
-  }
-
   function detail(label, value) {
     return '<div class="detail-row"><span>' + esc(label) + '</span><strong class="mono">' + esc(value) + '</strong></div>';
   }
@@ -66,7 +60,7 @@
     /** Server workspace: identity strip plus capability-driven tabs. */
     renderServer: function (route) {
       var serverId = route.params.serverId;
-      var section = route.params.section || 'overview';
+      var section = route.params.section || 'performance';
       var server = shell().server(serverId);
       if (!server) {
         return '<div class="ms-card empty"><h3>服务器不存在</h3>'
@@ -81,31 +75,36 @@
 
       shell().setHeader(
         '服务器 / ' + server.name,
-        ({ overview: '服务器概览', performance: '性能', connection: '连接' })[section] || '服务器概览',
+        ({ performance: '性能', codex: 'Codex 用量', connection: '连接' })[section] || '性能',
         actionButton('立即检测', 'probe', false, 'refresh') + openWorkspace,
       );
 
-      var base = this._hero(server, health, openWorkspace) + this._tabs(serverId, section);
-      if (section === 'performance') {
-        return base + (server.kind === 'local'
-          ? this._localPerformance()
-          : this._performance(serverId, health));
-      }
-      if (section === 'connection') return base + this._connection(server, health);
-      return base + this._overview(serverId, health, workspace);
+      var base = this._hero(server, health, openWorkspace) + this._tabs(server, section);
+      if (section === 'connection') return base + this._connection(server, health, workspace);
+      if (section === 'codex' && server.kind === 'local') return base + this._localCodex();
+      return base + (server.kind === 'local'
+        ? this._localPerformance()
+        : this._performance(serverId, health));
     },
 
     /**
-     * The local machine already has a full performance component. Mounting its
-     * own skeleton keeps machine perf, Claude/Codex usage, history and the
-     * process/disk drill-down intact; MsApp starts and stops its polling.
+     * The local machine has the full performance component. Each status route
+     * requests only the roots and pollers it owns; the legacy app keeps the
+     * no-argument all-in-one mode.
      */
     _localPerformance: function () {
       if (!global.PerfPanel || typeof global.PerfPanel.renderSkeleton !== 'function') {
         return '<div class="ms-card empty"><h3>性能组件未加载</h3>'
           + '<p>PerfPanel 脚本缺失，无法显示本机性能。</p></div>';
       }
-      return '<div class="section local-perf-host">' + global.PerfPanel.renderSkeleton() + '</div>';
+      return '<div class="section local-perf-host">' + global.PerfPanel.renderSkeleton('performance') + '</div>';
+    },
+
+    _localCodex: function () {
+      if (!global.PerfPanel || typeof global.PerfPanel.renderSkeleton !== 'function') {
+        return '<div class="ms-card empty"><h3>Codex 用量组件未加载</h3></div>';
+      }
+      return '<div class="section local-perf-host">' + global.PerfPanel.renderSkeleton('codex') + '</div>';
     },
 
     _hero: function (server, health, openWorkspace) {
@@ -123,64 +122,15 @@
         + (server.immutable ? '' : actionButton('编辑', 'edit-server', false, '')) + '</div></div>';
     },
 
-    _tabs: function (serverId, section) {
-      return '<div class="tabs">' + [
-        ['overview', '概览'],
-        ['performance', '性能'],
-        ['connection', '连接'],
-      ].map(function (entry) {
-        var route = { name: 'server', params: { serverId: serverId, section: entry[0] } };
+    _tabs: function (server, section) {
+      var entries = [['performance', '性能']];
+      if (server.kind === 'local') entries.push(['codex', 'Codex 用量']);
+      entries.push(['connection', '连接']);
+      return '<div class="tabs">' + entries.map(function (entry) {
+        var route = { name: 'server', params: { serverId: server.id, section: entry[0] } };
         return '<button class="tab ' + (section === entry[0] ? 'active' : '') + '"'
           + ' data-route="' + esc(global.Router.serialize(route)) + '">' + esc(entry[1]) + '</button>';
       }).join('') + '</div>';
-    },
-
-    _overview: function (serverId, health, workspace) {
-      var metrics = global.Store.getState().entities.metricsByServerId[serverId] || {};
-      var capabilities = health.capabilities || {};
-      var tmux = capabilities.tmux || {};
-      var ssh = capabilities.ssh || {};
-      var sessionCount = workspace ? (workspace.sessions || []).length : 0;
-      var windowCount = workspace ? (workspace.sessions || []).reduce(function (sum, session) {
-        return sum + (session.windows || []).length;
-      }, 0) : 0;
-
-      var workspaceValue = tmux.available ? sessionCount + 's · ' + windowCount + 'w'
-        : ssh.available ? 'SSH Session' : '不可用';
-
-      return '<div class="grid kpi-grid">'
-        + kpi('CPU', pct(metrics.cpuPercent), Number(metrics.cpuPercent) >= 70 ? 'yellow' : 'blue',
-          metrics.cpuCount ? metrics.cpuCount + ' cores' : '—')
-        + kpi('内存', pct(metrics.memPercent), Number(metrics.memPercent) >= 85 ? 'red' : 'purple',
-          metrics.memMetric || '缓存与可回收已区分')
-        + kpi('磁盘', pct(metrics.diskPercent), Number(metrics.diskPercent) >= 80 ? 'yellow' : 'green', '根卷')
-        + kpi('工作区', workspaceValue, tmux.available ? 'green' : ssh.available ? 'blue' : 'yellow',
-          tmux.available ? (workspace && workspace.transport === 'ssh' ? '远端 tmux 转接' : '本机 tmux')
-            : ssh.available ? '由面板服务托管 SSH 连接' : '等待连接恢复')
-        + '</div>'
-        + '<div class="section"><div class="section-head"><h3>能力状态</h3>'
-        + '<span>能力独立判断，不合并成一个"在线"</span></div><div class="grid three-col">'
-        + capability('SSH', ssh.available ? '可用' : shell().tone(health.state).label,
-          ssh.available ? 'green' : 'red',
-          health.error ? health.error.message : shell()._latencyOf(health))
-        + capability('性能指标',
-          metrics.sampledAt ? '可用' : (metrics.availability && metrics.availability.cpu === 'unsupported' ? '不支持' : '暂无数据'),
-          metrics.sampledAt ? 'green' : 'yellow',
-          metrics.sampledAt ? 'CPU、内存、磁盘与历史趋势' : '保留最后成功样本，不显示假零')
-        + capability('终端提供者',
-          tmux.available ? '远端 tmux' : ssh.available ? 'SSH Session' : '不可用',
-          tmux.available ? 'green' : ssh.available ? 'muted' : 'red',
-          tmux.available ? (tmux.version ? 'tmux ' + tmux.version : '已发现 tmux')
-            : ssh.available ? '未检测到 tmux，自动使用服务端托管的 SSH Session'
-              : '连接恢复后重新决定提供方式')
-        + '</div></div>'
-        + (workspace && workspace.pendingProvider === 'tmux'
-          ? '<div class="section"><div class="ms-card capability">'
-            + '<div class="capability-head"><strong>tmux 已可用</strong>'
-            + '<span class="ms-badge yellow">待切换</span></div>'
-            + '<p>当前 SSH Session 仍在运行，关闭后自动切换到 tmux；也可以立即切换并结束这些 Session。</p>'
-            + actionButton('立即切换到 tmux', 'adopt-provider', false, '') + '</div></div>'
-          : '');
     },
 
     _performance: function (serverId, health) {
@@ -205,6 +155,7 @@
         + kpi('CPU', pct(metrics.cpuPercent), Number(metrics.cpuPercent) >= 70 ? 'yellow' : 'blue', '整机口径')
         + kpi('内存', pct(metrics.memPercent), Number(metrics.memPercent) >= 85 ? 'red' : 'purple',
           metrics.memMetric || '整机口径')
+        + kpi('磁盘', pct(metrics.diskPercent), Number(metrics.diskPercent) >= 80 ? 'yellow' : 'green', '根卷')
         + kpi('负载', metrics.load1 === null || metrics.load1 === undefined ? '—' : String(metrics.load1), 'green',
           'load 1 分钟')
         + kpi('延迟', shell()._latencyOf(health), 'blue', 'SSH 往返')
@@ -235,7 +186,7 @@
         + '<path class="chart-line" d="' + path + '"/></svg>';
     },
 
-    _connection: function (server, health) {
+    _connection: function (server, health, workspace) {
       var address = server.address || {};
       var ssh = server.ssh || {};
       var capabilities = health.capabilities || {};
@@ -258,6 +209,13 @@
             + '<span class="ms-badge red">阻断</span></div>'
             + '<p>面板不会自动信任或覆盖主机密钥。请通过可信渠道核对指纹后再确认。</p>'
             + actionButton('获取指纹', 'scan-host-key', true, '') + '</div></div>'
+          : '')
+        + (workspace && workspace.pendingProvider === 'tmux'
+          ? '<div class="section"><div class="ms-card capability">'
+            + '<div class="capability-head"><strong>tmux 已可用</strong>'
+            + '<span class="ms-badge yellow">待切换</span></div>'
+            + '<p>当前 SSH Session 仍在运行，关闭后自动切换到 tmux；也可以立即切换并结束这些 Session。</p>'
+            + actionButton('立即切换到 tmux', 'adopt-provider', false, '') + '</div></div>'
           : '')
         + (server.immutable ? '' : '<div class="section">'
           + actionButton('编辑连接', 'edit-server', false, '')
