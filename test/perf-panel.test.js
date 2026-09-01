@@ -6,7 +6,7 @@ import path from 'node:path';
 const utils = fs.readFileSync('public/js/perf-utils.js', 'utf8');
 const panel = fs.readFileSync('public/js/perf-panel.js', 'utf8');
 
-function bootDom({ windowStats = null, usageFails = false } = {}) {
+function bootDom({ windowStats = null, codexUsage = null, usageFails = false } = {}) {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     runScripts: 'outside-only',
   });
@@ -20,6 +20,7 @@ function bootDom({ windowStats = null, usageFails = false } = {}) {
       const target = String(url);
       apiCalls.push(target);
       if (usageFails && /claude-usage|codex-usage/.test(target)) return { success: false, data: null };
+      if (target.includes('/api/codex-usage')) return { success: true, data: codexUsage || { aggregate: {} } };
       if (target.includes('/api/window-stats')) {
         return { success: true, data: windowStats || { total: {}, windows: [], external: [], disks: [] } };
       }
@@ -94,6 +95,30 @@ describe('PerfPanel skeleton', () => {
     await flush();
     expect(w.__apiCalls).toEqual(['/api/codex-usage']);
     w.PerfPanel.stop();
+  });
+
+  it('treats the current primary 10080-minute Codex limit as the weekly window', async () => {
+    const weekly = bootDom({
+      codexUsage: {
+        subscription: { type: 'prolite' },
+        utilization: {
+          primary: { used_percent: 52, window_minutes: 10080, resets_at: 1788750933 },
+          secondary: null,
+          observedAt: '2026-09-01T05:58:00Z',
+        },
+        aggregate: {},
+      },
+    }).window;
+    weekly.document.getElementById('root').innerHTML = weekly.PerfPanel.renderSkeleton('codex');
+    weekly.PerfPanel.start('codex');
+    await flush();
+
+    const root = weekly.document.getElementById('codex-view-root');
+    expect(root.textContent).toContain('7d 总量');
+    expect(root.textContent).not.toContain('5h 窗口');
+    expect(root.querySelectorAll('.cu-meter')).toHaveLength(1);
+    expect(weekly.document.getElementById('pp-badge-codex').textContent).toBe('7d 52%');
+    weekly.PerfPanel.stop();
   });
 
   it('puts each badge beside its own heading, with the count carrying a unit', async () => {

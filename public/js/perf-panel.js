@@ -758,6 +758,15 @@ var PerfPanel = (function () {
     return String(id || 'unknown').replace(/^openai\//, '');
   }
 
+  function codexWeeklyLimit(utilization) {
+    if (!utilization) return null;
+    var windows = [utilization.primary, utilization.secondary].filter(Boolean);
+    return windows.find(function (item) { return Number(item.window_minutes) >= 7 * 24 * 60; })
+      || utilization.secondary
+      || utilization.primary
+      || null;
+  }
+
   function renderCodexLimitMeter(label, obj) {
     if (!obj) return '';
     var pct = Math.floor(obj.used_percent || 0);
@@ -796,8 +805,7 @@ var PerfPanel = (function () {
       html += '</div>';
       if (u.observedAt) html += '<span class="cu-extra-text">采样 ' + escapeHtml(u.observedAt.replace('T', ' ').slice(0, 16)) + '</span>';
       html += '</div><div class="cu-meters">';
-      html += renderCodexLimitMeter('5h 窗口', u.primary);
-      html += renderCodexLimitMeter('7d 总量', u.secondary);
+      html += renderCodexLimitMeter('7d 总量', codexWeeklyLimit(u));
       html += '</div></div>';
     }
 
@@ -1042,9 +1050,10 @@ var PerfPanel = (function () {
 
   function updateCodexBadge() {
     var d = codexState.data;
-    if (!d || !d.utilization || !d.utilization.primary) { paintBadge('pp-badge-codex', null); return; }
-    var pct = Math.floor(d.utilization.primary.used_percent || 0);
-    paintBadge('pp-badge-codex', '5h ' + pct + '%', usageTone(pct));
+    var weekly = d && codexWeeklyLimit(d.utilization);
+    if (!weekly) { paintBadge('pp-badge-codex', null); return; }
+    var pct = Math.floor(weekly.used_percent || 0);
+    paintBadge('pp-badge-codex', '7d ' + pct + '%', usageTone(pct));
   }
 
   function start(mode) {
