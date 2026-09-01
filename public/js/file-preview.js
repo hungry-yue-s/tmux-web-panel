@@ -2469,42 +2469,104 @@ var FilePreview = (function () {
       + _escapeHtml(display || target) + '</span>';
   }
 
-  function _prepareMarkdownNavigation(wrap) {
+  function _decodeMarkdownPart(value) {
+    try { return decodeURIComponent(value); } catch (_) { return null; }
+  }
+
+  function _encodedFileURLPath(absPath) {
+    return String(absPath || '').split('/').map(function (part, index) {
+      return index === 0 ? '' : encodeURIComponent(part);
+    }).join('/');
+  }
+
+  function _resolveMarkdownHref(sourceAbsPath, rawHref) {
+    var href = String(rawHref || '').trim();
+    if (!href) return { kind: 'blocked' };
+
+    if (href.charAt(0) === '#') {
+      var localHeading = _decodeMarkdownPart(href.slice(1));
+      return localHeading === null ? { kind: 'blocked' }
+        : { kind: 'heading', headingRef: localHeading };
+    }
+
+    if (/^\/\//.test(href)) return { kind: 'web', href: 'https:' + href };
+    var scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(href);
+    if (scheme) {
+      return /^https?$/i.test(scheme[1]) ? { kind: 'web', href: href } : { kind: 'blocked' };
+    }
+
+    if (typeof sourceAbsPath !== 'string' || sourceAbsPath.charAt(0) !== '/') {
+      return { kind: 'blocked' };
+    }
+
+    try {
+      var origin = 'https://file-preview.invalid';
+      var target = new URL(href, origin + _encodedFileURLPath(sourceAbsPath));
+      if (target.origin !== origin) {
+        return /^https?:$/i.test(target.protocol) ? { kind: 'web', href: target.href } : { kind: 'blocked' };
+      }
+      var path = _decodeMarkdownPart(target.pathname);
+      var headingRef = _decodeMarkdownPart(target.hash ? target.hash.slice(1) : '');
+      if (path === null || headingRef === null) return { kind: 'blocked' };
+      if (path === sourceAbsPath) return { kind: 'heading', headingRef: headingRef };
+      return { kind: 'file', path: path, headingRef: headingRef || null };
+    } catch (_) {
+      return { kind: 'blocked' };
+    }
+  }
+
+  function _scrollMarkdownHeading(wrap, raw) {
+    if (!wrap) return false;
+    var headingRef = String(raw || '');
+    try { headingRef = decodeURIComponent(headingRef); } catch (_) { /* already decoded */ }
+    var headings = Array.prototype.slice.call(wrap.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+    var normalized = _normalizeMarkdownHeading(headingRef);
+    var target = null;
+    for (var i = 0; i < headings.length; i++) {
+      if (_normalizeMarkdownHeading(headings[i].textContent) === normalized) {
+        target = headings[i];
+        break;
+      }
+    }
+    if (!target) {
+      var slug = _markdownHeadingSlug(headingRef);
+      for (var j = 0; j < headings.length; j++) {
+        if (headings[j].id === slug) { target = headings[j]; break; }
+      }
+    }
+    if (!target) return false;
+    try { target.focus({ preventScroll: true }); } catch (_) { target.focus(); }
+    if (typeof target.scrollIntoView === 'function') {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    return true;
+  }
+
+  function _prepareMarkdownNavigation(wrap, sourceAbsPath, paneId) {
     if (!wrap) return;
     var headings = Array.prototype.slice.call(wrap.querySelectorAll('h1, h2, h3, h4, h5, h6'));
     var ids = {};
-    var byText = {};
     headings.forEach(function (heading) {
       var base = _markdownHeadingSlug(heading.textContent);
       var count = ids[base] || 0;
       ids[base] = count + 1;
       heading.id = count === 0 ? base : base + '-' + count;
       heading.setAttribute('tabindex', '-1');
-      var normalized = _normalizeMarkdownHeading(heading.textContent);
-      if (!byText[normalized]) byText[normalized] = heading;
     });
 
-    Array.prototype.forEach.call(wrap.querySelectorAll('a[href^="#"]'), function (link) {
-      link.addEventListener('click', function (event) {
-        var raw = link.getAttribute('data-fp-heading-target');
-        if (!raw) {
-          raw = (link.getAttribute('href') || '').slice(1);
-          try { raw = decodeURIComponent(raw); } catch (_) { /* keep raw fragment */ }
-        }
-        var target = byText[_normalizeMarkdownHeading(raw)] || null;
-        if (!target) {
-          var slug = _markdownHeadingSlug(raw);
-          for (var i = 0; i < headings.length; i++) {
-            if (headings[i].id === slug) { target = headings[i]; break; }
-          }
-        }
-        if (!target) return;
-        event.preventDefault();
-        try { target.focus({ preventScroll: true }); } catch (_) { target.focus(); }
-        if (typeof target.scrollIntoView === 'function') {
-          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-      });
+    wrap.addEventListener('click', function (event) {
+      var link = event.target.closest && event.target.closest('a[href]');
+      if (!link || !wrap.contains(link)) return;
+      var resolved = _resolveMarkdownHref(sourceAbsPath, link.getAttribute('href'));
+      event.preventDefault();
+      if (resolved.kind === 'heading') {
+        var heading = link.getAttribute('data-fp-heading-target') || resolved.headingRef;
+        _scrollMarkdownHeading(wrap, heading);
+      } else if (resolved.kind === 'file') {
+        openFile(resolved.path, paneId || _currentPaneId, { markdownFragment: resolved.headingRef });
+      } else if (resolved.kind === 'web') {
+        _openWeb(resolved.href);
+      }
     });
   }
 
@@ -2702,7 +2764,7 @@ var FilePreview = (function () {
     return rows ? '<div class="fp-frontmatter">' + rows + '</div>' : '';
   }
 
-  function _renderMarkdown(body, content, filePath) {
+  function _renderMarkdown(body, content, filePath, paneId) {
     body.innerHTML = '<div class="fp-loading">Rendering Markdown\u2026</div>';
     var baseDir = filePath.substring(0, filePath.lastIndexOf('/'));
 
@@ -2760,7 +2822,7 @@ var FilePreview = (function () {
         body.appendChild(wrap);
 
         _renderCallouts(wrap);
-        _prepareMarkdownNavigation(wrap);
+        _prepareMarkdownNavigation(wrap, filePath, paneId);
 
         var mermaidBlocks = wrap.querySelectorAll('code.language-mermaid');
         if (mermaidBlocks.length > 0) {
@@ -3214,7 +3276,7 @@ var FilePreview = (function () {
           if (!isCurrent()) return false;
           current.rawContent = cr.data.content;
           if (info.isMarkdown) {
-            return _renderMarkdown(renderedBody, cr.data.content, info.absPath);
+            return _renderMarkdown(renderedBody, cr.data.content, info.absPath, options.paneId);
           }
           if (_isCsvPath(info.absPath)) {
             _renderCsv(renderedBody, cr.data.content, info.absPath);
@@ -3227,14 +3289,23 @@ var FilePreview = (function () {
 
     return Promise.resolve(renderPromise).then(function (rendered) {
       if (rendered === false || !commit(current, 'file')) return false;
+      if (current.isMarkdown && options.markdownFragment) {
+        var scrollToLinkedHeading = function () {
+          if (!isCurrent()) return;
+          _scrollMarkdownHeading(body.querySelector('.fp-md-wrap'), options.markdownFragment);
+        };
+        if (window.requestAnimationFrame) window.requestAnimationFrame(scrollToLinkedHeading);
+        else setTimeout(scrollToLinkedHeading, 0);
+      }
       return true;
     });
   }
 
-  // opts: `true` (legacy keep-dir-context) or { lineRef, keepDirContext }.
+  // opts: `true` (legacy keep-dir-context) or { lineRef, keepDirContext, markdownFragment }.
   function openFile(filePath, paneId, opts) {
     var keepDir = opts === true || (opts && opts.keepDirContext);
     var targetLine = (opts && opts !== true && opts.lineRef != null) ? opts.lineRef : null;
+    var markdownFragment = (opts && opts !== true && opts.markdownFragment) || null;
     // A path may still carry a :line[:col] suffix (e.g. from a mobile tap); split
     // it off so the server gets a clean path and we still know where to jump.
     if (targetLine == null && typeof LinkDetect !== 'undefined') {
@@ -3270,7 +3341,11 @@ var FilePreview = (function () {
           _showError(body, res.error, errorAbsPath);
           return;
         }
-        return _renderResolvedPreview(body, res.data, targetLine, { requestId: requestId });
+        return _renderResolvedPreview(body, res.data, targetLine, {
+          requestId: requestId,
+          paneId: paneId || _currentPaneId,
+          markdownFragment: markdownFragment,
+        });
       })
       .then(function (rendered) {
         if (rendered === true) {
@@ -3605,6 +3680,8 @@ var FilePreview = (function () {
       mermaidStandaloneScript: _mermaidStandaloneScript,
       markdownHeadingSlug: _markdownHeadingSlug,
       wikilinkHtml: _wikilinkHtml,
+      resolveMarkdownHref: _resolveMarkdownHref,
+      scrollMarkdownHeading: _scrollMarkdownHeading,
       prepareMarkdownNavigation: _prepareMarkdownNavigation,
       loadDockState: _loadDockState,
       persistDockState: _persistDockState,

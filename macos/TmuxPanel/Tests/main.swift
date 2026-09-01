@@ -70,6 +70,46 @@ private func testEndpointResolution() throws {
         ),
         "default HTTP port did not match explicit port"
     )
+
+    let rootEndpoint = URL(string: "https://127.0.0.1:9443/")!
+    for allowed in ["/", "/index.html", "/login.html?next=%23%2Fservers", "/#/servers/local"] {
+        try expect(
+            PanelEndpointResolver.isAllowedPrimaryDocument(
+                URL(string: "https://127.0.0.1:9443\(allowed)")!,
+                as: rootEndpoint
+            ),
+            "allowed primary document rejected: \(allowed)"
+        )
+    }
+    for blocked in ["/research/note.md", "/api/files/raw", "/terminal.html"] {
+        try expect(
+            !PanelEndpointResolver.isAllowedPrimaryDocument(
+                URL(string: "https://127.0.0.1:9443\(blocked)")!,
+                as: rootEndpoint
+            ),
+            "unexpected primary document accepted: \(blocked)"
+        )
+    }
+    try expect(
+        !PanelEndpointResolver.isAllowedPrimaryDocument(
+            URL(string: "https://example.com/")!, as: rootEndpoint
+        ),
+        "cross-origin primary document accepted"
+    )
+
+    let baseEndpoint = URL(string: "https://panel.test/base/")!
+    try expect(
+        PanelEndpointResolver.isAllowedPrimaryDocument(
+            URL(string: "https://panel.test/base/login.html")!, as: baseEndpoint
+        ),
+        "base-path login document rejected"
+    )
+    try expect(
+        !PanelEndpointResolver.isAllowedPrimaryDocument(
+            URL(string: "https://panel.test/research/note.md")!, as: baseEndpoint
+        ),
+        "path outside base accepted"
+    )
 }
 
 private func testServiceStateParsing() throws {

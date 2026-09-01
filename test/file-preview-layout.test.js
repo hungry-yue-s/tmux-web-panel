@@ -42,7 +42,7 @@ function createPreview({ storage = {}, missingPaths = [], context = ['local', 't
   new Function('window', 'document', 'fetch', source)(dom.window, dom.window.document, fetch);
   const preview = dom.window.FilePreview;
   if (context) preview.switchDockContext(context[0], context[1], context[2]);
-  return { dom, preview };
+  return { dom, preview, fetch };
 }
 
 function createLivePreview({ visible = false } = {}) {
@@ -470,6 +470,70 @@ describe('file preview dock tabs', () => {
     expect(preview._test.wikilinkHtml('#目标', '<img src=x onerror=alert(1)>', true))
       .not.toContain('<img');
     expect(preview._test.wikilinkHtml('other.md', '其他文档', true)).toContain('<span');
+  });
+
+  it('resolves Markdown links against the current file, not the panel URL', () => {
+    const { preview } = createPreview();
+    const resolve = preview._test.resolveMarkdownHref;
+    const sourcePath = '/Users/me/notes/current.md';
+
+    expect(resolve(sourcePath, '#设计目标')).toEqual({ kind: 'heading', headingRef: '设计目标' });
+    expect(resolve(sourcePath, 'next.md')).toEqual({
+      kind: 'file', path: '/Users/me/notes/next.md', headingRef: null,
+    });
+    expect(resolve(sourcePath, '../research/%E4%B8%AA%E4%BA%BA.md?raw=1#%E9%AA%8C%E6%94%B6')).toEqual({
+      kind: 'file', path: '/Users/me/research/个人.md', headingRef: '验收',
+    });
+    expect(resolve(sourcePath, 'current.md#References')).toEqual({ kind: 'heading', headingRef: 'References' });
+    expect(resolve(sourcePath, 'https://example.com/doc')).toEqual({ kind: 'web', href: 'https://example.com/doc' });
+    expect(resolve(sourcePath, '//example.com/doc')).toEqual({ kind: 'web', href: 'https://example.com/doc' });
+    ['javascript:alert(1)', 'data:text/html,x', 'file:///tmp/x', 'blob:https://panel.test/x', 'bad%zz.md']
+      .forEach((href) => expect(resolve(sourcePath, href)).toEqual({ kind: 'blocked' }));
+  });
+
+  it('opens relative Markdown links in FilePreview and never changes the page URL', async () => {
+    const { dom, preview, fetch } = createPreview();
+    const wrap = dom.window.document.createElement('div');
+    wrap.innerHTML = '<a class="nested" href="../research/%E4%B8%AA%E4%BA%BA.md#%E9%AA%8C%E6%94%B6"><span>打开</span></a>'
+      + '<a class="missing" href="#missing">missing</a>';
+    dom.window.document.body.appendChild(wrap);
+    preview._test.prepareMarkdownNavigation(wrap, '/Users/me/notes/current.md', '%42');
+    const before = dom.window.location.href;
+
+    const click = new dom.window.MouseEvent('click', { bubbles: true, cancelable: true });
+    wrap.querySelector('.nested span').dispatchEvent(click);
+    await flush();
+    expect(click.defaultPrevented).toBe(true);
+    const infoURL = String(fetch.mock.calls.find(([url]) => String(url).includes('/api/files/info'))[0]);
+    expect(new URL(infoURL, 'https://panel.test').searchParams.get('path')).toBe('/Users/me/research/个人.md');
+    expect(new URL(infoURL, 'https://panel.test').searchParams.get('paneId')).toBe('%42');
+    expect(dom.window.location.href).toBe(before);
+
+    const missing = new dom.window.MouseEvent('click', { bubbles: true, cancelable: true });
+    wrap.querySelector('.missing').dispatchEvent(missing);
+    expect(missing.defaultPrevented).toBe(true);
+    expect(dom.window.location.href).toBe(before);
+  });
+
+  it('routes external Markdown links out and blocks unsafe schemes', () => {
+    const { dom, preview } = createPreview();
+    const opened = vi.fn();
+    dom.window.open = opened;
+    const wrap = dom.window.document.createElement('div');
+    wrap.innerHTML = '<a class="web" href="https://example.com/docs">web</a>'
+      + '<a class="unsafe" href="javascript:alert(1)">unsafe</a>';
+    dom.window.document.body.appendChild(wrap);
+    preview._test.prepareMarkdownNavigation(wrap, '/Users/me/notes/current.md', '%1');
+
+    const webClick = new dom.window.MouseEvent('click', { bubbles: true, cancelable: true });
+    wrap.querySelector('.web').dispatchEvent(webClick);
+    expect(webClick.defaultPrevented).toBe(true);
+    expect(opened).toHaveBeenCalledWith('https://example.com/docs', '_blank', 'noopener');
+
+    const unsafeClick = new dom.window.MouseEvent('click', { bubbles: true, cancelable: true });
+    wrap.querySelector('.unsafe').dispatchEvent(unsafeClick);
+    expect(unsafeClick.defaultPrevented).toBe(true);
+    expect(opened).toHaveBeenCalledTimes(1);
   });
 
   it('jumps both Obsidian and standard Markdown anchors to generated heading ids', () => {

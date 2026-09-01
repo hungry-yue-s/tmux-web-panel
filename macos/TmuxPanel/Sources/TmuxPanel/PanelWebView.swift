@@ -100,7 +100,9 @@ struct PanelWebView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            if webView === primaryWebView { model?.markReady() }
+            if webView === primaryWebView {
+                model?.markReady()
+            }
             (webView as? PanelWKWebView)?.publishFullscreenState()
         }
 
@@ -166,10 +168,22 @@ struct PanelWebView: NSViewRepresentable {
                 return
             }
 
-            if navigationAction.targetFrame?.isMainFrame == true,
-               isInternal(url, in: webView) {
-                decisionHandler(.allow)
-                return
+            if navigationAction.targetFrame?.isMainFrame == true {
+                if webView === primaryWebView {
+                    if PanelEndpointResolver.isAllowedPrimaryDocument(url, as: endpoint.url) {
+                        decisionHandler(.allow)
+                    } else if PanelEndpointResolver.isSameOrigin(url, as: endpoint.url) {
+                        decisionHandler(.cancel)
+                    } else {
+                        openExternalHTTPURL(url)
+                        decisionHandler(.cancel)
+                    }
+                    return
+                }
+                if isInternal(url, in: webView) {
+                    decisionHandler(.allow)
+                    return
+                }
             }
 
             if navigationAction.targetFrame?.isMainFrame == false {

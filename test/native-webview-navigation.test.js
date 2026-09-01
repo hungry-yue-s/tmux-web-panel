@@ -5,6 +5,9 @@ const source = readFileSync(
   'macos/TmuxPanel/Sources/TmuxPanel/PanelWebView.swift',
   'utf8',
 );
+const endpointSource = readFileSync('macos/TmuxPanel/Sources/TmuxPanel/PanelEndpoint.swift', 'utf8');
+const modelSource = readFileSync('macos/TmuxPanel/Sources/TmuxPanel/AppModel.swift', 'utf8');
+const appSource = readFileSync('macos/TmuxPanel/Sources/TmuxPanel/TmuxPanelApp.swift', 'utf8');
 const previewSource = readFileSync('public/js/file-preview.js', 'utf8');
 const terminalSource = readFileSync('public/js/terminal.js', 'utf8');
 const indexSource = readFileSync('public/index.html', 'utf8');
@@ -29,13 +32,34 @@ describe('macOS native WebView navigation', () => {
     expect(source).toContain('func webViewDidClose');
   });
 
+  it('blocks same-origin filesystem paths from replacing the primary panel document', () => {
+    expect(endpointSource).toContain('isAllowedPrimaryDocument');
+    expect(endpointSource).toContain('baseDirectory + "login.html"');
+    expect(source).toContain('webView === primaryWebView');
+    expect(source).toContain('PanelEndpointResolver.isAllowedPrimaryDocument(url, as: endpoint.url)');
+    expect(source).toContain('PanelEndpointResolver.isSameOrigin(url, as: endpoint.url)');
+    expect(source).toContain('navigationAction.targetFrame?.isMainFrame == false');
+    expect(source).toContain('decisionHandler(.cancel)');
+  });
+
+  it('keeps the primary document allowlist without toolbar navigation controls', () => {
+    expect(endpointSource).toContain('isAllowedPrimaryDocument');
+    expect(source).toContain('webView === primaryWebView');
+    expect(source).toContain('PanelEndpointResolver.isAllowedPrimaryDocument(url, as: endpoint.url)');
+    expect(appSource).not.toContain('Image(systemName: "chevron.left")');
+    expect(appSource).not.toContain('Image(systemName: "house")');
+    expect(appSource).not.toContain('Button("回到首页")');
+    expect(modelSource).not.toContain('func goBack()');
+    expect(modelSource).not.toContain('func goHome()');
+  });
+
   it('uses the native window bridge for previews and terminal pop-outs', () => {
     expect(source).toContain('openWindowHandlerName = "tmuxPanelOpenWindow"');
     expect(source).toContain('html.utf8.count <= Self.maximumWindowHTMLBytes');
     expect(previewSource).toContain('handlers.tmuxPanelOpenWindow');
     expect(previewSource).toContain('html: out.html');
     expect(terminalSource).toContain('messageHandlers.tmuxPanelOpenWindow');
-    expect(indexSource).toContain('/js/file-preview.js?v=35');
+    expect(indexSource).toContain('/js/file-preview.js?v=36');
     expect(indexSource).toContain('/js/terminal.js?v=16');
   });
 

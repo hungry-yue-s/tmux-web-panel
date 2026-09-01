@@ -95,6 +95,25 @@ enum PanelEndpointResolver {
             && effectivePort(for: candidateComponents) == effectivePort(for: endpointComponents)
     }
 
+    static func isAllowedPrimaryDocument(_ candidate: URL, as endpoint: URL) -> Bool {
+        guard isSameOrigin(candidate, as: endpoint) else { return false }
+        let endpointPath = endpoint.path.isEmpty ? "/" : endpoint.path
+        let baseDirectory: String
+        if endpoint.hasDirectoryPath {
+            baseDirectory = endpointPath.hasSuffix("/") ? endpointPath : endpointPath + "/"
+        } else {
+            let parent = (endpointPath as NSString).deletingLastPathComponent
+            baseDirectory = parent == "/" ? "/" : parent + "/"
+        }
+        let allowed = Set([
+            endpointPath,
+            baseDirectory,
+            baseDirectory + "index.html",
+            baseDirectory + "login.html",
+        ])
+        return allowed.contains(candidate.path.isEmpty ? "/" : candidate.path)
+    }
+
     private static func effectivePort(for components: URLComponents) -> Int? {
         if let port = components.port { return port }
         switch components.scheme?.lowercased() {
