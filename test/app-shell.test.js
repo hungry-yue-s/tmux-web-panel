@@ -115,6 +115,28 @@ describe('AppShell sidebar tree', () => {
     expect(ctx.document.querySelectorAll('.tree-window-row')).toHaveLength(2);
   });
 
+  it('puts stable server, provider and entity identity on sidebar rows', () => {
+    const session = ctx.document.querySelector('.tree-session-row');
+    const win = ctx.document.querySelector('.tree-window-row');
+    expect(session.dataset).toMatchObject({
+      sidebarEntity: 'session', serverId: 'local', provider: 'tmux', session: '$0', entityName: 'DataAnt',
+    });
+    expect(win.dataset).toMatchObject({
+      sidebarEntity: 'window', serverId: 'local', provider: 'tmux', session: '$0', window: '@0', entityName: '三绿',
+    });
+  });
+
+  it('escapes row attributes while preserving the dataset value', () => {
+    seedLocalTmux(ctx.Store, { sessions: [{
+      id: '$8', name: 'A&B "team"', active: true,
+      windows: [{ id: '@9', index: 1, name: 'docs <draft>', active: true, panes: [] }],
+    }] });
+    ctx.Store.setRoute({ name: 'terminal', params: { serverId: 'local', sessionId: '$8', windowId: '@9' } });
+    ctx.Shell.render();
+    expect(ctx.document.querySelector('.tree-session-row').dataset.entityName).toBe('A&B "team"');
+    expect(ctx.document.querySelector('.tree-window-row').dataset.entityName).toBe('docs <draft>');
+  });
+
   it('shows full window names with no first-character or ordinal anchor', () => {
     const rows = [...ctx.document.querySelectorAll('.tree-window-row')];
     const labels = rows.map((row) => row.querySelector('.tree-item-name').textContent);

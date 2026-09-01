@@ -287,7 +287,10 @@
         var expanded = global.Store.isSessionExpanded(serverId, session.id) || params.sessionId === session.id;
         var isActive = params.sessionId === session.id;
         return '<div class="tree-session-group ' + (isActive ? 'active' : '') + '">'
-          + '<div class="tree-session-row ' + (isActive ? 'active' : '') + '">'
+          + '<div class="tree-session-row ' + (isActive ? 'active' : '') + '"'
+          + ' data-sidebar-entity="session" data-server-id="' + esc(serverId) + '"'
+          + ' data-provider="' + esc(workspace.provider) + '"'
+          + ' data-session="' + esc(session.id) + '" data-entity-name="' + esc(session.name) + '">'
           + '<button class="tree-item" data-session-toggle="' + esc(session.id) + '"'
           + ' data-rail-label="' + esc(String(session.name || '?').charAt(0)) + '"'
           + ' title="' + esc(session.name) + '"'
@@ -338,7 +341,10 @@
           },
         };
         var command = pane ? (pane.command || pane.name || '') : '';
-        return '<div class="tree-window-row">'
+        return '<div class="tree-window-row" data-sidebar-entity="window"'
+          + ' data-server-id="' + esc(serverId) + '" data-provider="' + esc(workspace.provider) + '"'
+          + ' data-session="' + esc(session.id) + '" data-window="' + esc(win.id) + '"'
+          + ' data-entity-name="' + esc(win.name) + '">'
           + '<button class="tree-item ' + (active ? 'active' : '') + '"'
           + ' data-route="' + esc(global.Router.serialize(target)) + '"'
           + ' title="' + esc(win.name) + '"'

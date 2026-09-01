@@ -113,6 +113,7 @@
     },
 
     async _onRoute(route) {
+      this._hideSidebarContextMenu();
       const view = global.document.getElementById('ms-view');
       if (!view) return;
       if (route.name !== 'terminal') {
@@ -459,9 +460,92 @@
       this._pollTimer = null;
     },
 
+    _ensureSidebarContextMenu() {
+      let menu = global.document.getElementById('ms-sidebar-context-menu');
+      if (menu) return menu;
+      menu = global.document.createElement('div');
+      menu.id = 'ms-sidebar-context-menu';
+      menu.className = 'context-menu ms-sidebar-context-menu';
+      menu.setAttribute('role', 'menu');
+      menu.hidden = true;
+      global.document.body.appendChild(menu);
+      return menu;
+    },
+
+    _hideSidebarContextMenu({ restoreFocus = false } = {}) {
+      const menu = global.document.getElementById('ms-sidebar-context-menu');
+      if (!menu || menu.hidden) return;
+      menu.hidden = true;
+      menu.replaceChildren();
+      if (restoreFocus && this._sidebarContextOrigin && this._sidebarContextOrigin.isConnected) {
+        const target = this._sidebarContextOrigin.querySelector('.tree-item');
+        if (target) target.focus();
+      }
+      this._sidebarContextOrigin = null;
+    },
+
+    _positionSidebarContextMenu(menu, row, event) {
+      const gutter = 8;
+      const rowRect = row.getBoundingClientRect();
+      let left = Number(event.clientX) || rowRect.left + 16;
+      let top = Number(event.clientY) || rowRect.bottom;
+      menu.style.left = '0px';
+      menu.style.top = '0px';
+      menu.style.visibility = 'hidden';
+      menu.hidden = false;
+      const rect = menu.getBoundingClientRect();
+      left = Math.max(gutter, Math.min(left, global.innerWidth - rect.width - gutter));
+      top = Math.max(gutter, Math.min(top, global.innerHeight - rect.height - gutter));
+      menu.style.left = Math.round(left) + 'px';
+      menu.style.top = Math.round(top) + 'px';
+      menu.style.visibility = '';
+    },
+
+    _showSidebarContextMenu(row, event) {
+      this._hideSidebarContextMenu();
+      global.AppShell.hideServerPicker();
+      const serverId = row.dataset.serverId;
+      const workspace = global.AppShell.workspace(serverId);
+      const actions = (workspace && workspace.actions) || {};
+      const entity = row.dataset.sidebarEntity;
+      const entries = entity === 'session'
+        ? [
+          actions.createWindow && ['new-window', '新建 Window', false],
+          actions.renameSession && ['rename-session', '重命名', false],
+          actions.closeSession && ['close-session', '关闭', true],
+        ]
+        : [
+          actions.renameWindow && ['rename-window', '重命名', false],
+          actions.closeWindow && ['close-window', '关闭', true],
+        ];
+      const available = entries.filter(Boolean);
+      if (available.length === 0) return;
+
+      const menu = this._ensureSidebarContextMenu();
+      menu.setAttribute('aria-label', (entity === 'session' ? 'Session' : 'Window') + ' 操作');
+      menu.innerHTML = available.map((entry) => {
+        const action = entry[0];
+        const icon = action === 'new-window' ? '+' : (action.indexOf('rename-') === 0 ? '✎' : '×');
+        return '<button type="button" role="menuitem" class="context-menu-item'
+          + (entry[2] ? ' context-menu-item-danger' : '') + '" data-action="' + action + '"'
+          + ' data-server-id="' + global.AppShell.escape(serverId) + '"'
+          + ' data-provider="' + global.AppShell.escape(row.dataset.provider || '') + '"'
+          + ' data-session="' + global.AppShell.escape(row.dataset.session || '') + '"'
+          + ' data-window="' + global.AppShell.escape(row.dataset.window || '') + '"'
+          + ' data-entity-name="' + global.AppShell.escape(row.dataset.entityName || '') + '">'
+          + '<span class="context-menu-icon" aria-hidden="true">' + icon + '</span>'
+          + entry[1] + '</button>';
+      }).join('');
+      this._sidebarContextOrigin = row;
+      this._positionSidebarContextMenu(menu, row, event);
+      const first = menu.querySelector('[role="menuitem"]');
+      if (first) first.focus();
+    },
+
     /** Single delegated listener for the whole shell. */
     _bindEvents() {
       global.document.addEventListener('click', (event) => {
+        this._hideSidebarContextMenu();
         const routeTarget = event.target.closest('[data-route]');
         if (routeTarget) {
           global.AppShell.hideServerPicker();
@@ -495,6 +579,28 @@
           global.AppShell.toast(err && err.message ? err.message : '操作失败');
         });
       });
+
+      global.document.addEventListener('contextmenu', (event) => {
+        const sidebar = event.target.closest('.ms-sidebar');
+        if (!sidebar) return;
+        event.preventDefault();
+        const row = event.target.closest('[data-sidebar-entity]');
+        if (!row) {
+          this._hideSidebarContextMenu();
+          return;
+        }
+        this._showSidebarContextMenu(row, event);
+      });
+
+      global.document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        const menu = global.document.getElementById('ms-sidebar-context-menu');
+        if (!menu || menu.hidden) return;
+        event.preventDefault();
+        this._hideSidebarContextMenu({ restoreFocus: true });
+      });
+      global.document.addEventListener('scroll', () => this._hideSidebarContextMenu(), true);
+      global.addEventListener('resize', () => this._hideSidebarContextMenu());
 
       this._bindResizer();
     },
@@ -533,7 +639,11 @@
     },
 
     async _handleAction(action, node) {
-      const serverId = global.AppShell.activeServerId();
+      const serverId = node.dataset.serverId || global.AppShell.activeServerId();
+      const entityContext = {
+        provider: node.dataset.provider || null,
+        name: node.dataset.entityName || null,
+      };
 
       if (action === 'server-switcher' || action === 'mobile-server') {
         global.AppShell.showServerPicker(node);
@@ -578,19 +688,19 @@
         return;
       }
       if (action === 'rename-session') {
-        await this._renameSession(serverId, node.dataset.session);
+        await this._renameSession(serverId, node.dataset.session, entityContext);
         return;
       }
       if (action === 'close-session') {
-        await this._closeSession(serverId, node.dataset.session);
+        await this._closeSession(serverId, node.dataset.session, entityContext);
         return;
       }
       if (action === 'rename-window') {
-        await this._renameWindow(serverId, node.dataset.window);
+        await this._renameWindow(serverId, node.dataset.window, entityContext);
         return;
       }
       if (action === 'close-window') {
-        await this._closeWindow(serverId, node.dataset.window);
+        await this._closeWindow(serverId, node.dataset.window, entityContext);
         return;
       }
       if (action === 'close-modal') {
@@ -606,7 +716,7 @@
         return;
       }
       if (action === 'new-window') {
-        await this._createWindow(serverId, node.dataset.session);
+        await this._createWindow(serverId, node.dataset.session, entityContext);
         return;
       }
       if (action === 'adopt-provider') {
@@ -628,9 +738,10 @@
       }
     },
 
-    _providerHeader(serverId) {
+    _providerHeader(serverId, expectedProvider) {
       const workspace = global.AppShell.workspace(serverId);
-      return workspace ? { 'X-Workspace-Provider': workspace.provider } : {};
+      const provider = expectedProvider || (workspace && workspace.provider);
+      return provider ? { 'X-Workspace-Provider': provider } : {};
     },
 
     async _createSession(serverId) {
@@ -648,7 +759,7 @@
       await this._onRoute(global.Router.current());
     },
 
-    async _createWindow(serverId, sessionId) {
+    async _createWindow(serverId, sessionId, context = {}) {
       if (!sessionId) return;
       const name = await promptDialog({
         title: '新建 Window',
@@ -657,7 +768,9 @@
       });
       if (name === null) return;
       const path = global.Api.serverPath(serverId, '/sessions/' + encodeURIComponent(sessionId) + '/windows');
-      await global.Api.request('POST', path, name ? { name } : {}, { headers: this._providerHeader(serverId) });
+      await global.Api.request('POST', path, name ? { name } : {}, {
+        headers: this._providerHeader(serverId, context.provider),
+      });
       await this.refreshWorkspace(serverId);
       await this._onRoute(global.Router.current());
     },
@@ -841,14 +954,14 @@
       await this._onRoute(global.Router.current());
     },
 
-    async _renameSession(serverId, sessionId) {
+    async _renameSession(serverId, sessionId, context = {}) {
       if (!sessionId) return;
       const workspace = global.AppShell.workspace(serverId);
       const session = global.AppShell._findSession(workspace, sessionId);
       const name = await promptDialog({
         title: '重命名 Session',
         placeholder: '新名称',
-        value: session ? session.name : '',
+        value: context.name || (session ? session.name : ''),
         confirmText: '保存',
       });
       if (!name) return;
@@ -856,17 +969,17 @@
         'PATCH',
         global.Api.serverPath(serverId, '/sessions/' + encodeURIComponent(sessionId)),
         { name },
-        { headers: this._providerHeader(serverId) },
+        { headers: this._providerHeader(serverId, context.provider) },
       );
       await this.refreshWorkspace(serverId);
       await this._onRoute(global.Router.current());
     },
 
-    async _closeSession(serverId, sessionId) {
+    async _closeSession(serverId, sessionId, context = {}) {
       if (!sessionId) return;
       const workspace = global.AppShell.workspace(serverId);
       const session = global.AppShell._findSession(workspace, sessionId);
-      const label = session ? session.name : sessionId;
+      const label = context.name || (session ? session.name : sessionId);
       if (!await confirmDialog({
         title: '关闭 Session',
         message: '关闭 Session“' + label + '”？其中所有 Window 都会结束。',
@@ -878,13 +991,13 @@
         'DELETE',
         global.Api.serverPath(serverId, '/sessions/' + encodeURIComponent(sessionId)),
         undefined,
-        { headers: this._providerHeader(serverId) },
+        { headers: this._providerHeader(serverId, context.provider) },
       );
       await this.refreshWorkspace(serverId);
       this._correctRouteAfterClose(serverId, { sessionId });
     },
 
-    async _renameWindow(serverId, windowId) {
+    async _renameWindow(serverId, windowId, context = {}) {
       if (!windowId) return;
       const route = global.Router.current();
       const workspace = global.AppShell.workspace(serverId);
@@ -893,7 +1006,7 @@
       const name = await promptDialog({
         title: '重命名 Window',
         placeholder: '新名称',
-        value: win ? win.name : '',
+        value: context.name || (win ? win.name : ''),
         confirmText: '保存',
       });
       if (!name) return;
@@ -901,17 +1014,18 @@
         'PATCH',
         global.Api.serverPath(serverId, '/windows/' + encodeURIComponent(windowId)),
         { name },
-        { headers: this._providerHeader(serverId) },
+        { headers: this._providerHeader(serverId, context.provider) },
       );
       await this.refreshWorkspace(serverId);
       await this._onRoute(global.Router.current());
     },
 
-    async _closeWindow(serverId, windowId) {
+    async _closeWindow(serverId, windowId, context = {}) {
       if (!windowId) return;
+      const label = context.name || '这个 Window';
       if (!await confirmDialog({
         title: '关闭 Window',
-        message: '关闭这个 Window？其中的 Pane 都会结束。',
+        message: '关闭“' + label + '”？其中的 Pane 都会结束。',
         confirmText: '关闭',
         danger: true,
       })) return;
@@ -919,7 +1033,7 @@
         'DELETE',
         global.Api.serverPath(serverId, '/windows/' + encodeURIComponent(windowId)),
         undefined,
-        { headers: this._providerHeader(serverId) },
+        { headers: this._providerHeader(serverId, context.provider) },
       );
       await this.refreshWorkspace(serverId);
       this._correctRouteAfterClose(serverId, { windowId });

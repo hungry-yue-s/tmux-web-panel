@@ -3350,6 +3350,44 @@ body.terminal-fullscreen .terminal-exit-fullscreen-btn {
   font-family: 'JetBrains Mono', monospace;
 }
 
+#ms-sidebar-context-menu {
+  position: fixed;
+  z-index: 1200;
+  min-width: 148px;
+  padding: 4px;
+  border-color: var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-raised);
+  box-shadow: var(--ui-shadow-md);
+}
+
+#ms-sidebar-context-menu .context-menu-item {
+  width: 100%;
+  min-height: 34px;
+  justify-content: flex-start;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--ui-radius-xs);
+  color: var(--text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+
+#ms-sidebar-context-menu .context-menu-item:hover,
+#ms-sidebar-context-menu .context-menu-item:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  outline: none;
+}
+
+#ms-sidebar-context-menu .context-menu-item-danger,
+#ms-sidebar-context-menu .context-menu-item-danger:hover,
+#ms-sidebar-context-menu .context-menu-item-danger:focus-visible {
+  color: var(--accent-red);
+}
+
 /* === 8. Sidebar Collapse === */
 
 .sidebar-collapse-btn {

@@ -366,6 +366,14 @@ function loadStatusShell({ perfPanel = null, theme = null, auth = null } = {}) {
   return { win, MsApp: win.MsApp, Store: win.Store, Router: win.Router, document: win.document };
 }
 
+function seedRemoteSidebarWorkspace(Store) {
+  Store.setWorkspace('api-linux', {
+    serverId: 'api-linux', provider: 'ssh', transport: 'ssh', persistence: 'process-memory',
+    actions: { createWindow: true, renameSession: true, closeSession: true, renameWindow: true, closeWindow: true },
+    sessions: [],
+  });
+}
+
 function fakePerfPanel() {
   const calls = { started: [], stopped: 0, rendered: [] };
   return {
@@ -459,6 +467,84 @@ describe('MsApp status mode routing', () => {
     expect(view.classList.contains('terminal-mode')).toBe(false);
     expect(view.querySelector('.server-hero').textContent).toContain('api-linux');
     expect(view.querySelector('.tabs')).toBeTruthy();
+  });
+});
+
+describe('MsApp sidebar context menu', () => {
+  function row(ctx, entity) {
+    const el = ctx.document.createElement('div');
+    el.className = entity === 'session' ? 'tree-session-row' : 'tree-window-row';
+    Object.assign(el.dataset, {
+      sidebarEntity: entity,
+      serverId: 'api-linux',
+      provider: 'ssh',
+      session: '$7',
+      window: entity === 'window' ? '@9' : '',
+      entityName: entity === 'session' ? 'Remote work' : 'Build logs',
+    });
+    const button = ctx.document.createElement('button');
+    button.className = 'tree-item';
+    button.innerHTML = '<span class="nested-label">target</span>';
+    el.appendChild(button);
+    ctx.document.querySelector('.ms-sidebar').appendChild(el);
+    return el;
+  }
+
+  it('offers new window, rename and close for Session rows and rename/close for Window rows', () => {
+    const ctx = loadStatusShell();
+    seedRemoteSidebarWorkspace(ctx.Store);
+
+    const session = row(ctx, 'session');
+    ctx.MsApp._showSidebarContextMenu(session, { clientX: 20, clientY: 30 });
+    let menu = ctx.document.getElementById('ms-sidebar-context-menu');
+    expect([...menu.querySelectorAll('[data-action]')].map((n) => n.dataset.action))
+      .toEqual(['new-window', 'rename-session', 'close-session']);
+    expect(menu.textContent).not.toMatch(/Pin|Move|置顶|移动/);
+
+    const win = row(ctx, 'window');
+    ctx.MsApp._showSidebarContextMenu(win, { clientX: 20, clientY: 30 });
+    menu = ctx.document.getElementById('ms-sidebar-context-menu');
+    expect([...menu.querySelectorAll('[data-action]')].map((n) => n.dataset.action))
+      .toEqual(['rename-window', 'close-window']);
+    expect(menu.getAttribute('role')).toBe('menu');
+    expect(ctx.document.activeElement.getAttribute('role')).toBe('menuitem');
+  });
+
+  it('intercepts nested right-clicks, dismisses on Escape, and restores focus', () => {
+    const ctx = loadStatusShell();
+    seedRemoteSidebarWorkspace(ctx.Store);
+    ctx.MsApp._bindEvents();
+    const session = row(ctx, 'session');
+    const nested = session.querySelector('.nested-label');
+    const event = new ctx.win.MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, clientX: 10000, clientY: 10000,
+    });
+
+    nested.dispatchEvent(event);
+    const menu = ctx.document.getElementById('ms-sidebar-context-menu');
+    expect(event.defaultPrevented).toBe(true);
+    expect(menu.hidden).toBe(false);
+    expect(parseInt(menu.style.left, 10)).toBeLessThanOrEqual(ctx.win.innerWidth - 8);
+    expect(parseInt(menu.style.top, 10)).toBeLessThanOrEqual(ctx.win.innerHeight - 8);
+
+    ctx.document.dispatchEvent(new ctx.win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(menu.hidden).toBe(true);
+    expect(ctx.document.activeElement).toBe(session.querySelector('.tree-item'));
+  });
+
+  it('passes captured remote server, provider, id and name into existing actions', async () => {
+    const ctx = loadStatusShell();
+    const calls = [];
+    ctx.MsApp._renameWindow = async (...args) => calls.push(args);
+    const action = ctx.document.createElement('button');
+    Object.assign(action.dataset, {
+      action: 'rename-window', serverId: 'api-linux', provider: 'ssh',
+      window: '@9', entityName: 'Build logs',
+    });
+
+    await ctx.MsApp._handleAction('rename-window', action);
+    expect(calls).toEqual([['api-linux', '@9', { provider: 'ssh', name: 'Build logs' }]]);
+    expect(ctx.MsApp._providerHeader('api-linux', 'ssh')).toEqual({ 'X-Workspace-Provider': 'ssh' });
   });
 });
 
