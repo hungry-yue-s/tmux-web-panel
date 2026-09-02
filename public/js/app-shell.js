@@ -125,6 +125,9 @@
       this._renderSidebar(route);
       this._renderMobile(route);
       this._syncNav(route);
+      if (typeof global.NotificationPanel !== 'undefined' && global.NotificationPanel.syncAttention) {
+        global.NotificationPanel.syncAttention();
+      }
     },
 
     _syncMode: function (route) {
@@ -344,6 +347,7 @@
         return '<div class="tree-window-row" data-sidebar-entity="window"'
           + ' data-server-id="' + esc(serverId) + '" data-provider="' + esc(workspace.provider) + '"'
           + ' data-session="' + esc(session.id) + '" data-window="' + esc(win.id) + '"'
+          + ' data-window-index="' + esc(String(win.index)) + '"'
           + ' data-entity-name="' + esc(win.name) + '">'
           + '<button class="tree-item ' + (active ? 'active' : '') + '"'
           + ' data-route="' + esc(global.Router.serialize(target)) + '"'

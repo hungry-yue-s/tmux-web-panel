@@ -29,7 +29,7 @@ describe('global UI system', () => {
     expect(styles).toMatch(/#sidebar\.collapsed[\s\S]*?width:\s*52px/);
     expect(styles).toContain('@media (max-width: 767px)');
     expect(styles).toMatch(/#topbar[\s\S]*?min-height:\s*52px/);
-    expect(indexSource).toContain('/css/style.css?v=32');
+    expect(indexSource).toContain('/css/style.css?v=34');
     expect(indexSource).toContain('/js/app-fullscreen.js?v=2');
     expect(indexSource).toContain('/js/app.js?v=13');
   });

@@ -64,7 +64,7 @@ describe('extended terminal themes', () => {
 
   it('bumps browser caches for the theme-aware Mermaid scripts', () => {
     expect(indexSource).toContain('/js/theme.js?v=4');
-    expect(indexSource).toContain('/js/file-preview.js?v=36');
+    expect(indexSource).toContain('/js/file-preview.js?v=37');
   });
 
   it('does not expose the removed transparency UI or xterm option', () => {

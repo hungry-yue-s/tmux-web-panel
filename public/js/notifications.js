@@ -87,6 +87,7 @@ var NotificationPanel = (function () {
       }
     }
     _updateBadge();
+    _syncAttention();
     if (_isOpen) _rerenderPanel();
   }
 
@@ -102,6 +103,7 @@ var NotificationPanel = (function () {
       n.read = true;
       n.readAt = Date.now();
       _updateBadge();
+      _syncAttention();
       _serverMarkRead(id);
     }
   }
@@ -109,6 +111,7 @@ var NotificationPanel = (function () {
   function clearAll() {
     _notifications = [];
     _updateBadge();
+    _syncAttention();
     _serverClearAll();
     if (_isOpen) _rerenderPanel();
   }
@@ -292,8 +295,39 @@ var NotificationPanel = (function () {
     });
     if (changed) {
       _updateBadge();
+      _syncAttention();
       _serverMarkReadByWindow(session, windowIndex);
     }
+  }
+
+  // Highlight the sidebar row a fresh notification came from. When the session
+  // is expanded the specific window row breathes; when collapsed (window rows
+  // not rendered) the session row breathes instead so the cue stays visible.
+  function _syncAttention() {
+    var bySession = {};
+    _notifications.forEach(function (n) {
+      if (n.read) return;
+      (bySession[n.session] = bySession[n.session] || {}).unread = true;
+      ((bySession[n.session].windows = bySession[n.session].windows || {})[String(n.windowIndex)] = true);
+    });
+
+    document.querySelectorAll('.notify-breathe').forEach(function (el) {
+      el.classList.remove('notify-breathe');
+    });
+
+    document.querySelectorAll('.tree-session-row').forEach(function (row) {
+      var entry = bySession[row.dataset.entityName];
+      if (!entry) return;
+      var group = row.parentElement;
+      var windowList = group && group.querySelector('.tree-window-list');
+      if (!windowList) {
+        row.classList.add('notify-breathe');
+        return;
+      }
+      windowList.querySelectorAll('.tree-window-row').forEach(function (wrow) {
+        if (entry.windows[wrow.dataset.windowIndex]) wrow.classList.add('notify-breathe');
+      });
+    });
   }
 
   return {
@@ -306,5 +340,6 @@ var NotificationPanel = (function () {
     updateBadge: _updateBadge,
     handleServerPush: handleServerPush,
     refresh: _fetchAll,
+    syncAttention: _syncAttention,
   };
 })();
