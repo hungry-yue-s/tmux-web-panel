@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
@@ -545,6 +545,26 @@ describe('MsApp sidebar context menu', () => {
     await ctx.MsApp._handleAction('rename-window', action);
     expect(calls).toEqual([['api-linux', '@9', { provider: 'ssh', name: 'Build logs' }]]);
     expect(ctx.MsApp._providerHeader('api-linux', 'ssh')).toEqual({ 'X-Workspace-Provider': 'ssh' });
+  });
+});
+
+describe('MsApp clears notification attention on window switch', () => {
+  it('marks the routed window read so the breathing highlight stops', async () => {
+    const ctx = loadStatusShell();
+    ctx.Store.setWorkspace('local', {
+      serverId: 'local', provider: 'tmux', transport: 'local', persistence: 'tmux',
+      actions: {},
+      sessions: [{ id: '$0', name: 'work', windows: [{ id: '@1', index: 1, name: 'build', panes: [] }] }],
+    });
+    const markRead = vi.fn();
+    ctx.win.state = {};
+    ctx.win.renderTerminal = () => {};
+    ctx.win.TerminalTarget = { set: () => {} };
+    ctx.win.NotificationPanel = { _markReadByWindow: markRead };
+
+    await ctx.MsApp._onRoute({ name: 'terminal', params: { serverId: 'local', sessionId: '$0', windowId: '@1' } });
+
+    expect(markRead).toHaveBeenCalledWith('work', 1);
   });
 });
 

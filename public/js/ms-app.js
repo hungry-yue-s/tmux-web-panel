@@ -278,6 +278,9 @@
       global.state.currentPane = params.paneId || (win.panes && win.panes[0] ? win.panes[0].id : null);
       global.state.panes = win.panes || [];
       global.state.currentTab = 'terminal';
+      if (global.NotificationPanel && global.NotificationPanel._markReadByWindow) {
+        global.NotificationPanel._markReadByWindow(session.name, win.index);
+      }
       // renderTerminal calls embedTerminalChrome itself, on every render.
       global.renderTerminal(host);
       this._setDockContext(serverId, session.name, win.index);
