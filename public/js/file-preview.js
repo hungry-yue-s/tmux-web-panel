@@ -1964,6 +1964,16 @@ var FilePreview = (function () {
     body.appendChild(wrap);
   }
 
+  // Transient popup so a failed jump/open is never silent, even when the
+  // preview surface itself is hidden or docked.
+  function _notifyFailure(message) {
+    try {
+      if (window.AppShell && typeof window.AppShell.toast === 'function') {
+        window.AppShell.toast(message);
+      }
+    } catch (_) { /* notification must never break previewing */ }
+  }
+
   // --- Renderers ---
 
   function _renderImage(body, url) {
@@ -2567,11 +2577,15 @@ var FilePreview = (function () {
       event.preventDefault();
       if (resolved.kind === 'heading') {
         var heading = link.getAttribute('data-fp-heading-target') || resolved.headingRef;
-        _scrollMarkdownHeading(wrap, heading);
+        if (!_scrollMarkdownHeading(wrap, heading)) {
+          _notifyFailure('未找到标题：' + heading);
+        }
       } else if (resolved.kind === 'file') {
         openFile(resolved.path, paneId || _currentPaneId, { markdownFragment: resolved.headingRef });
       } else if (resolved.kind === 'web') {
         _openWeb(resolved.href);
+      } else if (resolved.kind === 'blocked') {
+        _notifyFailure('已阻止不安全链接：' + link.getAttribute('href'));
       }
     });
   }
@@ -3301,7 +3315,9 @@ var FilePreview = (function () {
       if (current.isMarkdown && options.markdownFragment) {
         var scrollToLinkedHeading = function () {
           if (!isCurrent()) return;
-          _scrollMarkdownHeading(body.querySelector('.fp-md-wrap'), options.markdownFragment);
+          if (!_scrollMarkdownHeading(body.querySelector('.fp-md-wrap'), options.markdownFragment)) {
+            _notifyFailure('未找到标题：' + options.markdownFragment);
+          }
         };
         if (window.requestAnimationFrame) window.requestAnimationFrame(scrollToLinkedHeading);
         else setTimeout(scrollToLinkedHeading, 0);
@@ -3345,9 +3361,14 @@ var FilePreview = (function () {
         if (!res) return;
         if (!_isPreviewRequestCurrent(requestId, body)) return false;
         if (!res.success) {
-          if (res.error === 'File not found' || res.error === 'Path not found') { close(); return; }
+          if (res.error === 'File not found' || res.error === 'Path not found') {
+            _showError(body, '无法打开 ' + filePath + '：文件不存在或不在允许预览的目录', null);
+            _notifyFailure('无法打开：' + filePath);
+            return;
+          }
           var errorAbsPath = (res.data && res.data.absPath) ? res.data.absPath : null;
           _showError(body, res.error, errorAbsPath);
+          _notifyFailure('预览打开失败：' + res.error);
           return;
         }
         return _renderResolvedPreview(body, res.data, targetLine, {
@@ -3368,6 +3389,7 @@ var FilePreview = (function () {
         if (_isPreviewRequestCurrent(requestId, body)) {
           _previewReady = false;
           _showError(body, err.message);
+          _notifyFailure('预览打开失败：' + err.message);
         }
         return false;
       });
@@ -3785,6 +3807,7 @@ var FilePreview = (function () {
       buildArchiveTree: _buildArchiveTree,
       renderArchiveTree: _renderArchiveTree,
       formatBytes: _formatBytes,
+      notifyFailure: _notifyFailure,
       loadDockState: _loadDockState,
       persistDockState: _persistDockState,
       dockStateKey: function (serverId, sessionName, windowIndex) {

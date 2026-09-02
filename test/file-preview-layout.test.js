@@ -1124,3 +1124,45 @@ describe('FilePreview archive tree', () => {
     expect(preview._test.formatBytes(3 * 1024 * 1024)).toBe('3.0 MB');
   });
 });
+
+describe('FilePreview failure notifications', () => {
+  it('toasts and shows an inline error when the target cannot be opened', async () => {
+    const { dom, preview } = createPreview({ missingPaths: ['/tmp/gone.md'] });
+    const toast = vi.fn();
+    dom.window.AppShell = { toast: toast };
+
+    preview.openFile('/tmp/gone.md', '%1');
+    await flush();
+
+    expect(toast).toHaveBeenCalledWith('无法打开：/tmp/gone.md');
+    expect(dom.window.document.querySelector('.fp-error')).not.toBeNull();
+  });
+
+  it('toasts when a heading jump finds no target', () => {
+    const { dom, preview } = createPreview();
+    const toast = vi.fn();
+    dom.window.AppShell = { toast: toast };
+    const wrap = dom.window.document.createElement('div');
+    wrap.innerHTML = '<a href="#nope">x</a><h2>Other</h2>';
+    dom.window.document.body.appendChild(wrap);
+    preview._test.prepareMarkdownNavigation(wrap, '/n/c.md', '%1');
+
+    wrap.querySelector('a').click();
+
+    expect(toast).toHaveBeenCalledWith('未找到标题：nope');
+  });
+
+  it('toasts when a link is blocked as unsafe', () => {
+    const { dom, preview } = createPreview();
+    const toast = vi.fn();
+    dom.window.AppShell = { toast: toast };
+    const wrap = dom.window.document.createElement('div');
+    wrap.innerHTML = '<a href="javascript:alert(1)">x</a>';
+    dom.window.document.body.appendChild(wrap);
+    preview._test.prepareMarkdownNavigation(wrap, '/n/c.md', '%1');
+
+    wrap.querySelector('a').click();
+
+    expect(toast).toHaveBeenCalledWith('已阻止不安全链接：javascript:alert(1)');
+  });
+});
