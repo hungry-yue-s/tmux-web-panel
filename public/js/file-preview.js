@@ -183,10 +183,9 @@ var FilePreview = (function () {
 
     var available = Math.max(0, layoutWidth - sidebarWidth);
     var min = 320;
-    var terminalMin = Math.min(560, Math.max(360, Math.floor(available * 0.45)));
-    // Keep the dock a secondary workspace instead of allowing a stale saved
-    // width to consume almost the entire terminal. This matches the CSS cap.
-    var max = Math.min(820, Math.max(0, available - terminalMin));
+    // Dragging left may grow the dock to at most 70% of the space it shares
+    // with the terminal, keeping a usable terminal strip beside it.
+    var max = Math.floor(available * 0.7);
     var preferred = Math.min(max, Math.max(min, Math.round(available * 0.44)));
     return { min: min, max: max, preferred: Math.min(preferred, max) };
   }

@@ -888,7 +888,8 @@ describe('file preview dock tabs', () => {
     dockCurrent(dom);
 
     const dock = dom.window.document.querySelector('.fp-dock');
-    expect(parseInt(dock.style.flexBasis, 10)).toBeLessThanOrEqual(820);
+    const cap = Math.floor(dom.window.innerWidth * 0.7);
+    expect(parseInt(dock.style.flexBasis, 10)).toBeLessThanOrEqual(cap);
     expect(parseInt(dock.style.flexBasis, 10)).toBeGreaterThanOrEqual(320);
     expect(dock.style.width).toBe(dock.style.flexBasis);
   });
