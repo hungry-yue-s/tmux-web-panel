@@ -1166,3 +1166,17 @@ describe('FilePreview failure notifications', () => {
     expect(toast).toHaveBeenCalledWith('已阻止不安全链接：javascript:alert(1)');
   });
 });
+
+describe('FilePreview share link origin', () => {
+  it('prefers the LAN host over the loopback origin', () => {
+    const { dom, preview } = createPreview();
+    preview._test.setLanHost(null);
+    expect(preview._test.shareOrigin()).toBe(dom.window.location.origin);
+
+    preview._test.setLanHost('192.168.1.50');
+    const origin = preview._test.shareOrigin();
+    expect(origin).toContain('192.168.1.50');
+    expect(origin).not.toContain('127.0.0.1');
+    preview._test.setLanHost(null);
+  });
+});

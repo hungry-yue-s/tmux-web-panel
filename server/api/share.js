@@ -1,5 +1,54 @@
 import { Router } from 'express';
+import { networkInterfaces } from 'node:os';
+import { createSocket } from 'node:dgram';
 import { MAX_TTL_MS } from '../share-store.js';
+
+const VIRTUAL_IFACE = /^(utun|tun|tap|vmnet|vnic|bridge|virbr|docker|awdl|llw|ipsec|pktap|lo)/i;
+
+function interfaceFallback() {
+  let physical = null;
+  let any = null;
+  for (const [name, list] of Object.entries(networkInterfaces())) {
+    if (VIRTUAL_IFACE.test(name)) continue;
+    for (const addr of list || []) {
+      if (addr.family !== 'IPv4' || addr.internal) continue;
+      if (!any) any = addr.address;
+      if (!physical && /^(en|eth)/i.test(name)) physical = addr.address;
+    }
+  }
+  return physical || any;
+}
+
+function knownLocal(address) {
+  if (!address) return false;
+  return Object.values(networkInterfaces()).some((list) =>
+    (list || []).some((a) => a.family === 'IPv4' && a.address === address));
+}
+
+// The address the OS routes outbound traffic through is the one peers on the
+// same network reach this machine by; RFC1918 preference would wrongly pick a
+// secondary or corporate-VPN-adjacent NIC on networks that use public ranges.
+function detectLanHost() {
+  return new Promise((resolve) => {
+    const sock = createSocket('udp4');
+    const finish = (value) => {
+      try { sock.close(); } catch (_) { /* already closed */ }
+      resolve(knownLocal(value) ? value : interfaceFallback());
+    };
+    sock.once('error', () => finish(null));
+    try {
+      sock.connect(53, '8.8.8.8', () => finish(sock.address().address));
+    } catch (_) {
+      finish(null);
+    }
+  });
+}
+
+let lanHostPromise = null;
+function lanHost() {
+  if (!lanHostPromise) lanHostPromise = detectLanHost();
+  return lanHostPromise;
+}
 
 /**
  * Authenticated management routes for shared preview snapshots.
@@ -8,6 +57,12 @@ import { MAX_TTL_MS } from '../share-store.js';
  */
 export function createShareRouter(shareStore) {
   const router = Router();
+
+  // The browser cannot discover the machine's LAN address on its own; share
+  // links must be reachable by others on the network, not just via loopback.
+  router.get('/lan-host', async (_req, res) => {
+    res.json({ success: true, data: { host: await lanHost() }, error: null });
+  });
 
   // Create a share from a client-rendered, self-contained HTML snapshot.
   router.post('/', async (req, res) => {

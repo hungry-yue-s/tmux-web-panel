@@ -1739,6 +1739,28 @@ var FilePreview = (function () {
     });
   }
 
+  var _lanHost = null;
+  var _lanHostPromise = null;
+  function _ensureLanHost() {
+    if (_lanHost) return Promise.resolve(_lanHost);
+    if (_lanHostPromise) return _lanHostPromise;
+    _lanHostPromise = fetch('/api/share/lan-host', {
+      headers: typeof Auth !== 'undefined' ? Auth.headers() : {}, cache: 'no-store',
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      _lanHost = (j && j.data && j.data.host) || null;
+      return _lanHost;
+    }).catch(function () { return null; });
+    return _lanHostPromise;
+  }
+
+  // Share links are meant for other machines, so prefer the LAN address over
+  // the loopback origin the panel itself is browsed on.
+  function _shareOrigin() {
+    if (!_lanHost) return window.location.origin;
+    var port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+    return window.location.protocol + '//' + _lanHost + ':' + port;
+  }
+
   function _copyText(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       return navigator.clipboard.writeText(text).catch(function () { _copyFallback(text); });
@@ -1817,12 +1839,12 @@ var FilePreview = (function () {
     }
 
     function renderList() {
-      _shareApi('GET', '').then(function (data) {
+      _ensureLanHost().then(function () { return _shareApi('GET', ''); }).then(function (data) {
         var shares = (data && data.shares) || [];
         if (!shares.length) { listEl.innerHTML = '<div class="fp-share-empty">暂无有效分享</div>'; return; }
         listEl.innerHTML = '';
         shares.forEach(function (s) {
-          var url = location.origin + '/s/' + s.id;
+          var url = _shareOrigin() + '/s/' + s.id;
           var row = document.createElement('div');
           row.className = 'fp-share-item';
           row.innerHTML = '<div class="fp-share-item-main">'
@@ -1853,18 +1875,20 @@ var FilePreview = (function () {
         if (!out) throw new Error('当前文件无法生成快照');
         return _shareApi('POST', '', { html: out.html, filename: _currentFile.filename || 'preview', ttlMs: ttl });
       }).then(function (data) {
-        var url = location.origin + data.url;
-        resultEl.style.display = 'block';
-        resultEl.innerHTML = '<div class="fp-share-ok">✅ 链接已生成(到期 ' + _escapeHtml(_fmtExpiry(data.expiresAt)) + ')</div>'
-          + '<div class="fp-share-linkrow"><input class="fp-share-link" id="fpShareLink" readonly value="' + _escapeHtml(url) + '">'
-          + '<button class="fp-share-btn fp-share-primary" id="fpShareCopy">复制</button></div>';
-        var linkInput = resultEl.querySelector('#fpShareLink');
-        linkInput.focus(); linkInput.select();
-        resultEl.querySelector('#fpShareCopy').addEventListener('click', function () {
-          _copyText(url); this.textContent = '已复制'; var b = this;
-          setTimeout(function () { b.textContent = '复制'; }, 1200);
+        return _ensureLanHost().then(function () {
+          var url = _shareOrigin() + data.url;
+          resultEl.style.display = 'block';
+          resultEl.innerHTML = '<div class="fp-share-ok">✅ 链接已生成(到期 ' + _escapeHtml(_fmtExpiry(data.expiresAt)) + ')</div>'
+            + '<div class="fp-share-linkrow"><input class="fp-share-link" id="fpShareLink" readonly value="' + _escapeHtml(url) + '">'
+            + '<button class="fp-share-btn fp-share-primary" id="fpShareCopy">复制</button></div>';
+          var linkInput = resultEl.querySelector('#fpShareLink');
+          linkInput.focus(); linkInput.select();
+          resultEl.querySelector('#fpShareCopy').addEventListener('click', function () {
+            _copyText(url); this.textContent = '已复制'; var b = this;
+            setTimeout(function () { b.textContent = '复制'; }, 1200);
+          });
+          renderList();
         });
-        renderList();
       }).catch(function (err) {
         alert('生成失败: ' + (err && err.message ? err.message : err));
       }).finally(function () {
@@ -3808,6 +3832,8 @@ var FilePreview = (function () {
       renderArchiveTree: _renderArchiveTree,
       formatBytes: _formatBytes,
       notifyFailure: _notifyFailure,
+      shareOrigin: _shareOrigin,
+      setLanHost: function (host) { _lanHost = host; },
       loadDockState: _loadDockState,
       persistDockState: _persistDockState,
       dockStateKey: function (serverId, sessionName, windowIndex) {
