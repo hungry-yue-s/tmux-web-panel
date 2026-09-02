@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { createReadStream } from 'node:fs';
+import { getArchiveType, listArchive, MAX_ENTRIES as ARCHIVE_MAX_ENTRIES } from './archive.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -13,6 +14,7 @@ const SIZE_LIMITS = {
   image: 10 * 1024 * 1024,
   pdf: 10 * 1024 * 1024,
   xlsx: 15 * 1024 * 1024,
+  archive: 64 * 1024 * 1024,
 };
 
 const SENSITIVE_PATTERNS = [
@@ -97,9 +99,11 @@ function getFileInfo(filePath) {
   const isPdf = mimeType === 'application/pdf';
   const isXlsx = mimeType === XLSX_MIME;
   const isMarkdown = mimeType === 'text/markdown';
-  const isText = !isImage && !isPdf && !isXlsx;
+  const archiveType = getArchiveType(filePath) || null;
+  const isArchive = archiveType !== null;
+  const isText = !isImage && !isPdf && !isXlsx && !isArchive;
   const language = LANG_MAP[ext] || BASENAME_MAP[base] || null;
-  return { mimeType, isText, isImage, isPdf, isXlsx, isMarkdown, language };
+  return { mimeType, isText, isImage, isPdf, isXlsx, isMarkdown, isArchive, archiveType, language };
 }
 
 // Detect language from shebang line (e.g. #!/usr/bin/env python3)
@@ -118,6 +122,7 @@ function getSizeLimit(info) {
   if (info.isImage) return SIZE_LIMITS.image;
   if (info.isPdf) return SIZE_LIMITS.pdf;
   if (info.isXlsx) return SIZE_LIMITS.xlsx;
+  if (info.isArchive) return SIZE_LIMITS.archive;
   return SIZE_LIMITS.text;
 }
 
@@ -375,6 +380,50 @@ export function createFilesRouter(allowedRoots) {
           entries,
           truncated,
           totalCount: names.length,
+        },
+        error: null,
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, data: null, error: err.message });
+    }
+  });
+
+  router.get('/archive', async (req, res) => {
+    try {
+      const { path: rawPath } = req.query;
+      if (!rawPath) {
+        return res.status(400).json({ success: false, data: null, error: 'Missing path parameter' });
+      }
+
+      const result = await validateFilePath(rawPath, roots);
+      if (result.error) {
+        return res.status(result.status).json({ success: false, data: null, error: result.error });
+      }
+      if (!result.info.isArchive) {
+        return res.status(400).json({ success: false, data: null, error: 'Not an archive' });
+      }
+
+      let entries;
+      try {
+        entries = await listArchive(result.absPath, result.info.archiveType);
+      } catch (err) {
+        return res.status(415).json({ success: false, data: null, error: err.message });
+      }
+
+      const truncated = entries.length >= ARCHIVE_MAX_ENTRIES;
+      entries.sort((a, b) => {
+        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      });
+
+      res.json({
+        success: true,
+        data: {
+          absPath: result.absPath,
+          archiveType: result.info.archiveType,
+          entries,
+          truncated,
+          totalCount: entries.length,
         },
         error: null,
       });

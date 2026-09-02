@@ -3253,6 +3253,7 @@ var FilePreview = (function () {
       isPdf: info.isPdf,
       isXlsx: info.isXlsx,
       isMarkdown: info.isMarkdown,
+      isArchive: info.isArchive,
       rawContent: null,
       size: info.size,
       mtimeMs: info.mtimeMs,
@@ -3266,6 +3267,8 @@ var FilePreview = (function () {
       renderPromise = Promise.resolve();
     } else if (info.isXlsx) {
       renderPromise = _renderXlsx(renderedBody, rawUrl);
+    } else if (info.isArchive) {
+      renderPromise = _renderArchive(renderedBody, info);
     } else {
       renderPromise = fetch('/api/files/content?path=' + encodeURIComponent(info.absPath), {
         headers: headers, cache: 'no-store',
@@ -3429,6 +3432,96 @@ var FilePreview = (function () {
       .catch(function (err) {
         if (!_isPreviewRequestCurrent(requestId, body, fileAtStart, dirPath)) return;
         _showError(body, err.message, dirPath);
+      });
+  }
+
+  function _formatBytes(n) {
+    if (n == null || isNaN(n)) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+    return (n / 1024 / 1024 / 1024).toFixed(1) + ' GB';
+  }
+
+  function _buildArchiveTree(entries) {
+    var root = { children: {}, isDir: true };
+    entries.forEach(function (entry) {
+      var parts = String(entry.name).split('/').filter(Boolean);
+      var node = root;
+      parts.forEach(function (part, i) {
+        node.children[part] = node.children[part] || { children: {} };
+        node = node.children[part];
+        if (i === parts.length - 1) {
+          node.isDir = !!entry.isDir;
+          node.size = entry.size || 0;
+          node.mtime = entry.mtime || 0;
+        } else {
+          node.isDir = true;
+        }
+      });
+    });
+    return root;
+  }
+
+  function _renderArchiveTree(node, container, depth) {
+    var names = Object.keys(node.children).sort(function (a, b) {
+      var ad = node.children[a].isDir ? 0 : 1;
+      var bd = node.children[b].isDir ? 0 : 1;
+      if (ad !== bd) return ad - bd;
+      return a.localeCompare(b, undefined, { sensitivity: 'base' });
+    });
+    names.forEach(function (name) {
+      var child = node.children[name];
+      var row = document.createElement('div');
+      row.className = 'fp-dir-row fp-arch-row' + (child.isDir ? ' fp-arch-dir' : '');
+      row.style.paddingLeft = (8 + depth * 16) + 'px';
+      var icon = child.isDir ? '📁' : '📄';
+      row.innerHTML = '<span class="fp-dir-icon">' + icon + '</span>'
+        + '<span class="fp-dir-name">' + _escapeHtml(name) + '</span>'
+        + '<span class="fp-dir-size">' + (child.isDir ? '' : _escapeHtml(_formatBytes(child.size))) + '</span>';
+      container.appendChild(row);
+      if (child.isDir) {
+        var sub = document.createElement('div');
+        sub.className = 'fp-arch-sub';
+        container.appendChild(sub);
+        _renderArchiveTree(child, sub, depth + 1);
+        row.addEventListener('click', function () {
+          sub.hidden = !sub.hidden;
+          row.classList.toggle('fp-arch-collapsed', sub.hidden);
+        });
+      }
+    });
+  }
+
+  function _renderArchive(body, info) {
+    body.innerHTML = '<div class="fp-loading">解析压缩包…</div>';
+    var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
+    return fetch('/api/files/archive?path=' + encodeURIComponent(info.absPath), {
+      headers: headers, cache: 'no-store',
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res.success) throw new Error(res.error || '压缩包解析失败');
+        var data = res.data;
+        var wrap = document.createElement('div');
+        wrap.className = 'fp-arch-wrap';
+
+        var head = document.createElement('div');
+        head.className = 'fp-arch-head';
+        head.innerHTML = '<span class="fp-arch-type">' + _escapeHtml(data.archiveType) + '</span>'
+          + '<span class="fp-arch-count">' + data.totalCount + ' 项</span>'
+          + (data.truncated ? '<span class="fp-arch-trunc">已截断</span>' : '');
+        wrap.appendChild(head);
+
+        var list = document.createElement('div');
+        list.className = 'fp-dir-list fp-arch-list';
+        var tree = _buildArchiveTree(data.entries);
+        _renderArchiveTree(tree, list, 0);
+        wrap.appendChild(list);
+
+        body.innerHTML = '';
+        body.appendChild(wrap);
+        return true;
       });
   }
 
@@ -3683,6 +3776,9 @@ var FilePreview = (function () {
       resolveMarkdownHref: _resolveMarkdownHref,
       scrollMarkdownHeading: _scrollMarkdownHeading,
       prepareMarkdownNavigation: _prepareMarkdownNavigation,
+      buildArchiveTree: _buildArchiveTree,
+      renderArchiveTree: _renderArchiveTree,
+      formatBytes: _formatBytes,
       loadDockState: _loadDockState,
       persistDockState: _persistDockState,
       dockStateKey: function (serverId, sessionName, windowIndex) {

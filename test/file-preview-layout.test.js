@@ -1058,3 +1058,44 @@ describe('file preview dock tabs', () => {
     expect(live.dom.window.document.querySelector('.fp-dir-list').textContent).not.toContain('stale.txt');
   });
 });
+
+describe('FilePreview archive tree', () => {
+  it('builds a nested tree and renders collapsible directories', () => {
+    const { dom, preview } = createPreview();
+    const tree = preview._test.buildArchiveTree([
+      { name: 'src/nested/b.js', size: 50, isDir: false },
+      { name: 'src/a.js', size: 100, isDir: false },
+      { name: 'README.md', size: 10, isDir: false },
+    ]);
+
+    const container = dom.window.document.createElement('div');
+    preview._test.renderArchiveTree(tree, container, 0);
+
+    const topRows = [...container.children].filter((n) => n.classList.contains('fp-arch-row'));
+    expect(topRows.map((r) => r.querySelector('.fp-dir-name').textContent))
+      .toEqual(['src', 'README.md']);
+
+    const allRows = container.querySelectorAll('.fp-arch-row');
+    expect(allRows).toHaveLength(5);
+
+    const srcRow = topRows[0];
+    const srcSub = srcRow.nextElementSibling;
+    expect(srcSub.classList.contains('fp-arch-sub')).toBe(true);
+    const nestedRow = srcSub.querySelector('.fp-arch-dir');
+    expect(nestedRow.querySelector('.fp-dir-name').textContent).toBe('nested');
+    expect(parseInt(nestedRow.style.paddingLeft, 10))
+      .toBeGreaterThan(parseInt(srcRow.style.paddingLeft, 10));
+
+    srcRow.click();
+    expect(srcSub.hidden).toBe(true);
+    srcRow.click();
+    expect(srcSub.hidden).toBe(false);
+  });
+
+  it('formats byte sizes for display', () => {
+    const { preview } = createPreview();
+    expect(preview._test.formatBytes(500)).toBe('500 B');
+    expect(preview._test.formatBytes(2048)).toBe('2.0 KB');
+    expect(preview._test.formatBytes(3 * 1024 * 1024)).toBe('3.0 MB');
+  });
+});
