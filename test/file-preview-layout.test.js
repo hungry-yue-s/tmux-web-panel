@@ -469,7 +469,31 @@ describe('file preview dock tabs', () => {
     expect(alias).toContain('>开始阅读</a>');
     expect(preview._test.wikilinkHtml('#目标', '<img src=x onerror=alert(1)>', true))
       .not.toContain('<img');
-    expect(preview._test.wikilinkHtml('other.md', '其他文档', true)).toContain('<span');
+
+    const fileLink = preview._test.wikilinkHtml('other.md', '其他文档', true);
+    expect(fileLink).toContain('class="fp-wikilink fp-wikilink-file"');
+    expect(fileLink).toContain('href="other.md"');
+    expect(fileLink).toContain('>其他文档</a>');
+    expect(preview._test.wikilinkHtml('notes/bare', 'x', true)).toContain('href="notes/bare.md"');
+    expect(preview._test.wikilinkHtml('other.md#sec', 'x', true)).toContain('href="other.md#sec"');
+    expect(preview._test.wikilinkHtml('o.md', '<img src=x onerror=alert(1)>', true))
+      .not.toContain('<img src=x');
+  });
+
+  it('opens Obsidian file wikilinks through the shared link handler', async () => {
+    const { dom, preview, fetch } = createPreview();
+    const wrap = dom.window.document.createElement('div');
+    wrap.className = 'fp-md-wrap';
+    wrap.innerHTML = preview._test.wikilinkHtml('sibling.md', '兄弟', true);
+    dom.window.document.body.appendChild(wrap);
+    preview._test.prepareMarkdownNavigation(wrap, '/notes/current.md', '%1');
+
+    wrap.querySelector('a').click();
+    await flush();
+
+    const infoCalls = fetch.mock.calls.map((c) => String(c[0]))
+      .filter((u) => u.includes('/api/files/info'));
+    expect(infoCalls.some((u) => u.includes(encodeURIComponent('/notes/sibling.md')))).toBe(true);
   });
 
   it('resolves Markdown links against the current file, not the panel URL', () => {

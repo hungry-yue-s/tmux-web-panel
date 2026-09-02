@@ -2464,8 +2464,15 @@ var FilePreview = (function () {
       return '<a class="fp-wikilink fp-wikilink-heading" href="#' + _escapeHtml(_markdownHeadingSlug(heading))
         + '" data-fp-heading-target="' + _escapeHtml(heading) + '">' + _escapeHtml(display) + '</a>';
     }
-    return '<span class="fp-wikilink" title="Obsidian 链接: ' + _escapeHtml(target) + '">'
-      + _escapeHtml(display || target) + '</span>';
+    var hashAt = target.indexOf('#');
+    var path = hashAt >= 0 ? target.slice(0, hashAt) : target;
+    var fragment = hashAt >= 0 ? target.slice(hashAt + 1) : '';
+    var lastSeg = path.split('/').pop() || '';
+    if (path && lastSeg.indexOf('.') < 0) path += '.md';
+    var href = path + (fragment ? '#' + fragment : '');
+    return '<a class="fp-wikilink fp-wikilink-file" href="' + _escapeHtml(href) + '"'
+      + ' title="Obsidian 链接: ' + _escapeHtml(target) + '">'
+      + _escapeHtml(display || target) + '</a>';
   }
 
   function _decodeMarkdownPart(value) {
@@ -2626,8 +2633,8 @@ var FilePreview = (function () {
       return true;
     });
 
-    // [[#heading]] is a navigable in-document link. Other wikilinks remain
-    // styled placeholders until cross-file preview navigation is supported.
+    // [[#heading]] jumps in-document; [[file]] / [[file#heading]] resolve
+    // relative to the current file and open through the shared link handler.
     md.inline.ruler.before('link', 'obs_wikilink', function (state, silent) {
       var s = state.src, p = state.pos;
       if (s.charCodeAt(p) !== 0x5B || s.charCodeAt(p + 1) !== 0x5B) return false;
