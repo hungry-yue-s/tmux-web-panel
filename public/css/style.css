@@ -3823,6 +3823,13 @@ body.fp-side-resizing { cursor: col-resize; user-select: none; }
 .fp-md-wrap th { background: var(--bg-primary); }
 .fp-md-wrap blockquote { border-left: 3px solid var(--accent-blue); margin: 1em 0; padding: 4px 16px; color: var(--text-muted); }
 .fp-md-wrap a { color: var(--accent-blue); }
+.fp-md-wrap li.fp-task-item { list-style: none; }
+.fp-md-wrap .fp-task-checkbox {
+  width: 1em; height: 1em; margin: 0 0.48em 0 0; vertical-align: -0.1em;
+  accent-color: var(--accent-blue); cursor: pointer;
+}
+.fp-md-wrap .fp-task-checkbox:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+.fp-md-wrap .fp-task-saving .fp-task-checkbox { cursor: wait; opacity: 0.65; }
 .fp-md-wrap .katex-display { overflow-x: auto; padding: 4px 0; }
 .fp-mermaid-err { color: var(--accent-red); font-size: 0.8rem; margin-bottom: 6px; }
 
@@ -4712,7 +4719,7 @@ body.fp-side-resizing { cursor: col-resize; user-select: none; }
 .pp-empty { color: var(--text-muted); padding: 24px; text-align: center; font-size: 12px; }
 
 /* Mobile */
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .pp-hdr { margin-bottom: 12px; gap: 8px; }
   .pp-hdr-l, .pp-hdr-r { width: 100%; }
   .pp-kpis { grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -6446,7 +6453,7 @@ textarea:focus-visible {
 /* The body is intentionally locked for terminal sizing, so non-terminal pages
    own their vertical scroll. Without this, stacked status sections extend below
    the viewport but wheel/touch input has no scroll container to move. */
-@media (min-width: 761px) {
+@media (min-width: 768px) {
   .ms-app.mode-status .ms-main,
   .ms-app.mode-settings .ms-main {
     height: 100vh;
@@ -6640,7 +6647,7 @@ textarea:focus-visible {
   max-height: 100%;
 }
 
-@media (min-width: 761px) {
+@media (min-width: 768px) {
   .ms-app.mode-terminal .ms-main {
     height: 100vh;
     min-height: 0;
@@ -7554,24 +7561,25 @@ button.list-row:hover {
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .ms-app {
     display: block;
-    padding-bottom: 64px;
+    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
   }
 
   .ms-sidebar,
-  .ms-topbar {
+  .ms-topbar,
+  .ms-topbar.terminal-layout {
     display: none;
   }
 
   .ms-main {
-    min-height: calc(100vh - 64px);
+    min-height: calc(100dvh - 64px - env(safe-area-inset-bottom, 0px));
   }
 
   .ms-app.mode-status .ms-main,
   .ms-app.mode-settings .ms-main {
-    height: calc(100dvh - 64px);
+    height: calc(100dvh - 64px - env(safe-area-inset-bottom, 0px));
     min-height: 0;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
@@ -7581,6 +7589,8 @@ button.list-row:hover {
     position: sticky;
     top: 0;
     z-index: 30;
+    box-sizing: border-box;
+    height: 56px;
     min-height: 56px;
     display: flex;
     align-items: center;
@@ -7591,6 +7601,23 @@ button.list-row:hover {
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
   }
+
+  .mobile-workspace-trigger {
+    display: flex;
+    min-width: 0;
+    min-height: 44px;
+    flex: 1;
+    align-items: center;
+    gap: 6px;
+    padding: 0 4px;
+    border: 0;
+    color: var(--text-primary);
+    background: transparent;
+    text-align: left;
+  }
+
+  .mobile-workspace-trigger[hidden] { visibility: hidden; }
+  .mobile-workspace-trigger:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; border-radius: 6px; }
 
   .mobile-title {
     min-width: 0;
@@ -7614,14 +7641,41 @@ button.list-row:hover {
     font-size: 9px;
   }
 
+  .mobile-workspace-chevron { color: var(--text-muted); font-size: 16px; }
+  .mobile-workspace-trigger[aria-expanded="true"] .mobile-workspace-chevron { transform: rotate(180deg); }
+
   .ms-content {
     padding: 18px 12px 32px;
   }
 
+  .ms-app.mode-terminal .ms-main {
+    height: calc(100dvh - 64px - env(safe-area-inset-bottom, 0px));
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .ms-app.mode-terminal .mobile-header { flex: 0 0 56px; }
+
   .ms-content.terminal-mode {
-    height: calc(100vh - 120px);
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    min-height: 0;
+    height: auto;
+    flex: 1 1 auto;
+    margin: 0;
     overflow: hidden;
     padding: 0;
+  }
+
+  .ms-content.terminal-mode .terminal-stage,
+  .ms-content.terminal-mode .terminal-view,
+  .ms-content.terminal-mode .terminal-container {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
   }
 
   .ms-content.terminal-mode .terminal-stage {
@@ -7825,7 +7879,7 @@ button.list-row:hover {
   flex: 0 0 auto;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .ms-hoisted-pills {
     max-width: 38vw;
   }
@@ -7861,39 +7915,88 @@ button.list-row:hover {
   display: none;
 }
 
-/* Mobile tools row: on phones the desktop Window Bar is hidden, so the hoisted
-   pane pills and terminal toolbar live inside the mobile header — the same
-   single bar, wrapped onto a second line. */
-.mobile-header {
-  flex-wrap: wrap;
+/* On phones terminal controls are staged off-screen until the workspace sheet
+   opens, preserving terminal height while retaining bound control nodes. */
+.mobile-tools {
+  display: none;
 }
 
-.mobile-tools {
+.ms-mobile-workspace-overlay {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+  animation: fpFadeIn 0.15s ease;
+}
+
+.ms-mobile-workspace-sheet {
+  position: fixed;
+  z-index: 81;
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: flex;
-  width: 100%;
+  max-height: min(76dvh, 680px);
+  flex-direction: column;
+  padding: 12px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+  border: 1px solid var(--border-subtle);
+  border-bottom: 0;
+  border-radius: 18px 18px 0 0;
+  background: var(--bg-card);
+  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.28);
+  animation: sheetSlideUp 0.2s ease-out;
+}
+
+.ms-mobile-workspace-head {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 8px 8px;
+}
+
+.ms-mobile-workspace-head strong { font-size: 14px; }
+
+.ms-mobile-workspace-tree {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.ms-mobile-workspace-tree .tree-section-head { display: none; }
+.ms-mobile-workspace-tree .tree-add-button { display: none !important; }
+.ms-mobile-workspace-tree .tree-session-row,
+.ms-mobile-workspace-tree .tree-window-row { min-height: 44px; }
+.ms-mobile-workspace-tree .tree-item { min-height: 44px; }
+.ms-mobile-workspace-tree .tree-window-list { padding-left: 8px; }
+
+.ms-mobile-workspace-tools {
+  display: flex;
+  min-height: 44px;
+  flex: 0 0 auto;
   align-items: center;
   gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
   overflow-x: auto;
   overflow-y: hidden;
+  border-top: 1px solid var(--border-subtle);
   scrollbar-width: none;
 }
 
-.mobile-tools:empty {
-  display: none;
-}
-
-.mobile-tools::-webkit-scrollbar {
-  display: none;
-}
-
-.mobile-tools .terminal-header-actions {
+.ms-mobile-workspace-tools::-webkit-scrollbar { display: none; }
+.ms-mobile-workspace-tools .terminal-header-actions,
+.ms-mobile-workspace-tools .ms-hoisted-pills {
   display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 2px;
-}
-
-.mobile-tools .ms-hoisted-pills {
+  min-width: max-content;
   max-width: none;
   flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+}
+
+@media (min-width: 768px) {
+  .ms-mobile-workspace-overlay,
+  .ms-mobile-workspace-sheet { display: none; }
 }

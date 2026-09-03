@@ -130,9 +130,10 @@ describe('single Window Bar', () => {
   });
 
   /** Renders the real header markup, then runs the real embed hook over it. */
-  function embedFixture({ provider = 'tmux', transport = 'local', width = 1440 } = {}) {
+  function embedFixture({ provider = 'tmux', transport = 'local', width = 1440, mobileSheet = false } = {}) {
     const dom = new JSDOM(`<!DOCTYPE html><html><body>
       <header class="mobile-header"><div class="mobile-tools" id="ms-mobile-tools"></div></header>
+      ${mobileSheet ? '<div id="ms-mobile-workspace-tools"></div>' : ''}
       <header class="ms-topbar" id="ms-topbar"><div id="ms-top-actions"></div></header>
       <div id="ms-terminal-host"><div class="terminal-view">
         <div class="terminal-header">
@@ -221,13 +222,21 @@ describe('single Window Bar', () => {
   });
 
   it('hoists into the mobile header on a phone, where the desktop bar is hidden', () => {
-    // .ms-topbar is display:none below 760px, so putting the toolbar there
+    // .ms-topbar is display:none below 768px, so putting the toolbar there
     // would make pane switching and every tool unreachable on mobile.
     const doc = embedFixture({ width: 360 }).document;
 
     expect(doc.querySelector('#ms-mobile-tools .terminal-header-actions')).toBeTruthy();
     expect(doc.querySelector('#ms-mobile-tools .terminal-header-pills')).toBeTruthy();
     expect(doc.querySelector('#ms-top-actions').children).toHaveLength(0);
+  });
+
+  it('uses the workspace sheet tools slot while a mobile picker is open', () => {
+    const doc = embedFixture({ width: 360, mobileSheet: true }).document;
+
+    expect(doc.querySelector('#ms-mobile-workspace-tools .terminal-header-actions')).toBeTruthy();
+    expect(doc.querySelector('#ms-mobile-workspace-tools .terminal-header-pills')).toBeTruthy();
+    expect(doc.querySelector('#ms-mobile-tools').children).toHaveLength(0);
   });
 
   it('hoists into the desktop window bar above the breakpoint', () => {
@@ -322,7 +331,10 @@ const STATUS_DOM = `<!DOCTYPE html><html><body>
       <div class="server-context" id="ms-server-context"></div>
     </aside>
     <main class="ms-main">
-      <strong id="ms-mobile-title"></strong><small id="ms-mobile-subtitle"></small>
+      <header class="mobile-header">
+        <button class="mobile-workspace-trigger" data-action="mobile-workspace" aria-expanded="false"><span id="ms-mobile-title"></span><small id="ms-mobile-subtitle"></small></button>
+        <div id="ms-mobile-tools"></div>
+      </header>
       <header class="ms-topbar" id="ms-topbar">
         <div class="crumb" id="ms-crumb"></div><h1 id="ms-page-title"></h1>
         <div id="ms-top-actions"></div>
@@ -394,6 +406,42 @@ function fakePerfPanel() {
     stop: () => { calls.stopped += 1; },
   };
 }
+
+describe('MsApp mobile workspace action', () => {
+  it('delegates the title trigger to the AppShell sheet toggle', async () => {
+    const ctx = loadStatusShell();
+    const toggle = vi.fn();
+    ctx.win.AppShell.toggleMobileWorkspaceSheet = toggle;
+    const trigger = ctx.document.querySelector('.mobile-workspace-trigger');
+
+    await ctx.MsApp._handleAction('mobile-workspace', trigger);
+
+    expect(toggle).toHaveBeenCalledOnce();
+  });
+
+  it('closes the sheet and preserves the existing hash route flow on window selection', () => {
+    const ctx = loadStatusShell();
+    Object.defineProperty(ctx.win, 'innerWidth', { value: 375, configurable: true });
+    ctx.Store.setWorkspace('local', {
+      serverId: 'local', provider: 'tmux', transport: 'local', persistence: 'tmux', actions: {},
+      sessions: [{
+        id: '$0', name: 'work', windows: [
+          { id: '@1', index: 1, name: 'one', panes: [{ id: '%1' }] },
+          { id: '@2', index: 2, name: 'two', panes: [{ id: '%2' }] },
+        ],
+      }],
+    });
+    ctx.Store.setRoute({ name: 'terminal', params: { serverId: 'local', sessionId: '$0', windowId: '@1', paneId: '%1' } });
+    ctx.win.AppShell.render();
+    ctx.MsApp._bindEvents();
+    ctx.win.AppShell.openMobileWorkspaceSheet();
+
+    ctx.document.querySelector('#ms-mobile-workspace-sheet [data-window="@2"] [data-route]').click();
+
+    expect(ctx.document.getElementById('ms-mobile-workspace-sheet')).toBeNull();
+    expect(ctx.win.location.hash).toContain('#/terminal/local/%240/%402/%252');
+  });
+});
 
 describe('MsApp status mode routing', () => {
   it('removes the terminal preview dock before rendering status', async () => {

@@ -14,7 +14,10 @@ const SHELL_DOM = `<!DOCTYPE html><html><body>
       <div class="server-context" id="ms-server-context"></div>
     </aside>
     <main class="ms-main">
-      <strong id="ms-mobile-title"></strong><small id="ms-mobile-subtitle"></small>
+      <header class="mobile-header">
+        <button class="mobile-workspace-trigger" data-action="mobile-workspace" aria-expanded="false"><span id="ms-mobile-title"></span><small id="ms-mobile-subtitle"></small></button>
+        <div id="ms-mobile-tools"></div>
+      </header>
       <header class="ms-topbar" id="ms-topbar">
         <div class="crumb" id="ms-crumb"></div><h1 id="ms-page-title"></h1>
         <div id="ms-top-actions"></div>
@@ -630,5 +633,65 @@ describe('AppShell sidebar width applies immediately', () => {
     expect(block).toContain('.ms-app.mode-status .sidebar-resizer');
     expect(block).toContain('.ms-app.mode-settings .sidebar-resizer');
     expect(block).toMatch(/display:\s*none/);
+  });
+});
+
+describe('AppShell mobile workspace sheet', () => {
+  it('uses the title trigger to expose active session and window navigation on phones', () => {
+    const ctx = loadShell();
+    Object.defineProperty(ctx.win, 'innerWidth', { value: 375, configurable: true });
+    seedLocalTmux(ctx.Store);
+    ctx.Shell.render();
+
+    const trigger = ctx.document.querySelector('.mobile-workspace-trigger');
+    expect(trigger.hidden).toBe(false);
+    expect(trigger.textContent).toContain('1 三绿');
+    expect(trigger.textContent).toContain('本机 · DataAnt');
+
+    ctx.Shell.openMobileWorkspaceSheet();
+    const sheet = ctx.document.getElementById('ms-mobile-workspace-sheet');
+    expect(sheet).not.toBeNull();
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    const active = sheet.querySelector('.tree-window-row .tree-item.active');
+    expect(active.dataset.route).toContain('#/terminal/local/%240/%400');
+
+    ctx.Store.setSessionExpanded('local', '$0', false);
+    ctx.Shell.render();
+    expect(sheet.querySelectorAll('.tree-window-row')).toHaveLength(2);
+
+    ctx.Shell.closeMobileWorkspaceSheet();
+    expect(ctx.document.getElementById('ms-mobile-workspace-sheet')).toBeNull();
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(ctx.document.activeElement).toBe(trigger);
+  });
+
+  it('moves live terminal controls between staging and the visible sheet', () => {
+    const ctx = loadShell();
+    Object.defineProperty(ctx.win, 'innerWidth', { value: 375, configurable: true });
+    seedLocalTmux(ctx.Store);
+    ctx.Shell.render();
+    const tool = ctx.document.createElement('button');
+    tool.className = 'terminal-refresh-btn';
+    ctx.document.getElementById('ms-mobile-tools').appendChild(tool);
+
+    ctx.Shell.openMobileWorkspaceSheet();
+    expect(ctx.document.querySelector('#ms-mobile-workspace-tools .terminal-refresh-btn')).toBe(tool);
+
+    ctx.Shell.closeMobileWorkspaceSheet({ restoreFocus: false });
+    expect(ctx.document.querySelector('#ms-mobile-tools .terminal-refresh-btn')).toBe(tool);
+  });
+
+  it('closes the mobile sheet when leaving the terminal route', () => {
+    const ctx = loadShell();
+    Object.defineProperty(ctx.win, 'innerWidth', { value: 375, configurable: true });
+    seedLocalTmux(ctx.Store);
+    ctx.Shell.render();
+    ctx.Shell.openMobileWorkspaceSheet();
+
+    ctx.Store.setRoute({ name: 'settings', params: {} });
+    ctx.Shell.render();
+
+    expect(ctx.document.getElementById('ms-mobile-workspace-sheet')).toBeNull();
+    expect(ctx.document.querySelector('.mobile-workspace-trigger').hidden).toBe(true);
   });
 });

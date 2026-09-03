@@ -62,6 +62,7 @@
   var AppShell = {
     _started: false,
     _statusUnsub: null,
+    _mobileWorkspaceKeydown: null,
 
     icon: icon,
     escape: esc,
@@ -124,6 +125,7 @@
       this._syncMode(route);
       this._renderSidebar(route);
       this._renderMobile(route);
+      this._syncMobileWorkspaceSheet(route);
       this._syncNav(route);
       if (typeof global.NotificationPanel !== 'undefined' && global.NotificationPanel.syncAttention) {
         global.NotificationPanel.syncAttention();
@@ -383,15 +385,132 @@
     _renderMobile: function (route) {
       var title = el('ms-mobile-title');
       var subtitle = el('ms-mobile-subtitle');
-      if (!title || !subtitle) return;
+      var trigger = global.document.querySelector('.mobile-workspace-trigger');
+      if (!title || !subtitle || !trigger) return;
       var serverId = this.activeServerId();
       var server = this.server(serverId);
-      title.textContent = this._titleFor(route);
-      subtitle.textContent = server ? server.name : serverId;
+      var isTerminal = route && route.name === 'terminal';
+      trigger.hidden = !isTerminal;
+      trigger.disabled = !isTerminal;
+      trigger.setAttribute('aria-expanded', String(this.isMobileWorkspaceOpen()));
+
+      if (isTerminal) {
+        var params = route.params || {};
+        var workspace = this.workspace(serverId);
+        var session = this._findSession(workspace, params.sessionId);
+        var win = this._findWindow(session, params.windowId);
+        title.textContent = win ? (win.index + ' ' + win.name) : '选择工作区';
+        subtitle.textContent = (server ? server.name : serverId) + (session ? ' · ' + session.name : '');
+      } else {
+        title.textContent = this._titleFor(route);
+        subtitle.textContent = server ? server.name : serverId;
+      }
+
       var home = global.document.querySelector('[data-terminal-home]');
       if (home) {
         home.dataset.route = global.Router.serialize({ name: 'terminal', params: { serverId: serverId } });
       }
+    },
+
+    isMobileWorkspaceOpen: function () {
+      return !!el('ms-mobile-workspace-sheet');
+    },
+
+    _mobileWorkspaceTrigger: function () {
+      return global.document.querySelector('.mobile-workspace-trigger');
+    },
+
+    _renderMobileWorkspaceTree: function () {
+      var tree = el('ms-mobile-workspace-tree');
+      if (!tree) return;
+      var route = global.Store.getState().route || {};
+      tree.innerHTML = this._renderTree(this.activeServerId(), route);
+    },
+
+    _syncMobileWorkspaceSheet: function (route) {
+      if (!this.isMobileWorkspaceOpen()) return;
+      if (!route || route.name !== 'terminal' || global.innerWidth >= 768) {
+        this.closeMobileWorkspaceSheet({ restoreFocus: false });
+        return;
+      }
+      this._renderMobileWorkspaceTree();
+    },
+
+    openMobileWorkspaceSheet: function () {
+      var route = global.Store.getState().route || {};
+      if (global.innerWidth >= 768 || !route || route.name !== 'terminal' || this.isMobileWorkspaceOpen()) return;
+      this.hideServerPicker();
+
+      var overlay = global.document.createElement('div');
+      overlay.id = 'ms-mobile-workspace-overlay';
+      overlay.className = 'ms-mobile-workspace-overlay';
+
+      var sheet = global.document.createElement('section');
+      sheet.id = 'ms-mobile-workspace-sheet';
+      sheet.className = 'ms-mobile-workspace-sheet';
+      sheet.setAttribute('role', 'dialog');
+      sheet.setAttribute('aria-modal', 'true');
+      sheet.setAttribute('aria-label', '切换 Session 和 Window');
+      sheet.innerHTML = '<div class="ms-mobile-workspace-head">'
+        + '<strong>切换工作区</strong>'
+        + '<button class="icon-btn" data-action="mobile-workspace-close" aria-label="关闭工作区">×</button>'
+        + '</div><div id="ms-mobile-workspace-tree" class="ms-mobile-workspace-tree"></div>'
+        + '<div id="ms-mobile-workspace-tools" class="ms-mobile-workspace-tools"></div>';
+
+      global.document.body.appendChild(overlay);
+      global.document.body.appendChild(sheet);
+      this._renderMobileWorkspaceTree();
+      this._moveMobileToolsToSheet();
+      var trigger = this._mobileWorkspaceTrigger();
+      if (trigger) trigger.setAttribute('aria-expanded', 'true');
+
+      var self = this;
+      overlay.addEventListener('click', function () { self.closeMobileWorkspaceSheet(); });
+      this._mobileWorkspaceKeydown = function (event) {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        self.closeMobileWorkspaceSheet();
+      };
+      global.document.addEventListener('keydown', this._mobileWorkspaceKeydown);
+      var close = sheet.querySelector('[data-action="mobile-workspace-close"]');
+      if (close) close.focus();
+    },
+
+    closeMobileWorkspaceSheet: function (options) {
+      var sheet = el('ms-mobile-workspace-sheet');
+      var overlay = el('ms-mobile-workspace-overlay');
+      if (!sheet && !overlay) return;
+      this._moveMobileToolsToStaging();
+      if (sheet) sheet.remove();
+      if (overlay) overlay.remove();
+      if (this._mobileWorkspaceKeydown) {
+        global.document.removeEventListener('keydown', this._mobileWorkspaceKeydown);
+        this._mobileWorkspaceKeydown = null;
+      }
+      var trigger = this._mobileWorkspaceTrigger();
+      if (trigger) {
+        trigger.setAttribute('aria-expanded', 'false');
+        if (!options || options.restoreFocus !== false) trigger.focus();
+      }
+    },
+
+    toggleMobileWorkspaceSheet: function () {
+      if (this.isMobileWorkspaceOpen()) this.closeMobileWorkspaceSheet();
+      else this.openMobileWorkspaceSheet();
+    },
+
+    _moveMobileToolsToSheet: function () {
+      var staging = el('ms-mobile-tools');
+      var target = el('ms-mobile-workspace-tools');
+      if (!staging || !target) return;
+      while (staging.firstChild) target.appendChild(staging.firstChild);
+    },
+
+    _moveMobileToolsToStaging: function () {
+      var staging = el('ms-mobile-tools');
+      var source = el('ms-mobile-workspace-tools');
+      if (!staging || !source) return;
+      while (source.firstChild) staging.appendChild(source.firstChild);
     },
 
     _titleFor: function (route) {
@@ -566,6 +685,7 @@
 
     /** Server picker popover, anchored under whatever opened it. */
     showServerPicker: function (anchor) {
+      this.closeMobileWorkspaceSheet({ restoreFocus: false });
       var popover = el('ms-server-popover');
       if (!popover) return;
       var self = this;

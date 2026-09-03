@@ -29,16 +29,27 @@ describe('global UI system', () => {
     expect(styles).toMatch(/#sidebar\.collapsed[\s\S]*?width:\s*52px/);
     expect(styles).toContain('@media (max-width: 767px)');
     expect(styles).toMatch(/#topbar[\s\S]*?min-height:\s*52px/);
-    expect(indexSource).toContain('/css/style.css?v=35');
+    expect(indexSource).toContain('/css/style.css?v=39');
     expect(indexSource).toContain('/js/app-fullscreen.js?v=2');
     expect(indexSource).toContain('/js/app.js?v=13');
   });
 
+  it('keeps the mobile terminal header compact while exposing a workspace sheet', () => {
+    expect(indexSource).toContain('class="mobile-workspace-trigger"');
+    expect(indexSource).toContain('data-action="mobile-workspace"');
+    expect(styles).toContain('.ms-mobile-workspace-sheet');
+    expect(styles).toContain('.ms-mobile-workspace-tools');
+    expect(styles).toContain('height: 56px;');
+    expect(styles).toMatch(/\.ms-topbar,\s*\.ms-topbar\.terminal-layout\s*\{\s*display:\s*none/);
+    expect(styles).not.toContain('.mobile-header {\n  flex-wrap: wrap;');
+  });
+
   it('lets long status pages scroll without unlocking the terminal viewport', () => {
     expect(styles).toMatch(/\.ms-app\.mode-status \.ms-main,[\s\S]*?\.ms-app\.mode-settings \.ms-main\s*\{[\s\S]*?height:\s*100vh;[\s\S]*?overflow-y:\s*auto/);
-    expect(styles).toMatch(/@media \(max-width:\s*760px\)[\s\S]*?\.ms-app\.mode-status \.ms-main,[\s\S]*?height:\s*calc\(100dvh - 64px\);[\s\S]*?overflow-y:\s*auto/);
-    expect(styles).toMatch(/\.ms-app\.mode-terminal \.ms-main\s*\{[\s\S]*?height:\s*100vh;[\s\S]*?overflow:\s*hidden/);
-    expect(styles).toMatch(/\.ms-content\.terminal-mode\s*\{[\s\S]*?overflow:\s*hidden/);
+    expect(styles).toMatch(/@media \(max-width:\s*767px\)[\s\S]*?\.ms-app\.mode-status \.ms-main,[\s\S]*?height:\s*calc\(100dvh - 64px - env\(safe-area-inset-bottom, 0px\)\);[\s\S]*?overflow-y:\s*auto/);
+    expect(styles).toMatch(/@media \(max-width:\s*767px\)[\s\S]*?\.ms-app\.mode-terminal \.ms-main\s*\{[\s\S]*?height:\s*calc\(100dvh - 64px - env\(safe-area-inset-bottom, 0px\)\);[\s\S]*?display:\s*flex;[\s\S]*?flex-direction:\s*column;[\s\S]*?overflow:\s*hidden/);
+    expect(styles).toMatch(/\.ms-content\.terminal-mode\s*\{[\s\S]*?width:\s*100%;[\s\S]*?max-width:\s*100%;[\s\S]*?min-width:\s*0;[\s\S]*?flex:\s*1 1 auto/);
+    expect(styles).toMatch(/\.ms-content\.terminal-mode \.terminal-stage,[\s\S]*?\.ms-content\.terminal-mode \.terminal-view,[\s\S]*?\.ms-content\.terminal-mode \.terminal-container\s*\{[\s\S]*?width:\s*100%;[\s\S]*?min-width:\s*0;/);
   });
 
   it('keeps the new-shell terminal inside the exact remaining content height', () => {

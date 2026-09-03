@@ -14,7 +14,7 @@
   <script src="https://unpkg.com/@xterm/xterm@6.0.0/lib/xterm.js"></script>
   <script src="https://unpkg.com/@xterm/addon-fit@0.11.0/lib/addon-fit.js"></script>
   <script src="https://unpkg.com/@xterm/addon-webgl@0.19.0/lib/addon-webgl.js"></script>
-  <link rel="stylesheet" href="/css/style.css?v=35">
+  <link rel="stylesheet" href="/css/style.css?v=39">
 </head>
 <body>
   <div id="legacy-shell" hidden>
@@ -62,9 +62,12 @@
     <main class="ms-main">
       <header class="mobile-header">
         <button class="icon-btn" data-action="mobile-server" aria-label="切换服务器"><svg class="ms-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01M17 7h1M17 17h1"/></svg></button>
-        <div class="mobile-title"><strong id="ms-mobile-title">终端工作台</strong><small id="ms-mobile-subtitle">本机</small></div>
+        <button class="mobile-workspace-trigger" data-action="mobile-workspace" aria-label="切换 Session 和 Window" aria-expanded="false">
+          <span class="mobile-title"><strong id="ms-mobile-title">终端工作台</strong><small id="ms-mobile-subtitle">本机</small></span>
+          <span class="mobile-workspace-chevron" aria-hidden="true">⌄</span>
+        </button>
         <button class="icon-btn" data-action="notifications" aria-label="通知"><svg class="ms-icon" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></button>
-        <div class="mobile-tools" id="ms-mobile-tools"></div>
+        <div class="mobile-tools" id="ms-mobile-tools" aria-hidden="true"></div>
       </header>
       <header class="ms-topbar" id="ms-topbar">
         <div class="crumbs"><div class="crumb" id="ms-crumb">本机</div><h1 class="page-title" id="ms-page-title">终端工作台</h1></div>
@@ -109,9 +112,9 @@
   <script src="/js/app.js?v=13"></script>
   <script src="/js/command-palette.js?v=2"></script>
   <script src="/js/layout-picker.js?v=2"></script>
-  <script src="/js/app-shell.js?v=9"></script>
+  <script src="/js/app-shell.js?v=10"></script>
   <script src="/js/servers.js?v=5"></script>
-  <script src="/js/ms-app.js?v=12"></script>
+  <script src="/js/ms-app.js?v=13"></script>
   <script>
     (function () {
       function boot() {

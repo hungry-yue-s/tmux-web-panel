@@ -298,7 +298,8 @@
      */
     /** The visible bar for this viewport; the other one is display:none. */
     _chromeTarget() {
-      const mobile = global.document.getElementById('ms-mobile-tools');
+      const sheetTools = global.document.getElementById('ms-mobile-workspace-tools');
+      const mobile = sheetTools || global.document.getElementById('ms-mobile-tools');
       const desktop = global.document.getElementById('ms-top-actions');
       if (global.innerWidth < 768 && mobile) return { target: mobile, other: desktop };
       return { target: desktop, other: mobile };
@@ -551,6 +552,9 @@
         this._hideSidebarContextMenu();
         const routeTarget = event.target.closest('[data-route]');
         if (routeTarget) {
+          if (routeTarget.closest('#ms-mobile-workspace-sheet')) {
+            global.AppShell.closeMobileWorkspaceSheet({ restoreFocus: false });
+          }
           global.AppShell.hideServerPicker();
           global.location.hash = routeTarget.dataset.route;
           return;
@@ -603,7 +607,10 @@
         this._hideSidebarContextMenu({ restoreFocus: true });
       });
       global.document.addEventListener('scroll', () => this._hideSidebarContextMenu(), true);
-      global.addEventListener('resize', () => this._hideSidebarContextMenu());
+      global.addEventListener('resize', () => {
+        this._hideSidebarContextMenu();
+        if (global.innerWidth >= 768) global.AppShell.closeMobileWorkspaceSheet({ restoreFocus: false });
+      });
 
       this._bindResizer();
     },
@@ -612,7 +619,7 @@
       const resizer = global.document.querySelector('.sidebar-resizer');
       if (!resizer) return;
       resizer.addEventListener('pointerdown', (event) => {
-        if (global.innerWidth <= 760) return;
+        if (global.innerWidth < 768) return;
         this._resizing = true;
         global.AppShell.setSidebarCollapsed(false);
         global.document.querySelector('.ms-app').classList.add('resizing-sidebar');
@@ -650,6 +657,14 @@
 
       if (action === 'server-switcher' || action === 'mobile-server') {
         global.AppShell.showServerPicker(node);
+        return;
+      }
+      if (action === 'mobile-workspace') {
+        global.AppShell.toggleMobileWorkspaceSheet();
+        return;
+      }
+      if (action === 'mobile-workspace-close') {
+        global.AppShell.closeMobileWorkspaceSheet();
         return;
       }
       if (action === 'sidebar-toggle') {
