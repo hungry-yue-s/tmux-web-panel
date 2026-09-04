@@ -45,17 +45,23 @@ export class NotificationStore {
 
   /**
    * Add a new notification.
-   * @param {{ session: string, windowIndex: number, windowName?: string, prevCommand?: string, paneId?: string }} entry
+   * @param {{ type?: string, state?: string, source?: string, event?: string, session: string, windowIndex: number|string, windowId?: string, windowName?: string, prevCommand?: string, paneId?: string, reason?: string }} entry
    * @returns {object} the created notification
    */
   add(entry) {
     const notification = {
       id: randomBytes(8).toString('hex'),
+      type: entry.type || 'command-complete',
+      state: entry.state || '',
+      source: entry.source || '',
+      event: entry.event || '',
       session: entry.session,
       windowIndex: entry.windowIndex,
+      windowId: entry.windowId || '',
       windowName: entry.windowName || '',
       command: entry.prevCommand || '',
       paneId: entry.paneId || '',
+      reason: entry.reason || '',
       timestamp: Date.now(),
       read: false,
       readAt: null,

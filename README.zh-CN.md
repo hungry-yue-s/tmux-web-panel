@@ -116,10 +116,10 @@ git submodule update --init --recursive
 TLS_AUTO=1 ./scripts/install-service.sh install
 ```
 
-Claude Code 这类交互式程序跑完想响铃通知，装个 hook。
+Qoder、Codex 这类 AI Agent 可以把停止、等待交互、失败、会话结束事件直接打进同一套通知流。
 
 ```bash
-node scripts/install-claude-hook.js
+node scripts/install-agent-hooks.js all
 ```
 
 macOS 上还有个原生 SwiftUI 外壳，npm run build:macos 构建，多菜单栏状态、原生通知和真正的剪贴板桥。WKWebView 拦异步剪贴板这件事，踩过坑的都懂。
@@ -131,6 +131,7 @@ macOS 上还有个原生 SwiftUI 外壳，npm run build:macos 构建，多菜单
 | | |
 |---|---|
 | [配置与认证](docs/authentication.md) | flag、环境变量、token 模型、登出 |
+| [Agent 自动提示](docs/agent-notifications.md) | Qoder/Codex hook 安装、token 处理、去重规则 |
 | [服务安装与重启后会话恢复](docs/service-install.md) | systemd 和 launchd、TLS、vendored tmux、tmux-resurrect 接线 |
 | [文件预览与链接识别](docs/file-preview.md) | 停靠标签、渲染器、分享、敏感路径策略 |
 | [移动端交互指南](docs/mobile-gestures.md) | 选择手势、滚动、按键抽屉、上传 |

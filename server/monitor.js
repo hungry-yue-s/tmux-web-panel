@@ -6,7 +6,7 @@ const PORT_CACHE_TTL_MS = 10_000;
 
 export class StatusMonitor {
   /**
-   * @param {{ notificationStore?: import('./notifications.js').NotificationStore }} [options]
+   * @param {{ notificationStore?: import('./notifications.js').NotificationStore, agentEvents?: import('./agent-events.js').AgentEventService }} [options]
    */
   constructor(options = {}) {
     this.subscribers = new Set();
@@ -17,6 +17,7 @@ export class StatusMonitor {
     this._portCache = new Map(); // paneId → { pid, ports, timestamp }
     this._lastPaneCmds = new Map(); // paneId → cmd (for pane-cmd broadcasts)
     this._notificationStore = options.notificationStore || null;
+    this._agentEvents = options.agentEvents || null;
     this._borderConfigEnsured = false;
     /** serverId -> latest health status, replayed to new subscribers. */
     this._serverStatuses = new Map();
@@ -58,6 +59,11 @@ export class StatusMonitor {
     if (!status || !status.serverId) return;
     this._serverStatuses.set(status.serverId, status);
     this._broadcast(JSON.stringify({ type: 'server-status', serverId: status.serverId, data: status }));
+  }
+
+  broadcastNotifications(notifications) {
+    if (!Array.isArray(notifications) || notifications.length === 0) return;
+    this._broadcast(JSON.stringify({ type: 'notifications', data: notifications }));
   }
 
   /** One server's workspace tree changed; clients refetch by revision. */
@@ -171,10 +177,28 @@ export class StatusMonitor {
       this._lastPaneCmds = currentPaneCmds;
 
       // Detect completions (using already-fetched paneCommands)
-      const { completedWindows, completedPanes } = await this._detectCompletions(sessionsWithWindows);
+      let { completedWindows, completedPanes } = await this._detectCompletions(sessionsWithWindows);
 
       // Strip internal _paneCommands before broadcasting
       const sessionsForPayload = sessionsWithWindows.map(({ _paneCommands: _, ...rest }) => rest);
+      const addedNotifications = [];
+      if (completedWindows.length > 0 && (this._notificationStore || this._agentEvents)) {
+        const visibleCompletions = [];
+        for (const cw of completedWindows) {
+          const sess = sessionsForPayload.find((s) => s.name === cw.session);
+          const win = sess && sess.windowDetails
+            ? sess.windowDetails.find((w) => w.index === cw.windowIndex)
+            : null;
+          const n = this._recordCompletionNotification(cw, win);
+          if (n) {
+            addedNotifications.push(n);
+            visibleCompletions.push(cw);
+          } else if (!this._agentEvents) {
+            visibleCompletions.push(cw);
+          }
+        }
+        completedWindows = visibleCompletions;
+      }
 
       // Build status message WITHOUT completedWindows/completedPanes for dedup
       const statusMessage = {
@@ -189,29 +213,8 @@ export class StatusMonitor {
         if (hasCompletions) {
           statusMessage.data.completedWindows = completedWindows;
           statusMessage.data.completedPanes = completedPanes;
-
-          // Persist notifications server-side and broadcast them
-          if (this._notificationStore) {
-            const added = [];
-            for (const cw of completedWindows) {
-              // Resolve window name from session data
-              const sess = sessionsForPayload.find((s) => s.name === cw.session);
-              const win = sess && sess.windowDetails
-                ? sess.windowDetails.find((w) => w.index === cw.windowIndex)
-                : null;
-              const n = this._notificationStore.add({
-                session: cw.session,
-                windowIndex: cw.windowIndex,
-                windowName: win ? (win.name || '') : '',
-                prevCommand: cw.prevCommand,
-              });
-              added.push(n);
-            }
-            if (added.length > 0) {
-              this._broadcast(JSON.stringify({ type: 'notifications', data: added }));
-            }
-          }
         }
+        if (addedNotifications.length > 0) this.broadcastNotifications(addedNotifications);
         this._broadcast(JSON.stringify(statusMessage));
       }
     } catch (err) {
@@ -221,6 +224,30 @@ export class StatusMonitor {
       };
       this._broadcast(JSON.stringify(errorMessage));
     }
+  }
+
+  _recordCompletionNotification(cw, win) {
+    const windowName = win ? (win.name || '') : '';
+    if (this._agentEvents) {
+      const result = this._agentEvents.ingest({
+        source: 'tmux',
+        event: cw.source === 'bell' ? 'bell' : 'command_complete',
+        notificationType: 'command-complete',
+        session: cw.session,
+        windowIndex: cw.windowIndex,
+        windowId: cw.windowId,
+        windowName,
+        prevCommand: cw.prevCommand,
+      }, { notify: true });
+      return result.notification;
+    }
+    if (!this._notificationStore) return null;
+    return this._notificationStore.add({
+      session: cw.session,
+      windowIndex: cw.windowIndex,
+      windowName,
+      prevCommand: cw.prevCommand,
+    });
   }
 
   async _detectCompletions(sessionsWithWindows) {

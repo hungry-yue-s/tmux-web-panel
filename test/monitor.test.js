@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { AgentEventService } from '../server/agent-events.js';
 import { StatusMonitor } from '../server/monitor.js';
 
 // Mock tmux module
@@ -330,6 +331,43 @@ describe('StatusMonitor', () => {
         const msg3 = JSON.parse(ws.send.mock.calls[0][0]);
         expect(msg3.data.completedWindows).toBeUndefined();
       }
+    });
+
+    it('dedupes a bell notification after an agent stop hook for the same window', async () => {
+      const store = {
+        notifications: [],
+        add(entry) {
+          const n = { id: String(this.notifications.length + 1), ...entry };
+          this.notifications.push(n);
+          return n;
+        },
+      };
+      const agentEvents = new AgentEventService({ notificationStore: store });
+      monitor = new StatusMonitor({ notificationStore: store, agentEvents });
+      const ws = createMockWs();
+      monitor.subscribe(ws);
+
+      agentEvents.ingest({
+        agent: 'qoder',
+        event: 'Stop',
+        session: 'main',
+        windowIndex: 0,
+        windowId: '@1',
+      });
+
+      tmux.listSessions.mockResolvedValue(SESSION);
+      tmux.listWindows.mockResolvedValue(windowsWith(false));
+      tmux.listPaneCommands.mockResolvedValue(paneCommandsWith('zsh'));
+      await monitor.poll();
+      ws.send.mockClear();
+
+      tmux.listSessions.mockResolvedValue(SESSION);
+      tmux.listWindows.mockResolvedValue(windowsWith(true));
+      tmux.listPaneCommands.mockResolvedValue(paneCommandsWith('zsh'));
+      await monitor.poll();
+
+      expect(store.notifications).toHaveLength(1);
+      expect(ws.send.mock.calls.map((c) => JSON.parse(c[0])).some((m) => m.type === 'notifications')).toBe(false);
     });
 
     it('does not fire when shell stays as shell', async () => {

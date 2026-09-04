@@ -29,7 +29,9 @@ import windowStatsRouter from './api/window-stats.js';
 import perfHistoryRouter, { startSampler as startPerfHistorySampler } from './api/perf-history.js';
 import perfDrilldownRouter from './api/perf-drilldown.js';
 import { NotificationStore } from './notifications.js';
+import { AgentEventService } from './agent-events.js';
 import { createNotificationsRouter } from './api/notifications.js';
+import { createAgentEventsRouter } from './api/agent-events.js';
 import { createSceneDiscoverRouter } from './api/scene-discover.js';
 import createClaudeUsageRouter from './api/claude-usage.js';
 import createCodexUsageRouter from './api/codex-usage.js';
@@ -183,6 +185,10 @@ const notificationStore = new NotificationStore(
   join(homedir(), '.config', 'tmux-web-panel', 'notifications.json'),
 );
 
+const agentEvents = new AgentEventService({ notificationStore });
+
+const statusMonitor = new StatusMonitor({ notificationStore, agentEvents });
+
 // --- Pin Store (window-id pinning, persisted across restarts) ---
 
 const pinStore = new PinStore(
@@ -250,6 +256,9 @@ app.use('/api/perf/history', perfHistoryRouter);
 app.use('/api/perf/drilldown', perfDrilldownRouter);
 app.use('/api/window-stats', windowStatsRouter);
 app.use('/api/notifications', createNotificationsRouter(notificationStore));
+app.use('/api/agent-events', createAgentEventsRouter(agentEvents, {
+  onNotifications: (notifications) => statusMonitor.broadcastNotifications(notifications),
+}));
 app.use('/api/scene/discover', createSceneDiscoverRouter());
 app.use('/api/pins', createPinsRouter(pinStore));
 app.use('/api/share', createShareRouter(shareStore));
@@ -281,8 +290,6 @@ const wss = new WebSocketServer({
 const terminalManager = new TerminalManager({
   maxConnectionsPerPane: config.maxConnections,
 });
-
-const statusMonitor = new StatusMonitor({ notificationStore });
 
 // --- Multi-server stack ---
 //

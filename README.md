@@ -127,10 +127,11 @@ git submodule update --init --recursive
 ./scripts/install-service.sh install          # add TLS_AUTO=1 for HTTPS
 ```
 
-Interactive programs like Claude Code can ring the bell when they finish:
+AI agents such as Qoder and Codex can report stop, attention, failure and
+session-end events into the same notification feed:
 
 ```bash
-node scripts/install-claude-hook.js
+node scripts/install-agent-hooks.js all
 ```
 
 On macOS there is also a native SwiftUI shell (`npm run build:macos`) that adds
@@ -143,6 +144,7 @@ menu-bar status, native notifications and a real clipboard bridge.
 | | |
 |---|---|
 | [Configuration & authentication](docs/authentication.md) | flags, env vars, token model, logout |
+| [Agent notifications](docs/agent-notifications.md) | Qoder/Codex hook install, token handling, dedupe rules |
 | [Service install & reboot persistence](docs/service-install.md) | systemd/launchd, TLS, vendored tmux, tmux-resurrect wiring |
 | [File preview & link detection](docs/file-preview.md) | dock tabs, renderers, sharing, sensitive-path policy |
 | [Mobile interaction guide](docs/mobile-gestures.md) | selection gestures, scrolling, key drawer, uploads |

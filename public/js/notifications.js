@@ -47,7 +47,7 @@ var NotificationPanel = (function () {
         session: String(notification.session || ''),
         windowIndex: String(notification.windowIndex ?? ''),
         windowName: String(notification.windowName || ''),
-        command: String(notification.command || ''),
+        command: String(notification.command || notification.reason || notification.state || ''),
       });
     } catch (_err) {
       // Native notification delivery must never break the in-page panel.
@@ -138,6 +138,25 @@ var NotificationPanel = (function () {
   }
 
   var _closeHandler = null;
+
+  function _notificationText(n) {
+    if (n.type !== 'agent-event') {
+      return '命令完成: ' + (n.command || '');
+    }
+    var labels = {
+      waiting_attention: '等待交互',
+      agent_stopped: 'Agent 已停止',
+      session_ended: '会话已结束',
+      process_exited: '进程已退出',
+      failed: 'Agent 异常停止'
+    };
+    var label = labels[n.state] || 'Agent 事件';
+    var parts = [label];
+    if (n.source) parts.push(n.source);
+    if (n.reason) parts.push(n.reason);
+    else if (n.command) parts.push(n.command);
+    return parts.join(' · ');
+  }
 
   function _rerenderPanel() {
     var panel = document.getElementById('notification-panel');
@@ -255,13 +274,15 @@ var NotificationPanel = (function () {
           '" data-session="' + (typeof escapeHtml === 'function' ? escapeHtml(n.session) : n.session) +
           '" data-window-index="' + n.windowIndex + '">';
         html += '<div class="notification-item-header">';
+        var hasWindowIndex = n.windowIndex !== '' && n.windowIndex !== null && n.windowIndex !== undefined;
         var displayName = n.windowName
-          ? n.windowIndex + ': ' + n.windowName
-          : 'window ' + n.windowIndex;
+          ? (hasWindowIndex ? n.windowIndex + ': ' : '') + n.windowName
+          : (hasWindowIndex ? 'window ' + n.windowIndex : (n.session || n.source || 'agent'));
         html += '<span class="notification-item-target">' + (typeof escapeHtml === 'function' ? escapeHtml(displayName) : displayName) + '</span>';
         html += '<span class="notification-item-time">' + _relativeTime(n.timestamp) + '</span>';
         html += '</div>';
-        html += '<div class="notification-item-command">命令完成: ' + (typeof escapeHtml === 'function' ? escapeHtml(n.command) : n.command) + '</div>';
+        var text = _notificationText(n);
+        html += '<div class="notification-item-command">' + (typeof escapeHtml === 'function' ? escapeHtml(text) : text) + '</div>';
         html += '</div>';
       });
       html += '</div>';
@@ -275,7 +296,7 @@ var NotificationPanel = (function () {
         var sess = el.getAttribute('data-session');
         var winIdx = el.getAttribute('data-window-index');
         markRead(id);
-        if (typeof navigate === 'function') {
+        if (typeof navigate === 'function' && winIdx !== '' && winIdx !== null) {
           navigate('terminal', { currentSession: sess, currentWindow: winIdx, currentPane: null });
         }
         var panel = document.getElementById('notification-panel');
