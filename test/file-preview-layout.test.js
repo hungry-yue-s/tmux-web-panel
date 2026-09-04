@@ -1125,6 +1125,50 @@ describe('FilePreview archive tree', () => {
   });
 });
 
+describe('Markdown task lists', () => {
+  it('maps task list tokens to their physical source line after frontmatter', () => {
+    const { preview } = createPreview();
+    const extracted = preview._test.extractFrontmatter('---\ntitle: Tasks\n---\n- [ ] first\n');
+    expect(extracted.lineOffset).toBe(3);
+
+    let taskRule;
+    preview._test.installMarkdownTasks({
+      core: { ruler: { after: (_after, name, rule) => { expect(name).toBe('fp_task_lists'); taskRule = rule; } } },
+    });
+    const attrs = {};
+    const token = {
+      type: 'list_item_open', map: [0, 1],
+      attrJoin: (name, value) => { attrs[name] = value; },
+      attrSet: (name, value) => { attrs[name] = value; },
+    };
+    taskRule({ env: { fpTaskLines: extracted.body.split(/\r?\n/), fpTaskLineOffset: extracted.lineOffset }, tokens: [token] });
+
+    expect(attrs).toEqual({
+      class: 'fp-task-item',
+      'data-fp-task-line': '3',
+      'data-fp-task-expected': '- [ ] first',
+    });
+  });
+
+  it('replaces task markers with native checkbox controls without changing task text', () => {
+    const { dom, preview } = createPreview();
+    const wrap = dom.window.document.createElement('div');
+    wrap.innerHTML = '<ul><li class="fp-task-item" data-fp-task-line="3" data-fp-task-expected="- [ ] open"><p>[ ] open</p></li><li class="fp-task-item" data-fp-task-line="4" data-fp-task-expected="- [X] done"><p>[X] done</p></li></ul>';
+    dom.window.document.body.appendChild(wrap);
+
+    preview._test.replaceTaskMarkers(wrap);
+
+    const boxes = wrap.querySelectorAll('.fp-task-checkbox');
+    expect(boxes).toHaveLength(2);
+    expect(boxes[0].checked).toBe(false);
+    expect(boxes[1].checked).toBe(true);
+    expect(Array.from(wrap.querySelectorAll('li')).map((item) => item.textContent)).toEqual(['open', 'done']);
+    expect(styles).toContain('.fp-md-wrap li.fp-task-item { list-style: none; }');
+    expect(styles).toContain('.fp-md-wrap li.fp-task-item > ul,');
+    expect(styles).toContain('padding-inline-start: 1.8em;');
+  });
+});
+
 describe('FilePreview failure notifications', () => {
   it('toasts and shows an inline error when the target cannot be opened', async () => {
     const { dom, preview } = createPreview({ missingPaths: ['/tmp/gone.md'] });

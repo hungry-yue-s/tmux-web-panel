@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { gzipSync } from 'node:zlib';
@@ -23,6 +23,7 @@ describe('files info API', () => {
     const expected = await stat(file);
 
     const app = express();
+    app.use(express.json());
     app.use('/api/files', createFilesRouter([root]));
     const res = await request(app).get('/api/files/info').query({ path: file });
 
@@ -30,6 +31,117 @@ describe('files info API', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.data.size).toBe(expected.size);
     expect(res.body.data.mtimeMs).toBeCloseTo(expected.mtimeMs, 0);
+  });
+});
+
+describe('Markdown task API', () => {
+  async function setup(content, filename = 'tasks.md') {
+    const root = await mkdtemp(join(tmpdir(), 'tmux-panel-tasks-'));
+    tempDirs.push(root);
+    const file = join(root, filename);
+    await writeFile(file, content);
+    const app = express();
+    app.use(express.json());
+    app.use('/api/files', createFilesRouter([root]));
+    return { root, file, app };
+  }
+
+  async function taskRequest(app, file, line, expectedLine, checked) {
+    const revision = await stat(file);
+    return request(app)
+      .patch('/api/files/markdown-task')
+      .send({
+        path: file,
+        line,
+        checked,
+        expectedLine,
+        expectedMtimeMs: revision.mtimeMs,
+        expectedSize: revision.size,
+      });
+  }
+
+  it('changes only one task marker byte and preserves CRLF content', async () => {
+    const content = '---\r\ntitle: Tasks\r\n---\r\n- [ ] first\r\n  - [X] nested\r\n1. [ ] ordered\r\n';
+    const { app, file } = await setup(content);
+
+    const res = await taskRequest(app, file, 4, '  - [X] nested', false);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ success: true, data: { line: 4, checked: false } });
+    const updated = await readFile(file, 'utf8');
+    expect(updated).toBe('---\r\ntitle: Tasks\r\n---\r\n- [ ] first\r\n  - [ ] nested\r\n1. [ ] ordered\r\n');
+  });
+
+  it('rejects stale revisions and non-task lines without changing the file', async () => {
+    const { app, file } = await setup('- [ ] first\nplain text\n');
+    const revision = await stat(file);
+    await writeFile(file, '- [ ] changed elsewhere\nplain text\n');
+
+    const stale = await request(app)
+      .patch('/api/files/markdown-task')
+      .send({
+        path: file,
+        line: 0,
+        checked: true,
+        expectedLine: '- [ ] first',
+        expectedMtimeMs: revision.mtimeMs,
+        expectedSize: revision.size,
+      });
+    expect(stale.status).toBe(409);
+    expect(await readFile(file, 'utf8')).toBe('- [ ] changed elsewhere\nplain text\n');
+
+    const current = await stat(file);
+    const invalid = await request(app)
+      .patch('/api/files/markdown-task')
+      .send({
+        path: file,
+        line: 1,
+        checked: true,
+        expectedLine: 'plain text',
+        expectedMtimeMs: current.mtimeMs,
+        expectedSize: current.size,
+      });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error).toBe('not_markdown_task');
+  });
+
+  it('rejects non-Markdown files and symlinks that resolve outside the allowed root', async () => {
+    const { root, app } = await setup('plain\n', 'plain.txt');
+    const plain = join(root, 'plain.txt');
+    const plainRevision = await stat(plain);
+    const nonMarkdown = await request(app)
+      .patch('/api/files/markdown-task')
+      .send({
+        path: plain,
+        line: 0,
+        checked: true,
+        expectedLine: 'plain',
+        expectedMtimeMs: plainRevision.mtimeMs,
+        expectedSize: plainRevision.size,
+      });
+    expect(nonMarkdown.status).toBe(400);
+    expect(nonMarkdown.body.error).toBe('not_markdown');
+
+    const outside = await mkdtemp(join(tmpdir(), 'tmux-panel-outside-'));
+    tempDirs.push(outside);
+    const outsideFile = join(outside, 'outside.md');
+    await writeFile(outsideFile, '- [ ] outside\n');
+    const escape = join(root, 'escape.md');
+    await symlink(outsideFile, escape);
+
+    expect((await request(app).get('/api/files/info').query({ path: escape })).status).toBe(403);
+    expect((await request(app).get('/api/files/content').query({ path: escape })).status).toBe(403);
+    const rejectedWrite = await request(app)
+      .patch('/api/files/markdown-task')
+      .send({
+        path: escape,
+        line: 0,
+        checked: true,
+        expectedLine: '- [ ] outside',
+        expectedMtimeMs: 0,
+        expectedSize: 0,
+      });
+    expect(rejectedWrite.status).toBe(403);
   });
 });
 
@@ -112,6 +224,7 @@ describe('files archive API', () => {
     const root = await mkdtemp(join(tmpdir(), 'tmux-panel-arch-'));
     tempDirs.push(root);
     const app = express();
+    app.use(express.json());
     app.use('/api/files', createFilesRouter([root]));
     return { root, app };
   }

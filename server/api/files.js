@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { resolve, extname, basename } from 'node:path';
-import { stat, lstat, realpath, readFile, readdir } from 'node:fs/promises';
+import { stat, lstat, realpath, readFile, readdir, open } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
@@ -8,6 +8,37 @@ import { createReadStream } from 'node:fs';
 import { getArchiveType, listArchive, MAX_ENTRIES as ARCHIVE_MAX_ENTRIES } from './archive.js';
 
 const execFileAsync = promisify(execFile);
+const taskWriteQueues = new Map();
+const TASK_MARKER_RE = /^([ \t]*(?:>[ \t]*)*(?:[-+*]|\d+[.)])[ \t]+)\[([ xX])\]/;
+
+function isWithinRoots(target, roots) {
+  return roots.some((root) => root === '/' ? target.startsWith('/') : target === root || target.startsWith(root + '/'));
+}
+
+function queueTaskWrite(realPath, operation) {
+  const queued = (taskWriteQueues.get(realPath) || Promise.resolve())
+    .catch(() => {})
+    .then(operation);
+  taskWriteQueues.set(realPath, queued);
+  return queued.finally(() => {
+    if (taskWriteQueues.get(realPath) === queued) taskWriteQueues.delete(realPath);
+  });
+}
+
+function getLineAt(buffer, lineNumber) {
+  let start = 0;
+  for (let current = 0; current <= lineNumber; current++) {
+    const newline = buffer.indexOf(0x0a, start);
+    const end = newline === -1 ? buffer.length : newline;
+    if (current === lineNumber) {
+      const contentEnd = end > start && buffer[end - 1] === 0x0d ? end - 1 : end;
+      return { start, line: buffer.subarray(start, contentEnd).toString('utf8') };
+    }
+    if (newline === -1) return null;
+    start = newline + 1;
+  }
+  return null;
+}
 
 const SIZE_LIMITS = {
   text: 2 * 1024 * 1024,
@@ -131,11 +162,9 @@ function getSizeLimit(info) {
 // on success, or an error shape the callers forward verbatim.
 async function resolveTarget(rawPath, allowedRoots) {
   const linkPath = resolve(rawPath);
+  const normalizedRoots = allowedRoots.map((root) => resolve(root));
 
-  const inAllowedRoot = allowedRoots.some(
-    (root) => linkPath === root || linkPath.startsWith(root + '/')
-  );
-  if (!inAllowedRoot) {
+  if (!isWithinRoots(linkPath, normalizedRoots)) {
     return { error: 'Access denied', status: 403 };
   }
 
@@ -144,6 +173,13 @@ async function resolveTarget(rawPath, allowedRoots) {
     realPath = await realpath(linkPath);
   } catch {
     return { error: 'Path not found', status: 404 };
+  }
+
+  const realRoots = await Promise.all(normalizedRoots.map(async (root) => {
+    try { return await realpath(root); } catch { return root; }
+  }));
+  if (!isWithinRoots(realPath, realRoots)) {
+    return { error: 'Access denied', status: 403 };
   }
 
   if (SENSITIVE_PATTERNS.some((p) => p.test(linkPath) || p.test(realPath))) {
@@ -181,10 +217,9 @@ async function validateFilePath(rawPath, allowedRoots, { skipSizeLimit = false }
     }
   }
 
-  // Return the link path (not realPath) as absPath so subsequent calls
-  // (content/raw endpoints) use the same identifier. realpath is resolved
-  // again inside those endpoints.
-  return { ok: true, absPath: t.linkPath, size: t.stat.size, info };
+  // Keep the link path as the UI identifier while internal I/O uses the
+  // canonical path that already passed the real-root validation above.
+  return { ok: true, absPath: t.linkPath, realPath: t.realPath, size: t.stat.size, info };
 }
 
 async function validateDirPath(rawPath, allowedRoots) {
@@ -405,7 +440,7 @@ export function createFilesRouter(allowedRoots) {
 
       let entries;
       try {
-        entries = await listArchive(result.absPath, result.info.archiveType);
+        entries = await listArchive(result.realPath, result.info.archiveType);
       } catch (err) {
         return res.status(415).json({ success: false, data: null, error: err.message });
       }
@@ -448,7 +483,7 @@ export function createFilesRouter(allowedRoots) {
         return res.status(400).json({ success: false, data: null, error: 'Use /raw endpoint for binary files' });
       }
 
-      const content = await readFile(result.absPath, 'utf-8');
+      const content = await readFile(result.realPath, 'utf-8');
       const language = result.info.language || detectShebangLanguage(content);
       res.json({
         success: true,
@@ -462,6 +497,85 @@ export function createFilesRouter(allowedRoots) {
       });
     } catch (err) {
       res.status(500).json({ success: false, data: null, error: err.message });
+    }
+  });
+
+  router.patch('/markdown-task', async (req, res) => {
+    try {
+      const {
+        path: rawPath,
+        line,
+        checked,
+        expectedLine,
+        expectedMtimeMs,
+        expectedSize,
+      } = req.body || {};
+      if (
+        typeof rawPath !== 'string' || !rawPath.startsWith('/')
+        || !Number.isInteger(line) || line < 0
+        || typeof checked !== 'boolean'
+        || typeof expectedLine !== 'string' || /[\r\n]/.test(expectedLine)
+        || typeof expectedMtimeMs !== 'number' || !Number.isFinite(expectedMtimeMs)
+        || !Number.isInteger(expectedSize) || expectedSize < 0
+      ) {
+        return res.status(400).json({ success: false, data: null, error: 'invalid_markdown_task_request' });
+      }
+
+      const result = await validateFilePath(rawPath, roots);
+      if (result.error) {
+        return res.status(result.status).json({ success: false, data: null, error: result.error });
+      }
+      if (!result.info.isMarkdown) {
+        return res.status(400).json({ success: false, data: null, error: 'not_markdown' });
+      }
+
+      const outcome = await queueTaskWrite(result.realPath, async () => {
+        let handle;
+        try {
+          handle = await open(result.realPath, 'r+');
+          const current = await handle.stat();
+          if (current.size > SIZE_LIMITS.text) return { tooLarge: true };
+          if (current.mtimeMs !== expectedMtimeMs || current.size !== expectedSize) return { conflict: true };
+
+          const buffer = Buffer.alloc(current.size);
+          const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+          if (bytesRead !== buffer.length) throw new Error('short_file_read');
+          const targetLine = getLineAt(buffer, line);
+          if (!targetLine || targetLine.line !== expectedLine) return { conflict: true };
+
+          const marker = TASK_MARKER_RE.exec(targetLine.line);
+          if (!marker) return { invalidTask: true };
+          const markerIndex = marker[1].length + 1;
+          const markerOffset = targetLine.start + Buffer.byteLength(targetLine.line.slice(0, markerIndex), 'utf8');
+          const nextMarker = checked ? 0x78 : 0x20;
+          if (buffer[markerOffset] !== nextMarker) {
+            const { bytesWritten } = await handle.write(Buffer.from([nextMarker]), 0, 1, markerOffset);
+            if (bytesWritten !== 1) throw new Error('short_task_write');
+            await handle.sync();
+          }
+          const updated = await handle.stat();
+          return { mtimeMs: updated.mtimeMs, size: updated.size };
+        } finally {
+          if (handle) await handle.close();
+        }
+      });
+
+      if (outcome.tooLarge) {
+        return res.status(413).json({ success: false, data: null, error: 'File too large' });
+      }
+      if (outcome.conflict) {
+        return res.status(409).json({ success: false, data: null, error: 'markdown_task_conflict' });
+      }
+      if (outcome.invalidTask) {
+        return res.status(400).json({ success: false, data: null, error: 'not_markdown_task' });
+      }
+      return res.json({
+        success: true,
+        data: { absPath: result.absPath, line, checked, mtimeMs: outcome.mtimeMs, size: outcome.size },
+        error: null,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, data: null, error: err.message });
     }
   });
 
@@ -491,7 +605,7 @@ export function createFilesRouter(allowedRoots) {
       if (result.info.mimeType === 'image/svg+xml') {
         res.setHeader('Content-Security-Policy', 'sandbox');
       }
-      createReadStream(result.absPath).pipe(res);
+      createReadStream(result.realPath).pipe(res);
     } catch (err) {
       res.status(500).json({ success: false, data: null, error: err.message });
     }

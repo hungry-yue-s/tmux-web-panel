@@ -3824,6 +3824,11 @@ body.fp-side-resizing { cursor: col-resize; user-select: none; }
 .fp-md-wrap blockquote { border-left: 3px solid var(--accent-blue); margin: 1em 0; padding: 4px 16px; color: var(--text-muted); }
 .fp-md-wrap a { color: var(--accent-blue); }
 .fp-md-wrap li.fp-task-item { list-style: none; }
+.fp-md-wrap li.fp-task-item > ul,
+.fp-md-wrap li.fp-task-item > ol {
+  margin: 0.25em 0 0.4em;
+  padding-inline-start: 1.8em;
+}
 .fp-md-wrap .fp-task-checkbox {
   width: 1em; height: 1em; margin: 0 0.48em 0 0; vertical-align: -0.1em;
   accent-color: var(--accent-blue); cursor: pointer;

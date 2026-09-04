@@ -1529,6 +1529,7 @@ var FilePreview = (function () {
       '.fp-md-wrap th{background:var(--bg-primary);}',
       '.fp-md-wrap blockquote{border-left:3px solid var(--accent-blue);margin:1em 0;padding:4px 16px;color:var(--text-muted);}',
       '.fp-md-wrap a{color:var(--accent-blue);}',
+      '.fp-md-wrap li.fp-task-item{list-style:none;}.fp-md-wrap li.fp-task-item>ul,.fp-md-wrap li.fp-task-item>ol{margin:.25em 0 .4em;padding-inline-start:1.8em;}.fp-md-wrap .fp-task-checkbox{width:1em;height:1em;margin:0 .48em 0 0;vertical-align:-.1em;accent-color:var(--accent-blue);}.fp-md-wrap .fp-task-checkbox:disabled{opacity:1;}',
       '.fp-md-wrap .fp-frontmatter{margin:0 0 1.2em;padding:10px 14px;border:1px solid var(--border-subtle);border-radius:8px;background:var(--bg-primary);font-size:0.84rem;}',
       '.fp-md-wrap .fp-fm-row{display:flex;gap:10px;padding:3px 0;align-items:baseline;}',
       '.fp-md-wrap .fp-fm-row+.fp-fm-row{border-top:1px solid var(--border-subtle);}',
@@ -1646,6 +1647,14 @@ var FilePreview = (function () {
     // mutating what's on screen.
     var capture = rendered.cloneNode(true);
     capture.querySelectorAll('.fp-colfilter-btn, .fp-table-search').forEach(function (b) { b.remove(); });
+    capture.querySelectorAll('.fp-task-checkbox').forEach(function (checkbox) {
+      checkbox.disabled = true;
+      checkbox.setAttribute('aria-disabled', 'true');
+    });
+    capture.querySelectorAll('li.fp-task-item').forEach(function (item) {
+      item.removeAttribute('data-fp-task-line');
+      item.removeAttribute('data-fp-task-expected');
+    });
     var base = (_currentFile.filename || 'preview').replace(/\.[^.]+$/, '');
     return _inlineAssets(capture).then(function () {
       var title = _escapeHtml(_currentFile.filename || 'preview');
@@ -2755,8 +2764,12 @@ var FilePreview = (function () {
   // list form that frontmatter actually uses; not a general YAML engine.
   function _extractFrontmatter(content) {
     var m = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(content);
-    if (!m) return { fm: null, body: content };
-    return { fm: _parseFrontmatter(m[1]), body: content.slice(m[0].length) };
+    if (!m) return { fm: null, body: content, lineOffset: 0 };
+    return {
+      fm: _parseFrontmatter(m[1]),
+      body: content.slice(m[0].length),
+      lineOffset: (m[0].match(/\n/g) || []).length,
+    };
   }
 
   function _stripQuotes(s) {
@@ -2808,6 +2821,119 @@ var FilePreview = (function () {
     return rows ? '<div class="fp-frontmatter">' + rows + '</div>' : '';
   }
 
+  var _taskMarkerRe = /^([ \t]*(?:>[ \t]*)*(?:[-+*]|\d+[.)])[ \t]+)\[([ xX])\]/;
+
+  function _installMarkdownTasks(md) {
+    md.core.ruler.after('inline', 'fp_task_lists', function (state) {
+      var lines = state.env.fpTaskLines;
+      if (!lines) return;
+      var lineOffset = state.env.fpTaskLineOffset || 0;
+      state.tokens.forEach(function (token) {
+        if (token.type !== 'list_item_open' || !token.map) return;
+        var sourceLine = lines[token.map[0]];
+        var match = typeof sourceLine === 'string' && _taskMarkerRe.exec(sourceLine);
+        if (!match) return;
+        token.attrJoin('class', 'fp-task-item');
+        token.attrSet('data-fp-task-line', String(lineOffset + token.map[0]));
+        token.attrSet('data-fp-task-expected', sourceLine);
+      });
+    });
+  }
+
+  function _replaceTaskMarkers(wrap) {
+    Array.prototype.forEach.call(wrap.querySelectorAll('li.fp-task-item'), function (item) {
+      var walker = document.createTreeWalker(item, 4);
+      var textNode = null;
+      var match = null;
+      while ((textNode = walker.nextNode())) {
+        match = /^\[([ xX])\][ \t]+/.exec(textNode.nodeValue);
+        if (match) break;
+      }
+      if (!match || !textNode || !textNode.parentNode) {
+        item.classList.remove('fp-task-item');
+        item.removeAttribute('data-fp-task-line');
+        item.removeAttribute('data-fp-task-expected');
+        return;
+      }
+      var checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'fp-task-checkbox';
+      checkbox.checked = match[1].toLowerCase() === 'x';
+      checkbox.setAttribute('aria-label', '\u5207\u6362\u4efb\u52a1\u72b6\u6001');
+      textNode.parentNode.insertBefore(checkbox, textNode);
+      textNode.nodeValue = textNode.nodeValue.slice(match[0].length);
+    });
+  }
+
+  function _bindMarkdownTaskToggles(wrap, filePath) {
+    wrap.addEventListener('change', function (event) {
+      var checkbox = event.target;
+      if (!checkbox || !checkbox.classList || !checkbox.classList.contains('fp-task-checkbox')) return;
+      var item = checkbox.closest('li.fp-task-item');
+      var current = _currentFile;
+      var line = item && Number(item.getAttribute('data-fp-task-line'));
+      var expectedLine = item && item.getAttribute('data-fp-task-expected');
+      if (
+        !current || current.absPath !== filePath || !Number.isInteger(line) || line < 0
+        || !expectedLine || current.mtimeMs == null || current.size == null
+      ) {
+        checkbox.checked = !checkbox.checked;
+        _notifyFailure('\u65e0\u6cd5\u540c\u6b65\u4efb\u52a1\u72b6\u6001');
+        return;
+      }
+
+      var checked = checkbox.checked;
+      checkbox.disabled = true;
+      item.classList.add('fp-task-saving');
+      var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
+      headers['Content-Type'] = 'application/json';
+      fetch('/api/files/markdown-task', {
+        method: 'PATCH', headers: headers, cache: 'no-store',
+        body: JSON.stringify({
+          path: current.absPath,
+          line: line,
+          checked: checked,
+          expectedLine: expectedLine,
+          expectedMtimeMs: current.mtimeMs,
+          expectedSize: current.size,
+        }),
+      })
+        .then(function (response) {
+          return response.json().then(function (result) {
+            return { status: response.status, result: result };
+          });
+        })
+        .then(function (response) {
+          if (response.status === 401) { close(); return false; }
+          if (!response.result.success) {
+            var error = new Error(response.result.error || '\u4fdd\u5b58\u4efb\u52a1\u72b6\u6001\u5931\u8d25');
+            error.status = response.status;
+            throw error;
+          }
+          return _refreshCurrent(true);
+        })
+        .then(function () {
+          if (checkbox.isConnected) {
+            checkbox.disabled = false;
+            item.classList.remove('fp-task-saving');
+          }
+        })
+        .catch(function (err) {
+          if (checkbox.isConnected) {
+            checkbox.checked = !checked;
+            checkbox.disabled = false;
+            item.classList.remove('fp-task-saving');
+          }
+          if (err && err.status === 409) {
+            _refreshCurrent(true);
+            _notifyFailure('\u6587\u4ef6\u5df2\u88ab\u5916\u90e8\u4fee\u6539\uff0c\u9884\u89c8\u5df2\u5237\u65b0');
+            return;
+          }
+          _notifyFailure('\u4fdd\u5b58\u4efb\u52a1\u72b6\u6001\u5931\u8d25\uff1a' + (err && err.message ? err.message : err));
+        });
+    });
+  }
+
   function _renderMarkdown(body, content, filePath, paneId) {
     body.innerHTML = '<div class="fp-loading">Rendering Markdown\u2026</div>';
     var baseDir = filePath.substring(0, filePath.lastIndexOf('/'));
@@ -2832,6 +2958,7 @@ var FilePreview = (function () {
         });
 
         md.use(_obsidianMarkdown);
+        _installMarkdownTasks(md);
 
         var katexLoaded = Promise.all([
           _loadCSS(CDN.katexCss),
@@ -2848,7 +2975,11 @@ var FilePreview = (function () {
       .then(function (md) {
         var fmExtract = _extractFrontmatter(content);
         var fmHtml = fmExtract.fm ? _renderFrontmatter(fmExtract.fm) : '';
-        var html = md.render(fmExtract.body);
+        var env = {
+          fpTaskLines: fmExtract.body.split(/\r?\n/),
+          fpTaskLineOffset: fmExtract.lineOffset,
+        };
+        var html = md.renderer.render(md.parse(fmExtract.body, env), md.options, env);
 
         var _mdTp = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
         html = html.replace(
@@ -2865,6 +2996,8 @@ var FilePreview = (function () {
         wrap.innerHTML = fmHtml + html;
         body.appendChild(wrap);
 
+        _replaceTaskMarkers(wrap);
+        _bindMarkdownTaskToggles(wrap, filePath);
         _renderCallouts(wrap);
         _prepareMarkdownNavigation(wrap, filePath, paneId);
 
@@ -3827,6 +3960,9 @@ var FilePreview = (function () {
       wikilinkHtml: _wikilinkHtml,
       resolveMarkdownHref: _resolveMarkdownHref,
       scrollMarkdownHeading: _scrollMarkdownHeading,
+      extractFrontmatter: _extractFrontmatter,
+      installMarkdownTasks: _installMarkdownTasks,
+      replaceTaskMarkers: _replaceTaskMarkers,
       prepareMarkdownNavigation: _prepareMarkdownNavigation,
       buildArchiveTree: _buildArchiveTree,
       renderArchiveTree: _renderArchiveTree,
