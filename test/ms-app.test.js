@@ -450,13 +450,37 @@ describe('MsApp status mode routing', () => {
     const ctx = loadStatusShell();
     const calls = [];
     ctx.win.FilePreview = {
-      switchDockContext: (serverId, session, windowIndex) => calls.push([serverId, session, windowIndex]),
+      switchDockContext: (...args) => calls.push(args),
     };
 
     await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'api-linux', section: 'performance' } });
 
-    expect(calls).toEqual([[null, null, null]]);
+    expect(calls).toEqual([[null, null]]);
     expect(ctx.document.getElementById('ms-view').querySelector('.server-hero')).toBeTruthy();
+  });
+
+  it('scopes the preview dock to the mounted window ID', () => {
+    const ctx = loadStatusShell();
+    const calls = [];
+    const workspace = {
+      provider: 'ssh',
+      sessions: [{
+        id: 'session_1', name: 'remote', windows: [
+          { id: 'win_7', index: 1, name: 'replacement', panes: [{ id: 'pane_1' }] },
+        ],
+      }],
+    };
+    ctx.document.getElementById('ms-view').innerHTML = '<section id="ms-terminal-host"></section>';
+    ctx.win.FilePreview = { switchDockContext: (...args) => calls.push(args) };
+    ctx.win.TerminalTarget = { set: vi.fn() };
+    ctx.win.state = {};
+    ctx.win.renderTerminal = vi.fn();
+
+    ctx.MsApp._mountTerminal('api-linux', workspace, {
+      sessionId: 'session_1', windowId: 'win_7', paneId: 'pane_1',
+    });
+
+    expect(calls).toEqual([['api-linux', 'win_7']]);
   });
 
   it('replaces the bare servers route with a server detail, with no list in between', async () => {

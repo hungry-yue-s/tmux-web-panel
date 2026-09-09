@@ -840,19 +840,32 @@ describe('file preview dock tabs', () => {
       activePath: '/tmp/legacy.md', hidden: false, width: 470,
     });
     const migrated = createPreview({
-      storage: { [legacyKey]: legacy }, context: ['local', 'main', 3],
+      storage: { [legacyKey]: legacy }, context: ['local', '@3'],
     });
 
     expect(await migrated.preview.restoreDocked()).toBe(true);
-    const scopedKey = migrated.preview._test.dockStateKey('local', 'main', 3);
+    const scopedKey = migrated.preview._test.dockStateKey('local', '@3');
     expect(migrated.dom.window.localStorage.getItem(legacyKey)).toBeNull();
     expect(JSON.parse(migrated.dom.window.localStorage.getItem(scopedKey)).tabs[0].path)
       .toBe('/tmp/legacy.md');
     expect(migrated.dom.window.document.querySelector('.fp-dock').style.width).toBe('470px');
   });
 
+  it('does not restore an index-keyed v2 snapshot into a new stable window', async () => {
+    const v2Key = 'tmux_file_preview_dock_v2:' + encodeURIComponent('local\u0000main\u00001');
+    const legacyState = JSON.stringify({
+      version: 1, tabs: [{ path: '/tmp/old-window.md', paneId: '%1' }],
+      activePath: '/tmp/old-window.md', hidden: false, width: 470,
+    });
+    const replacement = createPreview({ storage: { [v2Key]: legacyState }, context: ['local', '@42'] });
+
+    expect(await replacement.preview.restoreDocked()).toBe(false);
+    expect(replacement.dom.window.document.querySelector('.fp-dock')).toBeNull();
+    expect(replacement.dom.window.localStorage.getItem(v2Key)).toBe(legacyState);
+  });
+
   it('skips missing files and prunes them from persisted dock state', async () => {
-    const key = 'tmux_file_preview_dock_v2:' + encodeURIComponent('local\u0000test-session\u00000');
+    const key = 'tmux_file_preview_dock_v3:' + encodeURIComponent('local\u0000@0');
     const state = JSON.stringify({
       version: 1,
       tabs: [
@@ -874,17 +887,16 @@ describe('file preview dock tabs', () => {
     expect(pruned.activePath).toBe('/tmp/kept.md');
   });
 
-  it('switches the dock context with the active machine and tmux window', () => {
-    expect(appSource).toContain("FilePreview.switchDockContext('local', state.currentSession, state.currentWindow)");
-    expect(appSource).toContain('FilePreview.switchDockContext(null, null, null)');
-    expect(msAppSource).toContain('this._setDockContext(serverId, session.name, win.index)');
-    // Every terminal path that does not mount a terminal must drop the dock, or
-    // the previous machine's preview stays on screen.
-    expect(msAppSource.match(/_setDockContext\(null, null, null\)/g).length).toBeGreaterThanOrEqual(5);
+  it('uses stable window IDs in the modern shell without legacy interference', () => {
+    expect(appSource).toContain("if (document.querySelector('.ms-app')) return;");
+    expect(appSource).toContain("'legacy-local'");
+    expect(appSource).toContain('FilePreview.switchDockContext(null, null)');
+    expect(msAppSource).toContain('this._setDockContext(serverId, win.id)');
+    expect(msAppSource.match(/_setDockContext\(null, null\)/g).length).toBeGreaterThanOrEqual(5);
   });
 
   it('ignores and removes a corrupted persisted dock snapshot', async () => {
-    const key = 'tmux_file_preview_dock_v2:' + encodeURIComponent('local\u0000test-session\u00000');
+    const key = 'tmux_file_preview_dock_v3:' + encodeURIComponent('local\u0000@0');
     const restored = createPreview({ storage: { [key]: '{broken-json' } });
     expect(await restored.preview.restoreDocked()).toBe(false);
     expect(restored.dom.window.localStorage.getItem(key)).toBeNull();
