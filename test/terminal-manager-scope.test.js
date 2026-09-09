@@ -103,6 +103,63 @@ describe('TerminalManager server scoping', () => {
   });
 });
 
+describe('TerminalManager PTY termination', () => {
+  beforeEach(() => {
+    spawn.mockReset();
+    spawn.mockImplementation(() => fakeTerm());
+  });
+
+  it('keeps the SIGKILL fallback after a WebSocket closes', () => {
+    vi.useFakeTimers();
+    const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
+    try {
+      const term = fakeTerm();
+      spawn.mockReturnValue(term);
+      const manager = new TerminalManager();
+      const ws = fakeWs();
+
+      manager.create(ws, '%1');
+      ws.listeners.close();
+
+      expect(manager.connections.size).toBe(0);
+      expect(kill).toHaveBeenCalledWith(-4242, 'SIGTERM');
+
+      vi.advanceTimersByTime(500);
+
+      expect(kill).toHaveBeenCalledWith(-4242, 'SIGKILL');
+    } finally {
+      kill.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('escalates after the PTY leader exits without targeting its raw PID', () => {
+    vi.useFakeTimers();
+    const kill = vi.spyOn(process, 'kill').mockImplementation((target, signal) => {
+      if (target === -4242 && signal === 'SIGKILL') throw new Error('ESRCH');
+      return true;
+    });
+    try {
+      const term = fakeTerm();
+      spawn.mockReturnValue(term);
+      const manager = new TerminalManager();
+      const ws = fakeWs();
+
+      manager.create(ws, '%1');
+      ws.listeners.close();
+      term.handlers.exit({ exitCode: 0, signal: null });
+      vi.advanceTimersByTime(500);
+
+      expect(kill).toHaveBeenCalledTimes(2);
+      expect(kill).toHaveBeenNthCalledWith(1, -4242, 'SIGTERM');
+      expect(kill).toHaveBeenNthCalledWith(2, -4242, 'SIGKILL');
+    } finally {
+      kill.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('TerminalManager spawn override', () => {
   beforeEach(() => {
     spawn.mockReset();

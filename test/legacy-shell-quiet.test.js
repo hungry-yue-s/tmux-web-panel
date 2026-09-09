@@ -71,9 +71,15 @@ describe('legacy shell does not render behind the multi-server shell', () => {
     win.document.getElementById('ms-view').innerHTML = win.ServersPage._localPerformance();
     expect(win.document.querySelectorAll('#perf-panel')).toHaveLength(1);
     expect(win.document.querySelectorAll('#perf-view-root')).toHaveLength(1);
-    expect(win.document.querySelectorAll('#claude-view-root')).toHaveLength(1);
+    expect(win.document.querySelectorAll('#claude-view-root')).toHaveLength(0);
     expect(win.document.querySelectorAll('#codex-view-root')).toHaveLength(0);
     expect(win.document.getElementById('ms-view').contains(win.document.getElementById('perf-panel'))).toBe(true);
+
+    win.document.getElementById('ms-view').innerHTML = win.ServersPage._localClaude();
+    expect(win.document.querySelectorAll('#perf-panel')).toHaveLength(1);
+    expect(win.document.querySelectorAll('#perf-view-root')).toHaveLength(0);
+    expect(win.document.querySelectorAll('#claude-view-root')).toHaveLength(1);
+    expect(win.document.querySelectorAll('#codex-view-root')).toHaveLength(0);
 
     win.document.getElementById('ms-view').innerHTML = win.ServersPage._localCodex();
     expect(win.document.querySelectorAll('#perf-panel')).toHaveLength(1);

@@ -31,7 +31,7 @@ var FilePreview = (function () {
   var _dockContextKey = null;
   var _dockContextGeneration = 0;
   var AUTO_REFRESH_MS = 1500;
-  var DOCK_STATE_PREFIX = 'tmux_file_preview_dock_v2:';
+  var DOCK_STATE_PREFIX = 'tmux_file_preview_dock_v3:';
   var LEGACY_DOCK_STATE_KEY = 'tmux_file_preview_dock_v1';
   var LEGACY_DOCK_WIDTH_KEY = 'tmux_file_preview_side_width';
   var DOCK_STATE_VERSION = 1;
@@ -40,17 +40,13 @@ var FilePreview = (function () {
   /**
    * Identifies one window's dock state.
    *
-   * The serverId belongs in the key because session names and window indices
-   * repeat across machines. Keyed on those alone, two servers shared a context,
-   * so switching machines saw an unchanged key and kept the previous machine's
-   * dock — and both wrote the same localStorage snapshot.
+   * Window indices are display-only and can be reused after a window closes;
+   * stable IDs prevent a replacement window from inheriting that snapshot.
    */
-  function _makeDockContextKey(serverId, sessionName, windowIndex) {
+  function _makeDockContextKey(serverId, windowId) {
     if (typeof serverId !== 'string' || !serverId) return null;
-    if (typeof sessionName !== 'string' || !sessionName) return null;
-    if (!((typeof windowIndex === 'number' && Number.isInteger(windowIndex) && windowIndex >= 0)
-      || (typeof windowIndex === 'string' && /^\d+$/.test(windowIndex)))) return null;
-    return serverId + '\u0000' + sessionName + '\u0000' + String(windowIndex);
+    if (typeof windowId !== 'string' || !windowId) return null;
+    return serverId + '\u0000' + windowId;
   }
 
   function _dockStateStorageKey(contextKey) {
@@ -701,8 +697,8 @@ var FilePreview = (function () {
       && generation === _dockContextGeneration;
   }
 
-  function switchDockContext(serverId, sessionName, windowIndex) {
-    var nextContextKey = _makeDockContextKey(serverId, sessionName, windowIndex);
+  function switchDockContext(serverId, windowId) {
+    var nextContextKey = _makeDockContextKey(serverId, windowId);
     if (nextContextKey === _dockContextKey) {
       if (!nextContextKey) return Promise.resolve(false);
       if (_dockTabs.length > 0) return Promise.resolve(true);
@@ -3972,8 +3968,8 @@ var FilePreview = (function () {
       setLanHost: function (host) { _lanHost = host; },
       loadDockState: _loadDockState,
       persistDockState: _persistDockState,
-      dockStateKey: function (serverId, sessionName, windowIndex) {
-        return _dockStateStorageKey(_makeDockContextKey(serverId, sessionName, windowIndex));
+      dockStateKey: function (serverId, windowId) {
+        return _dockStateStorageKey(_makeDockContextKey(serverId, windowId));
       },
       legacyDockStateKey: LEGACY_DOCK_STATE_KEY,
       dockContextKey: function () { return _dockContextKey; },

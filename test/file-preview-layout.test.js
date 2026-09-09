@@ -7,7 +7,7 @@ const appSource = fs.readFileSync('public/js/app.js', 'utf8');
 const msAppSource = fs.readFileSync('public/js/ms-app.js', 'utf8');
 const styles = fs.readFileSync('public/css/style.css', 'utf8');
 
-function createPreview({ storage = {}, missingPaths = [], context = ['local', 'test-session', 0] } = {}) {
+function createPreview({ storage = {}, missingPaths = [], context = ['local', '@0'] } = {}) {
   const dom = new JSDOM(
     '<!doctype html><body><div id="main-layout"><main id="content"><div class="terminal-view"></div></main></div></body>',
     { url: 'https://panel.test/' }
@@ -41,7 +41,7 @@ function createPreview({ storage = {}, missingPaths = [], context = ['local', 't
 
   new Function('window', 'document', 'fetch', source)(dom.window, dom.window.document, fetch);
   const preview = dom.window.FilePreview;
-  if (context) preview.switchDockContext(context[0], context[1], context[2]);
+  if (context) preview.switchDockContext(context[0], context[1]);
   return { dom, preview, fetch };
 }
 
@@ -107,7 +107,7 @@ function createLivePreview({ visible = false } = {}) {
   });
 
   new Function('window', 'document', 'fetch', source)(dom.window, dom.window.document, fetch);
-  dom.window.FilePreview.switchDockContext('local', 'test-session', 0);
+  dom.window.FilePreview.switchDockContext('local', '@0');
   return {
     dom,
     preview: dom.window.FilePreview,
@@ -618,7 +618,7 @@ describe('file preview dock tabs', () => {
         : { success: true, data: { absPath: '/tmp/one.md', parent: '/', entries: [], truncated: false } }),
     }));
     new Function('window', 'document', 'fetch', source)(dom.window, dom.window.document, fetch);
-    dom.window.FilePreview.switchDockContext('local', 'test-session', 0);
+    dom.window.FilePreview.switchDockContext('local', '@0');
     dom.window.FilePreview.openFile('/tmp/one.md', '%1');
     await flush();
     dockCurrent(dom);
@@ -704,7 +704,7 @@ describe('file preview dock tabs', () => {
     expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
     expect(dom.window.document.querySelector('[aria-label="展开右侧文件预览"]')).toBeNull();
     expect(dom.window.document.body.classList.contains('fp-side-open')).toBe(false);
-    expect(dom.window.localStorage.getItem(preview._test.dockStateKey('local', 'test-session', 0))).toBeNull();
+    expect(dom.window.localStorage.getItem(preview._test.dockStateKey('local', '@0'))).toBeNull();
   });
 
   it('hides and restores the entire dock while retaining tabs', async () => {
@@ -733,7 +733,7 @@ describe('file preview dock tabs', () => {
       .querySelector('[aria-label="在右侧分栏打开"]').click();
     first.dom.window.document.querySelectorAll('.fp-dock-tab')[0].click();
 
-    const key = first.preview._test.dockStateKey('local', 'test-session', 0);
+    const key = first.preview._test.dockStateKey('local', '@0');
     const saved = JSON.parse(first.dom.window.localStorage.getItem(key));
     saved.width = 510;
     const serialized = JSON.stringify(saved);
@@ -762,7 +762,7 @@ describe('file preview dock tabs', () => {
       .querySelector('[aria-label="在右侧分栏打开"]').click();
     first.dom.window.document.querySelector('[aria-label="隐藏右侧预览"]').click();
 
-    const key = first.preview._test.dockStateKey('local', 'test-session', 0);
+    const key = first.preview._test.dockStateKey('local', '@0');
     const serialized = first.dom.window.localStorage.getItem(key);
     expect(JSON.parse(serialized).hidden).toBe(true);
 
@@ -778,58 +778,58 @@ describe('file preview dock tabs', () => {
     expect(JSON.parse(reopened.dom.window.localStorage.getItem(key)).hidden).toBe(false);
   });
 
-  it('keeps dock tabs isolated while switching between tmux windows', async () => {
-    const { dom, preview } = createPreview({ context: ['local', 'main', 1] });
+  it('keeps a replacement tmux window from restoring the dock at its reused index', async () => {
+    const reusedIndex = 1;
+    const { dom, preview } = createPreview({ context: ['local', '@41'] });
     preview.openFile('/tmp/window-one.md', '%1'); await flush(); dockCurrent(dom);
-    const firstKey = preview._test.dockStateKey('local', 'main', 1);
+    const firstKey = preview._test.dockStateKey('local', '@41');
     dom.window.document.querySelector('.fp-dock').style.flexBasis = '410px';
     dom.window.document.querySelector('.fp-dock').style.width = '410px';
     preview._test.persistDockState(410);
     dom.window.document.querySelector('[aria-label="隐藏右侧预览"]').click();
 
-    expect(await preview.switchDockContext('local', 'main', 2)).toBe(false);
+    // tmux can reuse this display index after @41 is closed, but @42 is new.
+    expect(reusedIndex).toBe(1);
+    expect(await preview.switchDockContext('local', '@42')).toBe(false);
     expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
     expect(JSON.parse(dom.window.localStorage.getItem(firstKey)).tabs[0].path)
       .toBe('/tmp/window-one.md');
 
     preview.openFile('/tmp/window-two.md', '%2'); await flush(); dockCurrent(dom);
-    const secondKey = preview._test.dockStateKey('local', 'main', 2);
+    const secondKey = preview._test.dockStateKey('local', '@42');
     dom.window.document.querySelector('.fp-dock').style.flexBasis = '650px';
     dom.window.document.querySelector('.fp-dock').style.width = '650px';
     preview._test.persistDockState(650);
     expect(secondKey).not.toBe(firstKey);
 
-    expect(await preview.switchDockContext('local', 'main', 1)).toBe(true);
+    expect(await preview.switchDockContext('local', '@41')).toBe(true);
     expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
     dom.window.document.querySelector('[aria-label="展开右侧文件预览"]').click();
     expect(dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('window-one.md');
     expect(dom.window.document.querySelector('.fp-dock').style.width).toBe('410px');
 
-    expect(await preview.switchDockContext('local', 'main', 2)).toBe(true);
+    expect(await preview.switchDockContext('local', '@42')).toBe(true);
     expect(dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('window-two.md');
     expect(dom.window.document.querySelector('.fp-dock').style.width).toBe('650px');
 
-    expect(await preview.switchDockContext(null, null, null)).toBe(false);
+    expect(await preview.switchDockContext(null, null)).toBe(false);
     expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
-    expect(await preview.switchDockContext('local', 'main', 2)).toBe(true);
+    expect(await preview.switchDockContext('local', '@42')).toBe(true);
     expect(dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('window-two.md');
   });
 
-  it('does not carry a dock across machines that share a session name and window index', async () => {
-    const { dom, preview } = createPreview({ context: ['local', 'main', 1] });
+  it('does not carry a dock across servers that share an SSH window ID', async () => {
+    const { dom, preview } = createPreview({ context: ['local', 'win_1'] });
     preview.openFile('/tmp/local-only.md', '%1'); await flush(); dockCurrent(dom);
     expect(dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('local-only.md');
 
-    // Same session name, same window index, different machine. Keyed without a
-    // serverId this looked unchanged and the local dock simply stayed up.
-    expect(await preview.switchDockContext('api-linux', 'main', 1)).toBe(false);
+    expect(await preview.switchDockContext('api-linux', 'win_1')).toBe(false);
     expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
     expect(dom.window.document.querySelector('[aria-label="展开右侧文件预览"]')).toBeNull();
-    expect(preview._test.dockStateKey('api-linux', 'main', 1))
-      .not.toBe(preview._test.dockStateKey('local', 'main', 1));
+    expect(preview._test.dockStateKey('api-linux', 'win_1'))
+      .not.toBe(preview._test.dockStateKey('local', 'win_1'));
 
-    // The local dock is untouched and comes back on return.
-    expect(await preview.switchDockContext('local', 'main', 1)).toBe(true);
+    expect(await preview.switchDockContext('local', 'win_1')).toBe(true);
     expect(dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('local-only.md');
   });
 
@@ -904,7 +904,7 @@ describe('file preview dock tabs', () => {
   it('clamps a stale saved width to the current desktop space', async () => {
     const { dom, preview } = createPreview();
     preview.openFile('/tmp/one.md', '%1'); await flush();
-    const key = preview._test.dockStateKey('local', 'test-session', 0);
+    const key = preview._test.dockStateKey('local', '@0');
     dom.window.localStorage.setItem(key, JSON.stringify({
       version: 1, tabs: [{ path: '/tmp/one.md', paneId: '%1' }],
       activePath: '/tmp/one.md', hidden: false, width: 5000,
@@ -934,7 +934,7 @@ describe('file preview dock tabs', () => {
     expect(dock.style.flexBasis).toBe('500px');
     expect(dock.style.width).toBe('500px');
     dom.window.dispatchEvent(new dom.window.MouseEvent('pointerup', { clientX: 920, bubbles: true }));
-    const key = preview._test.dockStateKey('local', 'test-session', 0);
+    const key = preview._test.dockStateKey('local', '@0');
     expect(JSON.parse(dom.window.localStorage.getItem(key)).width).toBe(500);
   });
 

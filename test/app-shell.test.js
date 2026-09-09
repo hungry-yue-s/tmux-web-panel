@@ -534,6 +534,20 @@ describe('AppShell status server rail', () => {
     expect(ctx.Shell._titleFor({ name: 'server', params: { section: 'codex' } })).toBe('Codex 用量');
   });
 
+  it('falls back to the first visible local monitor section in rail links', () => {
+    ctx.Store.setUi({ showPerformance: false, showClaude: true, showCodex: false });
+    ctx.Store.setRoute({ name: 'server', params: { serverId: 'local', section: 'performance' } });
+    ctx.Shell.render();
+
+    expect(ctx.Shell.localStatusSections()).toEqual(['claude']);
+    expect(ctx.Shell.defaultStatusSection('local')).toBe('claude');
+    expect(ctx.Shell.resolveStatusSection('local', 'performance')).toBe('claude');
+    expect(ctx.Shell.resolveStatusSection('api-linux', 'claude')).toBe('performance');
+    expect([...ctx.document.querySelectorAll('.server-rail-item')].map((n) => n.dataset.route))
+      .toEqual(['#/servers/local/claude', '#/servers/api-linux/performance']);
+    expect(ctx.Shell._titleFor({ name: 'server', params: { section: 'claude' } })).toBe('Claude 用量');
+  });
+
   it('offers an add-server entry', () => {
     expect(ctx.document.querySelector('.server-rail, .tree-section-head')).toBeTruthy();
     expect(ctx.document.querySelector('[data-action="add-server"]')).toBeTruthy();

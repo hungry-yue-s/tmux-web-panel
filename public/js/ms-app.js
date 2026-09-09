@@ -107,9 +107,9 @@
      * The dock reads the panel host's own filesystem, so leaving a stale one up
      * after switching machines would show local files under a remote server.
      */
-    _setDockContext(serverId, sessionName, windowIndex) {
+    _setDockContext(serverId, windowId) {
       if (!global.FilePreview || typeof global.FilePreview.switchDockContext !== 'function') return;
-      global.FilePreview.switchDockContext(serverId, sessionName, windowIndex);
+      global.FilePreview.switchDockContext(serverId, windowId);
     },
 
     async _onRoute(route) {
@@ -117,7 +117,7 @@
       const view = global.document.getElementById('ms-view');
       if (!view) return;
       if (route.name !== 'terminal') {
-        this._setDockContext(null, null, null);
+        this._setDockContext(null, null);
       }
       // PerfPanel owns interval timers; leaving its route must stop them.
       this._teardownPerfPanel();
@@ -128,7 +128,7 @@
         const target = global.AppShell.statusServerId(route);
         if (route.params && route.params.intent === 'new') this.openAddServer();
         global.Router.go(
-          { name: 'server', params: { serverId: target, section: 'performance' } },
+          { name: 'server', params: { serverId: target, section: global.AppShell.defaultStatusSection(target) } },
           { replace: true },
         );
         return;
@@ -141,10 +141,11 @@
       }
 
       if (route.name === 'server') {
-        const routedServer = global.AppShell.server(serverId);
-        if ((route.params || {}).section === 'codex' && (!routedServer || routedServer.kind !== 'local')) {
+        const requestedSection = (route.params || {}).section || 'performance';
+        const section = global.AppShell.resolveStatusSection(serverId, requestedSection);
+        if (section !== requestedSection) {
           global.Router.go(
-            { name: 'server', params: { serverId, section: 'performance' } },
+            { name: 'server', params: { serverId, section } },
             { replace: true },
           );
           return;
@@ -171,7 +172,7 @@
     _localPerfMode(route) {
       if (!route || route.name !== 'server') return null;
       const section = (route.params || {}).section;
-      if (section !== 'performance' && section !== 'codex') return null;
+      if (section !== 'performance' && section !== 'claude' && section !== 'codex') return null;
       const server = global.AppShell.server((route.params || {}).serverId);
       return server && server.kind === 'local' ? section : null;
     },
@@ -196,7 +197,7 @@
       const params = route.params || {};
 
       if (!workspace || workspace.provider === 'unavailable') {
-        this._setDockContext(null, null, null);
+        this._setDockContext(null, null);
         view.classList.remove('terminal-mode');
         view.innerHTML = this._unavailableWorkspace(serverId);
         global.AppShell.setHeader(
@@ -215,7 +216,7 @@
           global.Router.go(target, { replace: true });
           return;
         }
-        this._setDockContext(null, null, null);
+        this._setDockContext(null, null);
         view.classList.remove('terminal-mode');
         view.innerHTML = this._emptyWorkspace(serverId, workspace);
         global.AppShell.setHeader(
@@ -251,7 +252,7 @@
       const win = global.AppShell._findWindow(session, params.windowId);
 
       if (!session || !win) {
-        this._setDockContext(null, null, null);
+        this._setDockContext(null, null);
         host.innerHTML = '<div class="ms-card empty"><h3>目标窗口不存在</h3>'
           + '<p>它可能已被关闭。工作区已刷新。</p></div>';
         this.refreshWorkspace(serverId);
@@ -259,7 +260,7 @@
       }
 
       if (typeof global.renderTerminal !== 'function' || !global.state) {
-        this._setDockContext(null, null, null);
+        this._setDockContext(null, null);
         host.innerHTML = '<div class="ms-card empty"><h3>终端组件未加载</h3></div>';
         return;
       }
@@ -283,7 +284,7 @@
       }
       // renderTerminal calls embedTerminalChrome itself, on every render.
       global.renderTerminal(host);
-      this._setDockContext(serverId, session.name, win.index);
+      this._setDockContext(serverId, win.id);
     },
 
     /**
@@ -690,6 +691,15 @@
       }
       if (action === 'set-theme') {
         if (global.Theme && node.dataset.theme) global.Theme.apply(node.dataset.theme);
+        await this._onRoute(global.Router.current());
+        return;
+      }
+      if (action === 'toggle-monitor-page') {
+        const key = node.dataset.uiKey;
+        if (key !== 'showPerformance' && key !== 'showClaude' && key !== 'showCodex') return;
+        const patch = {};
+        patch[key] = node.checked;
+        global.Store.setUi(patch);
         await this._onRoute(global.Router.current());
         return;
       }

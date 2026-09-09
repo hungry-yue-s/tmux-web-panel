@@ -391,14 +391,10 @@ export class TerminalManager {
       try {
         process.kill(-pid, 'SIGKILL');
       } catch {
-        // Process group already dead — try individual PID
-        try {
-          process.kill(pid, 'SIGKILL');
-        } catch {
-          // Already dead
-        }
+        // Process group already exited.
       }
     }, 500);
+    if (conn.killTimer.unref) conn.killTimer.unref();
   }
 
   /**
@@ -415,12 +411,6 @@ export class TerminalManager {
     if (conn.pingTimer) {
       clearInterval(conn.pingTimer);
       conn.pingTimer = null;
-    }
-
-    // Clear SIGKILL timer
-    if (conn.killTimer) {
-      clearTimeout(conn.killTimer);
-      conn.killTimer = null;
     }
 
     // Dispose PTY data listener

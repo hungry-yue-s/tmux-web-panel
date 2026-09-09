@@ -51,6 +51,9 @@ describe('Store initial state', () => {
         expandedSessionIdsByServer: {},
         terminalModeByServer: {},
         lastStatusServerId: null,
+        showPerformance: true,
+        showClaude: true,
+        showCodex: true,
         pendingDialog: null,
       },
       requests: {
@@ -144,6 +147,9 @@ describe('Store ui prefs persistence', () => {
     expect(Object.keys(saved).sort()).toEqual([
       'expandedSessionIdsByServer',
       'lastStatusServerId',
+      'showClaude',
+      'showCodex',
+      'showPerformance',
       'sidebarCollapsed',
       'sidebarWidth',
       'terminalModeByServer',
@@ -161,6 +167,9 @@ describe('Store ui prefs persistence', () => {
       expandedSessionIdsByServer: { local: ['$1', '$2'] },
       terminalModeByServer: { prod: 'split' },
       lastStatusServerId: 'prod',
+      showPerformance: true,
+      showClaude: false,
+      showCodex: true,
     });
     const raw = first.storage.getItem('tmux_ui_prefs');
 
@@ -174,6 +183,9 @@ describe('Store ui prefs persistence', () => {
       expandedSessionIdsByServer: { local: ['$1', '$2'] },
       terminalModeByServer: { prod: 'split' },
       lastStatusServerId: 'prod',
+      showPerformance: true,
+      showClaude: false,
+      showCodex: true,
       pendingDialog: null,
     });
   });
@@ -207,6 +219,9 @@ describe('Store ui prefs persistence', () => {
         expandedSessionIdsByServer: ['not', 'a', 'map'],
         terminalModeByServer: 'tab',
         lastStatusServerId: 42,
+        showPerformance: 'yes',
+        showClaude: 0,
+        showCodex: null,
       }),
     });
     Store.loadUiPrefs();
@@ -217,6 +232,29 @@ describe('Store ui prefs persistence', () => {
     expect(ui.expandedSessionIdsByServer).toEqual({});
     expect(ui.terminalModeByServer).toEqual({});
     expect(ui.lastStatusServerId).toBeNull();
+    expect(ui.showPerformance).toBe(true);
+    expect(ui.showClaude).toBe(true);
+    expect(ui.showCodex).toBe(true);
+  });
+
+  it('restores Performance when persisted monitor preferences hide every page', () => {
+    const { Store } = loadStore({
+      tmux_ui_prefs: JSON.stringify({ showPerformance: false, showClaude: false, showCodex: false }),
+    });
+    Store.loadUiPrefs();
+    const ui = Store.getState().ui;
+    expect(ui.showPerformance).toBe(true);
+    expect(ui.showClaude).toBe(false);
+    expect(ui.showCodex).toBe(false);
+  });
+
+  it('restores Performance when a direct update hides every monitor page', () => {
+    const { Store } = loadStore();
+    Store.setUi({ showPerformance: false, showClaude: false, showCodex: false });
+    const ui = Store.getState().ui;
+    expect(ui.showPerformance).toBe(true);
+    expect(ui.showClaude).toBe(false);
+    expect(ui.showCodex).toBe(false);
   });
 
   it('rejects an empty remembered status server id', () => {

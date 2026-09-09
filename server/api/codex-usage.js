@@ -2,12 +2,14 @@
 // Reads local Codex session JSONL files. No external API calls are made.
 
 import { Router } from 'express';
-import { readFile, readdir } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 const CODEX_DIR = join(homedir(), '.codex');
 const SESSIONS_DIR = join(CODEX_DIR, 'sessions');
+const CACHE_DIR = join(homedir(), '.config', 'tmux-web-panel');
+const SNAPSHOT_PATH = join(CACHE_DIR, 'codex-usage.json');
 
 function createCache(ttlMs) {
   let data = null;
@@ -22,6 +24,31 @@ const POLL_INTERVAL = 5 * 60 * 1000;
 const sessionsCache = createCache(POLL_INTERVAL + 30_000);
 
 let latestCodexSnapshot = null;
+let snapshotWrite = Promise.resolve();
+
+function hasRateLimitSnapshot(snapshot) {
+  const utilization = snapshot?.utilization;
+  return Boolean(utilization?.primary || utilization?.secondary);
+}
+
+async function loadPersistedSnapshot() {
+  try {
+    const snapshot = JSON.parse(await readFile(SNAPSHOT_PATH, 'utf8'));
+    return hasRateLimitSnapshot(snapshot) ? snapshot : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistSnapshot(snapshot) {
+  snapshotWrite = snapshotWrite.catch(() => {}).then(async () => {
+    await mkdir(CACHE_DIR, { recursive: true, mode: 0o700 });
+    const tmp = SNAPSHOT_PATH + '.tmp';
+    await writeFile(tmp, JSON.stringify(snapshot), { encoding: 'utf8', mode: 0o600 });
+    await rename(tmp, SNAPSHOT_PATH);
+  });
+  return snapshotWrite;
+}
 
 async function listJsonlFiles(dir) {
   const out = [];
@@ -273,7 +300,17 @@ async function readSessions() {
 
 async function refreshCodexSnapshot() {
   try {
-    latestCodexSnapshot = await readSessions();
+    const snapshot = await readSessions();
+    if (!hasRateLimitSnapshot(snapshot)) {
+      if (!latestCodexSnapshot) latestCodexSnapshot = snapshot;
+      return;
+    }
+    latestCodexSnapshot = snapshot;
+    try {
+      await persistSnapshot(snapshot);
+    } catch (err) {
+      console.error('codex-usage cache write error:', err.message);
+    }
   } catch (err) {
     console.error('codex-usage poll error:', err.message);
   }
@@ -281,11 +318,15 @@ async function refreshCodexSnapshot() {
 
 export default function createRouter() {
   const router = Router();
+  const initialRefresh = loadPersistedSnapshot().then(async (snapshot) => {
+    if (snapshot) latestCodexSnapshot = snapshot;
+    await refreshCodexSnapshot();
+  });
 
-  refreshCodexSnapshot();
   setInterval(refreshCodexSnapshot, POLL_INTERVAL);
 
   router.get('/', async (_req, res) => {
+    await initialRefresh;
     if (!latestCodexSnapshot) {
       return res.json({ success: false, error: 'loading' });
     }

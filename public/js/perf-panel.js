@@ -1,4 +1,4 @@
-// Perf panel — Observatory layout. Top-level tabs: 性能 / Claude / Codex.
+// Perf panel — Observatory layout.
 // Self-managing: polls only while its DOM root exists.
 var PerfPanel = (function () {
   var POLL_MS = 2000;
@@ -39,22 +39,23 @@ var PerfPanel = (function () {
 
   // === Skeleton ===
   function panelMode(mode) {
-    return mode === 'performance' || mode === 'codex' ? mode : 'all';
+    return mode === 'performance' || mode === 'claude' || mode === 'codex' ? mode : 'all';
   }
 
   /**
    * Builds only the sections owned by this route. The legacy shell omits mode
-   * and keeps the complete dashboard; the multi-server shell splits Codex into
-   * its own top-level section without copying any renderer code.
+   * and keeps the complete dashboard without duplicating any renderer code.
    */
   function renderSkeleton(mode) {
     var selected = panelMode(mode);
     var sections = [];
-    if (selected !== 'codex') {
+    if (selected === 'all' || selected === 'performance') {
       sections.push(panelSection('perf', '机器性能', '加载机器与窗口性能…'));
+    }
+    if (selected === 'all' || selected === 'claude') {
       sections.push(panelSection('claude', 'Claude 用量', '加载 Claude 用量…'));
     }
-    if (selected !== 'performance') {
+    if (selected === 'all' || selected === 'codex') {
       sections.push(panelSection('codex', 'Codex 用量', '加载 Codex 用量…'));
     }
     return '<div id="perf-panel" class="pp-card">' + sections.join('') + '</div>';
@@ -413,10 +414,20 @@ var PerfPanel = (function () {
     return String(n);
   }
 
-  function meterColorClass(pct) {
-    if (pct >= 80) return 'red';
-    if (pct >= 50) return 'yellow';
-    return 'green';
+  function quotaPace(usedPct, resetMs, totalMs) {
+    var used = Number(usedPct);
+    var now = Date.now();
+    var remaining = Number(resetMs) - now;
+    if (!Number.isFinite(used) || !Number.isFinite(resetMs) || !Number.isFinite(totalMs)
+      || totalMs <= 0 || remaining < 0 || remaining > totalMs) {
+      return { valid: false, usedPct: 0, elapsedPct: 0, remainingMs: 0, colorClass: 'neutral', status: '节奏未知' };
+    }
+    used = Math.min(100, Math.max(0, used));
+    var elapsed = ((totalMs - remaining) / totalMs) * 100;
+    var delta = used - elapsed;
+    var status = delta <= 0 ? '健康' : delta <= 10 ? '略超前' : '明显超前';
+    var colorClass = delta <= 0 ? 'green' : delta <= 10 ? 'yellow' : 'red';
+    return { valid: true, usedPct: used, elapsedPct: elapsed, remainingMs: remaining, colorClass: colorClass, status: status };
   }
 
   function modelShortName(id) {
@@ -465,28 +476,22 @@ var PerfPanel = (function () {
 
       function renderMeter(label, obj, windowKey) {
         if (!obj) return '';
-        var pct = Math.floor(obj.utilization);
-        var cls = meterColorClass(pct);
-        var timePct = 0;
-        var remain = 0;
-        if (obj.resets_at) {
-          remain = Math.max(0, new Date(obj.resets_at) - Date.now());
-          var totalMs = WINDOW_DURATIONS[windowKey] || 0;
-          if (totalMs > 0) timePct = Math.min(100, Math.max(0, ((totalMs - remain) / totalMs) * 100));
-        }
+        var resetMs = obj.resets_at ? new Date(obj.resets_at).getTime() : NaN;
+        var pace = quotaPace(obj.utilization, resetMs, WINDOW_DURATIONS[windowKey]);
         var s = '<div class="cu-meter">';
         s += '<span class="cu-meter-label">' + label + '</span>';
         s += '<div class="cu-meter-track">';
-        s += '<div class="cu-meter-fill ' + cls + '" style="width:' + pct + '%"></div>';
-        if (timePct > 0) s += '<div class="cu-meter-time" style="left:' + timePct.toFixed(1) + '%"></div>';
+        s += '<div class="cu-meter-fill ' + pace.colorClass + '" style="width:' + pace.usedPct + '%"></div>';
+        if (pace.valid) s += '<div class="cu-meter-time" style="left:' + pace.elapsedPct.toFixed(1) + '%"></div>';
         s += '</div>';
-        s += '<span class="cu-meter-val">' + pct + '%</span>';
+        s += '<span class="cu-meter-val">' + pace.usedPct + '%</span>';
         s += '</div>';
-        if (obj.resets_at) {
-          var rh = Math.floor(remain / 3600000);
-          var rm = Math.floor((remain % 3600000) / 60000);
-          var status = pct > timePct ? ' · 超前' : ' · 健康';
-          s += '<div class="cu-meter-reset">重置于 ' + obj.resets_at.replace('T', ' ').slice(0, 16) + ' UTC（剩余 ' + rh + 'h ' + rm + 'm）' + status + '</div>';
+        if (pace.valid) {
+          var rh = Math.floor(pace.remainingMs / 3600000);
+          var rm = Math.floor((pace.remainingMs % 3600000) / 60000);
+          s += '<div class="cu-meter-reset">重置于 ' + obj.resets_at.replace('T', ' ').slice(0, 16) + ' UTC（剩余 ' + rh + 'h ' + rm + 'm） · ' + pace.status + '</div>';
+        } else {
+          s += '<div class="cu-meter-reset">节奏未知（重置信息不可用）</div>';
         }
         return s;
       }
@@ -767,21 +772,34 @@ var PerfPanel = (function () {
       || null;
   }
 
+  function formatCodexDuration(minutes) {
+    var total = Math.max(0, Math.floor(Number(minutes) || 0));
+    var days = Math.floor(total / (24 * 60));
+    var hours = Math.floor((total % (24 * 60)) / 60);
+    var mins = total % 60;
+    var parts = [];
+    if (days) parts.push(days + 'd');
+    if (hours) parts.push(hours + 'h');
+    if (mins || !parts.length) parts.push(mins + 'm');
+    return parts.join(' ');
+  }
+
   function renderCodexLimitMeter(label, obj) {
     if (!obj) return '';
-    var pct = Math.floor(obj.used_percent || 0);
-    var cls = meterColorClass(pct);
+    var resetMs = obj.resets_at ? Number(obj.resets_at) * 1000 : NaN;
+    var pace = quotaPace(obj.used_percent, resetMs, Number(obj.window_minutes) * 60000);
     var s = '<div class="cu-meter">';
     s += '<span class="cu-meter-label">' + label + '</span>';
-    s += '<div class="cu-meter-track"><div class="cu-meter-fill ' + cls + '" style="width:' + Math.min(100, pct) + '%"></div></div>';
-    s += '<span class="cu-meter-val">' + pct + '%</span>';
+    s += '<div class="cu-meter-track"><div class="cu-meter-fill ' + pace.colorClass + '" style="width:' + pace.usedPct + '%"></div>';
+    if (pace.valid) s += '<div class="cu-meter-time" style="left:' + pace.elapsedPct.toFixed(1) + '%"></div>';
     s += '</div>';
-    if (obj.resets_at) {
-      var reset = new Date(obj.resets_at * 1000);
-      var remain = Math.max(0, reset - Date.now());
-      var rh = Math.floor(remain / 3600000);
-      var rm = Math.floor((remain % 3600000) / 60000);
-      s += '<div class="cu-meter-reset">窗口 ' + (obj.window_minutes || 0) + 'm · 重置于 ' + reset.toISOString().replace('T', ' ').slice(0, 16) + ' UTC（剩余 ' + rh + 'h ' + rm + 'm）</div>';
+    s += '<span class="cu-meter-val">' + pace.usedPct + '%</span>';
+    s += '</div>';
+    if (pace.valid) {
+      var reset = new Date(resetMs);
+      s += '<div class="cu-meter-reset">窗口 ' + formatCodexDuration(obj.window_minutes) + ' · 重置于 ' + reset.toISOString().replace('T', ' ').slice(0, 16) + ' UTC（剩余 ' + formatCodexDuration(pace.remainingMs / 60000) + '） · ' + pace.status + '</div>';
+    } else {
+      s += '<div class="cu-meter-reset">节奏未知（重置信息不可用）</div>';
     }
     return s;
   }
@@ -1060,15 +1078,17 @@ var PerfPanel = (function () {
     var selected = panelMode(mode);
     stop();
 
-    if (selected !== 'codex') {
+    if (selected === 'all' || selected === 'performance') {
       tickSnap();
       tickHist();
-      tickClaude();
       state.timers.snap = setInterval(tickSnap, POLL_MS);
       state.timers.hist = setInterval(tickHist, HISTORY_POLL_MS);
+    }
+    if (selected === 'all' || selected === 'claude') {
+      tickClaude();
       state.timers.claude = setInterval(tickClaude, CLAUDE_POLL_MS);
     }
-    if (selected !== 'performance') {
+    if (selected === 'all' || selected === 'codex') {
       tickCodex();
       state.timers.codex = setInterval(tickCodex, CODEX_POLL_MS);
     }

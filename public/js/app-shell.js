@@ -1,4 +1,5 @@
 (function (global) {
+  var LOCAL_MONITOR_SECTIONS = ['performance', 'claude', 'codex'];
   var ICONS = {
     terminal: '<svg class="ms-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>',
     gauge: '<svg class="ms-icon" viewBox="0 0 24 24"><path d="M20 13a8 8 0 1 0-16 0"/><path d="m12 13 4-4"/><path d="M5 19h14"/></svg>',
@@ -120,6 +121,26 @@
       return 'local';
     },
 
+    localStatusSections: function () {
+      var ui = global.Store.getState().ui;
+      var visibility = { performance: ui.showPerformance, claude: ui.showClaude, codex: ui.showCodex };
+      return LOCAL_MONITOR_SECTIONS.filter(function (section) { return visibility[section]; });
+    },
+
+    defaultStatusSection: function (serverId) {
+      var server = this.server(serverId);
+      if (server && server.kind === 'local') return this.localStatusSections()[0] || 'performance';
+      return 'performance';
+    },
+
+    resolveStatusSection: function (serverId, section) {
+      if (section === 'connection') return 'connection';
+      var server = this.server(serverId);
+      if (!server || server.kind !== 'local') return 'performance';
+      if (this.localStatusSections().indexOf(section) >= 0) return section;
+      return this.defaultStatusSection(serverId);
+    },
+
     render: function () {
       var route = global.Store.getState().route || {};
       this._syncMode(route);
@@ -183,10 +204,10 @@
         var health = self.health(server.id);
         var stateTone = tone(health.state);
         var metrics = metricsById[server.id] || {};
-        // Keep comparable sections when switching servers. Codex data belongs to
-        // the panel host, so a remote row falls back to its performance page.
-        var targetSection = section === 'codex' && server.kind !== 'local' ? 'performance' : section;
-        var target = { name: 'server', params: { serverId: server.id, section: targetSection } };
+        var target = {
+          name: 'server',
+          params: { serverId: server.id, section: self.resolveStatusSection(server.id, section) },
+        };
         return '<button class="server-rail-item' + (server.id === selectedId ? ' selected' : '') + '"'
           + ' data-route="' + esc(global.Router.serialize(target)) + '"'
           + ' data-rail-server="' + esc(server.id) + '"'
@@ -518,7 +539,7 @@
       if (route.name === 'servers') return '状态';
       if (route.name === 'settings') return '设置';
       if (route.name === 'server') {
-        return ({ performance: '性能', codex: 'Codex 用量', connection: '连接' })[route.params.section] || '性能';
+        return ({ performance: '性能', claude: 'Claude 用量', codex: 'Codex 用量', connection: '连接' })[route.params.section] || '性能';
       }
       return '终端工作台';
     },

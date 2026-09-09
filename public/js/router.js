@@ -1,7 +1,7 @@
 (function (global) {
   var DEFAULT_SERVER_ID = 'local';
   var TERMINAL_KEYS = ['serverId', 'sessionId', 'windowId', 'paneId'];
-  var SERVER_SECTIONS = ['performance', 'codex', 'connection'];
+  var SERVER_SECTIONS = ['performance', 'claude', 'codex', 'connection'];
 
   var CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 

@@ -323,12 +323,15 @@ function saveNavState() {
 // === Router (hash-based) ===
 
 function _syncFilePreviewDockContext() {
+  if (document.querySelector('.ms-app')) return;
   if (typeof FilePreview === 'undefined' || !FilePreview.switchDockContext) return;
   if (state.currentTab === 'terminal' && state.currentSession && _isValidWindowIndex(state.currentWindow)) {
-    // This shell only ever addresses the panel's own machine.
-    FilePreview.switchDockContext('local', state.currentSession, state.currentWindow);
+    FilePreview.switchDockContext(
+      'legacy-local',
+      state.currentSession + '\u0000' + state.currentWindow,
+    );
   } else {
-    FilePreview.switchDockContext(null, null, null);
+    FilePreview.switchDockContext(null, null);
   }
 }
 

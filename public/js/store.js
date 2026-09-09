@@ -6,7 +6,11 @@
     'expandedSessionIdsByServer',
     'terminalModeByServer',
     'lastStatusServerId',
+    'showPerformance',
+    'showClaude',
+    'showCodex',
   ];
+  var MONITOR_VISIBILITY_KEYS = ['showPerformance', 'showClaude', 'showCodex'];
   var REQUEST_MAPS = { workspace: 'workspaceByServerId', metrics: 'metricsByServerId' };
   var SIDEBAR_MIN_WIDTH = 220;
   var SIDEBAR_MAX_WIDTH = 360;
@@ -33,6 +37,9 @@
         expandedSessionIdsByServer: {},
         terminalModeByServer: {},
         lastStatusServerId: null,
+        showPerformance: true,
+        showClaude: true,
+        showCodex: true,
         pendingDialog: null,
       },
       requests: {
@@ -189,8 +196,18 @@
     } catch (_e) {}
   }
 
+  function normalizeMonitorVisibility(ui) {
+    MONITOR_VISIBILITY_KEYS.forEach(function (key) {
+      if (typeof ui[key] !== 'boolean') ui[key] = true;
+    });
+    var visible = MONITOR_VISIBILITY_KEYS.some(function (key) { return ui[key]; });
+    if (!visible) ui.showPerformance = true;
+    return ui;
+  }
+
   function setUi(patch) {
-    state = assign({}, state, { ui: assign({}, state.ui, patch || {}) });
+    var nextUi = normalizeMonitorVisibility(assign({}, state.ui, patch || {}));
+    state = assign({}, state, { ui: nextUi });
     persistUiPrefs();
     notify();
   }
@@ -259,6 +276,10 @@
       patch.lastStatusServerId = parsed.lastStatusServerId;
     }
 
+    MONITOR_VISIBILITY_KEYS.forEach(function (key) {
+      if (typeof parsed[key] === 'boolean') patch[key] = parsed[key];
+    });
+
     return patch;
   }
 
@@ -280,7 +301,7 @@
         parsed = null;
       }
     }
-    state = assign({}, state, { ui: assign({}, state.ui, sanitizeUiPrefs(parsed)) });
+    state = assign({}, state, { ui: normalizeMonitorVisibility(assign({}, state.ui, sanitizeUiPrefs(parsed))) });
     notify();
     return state.ui;
   }

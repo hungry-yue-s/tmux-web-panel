@@ -393,11 +393,13 @@ function fakePerfPanel() {
     renderSkeleton: (mode) => {
       calls.rendered.push(mode);
       const sections = [];
-      if (mode !== 'codex') {
+      if (!mode || mode === 'performance') {
         sections.push('<div class="section"><div class="section-head"><h3>机器性能</h3></div><div id="perf-view-root"></div></div>');
+      }
+      if (!mode || mode === 'claude') {
         sections.push('<div class="section"><div class="section-head"><h3>Claude 用量</h3></div><div id="claude-view-root"></div></div>');
       }
-      if (mode !== 'performance') {
+      if (!mode || mode === 'codex') {
         sections.push('<div class="section"><div class="section-head"><h3>Codex 用量</h3></div><div id="codex-view-root"></div></div>');
       }
       return '<div id="perf-panel" class="pp-card">' + sections.join('') + '</div>';
@@ -481,6 +483,20 @@ describe('MsApp status mode routing', () => {
     expect(goes[0].params.serverId).toBe('api-linux');
   });
 
+  it('resolves bare status navigation to the first visible local monitor page', async () => {
+    const ctx = loadStatusShell();
+    ctx.Store.setUi({ showPerformance: false, showClaude: true, showCodex: false });
+    const goes = [];
+    ctx.win.Router.go = (route, opts) => goes.push({ route, opts });
+
+    await ctx.MsApp._onRoute({ name: 'servers', params: {} });
+
+    expect(goes).toEqual([{
+      route: { name: 'server', params: { serverId: 'local', section: 'claude' } },
+      opts: { replace: true },
+    }]);
+  });
+
   it('no longer has a server list page at all', () => {
     expect(SERVERS_SRC).not.toContain('renderList');
     expect(MS_APP).not.toContain('renderList');
@@ -489,17 +505,33 @@ describe('MsApp status mode routing', () => {
     expect(MS_APP).not.toContain('data-filter');
   });
 
-  it('shows Codex between performance and connection only for the local server', async () => {
+  it('shows independent Claude and Codex tabs only for the local server', async () => {
     const perf = fakePerfPanel();
     const ctx = loadStatusShell({ perfPanel: perf });
 
     await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'local', section: 'performance' } });
     expect([...ctx.document.querySelectorAll('.tabs .tab')].map((n) => n.textContent))
-      .toEqual(['性能', 'Codex 用量', '连接']);
+      .toEqual(['性能', 'Claude 用量', 'Codex 用量', '连接']);
 
     await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'api-linux', section: 'performance' } });
     expect([...ctx.document.querySelectorAll('.tabs .tab')].map((n) => n.textContent))
       .toEqual(['性能', '连接']);
+  });
+
+  it('replaces a hidden local monitor route with the first enabled page', async () => {
+    const perf = fakePerfPanel();
+    const ctx = loadStatusShell({ perfPanel: perf });
+    ctx.Store.setUi({ showPerformance: false, showClaude: true, showCodex: false });
+    const goes = [];
+    ctx.win.Router.go = (route, opts) => goes.push({ route, opts });
+
+    await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'local', section: 'performance' } });
+
+    expect(goes).toEqual([{
+      route: { name: 'server', params: { serverId: 'local', section: 'claude' } },
+      opts: { replace: true },
+    }]);
+    expect(perf.calls.started).toHaveLength(0);
   });
 
   it('remembers the selected server when a detail route renders', async () => {
@@ -617,18 +649,34 @@ describe('MsApp clears notification attention on window switch', () => {
 });
 
 describe('MsApp PerfPanel lifecycle', () => {
-  it('uses machine plus Claude mode for the local performance section', async () => {
+  it('uses machine-only mode for the local performance section', async () => {
     const perf = fakePerfPanel();
     const ctx = loadStatusShell({ perfPanel: perf });
 
     await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'local', section: 'performance' } });
 
     const view = ctx.document.getElementById('ms-view');
-    expect(view.querySelector('#perf-panel')).toBeTruthy();
-    expect(view.textContent).toContain('机器性能');
-    expect(view.textContent).toContain('Claude 用量');
+    const panel = view.querySelector('#perf-panel');
+    expect(panel).toBeTruthy();
+    expect(panel.textContent).toContain('机器性能');
+    expect(panel.textContent).not.toContain('Claude 用量');
+    expect(view.querySelector('#claude-view-root')).toBeNull();
     expect(view.querySelector('#codex-view-root')).toBeNull();
     expect(perf.calls.started).toContain('performance');
+  });
+
+  it('uses the Claude-only mode for the local Claude section', async () => {
+    const perf = fakePerfPanel();
+    const ctx = loadStatusShell({ perfPanel: perf });
+
+    await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'local', section: 'claude' } });
+
+    const view = ctx.document.getElementById('ms-view');
+    expect(view.textContent).toContain('Claude 用量');
+    expect(view.querySelector('#claude-view-root')).toBeTruthy();
+    expect(view.querySelector('#perf-view-root')).toBeNull();
+    expect(view.querySelector('#codex-view-root')).toBeNull();
+    expect(perf.calls.started).toContain('claude');
   });
 
   it('uses the Codex-only mode for the local Codex section', async () => {
@@ -669,20 +717,22 @@ describe('MsApp PerfPanel lifecycle', () => {
     expect(perf.calls.started).toHaveLength(0);
   });
 
-  it('redirects a remote Codex route to that server performance page', async () => {
-    const perf = fakePerfPanel();
-    const ctx = loadStatusShell({ perfPanel: perf });
-    const goes = [];
-    ctx.win.Router.go = (route, opts) => goes.push({ route, opts });
+  it('redirects remote Claude and Codex routes to that server performance page', async () => {
+    for (const section of ['claude', 'codex']) {
+      const perf = fakePerfPanel();
+      const ctx = loadStatusShell({ perfPanel: perf });
+      const goes = [];
+      ctx.win.Router.go = (route, opts) => goes.push({ route, opts });
 
-    await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'api-linux', section: 'codex' } });
+      await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'api-linux', section } });
 
-    expect(goes).toEqual([{
-      route: { name: 'server', params: { serverId: 'api-linux', section: 'performance' } },
-      opts: { replace: true },
-    }]);
-    expect(perf.calls.started).toHaveLength(0);
-    expect(ctx.document.getElementById('ms-view').innerHTML).toBe('');
+      expect(goes).toEqual([{
+        route: { name: 'server', params: { serverId: 'api-linux', section: 'performance' } },
+        opts: { replace: true },
+      }]);
+      expect(perf.calls.started).toHaveLength(0);
+      expect(ctx.document.getElementById('ms-view').innerHTML).toBe('');
+    }
   });
 
   it('does not claim to be mounted when PerfPanel is missing', async () => {
@@ -737,6 +787,26 @@ describe('MsApp settings interactions', () => {
     const light = ctx.document.querySelector('[data-theme="light"]');
     await ctx.MsApp._handleAction('set-theme', light);
     expect(theme.applied).toEqual(['light']);
+  });
+
+  it('persists monitor page toggles and locks the final enabled page', async () => {
+    const ctx = loadStatusShell({ theme: fakeTheme('tokyo') });
+    ctx.win.location.hash = '#/settings';
+    await ctx.MsApp._onRoute({ name: 'settings', params: {} });
+
+    const claude = ctx.document.querySelector('[data-ui-key="showClaude"]');
+    expect(claude.checked).toBe(true);
+    claude.checked = false;
+    await ctx.MsApp._handleAction('toggle-monitor-page', claude);
+    expect(ctx.Store.getState().ui.showClaude).toBe(false);
+    expect(ctx.document.querySelector('[data-ui-key="showClaude"]').checked).toBe(false);
+
+    ctx.Store.setUi({ showPerformance: false, showCodex: false });
+    await ctx.MsApp._onRoute({ name: 'settings', params: {} });
+    const performance = ctx.document.querySelector('[data-ui-key="showPerformance"]');
+    expect(performance.checked).toBe(true);
+    expect(performance.disabled).toBe(true);
+    expect(ctx.document.querySelector('.monitor-page-toggle.locked')).toBeTruthy();
   });
 
   it('shows about and version details', async () => {

@@ -6,7 +6,7 @@ import path from 'node:path';
 const utils = fs.readFileSync('public/js/perf-utils.js', 'utf8');
 const panel = fs.readFileSync('public/js/perf-panel.js', 'utf8');
 
-function bootDom({ windowStats = null, codexUsage = null, usageFails = false } = {}) {
+function bootDom({ windowStats = null, claudeUsage = null, codexUsage = null, usageFails = false } = {}) {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     runScripts: 'outside-only',
   });
@@ -20,6 +20,7 @@ function bootDom({ windowStats = null, codexUsage = null, usageFails = false } =
       const target = String(url);
       apiCalls.push(target);
       if (usageFails && /claude-usage|codex-usage/.test(target)) return { success: false, data: null };
+      if (target.includes('/api/claude-usage')) return { success: true, data: claudeUsage || { aggregate: {} } };
       if (target.includes('/api/codex-usage')) return { success: true, data: codexUsage || { aggregate: {} } };
       if (target.includes('/api/window-stats')) {
         return { success: true, data: windowStats || { total: {}, windows: [], external: [], disks: [] } };
@@ -70,18 +71,30 @@ describe('PerfPanel skeleton', () => {
     });
   });
 
-  it('renders and polls only machine plus Claude in performance mode', async () => {
+  it('renders and polls only machine performance in performance mode', async () => {
     w.document.getElementById('root').innerHTML = w.PerfPanel.renderSkeleton('performance');
     expect(w.document.getElementById('perf-view-root')).not.toBeNull();
-    expect(w.document.getElementById('claude-view-root')).not.toBeNull();
+    expect(w.document.getElementById('claude-view-root')).toBeNull();
     expect(w.document.getElementById('codex-view-root')).toBeNull();
 
     w.PerfPanel.start('performance');
     await flush();
     expect(w.__apiCalls.some((url) => url.includes('/api/window-stats'))).toBe(true);
     expect(w.__apiCalls.some((url) => url.includes('/api/perf/history'))).toBe(true);
-    expect(w.__apiCalls.some((url) => url.includes('/api/claude-usage'))).toBe(true);
+    expect(w.__apiCalls.some((url) => url.includes('/api/claude-usage'))).toBe(false);
     expect(w.__apiCalls.some((url) => url.includes('/api/codex-usage'))).toBe(false);
+    w.PerfPanel.stop();
+  });
+
+  it('renders and polls only Claude in claude mode', async () => {
+    w.document.getElementById('root').innerHTML = w.PerfPanel.renderSkeleton('claude');
+    expect(w.document.getElementById('perf-view-root')).toBeNull();
+    expect(w.document.getElementById('claude-view-root')).not.toBeNull();
+    expect(w.document.getElementById('codex-view-root')).toBeNull();
+
+    w.PerfPanel.start('claude');
+    await flush();
+    expect(w.__apiCalls).toEqual(['/api/claude-usage']);
     w.PerfPanel.stop();
   });
 
@@ -98,11 +111,12 @@ describe('PerfPanel skeleton', () => {
   });
 
   it('treats the current primary 10080-minute Codex limit as the weekly window', async () => {
+    const resetsAt = Math.floor((Date.now() + (3.5 * 24 * 60 * 60 * 1000)) / 1000);
     const weekly = bootDom({
       codexUsage: {
         subscription: { type: 'prolite' },
         utilization: {
-          primary: { used_percent: 52, window_minutes: 10080, resets_at: 1788750933 },
+          primary: { used_percent: 52, window_minutes: 10080, resets_at: resetsAt },
           secondary: null,
           observedAt: '2026-09-01T05:58:00Z',
         },
@@ -117,8 +131,69 @@ describe('PerfPanel skeleton', () => {
     expect(root.textContent).toContain('7d 总量');
     expect(root.textContent).not.toContain('5h 窗口');
     expect(root.querySelectorAll('.cu-meter')).toHaveLength(1);
+    expect(root.querySelector('.cu-meter-time')).not.toBeNull();
+    expect(root.textContent).toContain('窗口 7d');
+    expect(root.textContent).toContain('剩余 3d');
+    expect(root.textContent).toContain('超前');
     expect(weekly.document.getElementById('pp-badge-codex').textContent).toBe('7d 52%');
     weekly.PerfPanel.stop();
+  });
+
+  it('colors Claude and Codex quota meters by reset-window pacing', async () => {
+    const now = Date.parse('2026-09-08T00:00:00Z');
+    const scenarios = [
+      { used: 80, elapsedPct: 90, color: 'green', status: '健康' },
+      { used: 60, elapsedPct: 50, color: 'yellow', status: '略超前' },
+      { used: 25, elapsedPct: 10, color: 'red', status: '明显超前' },
+      { used: 50, elapsedPct: 50, color: 'green', status: '健康' },
+      { used: 75, elapsedPct: null, color: 'neutral', status: '节奏未知' },
+    ];
+    for (const scenario of scenarios) {
+        const claudeDuration = 5 * 60 * 60 * 1000;
+        const claudeReset = scenario.elapsedPct === null
+          ? null
+          : new Date(now + claudeDuration * (1 - scenario.elapsedPct / 100)).toISOString();
+        const claude = bootDom({
+          claudeUsage: {
+            subscription: { type: 'pro' },
+            utilization: { five_hour: { utilization: scenario.used, resets_at: claudeReset } },
+            aggregate: {}, modelUsage: {}, hourCounts: {}, aggregatedTools: {}, recentSessions: [],
+          },
+        }).window;
+        claude.Date.now = () => now;
+        claude.document.getElementById('root').innerHTML = claude.PerfPanel.renderSkeleton('claude');
+        claude.PerfPanel.start('claude');
+        await flush();
+        const claudeRoot = claude.document.getElementById('claude-view-root');
+        expect(claudeRoot.querySelector('.cu-meter-fill').classList.contains(scenario.color)).toBe(true);
+        expect(claudeRoot.textContent).toContain(scenario.status);
+        expect(claudeRoot.querySelector('.cu-meter-time') !== null).toBe(scenario.elapsedPct !== null);
+        claude.PerfPanel.stop();
+
+        const codexDuration = 7 * 24 * 60 * 60 * 1000;
+        const codexReset = scenario.elapsedPct === null
+          ? null
+          : Math.floor((now + codexDuration * (1 - scenario.elapsedPct / 100)) / 1000);
+        const codex = bootDom({
+          codexUsage: {
+            subscription: { type: 'pro' },
+            utilization: {
+              primary: { used_percent: scenario.used, window_minutes: 10080, resets_at: codexReset },
+              secondary: null,
+            },
+            aggregate: {},
+          },
+        }).window;
+        codex.Date.now = () => now;
+        codex.document.getElementById('root').innerHTML = codex.PerfPanel.renderSkeleton('codex');
+        codex.PerfPanel.start('codex');
+        await flush();
+        const codexRoot = codex.document.getElementById('codex-view-root');
+        expect(codexRoot.querySelector('.cu-meter-fill').classList.contains(scenario.color)).toBe(true);
+        expect(codexRoot.textContent).toContain(scenario.status);
+        expect(codexRoot.querySelector('.cu-meter-time') !== null).toBe(scenario.elapsedPct !== null);
+        codex.PerfPanel.stop();
+    }
   });
 
   it('puts each badge beside its own heading, with the count carrying a unit', async () => {

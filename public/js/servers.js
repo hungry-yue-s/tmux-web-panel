@@ -75,12 +75,13 @@
 
       shell().setHeader(
         '服务器 / ' + server.name,
-        ({ performance: '性能', codex: 'Codex 用量', connection: '连接' })[section] || '性能',
+        ({ performance: '性能', claude: 'Claude 用量', codex: 'Codex 用量', connection: '连接' })[section] || '性能',
         actionButton('立即检测', 'probe', false, 'refresh') + openWorkspace,
       );
 
       var base = this._hero(server, health, openWorkspace) + this._tabs(server, section);
       if (section === 'connection') return base + this._connection(server, health, workspace);
+      if (section === 'claude' && server.kind === 'local') return base + this._localClaude();
       if (section === 'codex' && server.kind === 'local') return base + this._localCodex();
       return base + (server.kind === 'local'
         ? this._localPerformance()
@@ -98,6 +99,13 @@
           + '<p>PerfPanel 脚本缺失，无法显示本机性能。</p></div>';
       }
       return '<div class="section local-perf-host">' + global.PerfPanel.renderSkeleton('performance') + '</div>';
+    },
+
+    _localClaude: function () {
+      if (!global.PerfPanel || typeof global.PerfPanel.renderSkeleton !== 'function') {
+        return '<div class="ms-card empty"><h3>Claude 用量组件未加载</h3></div>';
+      }
+      return '<div class="section local-perf-host">' + global.PerfPanel.renderSkeleton('claude') + '</div>';
     },
 
     _localCodex: function () {
@@ -123,9 +131,11 @@
     },
 
     _tabs: function (server, section) {
-      var entries = [['performance', '性能']];
-      if (server.kind === 'local') entries.push(['codex', 'Codex 用量']);
-      entries.push(['connection', '连接']);
+      var labels = { performance: '性能', claude: 'Claude 用量', codex: 'Codex 用量', connection: '连接' };
+      var entries = server.kind === 'local'
+        ? shell().localStatusSections().map(function (name) { return [name, labels[name]]; })
+        : [['performance', labels.performance]];
+      entries.push(['connection', labels.connection]);
       return '<div class="tabs">' + entries.map(function (entry) {
         var route = { name: 'server', params: { serverId: server.id, section: entry[0] } };
         return '<button class="tab ' + (section === entry[0] ? 'active' : '') + '"'
@@ -252,7 +262,29 @@
       return '<div class="intro"><h2>外观</h2><p>主题会立即应用到面板与终端。</p></div>'
         + '<div class="section"><div class="section-head"><h3>主题</h3>'
         + '<span>当前：' + esc(global.Theme ? global.Theme.getName() : '—') + '</span></div>'
-        + this._themeGrid() + '</div>';
+        + this._themeGrid() + '</div>'
+        + this._monitorPageSettings();
+    },
+
+    _monitorPageSettings: function () {
+      var ui = global.Store.getState().ui;
+      var entries = [
+        ['showPerformance', '性能', '机器与窗口资源'],
+        ['showClaude', 'Claude 用量', 'Claude 配额与使用趋势'],
+        ['showCodex', 'Codex 用量', 'Codex 配额与使用趋势'],
+      ];
+      var enabledCount = entries.filter(function (entry) { return ui[entry[0]]; }).length;
+      return '<div class="section"><div class="section-head"><h3>监控页面</h3>'
+        + '<span>至少保留一个</span></div><div class="ms-card monitor-page-settings">'
+        + entries.map(function (entry) {
+          var enabled = ui[entry[0]];
+          var locked = enabled && enabledCount === 1;
+          return '<label class="monitor-page-toggle' + (locked ? ' locked' : '') + '">'
+            + '<span><strong>' + esc(entry[1]) + '</strong><small>' + esc(entry[2]) + '</small></span>'
+            + '<input type="checkbox" data-action="toggle-monitor-page" data-ui-key="' + entry[0] + '"'
+            + (enabled ? ' checked' : '') + (locked ? ' disabled' : '') + '>'
+            + '<span class="monitor-page-toggle-track" aria-hidden="true"></span></label>';
+        }).join('') + '</div></div>';
     },
 
     /** Reuses Theme's own registry so the panel never keeps a second copy. */

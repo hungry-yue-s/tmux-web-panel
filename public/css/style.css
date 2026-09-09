@@ -4516,6 +4516,7 @@ body.fp-side-resizing { cursor: col-resize; user-select: none; }
 .cu-meter-fill.green { background: var(--accent-green); }
 .cu-meter-fill.yellow { background: var(--accent-yellow); }
 .cu-meter-fill.red { background: var(--accent-red); }
+.cu-meter-fill.neutral { background: var(--text-muted); }
 .cu-meter-val { font-size: 0.72rem; font-weight: 600; width: 36px; text-align: right; flex-shrink: 0; }
 .cu-meter-reset { font-size: 0.6rem; color: var(--text-muted); margin-left: 98px; }
 .cu-extra-meter { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-subtle); }
@@ -5376,6 +5377,89 @@ textarea:focus-visible {
 
 .theme-card-preview {
   border-radius: var(--ui-radius-sm);
+}
+
+.monitor-page-settings {
+  padding: 0;
+}
+
+.monitor-page-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 58px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--ui-border-soft);
+  cursor: pointer;
+}
+
+.monitor-page-toggle:last-child {
+  border-bottom: 0;
+}
+
+.monitor-page-toggle > span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.monitor-page-toggle strong {
+  font-size: .78rem;
+}
+
+.monitor-page-toggle small {
+  color: var(--text-muted);
+  font-size: .66rem;
+}
+
+.monitor-page-toggle input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  opacity: 0;
+}
+
+.monitor-page-toggle-track {
+  position: relative;
+  flex: 0 0 auto;
+  inline-size: 34px;
+  block-size: 18px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background .16s ease;
+}
+
+.monitor-page-toggle-track::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  inline-size: 14px;
+  block-size: 14px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  content: '';
+  transition: transform .16s ease, background .16s ease;
+}
+
+.monitor-page-toggle input:checked + .monitor-page-toggle-track {
+  background: var(--accent-blue);
+}
+
+.monitor-page-toggle input:checked + .monitor-page-toggle-track::after {
+  transform: translateX(16px);
+  background: var(--bg-primary);
+}
+
+.monitor-page-toggle input:focus-visible + .monitor-page-toggle-track {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 3px;
+}
+
+.monitor-page-toggle.locked {
+  cursor: not-allowed;
+  opacity: .62;
 }
 
 .more-about-card {

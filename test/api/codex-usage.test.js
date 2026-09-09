@@ -36,22 +36,31 @@ function dirent(name, directory = false) {
 }
 
 describe('GET /api/codex-usage', () => {
+  let mockMkdir;
   let mockReadFile;
   let mockReaddir;
+  let mockRename;
+  let mockWriteFile;
 
   beforeEach(() => {
     vi.resetModules();
     vi.restoreAllMocks();
 
+    mockMkdir = vi.fn().mockResolvedValue();
     mockReadFile = vi.fn();
     mockReaddir = vi.fn();
+    mockRename = vi.fn().mockResolvedValue();
+    mockWriteFile = vi.fn().mockResolvedValue();
 
     vi.doMock('node:os', () => ({
       homedir: () => '/home/tester',
     }));
     vi.doMock('node:fs/promises', () => ({
+      mkdir: mockMkdir,
       readFile: mockReadFile,
       readdir: mockReaddir,
+      rename: mockRename,
+      writeFile: mockWriteFile,
     }));
   });
 
@@ -124,5 +133,39 @@ describe('GET /api/codex-usage', () => {
     expect(res.body.data.modelUsage['gpt-5.5'].inputTokens).toBe(1000);
     expect(res.body.data.aggregatedTools.exec_command).toBe(1);
     expect(res.body.data.recentSessions[0].first_prompt).toBe('build a panel');
+    expect(mockMkdir).toHaveBeenCalledWith('/home/tester/.config/tmux-web-panel', { recursive: true, mode: 0o700 });
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      '/home/tester/.config/tmux-web-panel/codex-usage.json.tmp',
+      expect.stringContaining('"used_percent":42'),
+      { encoding: 'utf8', mode: 0o600 },
+    );
+    expect(mockRename).toHaveBeenCalledWith(
+      '/home/tester/.config/tmux-web-panel/codex-usage.json.tmp',
+      '/home/tester/.config/tmux-web-panel/codex-usage.json',
+    );
+  });
+
+  it('returns the persisted rate-limit snapshot when current sessions have no limits', async () => {
+    const cached = {
+      subscription: { type: 'plus', limitId: 'codex' },
+      utilization: {
+        primary: { used_percent: 52, window_minutes: 10080, resets_at: 1779109530 },
+        secondary: null,
+        observedAt: '2026-05-13T10:00:04.000Z',
+      },
+      aggregate: {},
+    };
+    mockReadFile.mockImplementation((path) => {
+      if (path === '/home/tester/.config/tmux-web-panel/codex-usage.json') return Promise.resolve(JSON.stringify(cached));
+      return Promise.reject(new Error('missing'));
+    });
+    mockReaddir.mockResolvedValue([]);
+
+    const { default: createRouter } = await import('../../server/api/codex-usage.js');
+    const res = await get(makeApp(createRouter), '/api/codex-usage');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, data: cached });
+    expect(mockWriteFile).not.toHaveBeenCalled();
   });
 });
