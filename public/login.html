@@ -130,6 +130,11 @@
           <label for="password">Password</label>
           <input type="password" id="password" name="password" autocomplete="current-password" required>
         </div>
+        <div class="login-field">
+          <label for="totp">Two-factor code (if enabled)</label>
+          <input type="text" id="totp" name="totp" inputmode="numeric" autocomplete="one-time-code"
+                 pattern="[0-9]*" maxlength="6" placeholder="123456">
+        </div>
         <label class="login-trust">
           <input type="checkbox" id="trusted"> Trust this device
         </label>
@@ -139,9 +144,13 @@
     </div>
   </div>
   <script src="/js/theme.js"></script>
+  <script src="/js/relay-config.js"></script>
   <script>
     (function () {
       var TOKEN_KEY = 'tmux_auth_token';
+      // Written by scripts/setup-relay.sh per deployment (gitignored); empty on
+      // a fresh clone, which then behaves as a plain login page.
+      var RELAY_PAGE = window.PANEL_RELAY_PAGE || '';
 
       // If already authenticated, redirect to main app
       var existing = localStorage.getItem(TOKEN_KEY);
@@ -168,17 +177,34 @@
         var username = document.getElementById('username').value;
         var password = document.getElementById('password').value;
         var trusted = document.getElementById('trusted').checked;
+        var totp = document.getElementById('totp').value.trim();
 
         fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: username, password: password, trusted: trusted }),
+          body: JSON.stringify({
+            username: username,
+            password: password,
+            trusted: trusted,
+            totp: totp || undefined,
+          }),
         })
           .then(function (res) { return res.json(); })
           .then(function (data) {
             if (data.success && data.data && data.data.token) {
               localStorage.setItem(TOKEN_KEY, data.data.token);
-              window.location.href = '/';
+              var relay = new URLSearchParams(window.location.search).get('relay');
+              if (relay && RELAY_PAGE) {
+                // Stored above first, so a failed bounce still leaves a session.
+                var panelTheme = '';
+                try { panelTheme = localStorage.getItem('tmux_theme') || ''; } catch (e) {}
+                window.location.replace(
+                  RELAY_PAGE + (panelTheme ? '?theme=' + encodeURIComponent(panelTheme) : '') +
+                  '#store=' + encodeURIComponent(data.data.token) +
+                  '&return=' + encodeURIComponent(window.location.origin + '/'));
+              } else {
+                window.location.href = '/';
+              }
             } else {
               showError(data.error || 'Login failed');
             }

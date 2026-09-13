@@ -1,0 +1,19 @@
+{
+  "name": "tmux-agent",
+  "version": "0.1.0",
+  "description": "Panel-managed tmux control, persistent commands and agent handoffs",
+  "author": {
+    "name": "Tmux Web Panel"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Tmux Agent",
+    "shortDescription": "Control the panel's tmux workspaces and agent panes.",
+    "longDescription": "Tmux Web Panel installs and manages this plugin. Connect its HTTP MCP endpoint to control workspaces, run persistent shell jobs and collect agent replies.",
+    "developerName": "Tmux Web Panel",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": "Help me use Tmux Agent."
+  },
+  "mcpServers": "./.mcp.json"
+}

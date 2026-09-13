@@ -73,20 +73,7 @@ build_project_tmux() {
 }
 
 detect_lan_ip() {
-  local ip=""
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    local iface
-    iface="$(route -n get default 2>/dev/null | awk '/interface:/{print $2; exit}')"
-    if [[ -n "$iface" ]]; then
-      ip="$(ipconfig getifaddr "$iface" 2>/dev/null || true)"
-    fi
-  else
-    ip="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
-    if [[ -z "$ip" ]] && command -v hostname &>/dev/null; then
-      ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
-    fi
-  fi
-  printf '%s' "$ip"
+  "$SCRIPT_DIR/lan-ip.sh"
 }
 
 certificate_covers() {
@@ -283,6 +270,9 @@ $(echo -e "$env_lines")
 WantedBy=default.target
 UNIT
 
+  # The unit embeds the plaintext AUTH password: owner-only.
+  chmod 600 "$systemd_unit"
+
   systemctl --user daemon-reload
   systemctl --user enable "$SERVICE_NAME"
   systemctl --user start "$SERVICE_NAME"
@@ -443,6 +433,9 @@ ${env_xml}    </dict>
 </dict>
 </plist>
 PLIST
+
+  # The plist embeds the plaintext AUTH password: owner-only.
+  chmod 600 "$launchd_plist"
 
   launchctl unload "$launchd_plist" 2>/dev/null || true
   launchctl load -w "$launchd_plist"

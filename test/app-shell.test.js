@@ -598,8 +598,8 @@ describe('AppShell settings navigation', () => {
     ctx.Shell.render();
 
     const items = [...ctx.document.querySelectorAll('.settings-nav-item')];
-    expect(items.map((n) => n.dataset.settingsSection)).toEqual(['appearance', 'security', 'about']);
-    expect(items.map((n) => n.textContent)).toEqual(['外观', '连接与安全', 'GitHub']);
+    expect(items.map((n) => n.dataset.settingsSection)).toEqual(['appearance', 'management', 'security', 'about']);
+    expect(items.map((n) => n.textContent)).toEqual(['外观', '管理中心', '连接与安全', 'GitHub']);
     expect(ctx.document.querySelector('.server-rail')).toBeNull();
     expect(ctx.document.querySelector('.tree-window-row')).toBeNull();
   });

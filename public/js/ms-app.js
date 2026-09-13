@@ -137,6 +137,9 @@
       if (route.name === 'settings') {
         view.classList.remove('terminal-mode');
         view.innerHTML = global.ServersPage.renderSettings();
+        if (global.ServersPage.settingsSection === 'management' && global.ManagementPage) {
+          await global.ManagementPage.mount(view.querySelector('#managed-resources'));
+        }
         return;
       }
 

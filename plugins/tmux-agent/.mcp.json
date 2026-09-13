@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tmux-agent": {
+      "type": "http",
+      "url": "http://localhost:7681/api/plugins/tmux-agent/mcp"
+    }
+  }
+}

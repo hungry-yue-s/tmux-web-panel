@@ -15,7 +15,9 @@ import {
   wsTokenAuth,
   startTokenReaper,
   initTokenPersistence,
+  createLoginRateLimiter,
 } from './auth.js';
+import { loadTotpSecret, verifyTotp } from './totp.js';
 import * as tmux from './tmux.js';
 import { TerminalManager } from './terminal.js';
 import { StatusMonitor } from './monitor.js';
@@ -51,6 +53,10 @@ import { TerminalGateway } from './terminal/gateway.js';
 import { createServersRouter } from './api/servers.js';
 import { createWorkspaceRouter } from './api/workspace.js';
 import { createServerMetricsRouter } from './api/metrics.js';
+import { PluginManager } from './plugins.js';
+import { createPluginsRouter } from './api/plugins.js';
+import { ManagedResources } from './managed-resources.js';
+import { createManagedResourcesRouter } from './api/managed-resources.js';
 
 // --- CLI Argument Parsing ---
 
@@ -120,23 +126,45 @@ if (config.auth) {
 
   // --- Public auth routes (no token required) ---
 
-  app.post('/api/auth/login', (req, res) => {
-    const { username, password, trusted } = req.body || {};
+  const loginLimiter = createLoginRateLimiter();
 
-    if (
+  app.post('/api/auth/login', (req, res) => {
+    const lockedUntil = loginLimiter.isBlocked(req.ip);
+    if (lockedUntil !== null) {
+      const retryAfter = Math.max(1, Math.ceil((lockedUntil - Date.now()) / 1000));
+      res.set('Retry-After', String(retryAfter));
+      res.status(429).json({
+        success: false,
+        data: null,
+        error: `Too many failed attempts. Try again in ${retryAfter}s.`,
+      });
+      return;
+    }
+
+    const { username, password, trusted, totp } = req.body || {};
+
+    const passwordOk =
       username === authUser &&
       password &&
-      verifyPassword(password, authSalt, authHash)
-    ) {
+      verifyPassword(password, authSalt, authHash);
+
+    // Read per attempt so enrolling or removing MFA needs no restart.
+    const totpSecret = loadTotpSecret();
+    const totpOk = !totpSecret || verifyTotp(totpSecret, String(totp ?? ''));
+
+    if (passwordOk && totpOk) {
+      loginLimiter.recordSuccess(req.ip);
       const token = createToken(tokenMap, { trusted: !!trusted });
       res.json({ success: true, data: { token, trusted: !!trusted }, error: null });
       return;
     }
 
+    loginLimiter.recordFailure(req.ip);
+    // One generic message: differing errors would reveal which factor matched.
     res.status(401).json({
       success: false,
       data: null,
-      error: 'Invalid username or password',
+      error: 'Invalid credentials',
     });
   });
 
@@ -365,6 +393,17 @@ const terminalGateway = new TerminalGateway({
 app.use('/api/servers', createServerMetricsRouter({ metricsService }));
 app.use('/api/servers', createWorkspaceRouter({ workspaceService }));
 app.use('/api/servers', createServersRouter({ serverService }));
+
+const pluginManager = new PluginManager({
+  configDir, catalogDir: join(__dirname, '..', 'plugins'),
+  dependencies: { workspaceService, executorPool, serverService },
+});
+await pluginManager.load();
+app.use('/api/plugins', createPluginsRouter(pluginManager));
+
+const managedResources = new ManagedResources({ projectDir: join(__dirname, '..'), configDir });
+await managedResources.load();
+app.use('/api/managed-resources', createManagedResourcesRouter(managedResources));
 
 server.on('upgrade', (req, socket, head) => {
   const proto = config.tls ? 'https' : 'http';

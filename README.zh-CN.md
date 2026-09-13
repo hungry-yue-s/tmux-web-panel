@@ -124,9 +124,23 @@ node scripts/install-agent-hooks.js all
 
 macOS 上还有个原生 SwiftUI 外壳，npm run build:macos 构建，多菜单栏状态、原生通知和真正的剪贴板桥。WKWebView 拦异步剪贴板这件事，踩过坑的都懂。
 
+### 局域网 IP 经常变？中继跳转 + 双因素
+
+面板监听 0.0.0.0，手机和其它机器靠局域网 IP 访问。DHCP 一改 IP，浏览器 origin 就变，登录态和缓存随之作废。这套可选组件解决它：
+
+- `scripts/setup-relay.sh` 用 `relay/index.template.html` 渲染属于你自己的跳转页（Duck DNS 名、端口、Pages 地址都在本地代入，**仓库里不含任何人的个人配置**），加 `--publish` 可一键发布到你自己的 GitHub Pages；
+- `scripts/install-lan-ip-sync.sh install` 装一个 launchd 代理：网络变化时把当前 IP 推到你自己的 Duck DNS、按需重签本地 CA 证书，并重启面板与 macOS 外壳；
+- 手机收藏跳转页即可：它经 DoH 查到当前 IP，带着会话 token 跳过去，IP 变了也不用重新登录；
+- `scripts/setup-totp.sh` 启用 TOTP 双因素（扫码绑定，密钥存本地 0600 文件）。
+
+Duck DNS 和 GitHub Pages 都是免费服务；账号与 token 只存在 `~/.config/tmux-web-panel/` 下，不进仓库。登录限速、凭据文件权限等安全默认值见[配置与认证](docs/authentication.md)。
+
 ---
 
 ## 想再深入
+
+**设置 → 管理中心**统一管理项目 tmux 的构建与回退、配置备份与应用、插件安装启停，以及 Codex/Claude skill 链接。
+内置可选的 `tmux-agent` 插件通过 HTTP MCP 提供窗格控制、持久命令和跨 agent 任务协作。详见[管理中心](docs/management.md)。
 
 | | |
 |---|---|

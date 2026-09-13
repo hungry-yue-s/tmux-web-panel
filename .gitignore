@@ -10,3 +10,6 @@ docs/superpowers/
 
 # Root-level temp screenshots (project screenshots live in public/screenshots/)
 /*.png
+
+# Per-deployment generated config (scripts/setup-relay.sh); see relay-config.example.js
+/public/js/relay-config.js

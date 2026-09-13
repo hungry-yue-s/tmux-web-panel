@@ -48,3 +48,17 @@ var Auth = {
       });
   },
 };
+
+// Adopt a token handed off by the relay page via the URL fragment. Runs at load,
+// before any other script reads Auth.getToken: the panel's IP (and therefore
+// this origin's localStorage) changes, and this re-seeds the session. The
+// fragment is stripped so the token does not linger in the URL or history.
+// Not validated here — every later use is checked server-side.
+(function adoptHandoffToken() {
+  var match = /[#&]handoff=([^&]+)/.exec(window.location.hash || '');
+  if (!match) return;
+  try {
+    Auth.setToken(decodeURIComponent(match[1]));
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  } catch (_e) {}
+})();

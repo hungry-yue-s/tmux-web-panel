@@ -6,7 +6,7 @@
  */
 
 import { scryptSync, randomBytes, timingSafeEqual } from 'node:crypto';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -107,16 +107,19 @@ function parseBearerToken(header) {
  */
 export function tokenAuth(tokenMap) {
   return (req, res, next) => {
-    // Support both Bearer header and ?token= query param (for img/iframe src URLs)
+    const accept = req.headers.accept || '';
+    // ?token= exists for <img>/<iframe> src and other subresource loads that
+    // cannot set an Authorization header. It is refused for HTML navigation so
+    // tokens never land in page URLs, browser history, or Referer headers.
     const token = parseBearerToken(req.headers.authorization)
-      || req.query.token || null;
+      || (accept.includes('text/html') ? null : req.query.token)
+      || null;
 
     if (isValidToken(tokenMap, token)) {
       next();
       return;
     }
 
-    const accept = req.headers.accept || '';
     if (accept.includes('text/html')) {
       res.redirect('/login.html');
       return;
@@ -220,8 +223,84 @@ function persistNow(tokenMap) {
   try {
     mkdirSync(dirname(_persistPath), { recursive: true });
     const entries = [...tokenMap.entries()];
-    writeFileSync(_persistPath, JSON.stringify(entries), 'utf8');
+    // Session tokens are live credentials: owner-only, and chmod on every flush
+    // so files created 0644 by older versions get tightened too.
+    writeFileSync(_persistPath, JSON.stringify(entries), { mode: 0o600 });
+    chmodSync(_persistPath, 0o600);
   } catch (_e) {
     // Best-effort — log nothing to avoid noise
   }
+}
+
+// --- Login rate limiting ---
+
+export const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+export const LOGIN_MAX_FAILURES = 5;
+export const LOGIN_LOCK_MS = 10 * 60 * 1000;
+
+/**
+ * Per-IP login rate limiter.
+ *
+ * Check `isBlocked` BEFORE doing any password hashing: scrypt is deliberately
+ * slow, so an unthrottled login endpoint is also a CPU denial-of-service.
+ * After `maxFailures` failures inside a rolling `windowMs` the IP is locked for
+ * `lockMs`; a successful login clears the record.
+ *
+ * @param {object} [options]
+ * @param {number} [options.windowMs]
+ * @param {number} [options.maxFailures]
+ * @param {number} [options.lockMs]
+ * @returns {{
+ *   isBlocked: (ip: string) => number | null,
+ *   recordFailure: (ip: string) => void,
+ *   recordSuccess: (ip: string) => void,
+ * }} `isBlocked` returns the lock expiry epoch ms, or null when not blocked.
+ */
+export function createLoginRateLimiter({
+  windowMs = LOGIN_WINDOW_MS,
+  maxFailures = LOGIN_MAX_FAILURES,
+  lockMs = LOGIN_LOCK_MS,
+} = {}) {
+  const state = new Map(); // ip -> { count, windowStart, lockedUntil }
+
+  const clearIfStale = (ip, entry, now) => {
+    if (entry.lockedUntil !== null && now >= entry.lockedUntil) {
+      state.delete(ip);
+      return true;
+    }
+    if (entry.lockedUntil === null && now - entry.windowStart > windowMs) {
+      state.delete(ip);
+      return true;
+    }
+    return false;
+  };
+
+  return {
+    isBlocked(ip) {
+      const entry = state.get(ip);
+      if (!entry) return null;
+      const now = Date.now();
+      if (clearIfStale(ip, entry, now)) return null;
+      return entry.lockedUntil;
+    },
+
+    recordFailure(ip) {
+      const now = Date.now();
+      let entry = state.get(ip);
+      if (!entry || clearIfStale(ip, entry, now)) {
+        entry = { count: 0, windowStart: now, lockedUntil: null };
+      }
+      entry.count += 1;
+      if (entry.count >= maxFailures) {
+        entry.lockedUntil = now + lockMs;
+        entry.count = 0;
+        entry.windowStart = now;
+      }
+      state.set(ip, entry);
+    },
+
+    recordSuccess(ip) {
+      state.delete(ip);
+    },
+  };
 }

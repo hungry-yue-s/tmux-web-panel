@@ -245,6 +245,7 @@
 
     SETTINGS_SECTIONS: [
       ['appearance', '外观'],
+      ['management', '管理中心'],
       ['security', '连接与安全'],
       ['about', 'GitHub'],
     ],

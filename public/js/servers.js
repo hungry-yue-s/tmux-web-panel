@@ -253,6 +253,7 @@
     renderSettings: function () {
       shell().setHeader('全局', '设置', '');
       var section = this.settingsSection || 'appearance';
+      if (section === 'management') return '<div id="managed-resources"></div>';
       if (section === 'security') return this._settingsSecurity();
       if (section === 'about') return this._settingsAbout();
       return this._settingsAppearance();

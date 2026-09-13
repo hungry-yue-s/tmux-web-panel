@@ -8089,3 +8089,13 @@ button.list-row:hover {
   .ms-mobile-workspace-overlay,
   .ms-mobile-workspace-sheet { display: none; }
 }
+
+.managed-card { padding: 20px; margin-bottom: 12px; }
+.managed-card p { margin: 10px 0; overflow-wrap: anywhere; }
+.managed-card pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; padding: 12px; background: var(--bg-primary); }
+.managed-card textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: 12px; font: 13px/1.6 monospace; color: var(--text-primary); background: var(--bg-primary); border: 1px solid var(--border-color, #555); border-radius: 6px; }
+.managed-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.managed-skill { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border-color, #555); }
+.managed-skill small { display: block; overflow-wrap: anywhere; margin-top: 4px; }
+.managed-skill > div { min-width: 0; }
+.managed-skill .ms-btn { flex-shrink: 0; }

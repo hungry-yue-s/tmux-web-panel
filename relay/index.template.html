@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#1a1b26">
+<title>panel</title>
+<style>
+  /* Palette mirrors the panel's own theme variables (public/js/theme.js), so
+     this page reads as part of the same product. Light variant tracks the
+     panel's github-light theme, passed along by the relay handoff. */
+  :root, body[data-theme="tokyo-night"] {
+    --bg-primary: #1a1b26;
+    --bg-deep: #16161e;
+    --bg-card: #24283b;
+    --bg-hover: #292e42;
+    --border: #3b4261;
+    --border-subtle: #2f3450;
+    --text-primary: #c0caf5;
+    --text-secondary: #a9b1d6;
+    --text-muted: #565f89;
+    --accent-blue: #7aa2f7;
+    --accent-green: #9ece6a;
+    --accent-red: #f7768e;
+    --accent-yellow: #e0af68;
+    color-scheme: dark;
+  }
+  body[data-theme="github-light"] {
+    --bg-primary: #ffffff;
+    --bg-deep: #f6f8fa;
+    --bg-card: #f6f8fa;
+    --bg-hover: #ebeef1;
+    --border: #d0d7de;
+    --border-subtle: #e8ebef;
+    --text-primary: #1f2328;
+    --text-secondary: #656d76;
+    --text-muted: #8b949e;
+    --accent-blue: #0969da;
+    --accent-green: #1a7f37;
+    --accent-red: #cf222e;
+    --accent-yellow: #9a6700;
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: clamp(16px, 5vw, 48px);
+    padding-bottom: calc(clamp(16px, 5vw, 48px) + env(safe-area-inset-bottom, 0px));
+    background: var(--bg-primary);
+    background-image: radial-gradient(min(720px, 90vw) 340px at 50% -12%,
+      color-mix(in srgb, var(--accent-blue) 14%, transparent), transparent 72%);
+    color: var(--text-primary);
+    font: clamp(14px, 1.6vw, 15px)/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+      Ubuntu, Cantarell, 'PingFang SC', 'Noto Sans SC', 'Helvetica Neue', Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, Menlo, Consolas, monospace; }
+  .card {
+    width: min(100%, 400px);
+    border: 1px solid var(--border-subtle);
+    border-radius: 14px;
+    background: var(--bg-card);
+    box-shadow: 0 24px 60px -28px rgba(0, 0, 0, .55);
+    overflow: hidden;
+  }
+  @media (min-width: 720px) {
+    .card { width: 440px; border-radius: 16px; }
+  }
+  /* Slim titlebar echoing the panel's window chrome */
+  .titlebar {
+    display: flex; align-items: center; gap: 7px;
+    padding: 11px 14px;
+    background: var(--bg-deep);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .tl-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .tl-dot.r { background: var(--accent-red); }
+  .tl-dot.y { background: var(--accent-yellow); }
+  .tl-dot.g { background: var(--accent-green); }
+  .tl-label {
+    margin-left: auto;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, Menlo, Consolas, monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: .4px;
+  }
+  .body { padding: clamp(22px, 6vw, 32px) clamp(18px, 5vw, 28px) clamp(16px, 4vw, 22px); text-align: center; }
+  .mark {
+    width: 54px; height: 54px;
+    margin: 0 auto 14px;
+    display: grid; place-items: center;
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--accent-blue) 18%, var(--bg-hover));
+    border: 1px solid color-mix(in srgb, var(--accent-blue) 34%, transparent);
+  }
+  .mark svg { width: 26px; height: 26px; stroke: var(--accent-blue); }
+  h1 { margin: 0; font-size: clamp(17px, 4.6vw, 19px); font-weight: 650; letter-spacing: .2px; }
+  .sub { margin: 4px 0 20px; font-size: clamp(12px, 3.4vw, 13px); color: var(--text-muted); }
+  .status {
+    display: flex; align-items: center; justify-content: center; gap: 9px;
+    min-height: 22px;
+    margin: 0 0 18px;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, Menlo, Consolas, monospace;
+    font-size: clamp(12px, 3.3vw, 13px);
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-blue); flex: none;
+         animation: pulse 1.1s ease-in-out infinite; }
+  body[data-state="ready"]  .dot { background: var(--accent-green); animation: none; }
+  body[data-state="failed"] .dot { background: var(--accent-red); animation: none; }
+  @keyframes pulse { 0%,100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
+  .btn {
+    display: block; width: 100%;
+    min-height: 48px;
+    padding: 12px 16px;
+    border: 1px solid color-mix(in srgb, var(--accent-blue) 34%, transparent);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--accent-blue) 22%, var(--bg-hover));
+    color: var(--accent-blue);
+    font: inherit; font-size: 15px; font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background .15s ease, transform .05s ease;
+  }
+  @media (min-width: 720px) { .btn { min-height: 44px; } }
+  .btn:hover { background: color-mix(in srgb, var(--accent-blue) 30%, var(--bg-hover)); }
+  .btn:active { transform: scale(.985); }
+  .btn[hidden] { display: none; }
+  .ghost {
+    display: inline-flex; align-items: center; gap: 7px;
+    margin-top: 14px;
+    min-height: 38px;
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    font-size: 13px; font-weight: 550;
+    text-decoration: none;
+  }
+  .ghost:hover { background: color-mix(in srgb, var(--bg-hover) 70%, var(--border)); color: var(--text-primary); }
+  .hint { margin: 14px 2px 0; font-size: 12px; line-height: 1.7; color: var(--text-muted); }
+  footer {
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--border-subtle);
+    background: var(--bg-deep);
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, Menlo, Consolas, monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: center;
+  }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+</style>
+</head>
+<body data-state="resolving" data-theme="tokyo-night">
+  <main class="card">
+    <div class="titlebar" aria-hidden="true">
+      <span class="tl-dot r"></span><span class="tl-dot y"></span><span class="tl-dot g"></span>
+      <span class="tl-label">relay</span>
+    </div>
+
+    <div class="body">
+      <div class="mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="5 8 9 12 5 16"></polyline>
+          <line x1="12" y1="16" x2="19" y2="16"></line>
+        </svg>
+      </div>
+      <h1>Tmux Panel</h1>
+      <p class="sub">中继跳转 · 自动定位当前内网地址</p>
+
+      <p class="status" role="status"><span class="dot"></span><span id="status-text">正在解析面板地址…</span></p>
+
+      <a class="btn" id="go" hidden>进入面板</a>
+
+      <a class="ghost" href="ca.crt" download>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12"></path><polyline points="7 10 12 15 17 10"></polyline><path d="M4 21h16"></path>
+        </svg>
+        下载 CA 证书
+      </a>
+      <p class="hint">CA 证书只需在手机上安装一次，之后访问不再出现证书告警。</p>
+    </div>
+
+    <footer>DoH 实时查询 · 记录于 Duck DNS</footer>
+  </main>
+
+<script>
+// The panel's LAN IP changes (and the machine roams between networks), and
+// browser localStorage is per-origin, so a session token stored under the old
+// IP is unreachable under the new one. This page keeps a copy of the token in
+// ITS origin and re-seeds the panel origin via a URL fragment on every hop.
+const NAME = '__DUCKDNS_FQDN__';
+const PORT = __PANEL_PORT__;
+const TOKEN_KEY = 'panel_relay_token';
+const THEME_KEY = 'panel_relay_theme';
+const ENDPOINTS = [
+  'https://dns.alidns.com/resolve?name=' + NAME + '&type=A',
+  'https://dns.google/resolve?name=' + NAME + '&type=A'
+];
+const bodyEl = document.body;
+const statusText = document.getElementById('status-text');
+const goBtn = document.getElementById('go');
+const hash = location.hash || '';
+const query = new URLSearchParams(location.search);
+
+// Match the panel's own theme: the handoff carries the panel's theme id; light
+// families get the github-light palette, everything else stays tokyo-night.
+(function applyTheme() {
+  let theme = query.get('theme');
+  if (!theme) {
+    try { theme = localStorage.getItem(THEME_KEY); } catch (e) { theme = null; }
+  }
+  if (theme && /light/i.test(theme)) {
+    bodyEl.dataset.theme = 'github-light';
+    document.querySelector('meta[name="theme-color"]').content = '#ffffff';
+  }
+})();
+
+function setState(state, text) {
+  bodyEl.dataset.state = state;
+  statusText.textContent = text;
+}
+
+function readStored(key) {
+  try { return localStorage.getItem(key); } catch (e) { return null; }
+}
+
+// Role 1 — deposit: the panel bounces here right after a relayed login so this
+// origin's copies (token, theme) stay fresh, then we hand the token straight back.
+const storeMatch = /[#&]store=([^&]+)(?:&return=([^&]+))?/.exec(hash);
+if (storeMatch) {
+  const token = decodeURIComponent(storeMatch[1]);
+  const back = storeMatch[2] ? decodeURIComponent(storeMatch[2]) : '/';
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+    const theme = query.get('theme');
+    if (theme) localStorage.setItem(THEME_KEY, theme);
+  } catch (e) {}
+  setState('ready', '会话已保存，正在返回…');
+  location.replace(back + '#handoff=' + encodeURIComponent(token));
+} else {
+  // Role 2 — relay: resolve the current IP and hop to the panel, carrying the
+  // stored token if we have one, otherwise asking for a relayed login.
+  (async () => {
+    const saved = readStored(TOKEN_KEY);
+    for (const url of ENDPOINTS) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        const payload = await res.json();
+        const answer = (payload.Answer || []).find(a => a.type === 1);
+        if (!answer) continue;
+        const target = saved
+          ? 'https://' + answer.data + ':' + PORT + '/#handoff=' + encodeURIComponent(saved)
+          : 'https://' + answer.data + ':' + PORT + '/login.html?relay=1';
+        setState('ready', answer.data + ':' + PORT + ' · 正在进入…');
+        goBtn.href = target;
+        goBtn.hidden = false;
+        location.replace(target);
+        return;
+      } catch (e) { /* try the next resolver */ }
+    }
+    setState('failed', '解析失败，请检查网络');
+    goBtn.hidden = true;
+    const retry = document.createElement('button');
+    retry.className = 'btn';
+    retry.style.marginTop = '6px';
+    retry.textContent = '重试';
+    retry.onclick = () => location.reload();
+    goBtn.parentNode.insertBefore(retry, goBtn.nextSibling);
+  })();
+}
+</script>
+</body>
+</html>

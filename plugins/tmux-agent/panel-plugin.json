@@ -1,0 +1,8 @@
+{
+  "id": "tmux-agent",
+  "name": "Tmux Agent",
+  "version": "0.1.0",
+  "description": "让 agent 管理 tmux、执行持久命令，并向其他窗格分配任务和读取回复。",
+  "entry": "server.mjs",
+  "capabilities": ["tmux", "persistent-jobs", "agent-tasks", "mcp"]
+}

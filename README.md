@@ -6,6 +6,8 @@ English | [中文版](README.zh-CN.md)
 
 # Tmux Web Panel
 
+The **Settings → 管理中心 (Management)** page manages the project-built tmux runtime, configuration backups, plugin lifecycle, and Codex/Claude skill links. The optional `tmux-agent` plugin exposes pane control, persistent commands, and agent handoffs over HTTP MCP. See [management documentation](docs/management.md).
+
 **The tmux sessions on your machines, in any browser — desktop, phone or tablet —
 as if you were sitting at the keyboard.**
 
@@ -136,6 +138,28 @@ node scripts/install-agent-hooks.js all
 
 On macOS there is also a native SwiftUI shell (`npm run build:macos`) that adds
 menu-bar status, native notifications and a real clipboard bridge.
+
+### Roaming LAN IP? Relay hop + two-factor
+
+The panel listens on 0.0.0.0 and clients reach it by LAN IP. When DHCP moves
+that IP the browser origin changes with it, and sessions and caches are lost.
+Optional components fix that:
+
+- `scripts/setup-relay.sh` renders your own relay page from
+  `relay/index.template.html` (Duck DNS name, port and Pages URL are substituted
+  locally — **the repository carries nobody's personal configuration**) and with
+  `--publish` pushes it to your own GitHub Pages;
+- `scripts/install-lan-ip-sync.sh install` adds a launchd agent that publishes
+  the current IP to your own Duck DNS on network changes, re-issues the local CA
+  leaf certificate when needed, and restarts the panel and the macOS shell;
+- bookmark the relay page on your phone: it resolves the current IP over DoH and
+  hops over carrying the session token, so an IP change no longer forces a
+  re-login;
+- `scripts/setup-totp.sh` enables TOTP two-factor (scan to enrol; the secret
+  stays in a local 0600 file).
+
+Duck DNS and GitHub Pages are free services; accounts and tokens live only
+under `~/.config/tmux-web-panel/` and never enter the repository.
 
 ---
 
