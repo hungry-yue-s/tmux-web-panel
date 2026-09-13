@@ -170,6 +170,7 @@ under `~/.config/tmux-web-panel/` and never enter the repository.
 | [Configuration & authentication](docs/authentication.md) | flags, env vars, token model, logout |
 | [Agent notifications](docs/agent-notifications.md) | Qoder/Codex hook install, token handling, dedupe rules |
 | [Service install & reboot persistence](docs/service-install.md) | systemd/launchd, TLS, vendored tmux, tmux-resurrect wiring |
+| [Roaming access: relay hop & two-factor](docs/roaming-access.md) | Deploy, maintain and troubleshoot the Duck DNS + DoH + local CA + TOTP stack |
 | [File preview & link detection](docs/file-preview.md) | dock tabs, renderers, sharing, sensitive-path policy |
 | [Mobile interaction guide](docs/mobile-gestures.md) | selection gestures, scrolling, key drawer, uploads |
 | [Multi-server design](docs/多服务器管理-UIUX设计.md) | the UX model behind the workbench, with a clickable demo |

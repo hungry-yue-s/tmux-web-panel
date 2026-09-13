@@ -147,6 +147,7 @@ Duck DNS 和 GitHub Pages 都是免费服务；账号与 token 只存在 `~/.con
 | [配置与认证](docs/authentication.md) | flag、环境变量、token 模型、登出 |
 | [Agent 自动提示](docs/agent-notifications.md) | Qoder/Codex hook 安装、token 处理、去重规则 |
 | [服务安装与重启后会话恢复](docs/service-install.md) | systemd 和 launchd、TLS、vendored tmux、tmux-resurrect 接线 |
+| [漫游访问：中继跳转与双因素](docs/roaming-access.md) | Duck DNS + DoH + 本地 CA + TOTP 的部署、维护与排障 |
 | [文件预览与链接识别](docs/file-preview.md) | 停靠标签、渲染器、分享、敏感路径策略 |
 | [移动端交互指南](docs/mobile-gestures.md) | 选择手势、滚动、按键抽屉、上传 |
 | [多服务器设计](docs/多服务器管理-UIUX设计.md) | 工作台背后的 UX 模型，附可点击 demo |
