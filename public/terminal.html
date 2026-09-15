@@ -57,7 +57,7 @@
 
       var term = new Terminal({
         theme: Theme.getTerminalTheme(),
-        fontFamily: "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace",
+        fontFamily: 'monospace',
         fontSize: 14,
         cursorBlink: true,
       });
@@ -73,6 +73,23 @@
 
       var container = document.getElementById('terminal');
       term.open(container);
+
+      var firstWrite = new Promise(function (resolve) {
+        var listener = term.onWriteParsed(function () {
+          listener.dispose();
+          resolve();
+        });
+      });
+      var fontsReady = (document.fonts && document.fonts.load)
+        ? Promise.all([
+          document.fonts.load("400 14px 'Tmux Panel Mono'"),
+          document.fonts.load("700 14px 'Tmux Panel Mono'")
+        ]) : Promise.resolve();
+      Promise.all([fontsReady, firstWrite]).then(function () {
+        term.options.fontFamily = "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
+        fitAddon.fit();
+        term.refresh(0, term.rows - 1);
+      }).catch(function () { /* keep the working default font */ });
 
       if (term.textarea) {
         term.textarea.setAttribute('autocapitalize', 'off');

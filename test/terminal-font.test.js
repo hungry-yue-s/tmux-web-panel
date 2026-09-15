@@ -10,7 +10,10 @@ describe('terminal font configuration', () => {
     ];
 
     for (const source of sources) {
-      expect(source).toContain("fontFamily: \"'Tmux Panel Mono', 'Maple Mono NF CN'");
+      expect(source).toContain("'Tmux Panel Mono', 'Maple Mono NF CN'");
+      expect(source).toContain("fontFamily: 'monospace'");
+      expect(source).toContain('document.fonts.load');
+      expect(source).toContain('Promise.all([fontsReady, firstWrite])');
     }
   });
 
@@ -45,5 +48,17 @@ describe('terminal font configuration', () => {
 
     expect(webViewSource).toContain("classList.add('tmux-native-shell')");
     expect(styleSource).toMatch(/html\.tmux-native-shell body\s*\{[\s\S]*?-webkit-font-smoothing:\s*auto/);
+  });
+
+  it('rebuilds the WebGL glyph atlas after the bundled font finishes loading', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../public/js/terminal.js'), 'utf8');
+    const fontReady = source.indexOf('Promise.all([fontsReady, firstWrite]).then');
+
+    expect(source.indexOf('term.loadAddon(webglAddon)')).toBeGreaterThan(fontReady);
+    expect(source.indexOf('term.options.fontFamily = TERMINAL_FONT_FAMILY', fontReady)).toBeGreaterThan(fontReady);
+    expect(source.indexOf('term.clearTextureAtlas()', fontReady)).toBeGreaterThan(fontReady);
+    expect(source.indexOf('term.refresh(0, term.rows - 1)', fontReady)).toBeGreaterThan(fontReady);
+    expect(source.slice(fontReady, source.indexOf('\n  }', fontReady)))
+      .toContain('terminalState.term !== term');
   });
 });

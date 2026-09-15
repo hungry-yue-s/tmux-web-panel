@@ -593,6 +593,7 @@ var _terminalMode = (function () {
 /** Readable starting point on phones, where fitting to a pane's geometry is wrong. */
 var MOBILE_BASE_FONT_SIZE = 13;
 var MOBILE_MIN_FONT_SIZE = 11;
+var TERMINAL_FONT_FAMILY = "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
 
 function _calcTerminalFontSize(paneCols, paneRows, containerEl) {
   // On a phone the pane's cols/rows come from a desktop-sized tmux window, so
@@ -627,7 +628,7 @@ function _calcTerminalFontSize(paneCols, paneRows, containerEl) {
 function createTerminalInstance(paneCols, paneRows, nozoom) {
   var term = new Terminal({
     theme: Theme.getTerminalTheme(),
-    fontFamily: "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace",
+    fontFamily: 'monospace',
     fontSize: _calcTerminalFontSize(paneCols, paneRows),
     cursorBlink: true,
     scrollback: 5000,
@@ -1150,18 +1151,41 @@ function _mountTerminal(termContainer, nozoom) {
     }, true); // capture phase — before xterm's handler
   }
 
-  // Use WebGL renderer for crisp box-drawing characters (tmux split borders)
-  if (typeof WebglAddon !== 'undefined') {
-    try {
-      var webglAddon = new WebglAddon.WebglAddon();
-      webglAddon.onContextLoss(function () {
-        webglAddon.dispose();
-      });
-      term.loadAddon(webglAddon);
-    } catch (_e) {
-      // WebGL not available — fall back to default canvas renderer
+  // A slow webfont can finish after WebGL has built its glyph atlas, leaving
+  // the buffer populated but the canvas blank (most visible on phones). Keep
+  // the default renderer until fonts settle, then enable WebGL and repaint.
+  var fontsReady = (document.fonts && document.fonts.load)
+    ? Promise.all([
+      document.fonts.load("400 13px 'Tmux Panel Mono'"),
+      document.fonts.load("700 13px 'Tmux Panel Mono'")
+    ]) : Promise.resolve();
+  var firstWrite = new Promise(function (resolve) {
+    var listener = term.onWriteParsed(function () {
+      listener.dispose();
+      resolve();
+    });
+  });
+  Promise.all([fontsReady, firstWrite]).then(function () {
+    if (terminalState.term !== term) return;
+    term.options.fontFamily = TERMINAL_FONT_FAMILY;
+    if (typeof WebglAddon !== 'undefined') {
+      try {
+        var webglAddon = new WebglAddon.WebglAddon();
+        webglAddon.onContextLoss(function () {
+          webglAddon.dispose();
+        });
+        term.loadAddon(webglAddon);
+      } catch (_e) {
+        // WebGL not available — keep the default renderer
+      }
     }
-  }
+    if (typeof term.clearTextureAtlas === 'function') {
+      term.clearTextureAtlas();
+    }
+    fitAddon.fit();
+    _syncTerminalSize(ws, term, true);
+    term.refresh(0, term.rows - 1);
+  }).catch(function () { /* keep the working default renderer and font */ });
 
 
 
