@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
 const MS_APP = readFileSync('public/js/ms-app.js', 'utf8');
@@ -302,6 +302,19 @@ describe('index.html cache busting', () => {
     expect(positions[0]).toBeGreaterThan(-1);
     expect(positions[0]).toBeLessThan(positions[1]);
     expect(positions[0]).toBeLessThan(positions[2]);
+  });
+
+  it('serves xterm from this host instead of a third-party CDN', () => {
+    expect(INDEX).not.toContain('unpkg.com/@xterm');
+    for (const asset of [
+      'xterm.css?v=6.0.0',
+      'xterm.js?v=6.0.0',
+      'addon-fit.js?v=0.11.0',
+      'addon-webgl.js?v=0.19.0',
+    ]) {
+      expect(INDEX).toContain(`/vendor/xterm/${asset}`);
+      expect(existsSync(`public/vendor/xterm/${asset.split('?')[0]}`)).toBe(true);
+    }
   });
 
   it('keeps the legacy shell present but hidden', () => {
