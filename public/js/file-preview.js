@@ -19,6 +19,7 @@ var FilePreview = (function () {
   var _dockRestoreButton = null;
   var _currentOpenPath = null;
   var _refreshButton = null;
+  var _actionMenu = null;
   var _autoRefreshTimer = null;
   var _refreshPromise = null;
   var _previewGeneration = 0;
@@ -627,6 +628,7 @@ var FilePreview = (function () {
   function _destroyDock(preservePersisted) {
     _previewGeneration++;
     _previewReady = false;
+    _closeActionMenu();
     _stopAutoRefresh();
     _cleanupSideResize();
     var separateOverlay = _overlay && _overlay !== _dockOverlay ? _overlay : null;
@@ -895,19 +897,38 @@ var FilePreview = (function () {
       '<path d="M15 3h6v6"/><path d="m10 14 11-11"/>'
       + '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>');
     btnNewTab.className += ' fp-btn-file-only fp-btn-newtab';
-    var btnExport = _btn('', '\u5BFC\u51FA\u6E32\u67D3\u540E\u7684 HTML', function () { _exportHtml(); });
-    _setSvgIcon(btnExport,
-      '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
-      + '<path d="M14 2v6h6"/><path d="M12 11v7"/><path d="m9 15 3 3 3-3"/>');
-    btnExport.className += ' fp-btn-file-only';
     var btnShare = _btn('', '\u751F\u6210\u5185\u7F51\u5206\u4EAB\u94FE\u63A5', function () { _openShareDialog(); });
     _setSvgIcon(btnShare,
       '<path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"/>'
       + '<path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.14-1.14"/>');
     btnShare.className += ' fp-btn-file-only';
-    var btnDownload = _btn('', 'Download', function () { _download(); });
-    _setSvgIcon(btnDownload,
-      '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>');
+    var btnCopy = _menuBtn('复制全文',
+      '<rect x="9" y="9" width="12" height="12" rx="2"/>'
+      + '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+      [
+        { label: '带格式复制', hint: '渲染后的富文本，保留标题、表格与图片',
+          icon: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
+            + '<path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/>',
+          run: _copyRendered },
+        { label: '不带格式复制', hint: '无样式的纯文本',
+          icon: '<path d="M4 7V5a1 1 0 0 1 1-1h2"/><path d="M17 4h2a1 1 0 0 1 1 1v2"/>'
+            + '<path d="M20 17v2a1 1 0 0 1-1 1h-2"/><path d="M7 20H5a1 1 0 0 1-1-1v-2"/>'
+            + '<path d="M8 12h8"/>',
+          run: _copyPlainText },
+      ]);
+    btnCopy.className += ' fp-btn-file-only fp-btn-copy';
+    var btnDownload = _menuBtn('下载',
+      '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
+      [
+        { label: '下载 Raw 文件', hint: '服务器上的原始文件',
+          icon: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
+            + '<path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
+          run: _download },
+        { label: '导出渲染后的 HTML', hint: '当前预览效果的自包含快照',
+          icon: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
+            + '<path d="M14 2v6h6"/><path d="M12 11v7"/><path d="m9 15 3 3 3-3"/>',
+          run: _exportHtml },
+      ]);
     btnDownload.className += ' fp-btn-file-only fp-btn-download';
     var btnClose = _btn('', 'Close', close);
     _setSvgIcon(btnClose, '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
@@ -917,7 +938,7 @@ var FilePreview = (function () {
     actions.appendChild(btnPlacement);
     actions.appendChild(btnMaximize);
     actions.appendChild(btnNewTab);
-    actions.appendChild(btnExport);
+    actions.appendChild(btnCopy);
     actions.appendChild(btnShare);
     actions.appendChild(btnDownload);
     actions.appendChild(btnClose);
@@ -962,11 +983,115 @@ var FilePreview = (function () {
     return b;
   }
 
+  // Toolbar button that toggles an action menu. The ARIA menu-button contract
+  // is declared up front so aria-expanded is meaningful before the first open.
+  function _menuBtn(label, iconPaths, items) {
+    var b = _btn('', label, function () { _openActionMenu(b, items); });
+    _setSvgIcon(b, iconPaths);
+    b.setAttribute('aria-haspopup', 'menu');
+    b.setAttribute('aria-expanded', 'false');
+    return b;
+  }
+
   function _setSvgIcon(button, paths) {
     button.classList.add('fp-btn-svg');
     button.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
       + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'
       + ' aria-hidden="true" focusable="false">' + paths + '</svg>';
+  }
+
+  // One shared anchored popup for the toolbar's menu buttons. It lives on
+  // document.body rather than inside the header because .fp-modal clips
+  // overflow, and only one menu is ever open at a time.
+  function _closeActionMenu() {
+    var menu = _actionMenu;
+    if (!menu) return;
+    _actionMenu = null;
+    document.removeEventListener('mousedown', menu.onOutside, true);
+    document.removeEventListener('keydown', menu.onKeydown, true);
+    window.removeEventListener('resize', menu.onDismiss);
+    menu.el.remove();
+    menu.anchor.classList.remove('is-active');
+    menu.anchor.setAttribute('aria-expanded', 'false');
+  }
+
+  // items: [{ label, hint, icon, disabled, run }]. `icon` is trusted SVG
+  // markup from this file; label/hint are rendered as text.
+  function _openActionMenu(anchor, items) {
+    if (_actionMenu && _actionMenu.anchor === anchor) { _closeActionMenu(); return; }
+    _closeActionMenu();
+
+    var el = document.createElement('div');
+    el.className = 'fp-menu';
+    el.setAttribute('role', 'menu');
+
+    items.forEach(function (item) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'fp-menu-item';
+      btn.setAttribute('role', 'menuitem');
+      if (item.icon) {
+        var icon = document.createElement('span');
+        icon.className = 'fp-menu-icon';
+        icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+          + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'
+          + ' aria-hidden="true" focusable="false">' + item.icon + '</svg>';
+        btn.appendChild(icon);
+      }
+      var text = document.createElement('span');
+      text.className = 'fp-menu-text';
+      var label = document.createElement('span');
+      label.className = 'fp-menu-label';
+      label.textContent = item.label;
+      text.appendChild(label);
+      if (item.hint) {
+        var hint = document.createElement('span');
+        hint.className = 'fp-menu-hint';
+        hint.textContent = item.hint;
+        text.appendChild(hint);
+      }
+      btn.appendChild(text);
+      if (item.disabled) {
+        btn.disabled = true;
+      } else {
+        btn.addEventListener('click', function () { _closeActionMenu(); item.run(); });
+      }
+      el.appendChild(btn);
+    });
+
+    document.body.appendChild(el);
+    var rect = anchor.getBoundingClientRect();
+    var width = el.offsetWidth, height = el.offsetHeight;
+    var left = Math.min(Math.max(8, rect.right - width), window.innerWidth - width - 8);
+    var top = rect.bottom + 6;
+    if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 6);
+    el.style.left = Math.round(left) + 'px';
+    el.style.top = Math.round(top) + 'px';
+
+    // The anchor is excluded so its own click handler performs the toggle
+    // instead of the outside-mousedown closing it first.
+    var onOutside = function (e) {
+      if (!el.contains(e.target) && e.target !== anchor) _closeActionMenu();
+    };
+    var onKeydown = function (e) {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      _closeActionMenu();
+      anchor.focus();
+    };
+    var onDismiss = function () { _closeActionMenu(); };
+    document.addEventListener('mousedown', onOutside, true);
+    document.addEventListener('keydown', onKeydown, true);
+    window.addEventListener('resize', onDismiss);
+
+    _actionMenu = {
+      el: el, anchor: anchor,
+      onOutside: onOutside, onKeydown: onKeydown, onDismiss: onDismiss,
+    };
+    anchor.classList.add('is-active');
+    anchor.setAttribute('aria-expanded', 'true');
+    var first = el.querySelector('.fp-menu-item:not([disabled])');
+    if (first) first.focus();
   }
 
   function _mermaidHex(value, fallback) {
@@ -1490,7 +1615,7 @@ var FilePreview = (function () {
   function _rootVars() {
     var keys = ['--bg-primary', '--bg-secondary', '--bg-card', '--bg-deep', '--bg-hover', '--border-subtle',
       '--text-primary', '--text-secondary', '--text-muted', '--accent-blue', '--accent-red'];
-    var cs = getComputedStyle(document.documentElement);
+    var cs = window.getComputedStyle(document.documentElement);
     var out = ':root{';
     keys.forEach(function (k) {
       var v = (cs.getPropertyValue(k) || '').trim();
@@ -1767,8 +1892,8 @@ var FilePreview = (function () {
   }
 
   function _copyText(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      return navigator.clipboard.writeText(text).catch(function () { _copyFallback(text); });
+    if (window.navigator.clipboard && window.navigator.clipboard.writeText) {
+      return window.navigator.clipboard.writeText(text).catch(function () { _copyFallback(text); });
     }
     _copyFallback(text);
     return Promise.resolve();
@@ -1936,7 +2061,46 @@ var FilePreview = (function () {
       });
   }
 
+  // Text files keep their content in rawContent from the /content fetch;
+  // xlsx and friends have none, so the rendered view is the only source.
+  function _previewPlainText() {
+    if (!_currentFile) return '';
+    if (_currentFile.rawContent != null) return _currentFile.rawContent;
+    var rendered = _overlay && _overlay.querySelector('.fp-md-wrap, .fp-code-wrap, .fp-xlsx-wrap');
+    return rendered ? (rendered.textContent || '') : '';
+  }
+
+  function _copyPlainText() {
+    var text = _previewPlainText();
+    if (!text) { _toast('当前文件没有可复制的文本'); return; }
+    _copyText(text).then(function () { _toast('已复制全文（纯文本）'); });
+  }
+
+  // Rich copy reuses the export/share snapshot so pasting keeps headings,
+  // tables, syntax colours and inline images.
+  function _copyRendered() {
+    _buildStandaloneDoc().then(function (out) {
+      if (!out) { _toast('当前文件没有可复制的渲染结果'); return null; }
+      var plain = _previewPlainText();
+      var supportsRich = window.ClipboardItem && window.navigator.clipboard
+        && typeof window.navigator.clipboard.write === 'function';
+      if (!supportsRich) {
+        if (!plain) throw new Error('当前浏览器不支持带格式复制');
+        return _copyText(plain).then(function () {
+          _toast('当前浏览器不支持带格式复制，已复制纯文本');
+        });
+      }
+      return window.navigator.clipboard.write([new window.ClipboardItem({
+        'text/html': new Blob([out.html], { type: 'text/html' }),
+        'text/plain': new Blob([plain], { type: 'text/plain' }),
+      })]).then(function () { _toast('已复制全文（带格式）'); });
+    }).catch(function (err) {
+      _toast('复制失败: ' + (err && err.message ? err.message : err));
+    });
+  }
+
   function close() {
+    _closeActionMenu();
     if (_placement === 'side') {
       _closeDockTab(_activeDockTabId);
       return;
@@ -1978,7 +2142,7 @@ var FilePreview = (function () {
     if (absPath) {
       var btn = document.createElement('button');
       btn.className = 'fp-error-download';
-      btn.textContent = 'Download';
+      btn.textContent = '下载 Raw 文件';
       btn.addEventListener('click', function () {
         var _tp = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
         var url = '/api/files/raw?path=' + encodeURIComponent(absPath)
@@ -1993,15 +2157,16 @@ var FilePreview = (function () {
     body.appendChild(wrap);
   }
 
-  // Transient popup so a failed jump/open is never silent, even when the
-  // preview surface itself is hidden or docked.
-  function _notifyFailure(message) {
+  // Transient popup for preview feedback — failures that must never be
+  // silent even when the surface is hidden or docked, and copy confirmations.
+  function _toast(message) {
     try {
       if (window.AppShell && typeof window.AppShell.toast === 'function') {
         window.AppShell.toast(message);
       }
     } catch (_) { /* notification must never break previewing */ }
   }
+  function _notifyFailure(message) { _toast(message); }
 
   // --- Renderers ---
 
