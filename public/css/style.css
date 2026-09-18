@@ -1609,22 +1609,6 @@ body {
   line-height: 1.5;
 }
 
-/* Swipe-back indicator */
-.swipe-back-indicator {
-  position: fixed;
-  left: 0;
-  top: 20%;
-  width: 6px;
-  height: 60%;
-  background: var(--accent-blue);
-  border-radius: 0 4px 4px 0;
-  opacity: 0;
-  transform: scaleX(0.3);
-  transform-origin: left center;
-  pointer-events: none;
-  z-index: 100;
-}
-
 /* Fullscreen mode */
 body.terminal-fullscreen #topbar,
 body.terminal-fullscreen #sidebar {

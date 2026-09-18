@@ -20,8 +20,7 @@ tail, dragging up shows the head.
 
 - Vertical drag on the terminal scrolls tmux copy-mode with inertial fling
   (decay matched to UIScrollView).
-- Horizontal swipe from the left edge goes back to the window list, with a
-  progress indicator.
+- Horizontal drags stay in the terminal and do not navigate back.
 
 ## The key drawer
 

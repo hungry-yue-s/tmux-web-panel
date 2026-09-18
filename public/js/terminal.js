@@ -875,13 +875,6 @@ function renderTerminal(container) {
     });
   });
 
-  // Swipe-back visual indicator (rendered once, driven by overlay touch handler)
-  if (window.innerWidth < 768) {
-    var ind = document.createElement('div');
-    ind.className = 'swipe-back-indicator';
-    view.appendChild(ind);
-  }
-
   // Split button
   function doSplit(direction) {
     TerminalTarget.splitPane(state.currentSession, state.currentWindow, state.currentPane, direction)
@@ -1504,22 +1497,15 @@ function _mountTerminal(termContainer, nozoom) {
     flingRaf = requestAnimationFrame(step);
   }
 
-  // Unified touch handler: vertical = tmux scroll, horizontal = swipe back
+  // Unified touch handler: vertical = tmux scroll; horizontal is ignored.
   var ts = {
     startX: 0, startY: 0, lastY: 0,
     moved: false, scrollAccum: 0,
     direction: null,  // null | 'vertical' | 'horizontal'
-    startTime: 0, currentDx: 0,
+    startTime: 0,
     lastMoveTime: 0,
   };
   var LOCK_DISTANCE = 12;         // px before direction locks
-  var swipeIndicator = termContainer.closest('.terminal-view')
-    ? termContainer.closest('.terminal-view').querySelector('.swipe-back-indicator')
-    : null;
-  var sw = window.innerWidth;
-  var SWIPE_THRESHOLD = sw * 0.22;
-  var VELOCITY_TRIGGER = 0.35;    // px/ms
-
   // Pinch-to-zoom state
   var pinch = { active: false, startDist: 0, startFontSize: 0 };
 
@@ -1552,13 +1538,8 @@ function _mountTerminal(termContainer, nozoom) {
       ts.scrollAccum = 0;
       ts.direction = null;
       ts.startTime = Date.now();
-      ts.currentDx = 0;
       vSamples.length = 0;
       ts.lastMoveTime = ts.startTime;
-      if (swipeIndicator) {
-        swipeIndicator.style.transition = 'none';
-        swipeIndicator.style.opacity = '0';
-      }
 
       // Start long-press timer (only if not already in selection mode)
       if (!longPress.active) {
@@ -1626,13 +1607,8 @@ function _mountTerminal(termContainer, nozoom) {
     }
 
     if (ts.direction === 'horizontal') {
-      ts.currentDx = Math.max(0, dx);
-      // Visual feedback
-      if (swipeIndicator) {
-        var progress = Math.min(ts.currentDx / SWIPE_THRESHOLD, 1);
-        swipeIndicator.style.opacity = String(progress * 0.9);
-        swipeIndicator.style.transform = 'scaleX(' + (0.3 + progress * 0.7) + ')';
-      }
+      // Keep the gesture local so an accidental horizontal drag cannot trigger
+      // browser history navigation, but do not leave the terminal route.
       e.preventDefault();
     } else {
       // Vertical: tmux scroll
@@ -1697,12 +1673,10 @@ function _mountTerminal(termContainer, nozoom) {
           }
         }
       }
-      // No file path hit — pass through to terminal
-      overlay.style.pointerEvents = 'none';
-      var touch = e.changedTouches[0];
-      var el = document.elementFromPoint(touch.clientX, touch.clientY);
-      if (el) { el.focus(); el.click(); }
-      setTimeout(function () { overlay.style.pointerEvents = ''; }, 300);
+      // No file path hit — focus xterm directly. Temporarily disabling this
+      // overlay could strand pointer-events:none if Chrome Android froze before
+      // the old restore timer ran, which made later swipes dead.
+      term.focus();
       return;
     }
 
@@ -1717,23 +1691,6 @@ function _mountTerminal(termContainer, nozoom) {
       return;
     }
 
-    if (ts.direction === 'horizontal') {
-      var endX = e.changedTouches[0].clientX;
-      var totalDx = endX - ts.startX;
-      var dt = Date.now() - ts.startTime;
-      var velocity = dt > 0 ? totalDx / dt : 0;
-
-      // Fade out indicator
-      if (swipeIndicator) {
-        swipeIndicator.style.transition = 'opacity 0.25s, transform 0.25s';
-        swipeIndicator.style.opacity = '0';
-        swipeIndicator.style.transform = 'scaleX(0.3)';
-      }
-
-      if (totalDx >= SWIPE_THRESHOLD || velocity >= VELOCITY_TRIGGER) {
-        _backToWindows();
-      }
-    }
   });
 
   // ResizeObserver for auto-fit

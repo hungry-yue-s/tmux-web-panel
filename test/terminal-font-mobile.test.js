@@ -101,6 +101,28 @@ describe('mobile font size constants', () => {
   });
 });
 
+describe('mobile touch forwarding', () => {
+  it('focuses xterm without disabling the swipe overlay', () => {
+    const tapBlock = TERMINAL_SRC.slice(
+      TERMINAL_SRC.indexOf('// No file path hit'),
+      TERMINAL_SRC.indexOf('if (ts.direction === \'vertical\')', TERMINAL_SRC.indexOf('// No file path hit')),
+    );
+
+    expect(tapBlock).toContain('term.focus()');
+    expect(tapBlock).not.toContain('overlay.style.pointerEvents');
+    expect(tapBlock).not.toContain('setTimeout');
+  });
+});
+
+describe('mobile horizontal swipe', () => {
+  it('keeps horizontal terminal drags on the terminal route', () => {
+    expect(TERMINAL_SRC).not.toContain('SWIPE_THRESHOLD');
+    expect(TERMINAL_SRC).not.toContain('VELOCITY_TRIGGER');
+    expect(TERMINAL_SRC).not.toContain('swipe-back-indicator');
+    expect(TERMINAL_SRC).toContain("ts.direction === 'horizontal'");
+  });
+});
+
 describe('initial terminal fit', () => {
   it('sends the final fitted dimensions even when the socket opened first', () => {
     const delayedFit = TERMINAL_SRC.slice(
