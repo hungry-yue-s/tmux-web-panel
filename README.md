@@ -17,6 +17,10 @@ of every machine you own, plus rendered docs, live perf dashboards and
 
 <img src="docs/assets/readme/hero.png" alt="Desktop: terminal beside a docked Mermaid diagram preview" width="100%">
 
+<img src="docs/assets/readme/illustrations/xiaohei-viewers.svg" alt="Hand-drawn concept: desktop browser, mobile browser, and macOS app all view the same running tmux workspace through tmux-web-panel" width="88%">
+
+<sub>Concept illustration in the hand-drawn <a href="https://github.com/helloianneo/ian-xiaohei-illustrations">Ian Xiaohei Illustrations</a> style.</sub>
+
 </div>
 
 ---
@@ -109,6 +113,65 @@ Input is where the mobile work went. The key drawer detects whether the pane run
 Link detection is the feature people stop noticing they rely on: paths, `file://`, `localhost:port`, `:line` refs and CJK filenames are all clickable, and previews cover code, Markdown with Obsidian syntax, Mermaid, images, PDF, CSV/XLSX, directories and archive trees, refreshing when the file changes and exportable as a shared snapshot with a TTL. The multi-machine line adds eight explicit health states, host-key first-trust with fingerprint confirmation, and remote metrics collected by a read-only stdin probe with nothing installed on the far side. Notifications ride along: completion and bell edges per pane, breathing sidebar rows, a persisted notification center, and native macOS notifications that deep-link to the window.
 
 Ops is not an afterthought. Optional token auth, optional self-signed TLS covering localhost and the LAN IP, a systemd/launchd installer that builds tmux from a pinned submodule, and a companion service that brings sessions back after a reboot. The frontend has no build step, and there are roughly 1,400 automated tests across frontend, backend, SSH transport and the native bridges.
+
+---
+
+## Architecture
+
+tmux has three useful layers: a **session** is one project, a **window** is one tab/screen inside that project, and a **pane** is one split rectangle inside a window. Codex, Claude, lazygit, bash, or a plain shell actually runs in a pane.
+
+<img src="docs/assets/readme/illustrations/xiaohei-tmux-layers.svg" alt="Hand-drawn hierarchy: one tmux session contains windows; each window contains panes where Codex, Claude, lazygit, and bash run" width="90%">
+
+Clients never connect to tmux directly. They connect to `tmux-web-panel`; the panel authenticates them, serves the UI, and attaches to tmux. That is why closing a browser tab does not stop a build, and the same pane can be reopened from another device.
+
+```mermaid
+flowchart LR
+    subgraph clients["Clients"]
+        desktop["Desktop browser"]
+        mobile["Mobile browser<br/>Chrome · Safari"]
+        native["macOS app<br/>SwiftUI · WKWebView"]
+    end
+
+    subgraph deployment["Deployment computer"]
+        panel["tmux-web-panel<br/>login · web UI · REST API · terminal WebSocket"]
+
+        subgraph localTmux["Local tmux server — keeps jobs running when clients disconnect"]
+            direction TB
+            subgraph projectSession["Session = one project"]
+                direction TB
+                subgraph agentWindow["Window = one screen/tab"]
+                    codexPane["Pane<br/>Codex CLI"]
+                    claudePane["Pane<br/>Claude Code"]
+                end
+                subgraph workWindow["Window = another screen/tab"]
+                    lazygitPane["Pane<br/>lazygit"]
+                    bashPane["Pane<br/>bash"]
+                    logsPane["Pane<br/>logs"]
+                end
+            end
+        end
+
+        hostResources["Panel-host resources<br/>files · previews · metrics · notifications<br/>Codex/Claude skills & usage"]
+    end
+
+    subgraph remoteMachines["Optional registered machines"]
+        remoteTmux["Remote tmux"]
+        sshFallback["Persistent SSH PTY sessions<br/>when tmux is unavailable"]
+    end
+
+    clients -->|HTTPS: pages, workspace API, files| panel
+    clients <-->|terminal WebSocket: input/output| panel
+    panel <-->|tmux attach: create, resize, type, read output| localTmux
+    codexPane -.->|Stop / attention hooks| panel
+    claudePane -.->|bell / events| panel
+    codexPane <-->|optional tmux-agent HTTP MCP| panel
+    claudePane <-->|optional tmux-agent HTTP MCP| panel
+    panel -->|local collectors and files| hostResources
+    panel <-->|OpenSSH · no remote agent| remoteTmux
+    panel <-->|OpenSSH| sshFallback
+```
+
+The same workspace tree—server → session → window → pane—is what the sidebar, routes, and terminal WebSocket addresses use.
 
 ---
 

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+      <title id="title">tmux session, window, and pane hierarchy</title>
+      <desc id="desc">A hand-drawn workspace container illustration with Xiaohei in a bash pane</desc>
+      <rect width="1200" height="675" fill="#fff"/>
+      <defs>
+        <filter id="rough" x="-5%" y="-5%" width="110%" height="110%"><feTurbulence type="fractalNoise" baseFrequency="0.013" numOctaves="2" seed="4" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="5"/></filter>
+      </defs>
+      <g filter="url(#rough)">
+        <path d="M83,113 C390,88 815,94 1117,113 L1105,566 C795,594 383,588 94,565 Z" fill="#fff" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M190,91 C390,76 810,82 1108,98" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M151,165 C342,150 491,157 499,172 L489,489 C339,504 195,497 160,481 Z" fill="#fff" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M558,167 C743,152 896,158 904,173 L894,489 C746,504 610,497 580,481 Z" fill="#fff" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M203,247 C282,237 337,243 342,257 L334,354 C279,364 226,358 211,344 Z" fill="#fff" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M368,248 C425,240 473,245 477,258 L470,352 C427,362 385,356 373,342 Z" fill="#fff" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M203,377 C282,367 337,373 342,387 L334,462 C279,472 226,466 211,452 Z" fill="#fff" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M620,252 C734,240 831,247 838,264 L828,439 C726,453 642,445 627,426 Z" fill="#fff" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M222,286 L312,281 M222,304 L294,300 M222,322 L303,318" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M385,287 L455,282 M385,305 L441,301 M385,323 L452,319" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M222,414 L316,409 M222,432 L295,428" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M642,290 L805,283 M642,312 L778,306 M642,334 L793,328" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+      <g transform="translate(750,404) scale(0.9)">
+      <path d="M0,28 C-25,25 -31,-4 -15,-22 C-4,-34 15,-32 23,-18 C34,-1 26,25 0,28 Z" fill="#111"/>
+      <circle cx="-7" cy="-7" r="3.1" fill="#fff"/><circle cx="10" cy="-7" r="3.1" fill="#fff"/>
+      <path d="M-8,28 L-12,59" fill="none" stroke="#111" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M9,28 L14,59" fill="none" stroke="#111" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M-18,4 C-38,10 -50,3 -62,14" fill="none" stroke="#111" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M22,3 C42,10 54,3 66,13" fill="none" stroke="#111" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+      <g>
+        <text x="95" y="148" font-family="Xiaolai, Bradley Hand, Patrick Hand, Chalkboard SE, Comic Sans MS, PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, cursive, sans-serif" font-size="30" fill="#111" text-anchor="start" font-weight="500">Session = one project</text>
+        <text x="103" y="188" font-family="Xiaolai, Bradley Hand, Patrick Hand, Chalkboard SE, Comic Sans MS, PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, cursive, sans-serif" font-size="20" fill="#3b82c4" text-anchor="start" font-weight="500">long-running</text>
+        <text x="175" y="230" font-family="Xiaolai, Bradley Hand, Patrick Hand, Chalkboard SE, Comic Sans MS, PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, cursive, sans-serif" font-size="23" fill="#f07c24" text-anchor="start" font-weight="500">Window = tab/screen</text>
+        <text x="590" y="231" font-family="Xiaolai, Bradley Hand, Patrick Hand, Chalkboard SE, Comic Sans MS, PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, cursive, sans-serif" font-size="23" fill="#f07c24" text-anchor="start" font-weight="500">another window</text>
+        <text x="272" y="352" font-family="Xiaolai, Bradley Hand, Patrick Hand, Chalkboard SE, Comic Sans MS, PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, cursive, sans-serif" font-size="20" fill="#d94f3d" text-anchor="middle" font-weight="500">Codex CLI</text>
+        <text x="423" y="352" font-family="Xiaolai, Bradley Hand, Patrick Hand, Chalkboard SE, Comic Sans MS, PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, cursive, sans-serif" font-size="20" fill="#d94f3d" text-anchor="middle" font-weight="500">Claude Code</text>
+        <text x="272" y="447" font-family="Xiaolai, Bradley Hand, Patrick Hand, Chalkboard SE, Comic Sans MS, PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, cursive, sans-serif" font-size="20" fill="#d94f3d" text-anchor="middle" font-weight="500">lazygit</text>
+        <text x="750" y="374" font-family="Xiaolai, Bradley Hand, Patrick Hand, Chalkboard SE, Comic Sans MS, PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, cursive, sans-serif" font-size="22" fill="#d94f3d" text-anchor="middle" font-weight="500">bash</text>
+        <text x="600" y="627" font-family="Xiaolai, Bradley Hand, Patrick Hand, Chalkboard SE, Comic Sans MS, PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, cursive, sans-serif" font-size="25" fill="#3b82c4" text-anchor="middle" font-weight="500">Codex / Claude / lazygit / bash all run in panes</text>
+      </g>
+    </svg>

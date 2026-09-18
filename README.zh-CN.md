@@ -14,6 +14,10 @@ session、window、pane 都在，文档渲染、性能看板、还有追到手�
 
 <img src="docs/assets/readme/hero.png" alt="桌面端，终端旁边停着一张渲染好的 Mermaid 图" width="100%">
 
+<img src="docs/assets/readme/illustrations/xiaohei-viewers-zh.svg" alt="手绘概念图：电脑浏览器、手机浏览器和 macOS App 都通过 tmux-web-panel 打开同一个仍在运行的 tmux 现场" width="88%">
+
+<sub>插画的小黑手绘风格来自 <a href="https://github.com/helloianneo/ian-xiaohei-illustrations">Ian Xiaohei Illustrations</a>。</sub>
+
 </div>
 
 ---
@@ -97,6 +101,65 @@ session、window、pane 都在，文档渲染、性能看板、还有追到手�
 运维侧也没裸着。可选的 token 认证，可选的自签 TLS 覆盖 localhost 加局域网 IP，systemd 和 launchd 安装器从 pinned 子模块构建 tmux，重启后会话恢复有伴随服务兜底。重启丢会话这个坑大家也都知道，安装器把 tmux-resurrect 和 continuum 的接线一起做了。
 
 测试大概 1,400 个，前端、后端、SSH 传输、原生桥都覆盖。不在一个尺度上谈不上，但至少不是没测试的周末项目。
+
+---
+
+## 架构
+
+tmux 自己只有三层：**Session 管一件事**，**Window 像这件事里的一个标签页**，**Pane 是标签页里切出来的一块屏幕**。Codex、Claude、lazygit、bash 都住在 Pane 里；面板不是复制终端，而是把这三层搬进浏览器。
+
+<img src="docs/assets/readme/illustrations/xiaohei-tmux-layers-zh.svg" alt="手绘层级图：Session 里装多个 Window，Window 再分成 Pane；Codex、Claude、lazygit 和 bash 分别跑在不同 Pane 里" width="90%">
+
+手机、桌面浏览器、macOS App 都只是取景器。它们连的是 `tmux-web-panel`，由面板处理登录、网页、API 和终端连接，再去 attach tmux。所以关掉页面只是放下取景器，tmux 里的活不会停；换一台设备打开，还能回到同一个 Pane。
+
+```mermaid
+flowchart LR
+    subgraph clients["你手上的入口"]
+        desktop["电脑浏览器"]
+        mobile["手机 / 平板浏览器<br/>Chrome · Safari"]
+        native["macOS 原生外壳<br/>SwiftUI · WKWebView"]
+    end
+
+    subgraph deployment["面板部署在这台电脑"]
+        panel["tmux-web-panel<br/>负责登录 · 网页 · API · 终端连接"]
+
+        subgraph localTmux["本地 tmux：页面关了，任务还在"]
+            direction TB
+            subgraph projectSession["Session：一个项目"]
+                direction TB
+                subgraph agentWindow["Window：项目里的一个标签页"]
+                    codexPane["Pane<br/>Codex CLI"]
+                    claudePane["Pane<br/>Claude Code"]
+                end
+                subgraph workWindow["另一个 Window"]
+                    lazygitPane["Pane<br/>lazygit"]
+                    bashPane["Pane<br/>bash"]
+                    logsPane["Pane<br/>日志"]
+                end
+            end
+        end
+
+        hostResources["这台机器上的资源<br/>文件 · 预览 · 指标 · 通知<br/>Codex/Claude 技能和用量"]
+    end
+
+    subgraph remoteMachines["另外登记的主机"]
+        remoteTmux["远端 tmux"]
+        sshFallback["远端没有 tmux 时<br/>由面板托管 SSH 会话"]
+    end
+
+    clients -->|HTTPS：打开页面、查工作区、看文件| panel
+    clients <-->|终端 WebSocket 收发输入输出| panel
+    panel <-->|attach tmux：建窗格、改尺寸、读写终端| localTmux
+    codexPane -.->|结束 / 请求确认| panel
+    claudePane -.->|响铃 / 事件| panel
+    codexPane <-->|可接 tmux-agent MCP| panel
+    claudePane <-->|可接 tmux-agent MCP| panel
+    panel -->|读取文件和本机指标| hostResources
+    panel <-->|走 OpenSSH，远端不装 agent| remoteTmux
+    panel <-->|走 OpenSSH| sshFallback
+```
+
+侧栏、页面地址和终端连接共用这棵树：**服务器 → Session → Window → Pane**。
 
 ---
 
