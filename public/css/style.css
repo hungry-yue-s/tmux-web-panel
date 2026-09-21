@@ -1300,6 +1300,13 @@ body {
   padding: 4px;
 }
 
+/* FitAddon can leave less than one row of unused height after rounding the
+   terminal to whole cells. Match that viewport remainder to the active theme
+   instead of exposing xterm.css's default black background. */
+.terminal-container .xterm-viewport {
+  background-color: var(--bg-primary);
+}
+
 .terminal-touch-overlay {
   position: absolute;
   top: 0;
