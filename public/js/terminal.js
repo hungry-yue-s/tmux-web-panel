@@ -1595,7 +1595,6 @@ function _mountTerminal(termContainer, nozoom) {
     var t = e.touches[0];
     var dx = t.clientX - ts.startX;
     var dy = t.clientY - ts.startY;
-    ts.moved = true;
 
     // Lock direction after initial movement
     if (!ts.direction) {
@@ -1605,6 +1604,7 @@ function _mountTerminal(termContainer, nozoom) {
         return; // Not enough movement yet
       }
     }
+    ts.moved = true;
 
     if (ts.direction === 'horizontal') {
       // Keep the gesture local so an accidental horizontal drag cannot trigger

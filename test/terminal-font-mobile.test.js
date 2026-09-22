@@ -112,6 +112,16 @@ describe('mobile touch forwarding', () => {
     expect(tapBlock).not.toContain('overlay.style.pointerEvents');
     expect(tapBlock).not.toContain('setTimeout');
   });
+
+  it('still treats sub-threshold finger jitter as a tap', () => {
+    const touchMove = TERMINAL_SRC.slice(
+      TERMINAL_SRC.indexOf("overlay.addEventListener('touchmove'"),
+      TERMINAL_SRC.indexOf("overlay.addEventListener('touchend'"),
+    );
+
+    expect(touchMove.indexOf('ts.moved = true'))
+      .toBeGreaterThan(touchMove.indexOf('// Lock direction after initial movement'));
+  });
 });
 
 describe('mobile horizontal swipe', () => {
