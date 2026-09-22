@@ -75,14 +75,13 @@
 
       shell().setHeader(
         '服务器 / ' + server.name,
-        ({ performance: '性能', claude: 'Claude 用量', codex: 'Codex 用量', connection: '连接' })[section] || '性能',
+        ({ performance: '性能', agents: 'Agent 控制台', claude: 'Agent 控制台', codex: 'Agent 控制台', connection: '连接' })[section] || '性能',
         actionButton('立即检测', 'probe', false, 'refresh') + openWorkspace,
       );
 
       var base = this._hero(server, health, openWorkspace) + this._tabs(server, section);
       if (section === 'connection') return base + this._connection(server, health, workspace);
-      if (section === 'claude' && server.kind === 'local') return base + this._localClaude();
-      if (section === 'codex' && server.kind === 'local') return base + this._localCodex();
+      if (section === 'agents' && server.kind === 'local') return base + this._localAgents();
       return base + (server.kind === 'local'
         ? this._localPerformance()
         : this._performance(serverId, health));
@@ -115,6 +114,13 @@
       return '<div class="section local-perf-host">' + global.PerfPanel.renderSkeleton('codex') + '</div>';
     },
 
+    _localAgents: function () {
+      if (!global.AgentHub || typeof global.AgentHub.renderSkeleton !== 'function') {
+        return '<div class="ms-card empty"><h3>Agent 控制台组件未加载</h3></div>';
+      }
+      return '<div class="section local-agent-host">' + global.AgentHub.renderSkeleton() + '</div>';
+    },
+
     _hero: function (server, health, openWorkspace) {
       var stateTone = shell().tone(health.state);
       var facts = health.facts || {};
@@ -131,7 +137,7 @@
     },
 
     _tabs: function (server, section) {
-      var labels = { performance: '性能', claude: 'Claude 用量', codex: 'Codex 用量', connection: '连接' };
+      var labels = { performance: '性能', agents: 'Agent 控制台', claude: 'Claude 用量', codex: 'Codex 用量', connection: '连接' };
       var entries = server.kind === 'local'
         ? shell().localStatusSections().map(function (name) { return [name, labels[name]]; })
         : [['performance', labels.performance]];
@@ -271,8 +277,8 @@
       var ui = global.Store.getState().ui;
       var entries = [
         ['showPerformance', '性能', '机器与窗口资源'],
-        ['showClaude', 'Claude 用量', 'Claude 配额与使用趋势'],
-        ['showCodex', 'Codex 用量', 'Codex 配额与使用趋势'],
+        ['showClaude', 'Claude 数据源', '在 Agent 控制台显示 Claude 配额与趋势'],
+        ['showCodex', 'Codex / Qoder 数据源', '在 Agent 控制台显示账号、供应商与 CLI 活动'],
       ];
       var enabledCount = entries.filter(function (entry) { return ui[entry[0]]; }).length;
       return '<div class="section"><div class="section-head"><h3>监控页面</h3>'

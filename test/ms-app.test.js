@@ -361,7 +361,7 @@ const STATUS_DOM = `<!DOCTYPE html><html><body>
 </body></html>`;
 
 /** Full shell with stubbed network, so route handling can be driven directly. */
-function loadStatusShell({ perfPanel = null, theme = null, auth = null } = {}) {
+function loadStatusShell({ perfPanel = null, agentHub = null, theme = null, auth = null } = {}) {
   const dom = new JSDOM(STATUS_DOM, { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window;
   win.eval(ROUTER_SRC);
@@ -371,6 +371,7 @@ function loadStatusShell({ perfPanel = null, theme = null, auth = null } = {}) {
   win.eval(MS_APP);
 
   if (perfPanel) win.PerfPanel = perfPanel;
+  if (agentHub) win.AgentHub = agentHub;
   if (theme) win.Theme = theme;
   if (auth) win.Auth = auth;
 
@@ -418,6 +419,19 @@ function fakePerfPanel() {
       return '<div id="perf-panel" class="pp-card">' + sections.join('') + '</div>';
     },
     start: (mode) => { calls.started.push(mode); },
+    stop: () => { calls.stopped += 1; },
+  };
+}
+
+function fakeAgentHub() {
+  const calls = { started: 0, stopped: 0, rendered: 0 };
+  return {
+    calls,
+    renderSkeleton: () => {
+      calls.rendered += 1;
+      return '<section id="agent-hub"><h2>Agent 控制台</h2></section>';
+    },
+    start: () => { calls.started += 1; },
     stop: () => { calls.stopped += 1; },
   };
 }
@@ -529,7 +543,7 @@ describe('MsApp status mode routing', () => {
     await ctx.MsApp._onRoute({ name: 'servers', params: {} });
 
     expect(goes).toEqual([{
-      route: { name: 'server', params: { serverId: 'local', section: 'claude' } },
+      route: { name: 'server', params: { serverId: 'local', section: 'agents' } },
       opts: { replace: true },
     }]);
   });
@@ -542,13 +556,13 @@ describe('MsApp status mode routing', () => {
     expect(MS_APP).not.toContain('data-filter');
   });
 
-  it('shows independent Claude and Codex tabs only for the local server', async () => {
+  it('shows one unified Agent tab only for the local server', async () => {
     const perf = fakePerfPanel();
     const ctx = loadStatusShell({ perfPanel: perf });
 
     await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'local', section: 'performance' } });
     expect([...ctx.document.querySelectorAll('.tabs .tab')].map((n) => n.textContent))
-      .toEqual(['性能', 'Claude 用量', 'Codex 用量', '连接']);
+      .toEqual(['性能', 'Agent 控制台', '连接']);
 
     await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'api-linux', section: 'performance' } });
     expect([...ctx.document.querySelectorAll('.tabs .tab')].map((n) => n.textContent))
@@ -565,7 +579,7 @@ describe('MsApp status mode routing', () => {
     await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'local', section: 'performance' } });
 
     expect(goes).toEqual([{
-      route: { name: 'server', params: { serverId: 'local', section: 'claude' } },
+      route: { name: 'server', params: { serverId: 'local', section: 'agents' } },
       opts: { replace: true },
     }]);
     expect(perf.calls.started).toHaveLength(0);
@@ -702,32 +716,32 @@ describe('MsApp PerfPanel lifecycle', () => {
     expect(perf.calls.started).toContain('performance');
   });
 
-  it('uses the Claude-only mode for the local Claude section', async () => {
-    const perf = fakePerfPanel();
-    const ctx = loadStatusShell({ perfPanel: perf });
+  it('redirects legacy Claude and Codex routes to the unified Agent console', async () => {
+    for (const section of ['claude', 'codex']) {
+      const ctx = loadStatusShell({ agentHub: fakeAgentHub() });
+      const goes = [];
+      ctx.win.Router.go = (route, opts) => goes.push({ route, opts });
 
-    await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'local', section: 'claude' } });
+      await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'local', section } });
 
-    const view = ctx.document.getElementById('ms-view');
-    expect(view.textContent).toContain('Claude 用量');
-    expect(view.querySelector('#claude-view-root')).toBeTruthy();
-    expect(view.querySelector('#perf-view-root')).toBeNull();
-    expect(view.querySelector('#codex-view-root')).toBeNull();
-    expect(perf.calls.started).toContain('claude');
+      expect(goes).toEqual([{
+        route: { name: 'server', params: { serverId: 'local', section: 'agents' } },
+        opts: { replace: true },
+      }]);
+    }
   });
 
-  it('uses the Codex-only mode for the local Codex section', async () => {
-    const perf = fakePerfPanel();
-    const ctx = loadStatusShell({ perfPanel: perf });
+  it('mounts and tears down the unified Agent console', async () => {
+    const hub = fakeAgentHub();
+    const ctx = loadStatusShell({ agentHub: hub });
 
-    await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'local', section: 'codex' } });
+    await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'local', section: 'agents' } });
+    expect(ctx.document.querySelector('#agent-hub')).toBeTruthy();
+    expect(hub.calls.started).toBeGreaterThan(0);
 
-    const view = ctx.document.getElementById('ms-view');
-    expect(view.textContent).toContain('Codex 用量');
-    expect(view.textContent).not.toContain('机器性能');
-    expect(view.querySelector('#codex-view-root')).toBeTruthy();
-    expect(view.querySelector('#perf-view-root')).toBeNull();
-    expect(perf.calls.started).toContain('codex');
+    await ctx.MsApp._onRoute({ name: 'settings', params: {} });
+    expect(hub.calls.stopped).toBeGreaterThan(0);
+    expect(ctx.MsApp._agentHubMounted).toBe(false);
   });
 
   it('stops PerfPanel polling when leaving the route', async () => {

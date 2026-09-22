@@ -526,12 +526,12 @@ describe('AppShell status server rail', () => {
     expect(routes).toEqual(['#/servers/local/performance', '#/servers/api-linux/performance']);
   });
 
-  it('keeps Codex only for the local row and falls remote rows back to performance', () => {
+  it('keeps the Agent console only for the local row and falls remote rows back to performance', () => {
     ctx.Store.setRoute({ name: 'server', params: { serverId: 'local', section: 'codex' } });
     ctx.Shell.render();
     const routes = [...ctx.document.querySelectorAll('.server-rail-item')].map((n) => n.dataset.route);
-    expect(routes).toEqual(['#/servers/local/codex', '#/servers/api-linux/performance']);
-    expect(ctx.Shell._titleFor({ name: 'server', params: { section: 'codex' } })).toBe('Codex 用量');
+    expect(routes).toEqual(['#/servers/local/agents', '#/servers/api-linux/performance']);
+    expect(ctx.Shell._titleFor({ name: 'server', params: { section: 'agents' } })).toBe('Agent 控制台');
   });
 
   it('falls back to the first visible local monitor section in rail links', () => {
@@ -539,13 +539,13 @@ describe('AppShell status server rail', () => {
     ctx.Store.setRoute({ name: 'server', params: { serverId: 'local', section: 'performance' } });
     ctx.Shell.render();
 
-    expect(ctx.Shell.localStatusSections()).toEqual(['claude']);
-    expect(ctx.Shell.defaultStatusSection('local')).toBe('claude');
-    expect(ctx.Shell.resolveStatusSection('local', 'performance')).toBe('claude');
+    expect(ctx.Shell.localStatusSections()).toEqual(['agents']);
+    expect(ctx.Shell.defaultStatusSection('local')).toBe('agents');
+    expect(ctx.Shell.resolveStatusSection('local', 'performance')).toBe('agents');
     expect(ctx.Shell.resolveStatusSection('api-linux', 'claude')).toBe('performance');
     expect([...ctx.document.querySelectorAll('.server-rail-item')].map((n) => n.dataset.route))
-      .toEqual(['#/servers/local/claude', '#/servers/api-linux/performance']);
-    expect(ctx.Shell._titleFor({ name: 'server', params: { section: 'claude' } })).toBe('Claude 用量');
+      .toEqual(['#/servers/local/agents', '#/servers/api-linux/performance']);
+    expect(ctx.Shell._titleFor({ name: 'server', params: { section: 'agents' } })).toBe('Agent 控制台');
   });
 
   it('offers an add-server entry', () => {

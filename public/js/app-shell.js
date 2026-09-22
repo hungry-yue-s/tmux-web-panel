@@ -1,5 +1,5 @@
 (function (global) {
-  var LOCAL_MONITOR_SECTIONS = ['performance', 'claude', 'codex'];
+  var LOCAL_MONITOR_SECTIONS = ['performance', 'agents'];
   var ICONS = {
     terminal: '<svg class="ms-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>',
     gauge: '<svg class="ms-icon" viewBox="0 0 24 24"><path d="M20 13a8 8 0 1 0-16 0"/><path d="m12 13 4-4"/><path d="M5 19h14"/></svg>',
@@ -123,7 +123,7 @@
 
     localStatusSections: function () {
       var ui = global.Store.getState().ui;
-      var visibility = { performance: ui.showPerformance, claude: ui.showClaude, codex: ui.showCodex };
+      var visibility = { performance: ui.showPerformance, agents: ui.showClaude || ui.showCodex };
       return LOCAL_MONITOR_SECTIONS.filter(function (section) { return visibility[section]; });
     },
 
@@ -137,6 +137,9 @@
       if (section === 'connection') return 'connection';
       var server = this.server(serverId);
       if (!server || server.kind !== 'local') return 'performance';
+      if ((section === 'claude' || section === 'codex') && this.localStatusSections().indexOf('agents') >= 0) {
+        return 'agents';
+      }
       if (this.localStatusSections().indexOf(section) >= 0) return section;
       return this.defaultStatusSection(serverId);
     },
@@ -540,7 +543,7 @@
       if (route.name === 'servers') return '状态';
       if (route.name === 'settings') return '设置';
       if (route.name === 'server') {
-        return ({ performance: '性能', claude: 'Claude 用量', codex: 'Codex 用量', connection: '连接' })[route.params.section] || '性能';
+        return ({ performance: '性能', agents: 'Agent 控制台', claude: 'Agent 控制台', codex: 'Agent 控制台', connection: '连接' })[route.params.section] || '性能';
       }
       return '终端工作台';
     },

@@ -8119,3 +8119,162 @@ button.list-row:hover {
 .managed-skill small { display: block; overflow-wrap: anywhere; margin-top: 4px; }
 .managed-skill > div { min-width: 0; }
 .managed-skill .ms-btn { flex-shrink: 0; }
+
+/* ================================================================== */
+/* === Unified Agent control room =================================== */
+/* ================================================================== */
+.local-agent-host { margin-top: 0; }
+.agent-hub { display: grid; gap: 22px; padding-bottom: 36px; }
+.ah-loading,
+.ah-empty,
+.ah-error {
+  padding: 24px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--ui-radius-md);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg-card) 82%, transparent);
+}
+.ah-error { color: var(--accent-red); border-color: color-mix(in srgb, var(--accent-red) 35%, var(--border-subtle)); }
+.ah-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 11px; }
+.ah-actions > div { display: flex; gap: 8px; }
+.ah-source-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.ah-source-card,
+.ah-profile-card,
+.ah-usage-card,
+.ah-provider-list,
+.ah-activity-list {
+  border: 1px solid var(--border-subtle);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--bg-card) 92%, var(--bg-primary));
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .08);
+}
+.ah-source-card { min-width: 0; padding: 17px; color: inherit; text-align: left; cursor: pointer; font: inherit; }
+.ah-source-card:hover { border-color: color-mix(in srgb, var(--accent-blue) 38%, var(--border-subtle)); }
+.ah-source-card.selected { border-color: var(--accent-blue); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-blue) 18%, transparent), 0 12px 30px rgba(0, 0, 0, .08); }
+.ah-source-card.claude { border-top-color: color-mix(in srgb, var(--accent-orange) 70%, var(--border-subtle)); }
+.ah-source-card.codex { border-top-color: color-mix(in srgb, var(--accent-blue) 70%, var(--border-subtle)); }
+.ah-source-card.qoder { border-top-color: color-mix(in srgb, var(--accent-purple) 70%, var(--border-subtle)); }
+.ah-source-head { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; margin-bottom: 18px; }
+.ah-source-head h3 { margin: 0; font-size: 15px; }
+.ah-source-head p { margin: 2px 0 0; overflow: hidden; color: var(--text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.ah-agent-mark {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-primary) 76%, transparent);
+  font: 700 15px/1 var(--ms-mono);
+}
+.ah-quota { display: grid; grid-template-columns: minmax(92px, 1fr) minmax(70px, 1.5fr) 38px; align-items: center; gap: 10px; margin: 10px 0; font-size: 11px; }
+.ah-quota > div:first-child { display: grid; gap: 2px; }
+.ah-quota small { overflow: hidden; color: var(--text-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.ah-quota > strong { text-align: right; font: 700 12px/1 var(--ms-mono); }
+.ah-quota-track { height: 5px; overflow: hidden; border-radius: 999px; background: var(--bg-primary); }
+.ah-quota-track i { height: 100%; display: block; border-radius: inherit; background: var(--text-muted); }
+.ah-quota-track i.green { background: var(--accent-green); }
+.ah-quota-track i.yellow { background: var(--accent-yellow); }
+.ah-quota-track i.red { background: var(--accent-red); }
+.ah-source-stats { display: flex; justify-content: space-between; gap: 12px; margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--border-subtle); color: var(--text-muted); font-size: 10px; }
+.ah-source-stats strong { color: var(--text-primary); font: 700 12px/1 var(--ms-mono); }
+.ah-card-route { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; min-height: 46px; }
+.ah-card-route small { color: var(--text-muted); font-size: 9px; }
+.ah-card-route strong { font-size: 11px; text-align: right; }
+.ah-card-route span { grid-column: 1 / -1; color: var(--text-secondary); font-size: 10px; }
+.ah-qoder-count { min-height: 74px; display: grid; place-items: center; align-content: center; }
+.ah-qoder-count strong { color: var(--accent-purple); font: 700 30px/1 var(--ms-mono); }
+.ah-qoder-count span { margin-top: 6px; color: var(--text-muted); font-size: 10px; }
+.ah-source-note,
+.ah-security-note { margin: 10px 0 0; color: var(--text-muted); font-size: 10px; line-height: 1.5; }
+.ah-current-profile { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; padding: 17px 20px; border: 1px solid color-mix(in srgb, var(--accent-green) 45%, var(--border-subtle)); border-radius: 13px; background: color-mix(in srgb, var(--accent-green) 5%, var(--bg-card)); }
+.ah-current-profile.unknown { border-color: var(--border-subtle); }
+.ah-current-profile > div { display: grid; gap: 4px; }
+.ah-current-profile small { color: var(--text-muted); font-size: 9px; text-transform: uppercase; }
+.ah-current-profile strong { font-size: 15px; }
+.ah-current-profile span { color: var(--text-muted); font-size: 10px; }
+.ah-current-next { min-width: 170px; padding-left: 20px; border-left: 1px solid var(--border-subtle); }
+.ah-binding-note { display: flex; flex-wrap: wrap; gap: 8px 22px; padding: 10px 14px; border: 1px solid var(--border-subtle); border-radius: 10px; color: var(--text-muted); background: color-mix(in srgb, var(--bg-card) 75%, transparent); font-size: 10px; }
+.ah-binding-note strong { color: var(--text-primary); }
+.ah-profile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ah-profile-card { min-width: 0; padding: 15px; }
+.ah-profile-card.active { border-color: color-mix(in srgb, var(--accent-green) 50%, var(--border-subtle)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-green) 12%, transparent), 0 12px 30px rgba(0, 0, 0, .08); }
+.ah-account-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.ah-account-top > div { min-width: 0; }
+.ah-card-controls { display: flex; align-items: center; gap: 6px; }
+.ah-account-name { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.ah-profile-type { margin-bottom: 5px; color: var(--accent-blue); font: 700 9px/1 var(--ms-mono); text-transform: uppercase; }
+.ah-account-meta { margin-top: 3px; overflow: hidden; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.ah-account-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-subtle); color: var(--text-muted); font-size: 9px; }
+.ah-account-message { min-height: 47px; display: grid; place-items: center; color: var(--text-muted); font-size: 10px; }
+.ah-provider-summary { min-height: 47px; display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text-muted); font-size: 10px; }
+.ah-budget-list { min-height: 47px; display: flex; align-items: center; gap: 18px; color: var(--text-muted); font-size: 10px; }
+.ah-budget-list strong { color: var(--text-primary); }
+.ah-usage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ah-usage-card { padding: 15px; }
+.ah-usage-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.ah-usage-title span { color: var(--text-muted); font-size: 9px; }
+.ah-consumption { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); min-height: 74px; }
+.ah-consumption > div { display: grid; place-content: center; gap: 6px; text-align: center; }
+.ah-consumption > div + div { border-left: 1px solid var(--border-subtle); }
+.ah-consumption strong { font: 700 22px/1 var(--ms-mono); }
+.ah-consumption span { color: var(--text-muted); font-size: 10px; }
+.ms-btn.compact { min-height: 27px; padding: 4px 9px; font-size: 10px; }
+.ah-link-button { border: 0; color: var(--accent-blue); background: transparent; cursor: pointer; font: inherit; font-size: 11px; }
+.ah-provider-list { overflow: hidden; }
+.ah-provider-row { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto auto; align-items: center; gap: 9px; padding: 11px 12px; border-bottom: 1px solid var(--border-subtle); }
+.ah-provider-row:last-child { border-bottom: 0; }
+.ah-provider-row > div { min-width: 0; }
+.ah-provider-row strong,
+.ah-provider-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ah-provider-row strong { font-size: 11px; }
+.ah-provider-row small { margin-top: 2px; color: var(--text-muted); font-size: 9px; }
+.ah-provider-agent { color: var(--accent-purple); font: 700 9px/1 var(--ms-mono); text-transform: uppercase; }
+.ah-activity-list { overflow: hidden; }
+.ah-activity-row { display: grid; grid-template-columns: minmax(0, 1fr) 110px 110px auto 82px; align-items: center; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--border-subtle); font-size: 10px; }
+.ah-activity-row:last-child { border-bottom: 0; }
+.ah-activity-row > div { min-width: 0; }
+.ah-activity-row strong,
+.ah-activity-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ah-activity-row small,
+.ah-activity-row time { color: var(--text-muted); font-size: 9px; }
+.ah-activity-row time { text-align: right; }
+.ah-session-profile { color: var(--text-muted); }
+
+/* The same URL is a browser tab in normal browsers and an NSWindow in the
+   Swift WKWebView shell. The page itself only switches to a focused layout. */
+.agent-standalone .ms-app { grid-template-columns: minmax(0, 1fr); }
+.agent-standalone .ms-sidebar,
+.agent-standalone .ms-topbar,
+.agent-standalone .mobile-header,
+.agent-standalone .bottom-nav { display: none !important; }
+.agent-standalone .ms-app.mode-status .ms-main { height: 100vh; }
+.agent-standalone .ms-content { width: min(1480px, 100%); margin: 0 auto; padding-top: 26px; }
+.agent-standalone .server-hero,
+.agent-standalone .tabs { display: none; }
+.agent-standalone [data-ah-action="detach"] { display: none; }
+
+@media (max-width: 1100px) {
+  .ah-source-grid { grid-template-columns: 1fr 1fr; }
+  .ah-source-card.qoder { grid-column: 1 / -1; }
+  .ah-activity-row { grid-template-columns: minmax(0, 1fr) 100px 110px auto; }
+  .ah-activity-row time { display: none; }
+}
+
+@media (max-width: 720px) {
+  .agent-hub { gap: 15px; }
+  .ah-actions { width: 100%; align-items: stretch; flex-direction: column; }
+  .ah-actions > div { width: 100%; }
+  .ah-actions .ms-btn { flex: 1; }
+  .ah-source-grid,
+  .ah-profile-grid,
+  .ah-usage-grid { grid-template-columns: 1fr; }
+  .ah-source-card.qoder { grid-column: auto; }
+  .ah-current-profile { grid-template-columns: 1fr; gap: 12px; }
+  .ah-current-next { min-width: 0; padding: 12px 0 0; border-top: 1px solid var(--border-subtle); border-left: 0; }
+  .ah-activity-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .ah-activity-row > span:not(.ah-session-profile),
+  .ah-activity-row time { display: none; }
+  .agent-standalone .ms-content { padding: 14px; }
+}

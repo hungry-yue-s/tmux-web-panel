@@ -15,6 +15,7 @@
     _pollTimer: null,
     _resizing: false,
     _perfPanelMounted: false,
+    _agentHubMounted: false,
 
     /**
      * A failed render used to leave a blank page with no trace. Always leave
@@ -121,6 +122,7 @@
       }
       // PerfPanel owns interval timers; leaving its route must stop them.
       this._teardownPerfPanel();
+      this._teardownAgentHub();
       const serverId = (route.params && route.params.serverId) || 'local';
 
       if (route.name === 'servers') {
@@ -157,14 +159,17 @@
         view.classList.remove('terminal-mode');
         view.innerHTML = global.ServersPage.renderServer(route);
         this._mountPerfPanel(route);
+        this._mountAgentHub(route);
         await this.refreshWorkspace(serverId);
         // The rail shows CPU and memory for every server, not just this one.
         await Promise.all(global.AppShell.servers().map((s) => this.refreshMetrics(s.id)));
         // The route may have moved on while those two were in flight.
         if (!global.Router.isSame(global.Router.current(), route)) return;
         this._teardownPerfPanel();
+        this._teardownAgentHub();
         view.innerHTML = global.ServersPage.renderServer(route);
         this._mountPerfPanel(route);
+        this._mountAgentHub(route);
         return;
       }
 
@@ -175,7 +180,7 @@
     _localPerfMode(route) {
       if (!route || route.name !== 'server') return null;
       const section = (route.params || {}).section;
-      if (section !== 'performance' && section !== 'claude' && section !== 'codex') return null;
+      if (section !== 'performance') return null;
       const server = global.AppShell.server((route.params || {}).serverId);
       return server && server.kind === 'local' ? section : null;
     },
@@ -193,6 +198,22 @@
       if (!this._perfPanelMounted) return;
       this._perfPanelMounted = false;
       if (global.PerfPanel && typeof global.PerfPanel.stop === 'function') global.PerfPanel.stop();
+    },
+
+    _mountAgentHub(route) {
+      if (!route || route.name !== 'server' || (route.params || {}).section !== 'agents') return;
+      const server = global.AppShell.server((route.params || {}).serverId);
+      if (!server || server.kind !== 'local') return;
+      if (!global.AgentHub || typeof global.AgentHub.start !== 'function') return;
+      if (!global.document.getElementById('agent-hub')) return;
+      global.AgentHub.start();
+      this._agentHubMounted = true;
+    },
+
+    _teardownAgentHub() {
+      if (!this._agentHubMounted) return;
+      this._agentHubMounted = false;
+      if (global.AgentHub && typeof global.AgentHub.stop === 'function') global.AgentHub.stop();
     },
 
     async _renderTerminal(route, serverId, view) {

@@ -1,7 +1,9 @@
 (function (global) {
   var DEFAULT_SERVER_ID = 'local';
   var TERMINAL_KEYS = ['serverId', 'sessionId', 'windowId', 'paneId'];
-  var SERVER_SECTIONS = ['performance', 'claude', 'codex', 'connection'];
+  // Claude/Codex remain accepted as migration aliases and are redirected by
+  // AppShell to the unified agents route.
+  var SERVER_SECTIONS = ['performance', 'agents', 'claude', 'codex', 'connection'];
 
   var CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 

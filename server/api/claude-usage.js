@@ -84,35 +84,67 @@ async function readSessionsMeta() {
         sessions.push(JSON.parse(raw));
       } catch { /* skip */ }
     }
-    sessions.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+    const value = (session, camel, snake) => session[camel] ?? session[snake];
+    const millis = (input) => typeof input === 'number' ? input : Date.parse(input || '') || 0;
+    sessions.sort((a, b) => millis(value(b, 'startedAt', 'start_time')) - millis(value(a, 'startedAt', 'start_time')));
 
-    const recent = sessions.slice(0, 10).map((s) => ({
-      session_id: s.sessionId,
-      project_path: s.cwd || '',
-      start_time: s.startedAt ? new Date(s.startedAt).toISOString() : '',
-      updated_at: s.updatedAt ? new Date(s.updatedAt).toISOString() : '',
-      duration_minutes: s.startedAt && s.updatedAt ? Math.round((s.updatedAt - s.startedAt) / 60000) : 0,
-      version: s.version || '',
-    }));
+    const recent = sessions.slice(0, 10).map((s) => {
+      const startedAt = millis(value(s, 'startedAt', 'start_time'));
+      const updatedAt = millis(value(s, 'updatedAt', 'updated_at'));
+      return {
+        session_id: value(s, 'sessionId', 'session_id'),
+        project_path: value(s, 'cwd', 'project_path') || '',
+        start_time: startedAt ? new Date(startedAt).toISOString() : '',
+        updated_at: updatedAt ? new Date(updatedAt).toISOString() : '',
+        duration_minutes: value(s, 'durationMinutes', 'duration_minutes')
+          ?? (startedAt && updatedAt ? Math.round((updatedAt - startedAt) / 60000) : 0),
+        version: s.version || '',
+        model: s.model || '',
+        first_prompt: value(s, 'firstPrompt', 'first_prompt') || '',
+        input_tokens: Number(value(s, 'inputTokens', 'input_tokens')) || 0,
+        output_tokens: Number(value(s, 'outputTokens', 'output_tokens')) || 0,
+      };
+    });
 
     // Build daily activity + hour counts from session timestamps
     const dailyMap = {};
     const hourCounts = {};
     let firstDate = null;
+    let totalMessages = 0;
     for (const s of sessions) {
-      if (!s.startedAt) continue;
-      const d = new Date(s.startedAt);
+      const startedAt = millis(value(s, 'startedAt', 'start_time'));
+      if (!startedAt) continue;
+      const d = new Date(startedAt);
       const date = d.toISOString().slice(0, 10);
       if (!firstDate || date < firstDate) firstDate = date;
       if (!dailyMap[date]) dailyMap[date] = { date, sessions: 0, messages: 0, tokens: 0, toolCalls: 0 };
       dailyMap[date].sessions += 1;
-      const h = String(d.getHours());
-      hourCounts[h] = (hourCounts[h] || 0) + 1;
+      const messages = (Number(value(s, 'userMessageCount', 'user_message_count')) || 0)
+        + (Number(value(s, 'assistantMessageCount', 'assistant_message_count')) || 0);
+      const tokens = (Number(value(s, 'inputTokens', 'input_tokens')) || 0)
+        + (Number(value(s, 'outputTokens', 'output_tokens')) || 0);
+      dailyMap[date].messages += messages;
+      dailyMap[date].tokens += tokens;
+      totalMessages += messages;
+      const hours = value(s, 'messageHours', 'message_hours');
+      if (Array.isArray(hours) && hours.length) {
+        for (const hour of hours) hourCounts[String(hour)] = (hourCounts[String(hour)] || 0) + 1;
+      } else {
+        const h = String(d.getHours());
+        hourCounts[h] = (hourCounts[h] || 0) + 1;
+      }
     }
     const dailyActivity = Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date));
 
     // 2. Scan recent conversation JSONL files for tool usage
     const aggregatedTools = {};
+    for (const session of sessions) {
+      const tools = value(session, 'toolCounts', 'tool_counts') || {};
+      for (const [name, count] of Object.entries(tools)) {
+        aggregatedTools[name] = (aggregatedTools[name] || 0) + (Number(count) || 0);
+      }
+    }
+    const hasMetadataTools = Object.keys(aggregatedTools).length > 0;
     const projDir = join(CLAUDE_DIR, 'projects');
     const projFolders = await readdir(projDir).catch(() => []);
     const allJsonl = [];
@@ -128,7 +160,7 @@ async function readSessionsMeta() {
       }
     }
     allJsonl.sort((a, b) => b.mtime - a.mtime);
-    const recentJsonl = allJsonl.slice(0, 20);
+    const recentJsonl = hasMetadataTools ? [] : allJsonl.slice(0, 20);
 
     for (const { path } of recentJsonl) {
       try {
@@ -150,10 +182,13 @@ async function readSessionsMeta() {
     }
 
     // 3. Get code change stats from git across recent project dirs
-    let totalLinesAdded = 0, totalLinesRemoved = 0, totalCommits = 0;
+    let totalLinesAdded = sessions.reduce((sum, s) => sum + (Number(value(s, 'linesAdded', 'lines_added')) || 0), 0);
+    let totalLinesRemoved = sessions.reduce((sum, s) => sum + (Number(value(s, 'linesRemoved', 'lines_removed')) || 0), 0);
+    let totalCommits = sessions.reduce((sum, s) => sum + (Number(value(s, 'gitCommits', 'git_commits')) || 0), 0);
+    const hasMetadataCodeStats = totalLinesAdded > 0 || totalLinesRemoved > 0 || totalCommits > 0;
     const seenDirs = new Set();
-    for (const s of sessions.slice(0, 20)) {
-      const dir = s.cwd;
+    for (const s of hasMetadataCodeStats ? [] : sessions.slice(0, 20)) {
+      const dir = value(s, 'cwd', 'project_path');
       if (!dir || seenDirs.has(dir)) continue;
       seenDirs.add(dir);
       try {
@@ -173,7 +208,7 @@ async function readSessionsMeta() {
       recent, aggregatedTools,
       totalLinesAdded, totalLinesRemoved, totalCommits,
       totalSessions: sessions.length,
-      totalMessages: 0,
+      totalMessages,
       firstDate,
       dailyActivity, hourCounts,
     };
@@ -182,11 +217,11 @@ async function readSessionsMeta() {
     try {
       const raw = await readFile(join(CLAUDE_DIR, 'stats-cache.json'), 'utf8');
       const stats = JSON.parse(raw);
-      if (stats.totalMessages) result.totalMessages = stats.totalMessages;
-      if (stats.totalSessions > result.totalSessions) result.totalSessions = stats.totalSessions;
-      if (stats.firstSessionDate) {
+      if (!result.totalMessages && stats.totalMessages) result.totalMessages = stats.totalMessages;
+      if (!result.totalSessions && stats.totalSessions) result.totalSessions = stats.totalSessions;
+      if (!result.firstDate && stats.firstSessionDate) {
         const sd = stats.firstSessionDate.slice(0, 10);
-        if (!result.firstDate || sd < result.firstDate) result.firstDate = sd;
+        result.firstDate = sd;
       }
     } catch { /* no stats-cache */ }
 
@@ -336,12 +371,14 @@ export default function createRouter() {
   const router = Router();
 
   // Start background polling immediately
-  refreshSnapshot();
+  const initialRefresh = refreshSnapshot();
   setInterval(refreshSnapshot, POLL_INTERVAL);
 
   router.get('/', async (_req, res) => {
+    await initialRefresh;
     if (!latestSnapshot) {
-      return res.json({ success: false, error: 'loading' });
+      const credentials = await readCredentials();
+      return res.json({ success: false, error: credentials && credentials.claudeAiOauth ? 'loading' : 'not_configured' });
     }
     res.json({ success: true, data: latestSnapshot });
   });

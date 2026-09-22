@@ -27,7 +27,7 @@ function showPrompt(opts) {
 
     var input = document.createElement('input');
     input.className = 'modal-input';
-    input.type = 'text';
+    input.type = opts.type || 'text';
     input.placeholder = opts.placeholder || '';
     input.value = opts.value || '';
     box.appendChild(input);

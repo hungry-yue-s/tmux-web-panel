@@ -37,6 +37,7 @@ import { createAgentEventsRouter } from './api/agent-events.js';
 import { createSceneDiscoverRouter } from './api/scene-discover.js';
 import createClaudeUsageRouter from './api/claude-usage.js';
 import createCodexUsageRouter from './api/codex-usage.js';
+import { createAgentHubRouter } from './api/agent-hub.js';
 import { PinStore } from './pins.js';
 import { createPinsRouter } from './api/pins.js';
 import { ShareStore } from './share-store.js';
@@ -296,6 +297,7 @@ app.use('/api/upload', createUploadRouter('/tmp/tmux-web-panel-uploads'));
 app.use('/api/files', createFilesRouter([homedir(), '/tmp']));
 app.use('/api/claude-usage', createClaudeUsageRouter());
 app.use('/api/codex-usage', createCodexUsageRouter());
+app.use('/api/agent-hub', createAgentHubRouter());
 
 // --- HTTP(S) + WebSocket Server ---
 
