@@ -108,6 +108,7 @@ describe('mobile touch forwarding', () => {
       TERMINAL_SRC.indexOf('if (ts.direction === \'vertical\')', TERMINAL_SRC.indexOf('// No file path hit')),
     );
 
+    expect(tapBlock.indexOf('e.preventDefault()')).toBeLessThan(tapBlock.indexOf('term.focus()'));
     expect(tapBlock).toContain('term.focus()');
     expect(tapBlock).not.toContain('overlay.style.pointerEvents');
     expect(tapBlock).not.toContain('setTimeout');

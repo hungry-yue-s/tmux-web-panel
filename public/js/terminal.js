@@ -1676,6 +1676,7 @@ function _mountTerminal(termContainer, nozoom) {
       // No file path hit — focus xterm directly. Temporarily disabling this
       // overlay could strand pointer-events:none if Chrome Android froze before
       // the old restore timer ran, which made later swipes dead.
+      e.preventDefault();
       term.focus();
       return;
     }
