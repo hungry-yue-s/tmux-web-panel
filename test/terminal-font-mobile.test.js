@@ -108,7 +108,7 @@ describe('mobile touch forwarding', () => {
       TERMINAL_SRC.indexOf('if (ts.direction === \'vertical\')', TERMINAL_SRC.indexOf('// No file path hit')),
     );
 
-    expect(tapBlock.indexOf('e.preventDefault()')).toBeLessThan(tapBlock.indexOf('term.focus()'));
+    expect(tapBlock).toContain('refocusOnClick = true');
     expect(tapBlock).toContain('term.focus()');
     expect(tapBlock).not.toContain('overlay.style.pointerEvents');
     expect(tapBlock).not.toContain('setTimeout');
@@ -122,6 +122,17 @@ describe('mobile touch forwarding', () => {
 
     expect(touchMove.indexOf('ts.moved = true'))
       .toBeGreaterThan(touchMove.indexOf('// Lock direction after initial movement'));
+  });
+
+  it('refocuses xterm after Chrome dispatches its compatibility click', () => {
+    const clickBlock = TERMINAL_SRC.slice(
+      TERMINAL_SRC.indexOf("overlay.addEventListener('click'"),
+      TERMINAL_SRC.indexOf('// ResizeObserver for auto-fit'),
+    );
+
+    expect(clickBlock).toContain('if (!refocusOnClick) return');
+    expect(clickBlock).toContain('e.preventDefault()');
+    expect(clickBlock).toContain('term.focus()');
   });
 });
 

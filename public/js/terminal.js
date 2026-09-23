@@ -1505,6 +1505,7 @@ function _mountTerminal(termContainer, nozoom) {
     startTime: 0,
     lastMoveTime: 0,
   };
+  var refocusOnClick = false;
   var LOCK_DISTANCE = 12;         // px before direction locks
   // Pinch-to-zoom state
   var pinch = { active: false, startDist: 0, startFontSize: 0 };
@@ -1538,6 +1539,7 @@ function _mountTerminal(termContainer, nozoom) {
       ts.scrollAccum = 0;
       ts.direction = null;
       ts.startTime = Date.now();
+      refocusOnClick = false;
       vSamples.length = 0;
       ts.lastMoveTime = ts.startTime;
 
@@ -1676,7 +1678,7 @@ function _mountTerminal(termContainer, nozoom) {
       // No file path hit — focus xterm directly. Temporarily disabling this
       // overlay could strand pointer-events:none if Chrome Android froze before
       // the old restore timer ran, which made later swipes dead.
-      e.preventDefault();
+      refocusOnClick = true;
       term.focus();
       return;
     }
@@ -1692,6 +1694,16 @@ function _mountTerminal(termContainer, nozoom) {
       return;
     }
 
+  });
+
+  // Chrome focuses the touched overlay while dispatching its compatibility
+  // click, immediately blurring xterm after touchend and closing the keyboard.
+  // Refocus at the end of that trusted click so the IME stays attached.
+  overlay.addEventListener('click', function (e) {
+    if (!refocusOnClick) return;
+    refocusOnClick = false;
+    e.preventDefault();
+    term.focus();
   });
 
   // ResizeObserver for auto-fit
