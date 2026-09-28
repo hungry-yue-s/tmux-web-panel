@@ -44,11 +44,129 @@ Star 数是 2026-09-21 调研快照，只用于判断社区规模，会随时间
 | 项目 | 社区规模 | 值得吸收的能力 | 本项目的取舍 |
 | --- | ---: | --- | --- |
 | [CodexBar](https://github.com/steipete/CodexBar) | ≈21.7k stars | 多提供商适配、额度与重置时间、消费/状态、Qoder 支持、缓存最后一次成功结果 | 采用“统一视图 + 数据源适配器”思路；不扫描浏览器 Cookie/钥匙串 |
-| [codex-switcher](https://github.com/Lampese/codex-switcher) | 本机参考项目 | 多 Codex 账号、OAuth/API Key、5 小时/周额度、安全切换 | 只读账号仓库并提供安全切换；切换前保存当前账号已轮换 Token |
+| [codex-switcher](https://github.com/Lampese/codex-switcher) | 本机参考项目 | 多 Codex 账号、OAuth/API Key、账号画像、重置 Credits、安全切换 | 只读账号仓库并提供安全切换；切换前保存当前账号已轮换 Token。本机 Codex 只按实际返回展示周额度，不推测 5 小时窗口 |
 | [cc-switch](https://github.com/farion1231/cc-switch) | ≈133k stars | 多 CLI/供应商、MCP/Skills/Prompts、代理/故障转移、请求日志 | 引入其 MIT 许可下的配置投影思路；本面板自行完成直连 Provider 切换，不依赖 CC Switch 进程 |
 | [claude-code-router](https://github.com/musistudio/claude-code-router) | ≈37.4k stars | 多模型路由、凭据池、重试/回退、Token/延迟/成本日志 | 适合作为后续本地控制平面的设计参考，不在当前版本引入代理链路 |
 | [ccusage](https://github.com/ccusage/ccusage) | ≈18.7k stars | 多 CLI 本地日志统计、日/周/月/会话/计费块分析 | 吸收日志归一化方式；不增加对其命令运行态的依赖 |
+| [ccstatusline](https://github.com/sirmalloc/ccstatusline) | 高 Star 补充参考 | 当前上下文、Token 速度、压缩次数、额度缓存失效 | 只借鉴当前会话遥测；不引入状态栏编辑器和主题系统 |
 | [subswapper](https://github.com/lawzava/subswapper) / [Athena Usage Tracker](https://github.com/luckeyfaraday/athena-usage-tracker) | 补充参考 | 多账号隔离、最低用量排序、冷却与自动切换 | 当前保留人工确认切换；自动策略等有稳定额度源后再做 |
+
+### CodexBar
+
+最有价值的是数据层而不是 Swift 菜单栏外壳：
+
+- 每个 Provider 独立声明认证来源、抓取策略、额度窗口和展示数据。
+- 多种抓取方式按优先级回退，单一来源失败不拖垮整个面板。
+- 网络失败时保留最后一次成功快照，并明确标记 `stale`，而不是把旧数据当实时数据或直接清空。
+- 按前台交互、近期活动和空闲状态调整刷新间隔，合并重复刷新。
+- 官方服务状态与账号额度分开，事故状态不伪装成账号额度耗尽。
+- 本地日志产生的 Token/成本与供应商返回的额度并列展示，但不混算。
+
+不迁移浏览器 Cookie 自动扫描、钥匙串遍历、PTY 登录探测、菜单栏图标和 Widget。这些能力依赖 macOS 权限或 Swift UI，且会扩大凭据读取范围。Qoder 仍由用户显式录入会话 Cookie。
+
+### codex-switcher
+
+现有实现已经吸收其最关键的安全切换行为：写入另一个账号前，先把 `~/.codex/auth.json` 中可能已经轮换的 Token 保存回当前账号；账号切换与后台操作串行化，并提供崩溃恢复和回滚。
+
+后续适合独立实现的能力：
+
+- OAuth 账号的今天、近 7 天、近 30 天 Token 和每日桶。
+- 连续活跃天数、最长任务、常用集成、推理强度等账号画像。
+- Manual Reset Credits 数量、最近到期时间和订阅到期提醒。
+- 401 时刷新凭据后重试一次；403 不盲目刷新，避免消耗或破坏仍有效的 Refresh Token。
+- 切换前只做运行状态提示，不默认结束正在运行的 Codex 进程。
+
+当前本地检出的项目没有 `LICENSE` 文件，包清单也没有许可证声明。因此只能借鉴交互、协议和行为，不能直接复制其 Rust 或前端代码。
+
+### CC Switch
+
+适合迁移的是不要求其进程运行的数据能力：
+
+- Provider 预设、配置投影、原子写入、切换前快照和失败恢复。
+- 套餐额度、余额和预算的查询模板。
+- Claude/Codex 等本地 JSONL 会话的增量扫描、去重和聚合。
+- 模型名称归一化、输入/输出/缓存 Token 分列和自定义价格。
+- 按日期、Agent、Provider、模型、项目筛选用量。
+- 会话搜索、详情、复制恢复命令和显式恢复。
+- MCP 配置的跨 Agent 只读盘点和差异预览。
+
+不迁移本地代理接管、请求格式转换、故障转移、熔断、任意 JavaScript 用量脚本、云同步和 Deep Link。它们会让面板从观察/切换工具变成请求控制平面，也会引入请求内容、密钥和流式协议处理责任。
+
+### ccusage
+
+ccusage 的价值是统一离线统计模型：同一套结构表达日、周、月和会话用量，并保留 Agent、模型、项目、时区、输入/输出/缓存 Token 与价格来源。
+
+本项目应在服务端复用这种归一化思路并直接读取本地日志，不通过 `npx ccusage` 或常驻子进程获取数据。成本显示必须区分：
+
+- API Provider：供应商真实账单或按其价格表估算。
+- 官方订阅：仅显示“API 等价成本”，不是实际付款金额。
+- 未知模型或未知价格：显示 Token，不估算金额。
+
+### Claude Code Router 与 ccstatusline
+
+Claude Code Router 的 `Agent Profile` 概念适合未来的“使用指定身份新建 tmux Window”：默认运行身份仍用于普通新会话，用户也可以在启动时显式选择另一个身份；只有 CLI 官方支持隔离配置目录时才允许多个身份并行运行。
+
+ccstatusline 中的当前上下文比例、Token 速度、当前模型和压缩次数适合放进“当前会话详情”，不应放进账号额度卡片。账号额度、单会话上下文和机器性能是三类不同指标。
+
+## 迁移原则
+
+“引入代码逻辑、不依赖第三方运行态”具体意味着：
+
+1. 不调用第三方 GUI、CLI、后台服务、端口或本地代理。
+2. 只复用许可证允许的算法、协议映射和解析规则；跨 Swift/Rust/TypeScript 时优先用本项目语言独立实现。
+3. 第三方配置只作为兼容导入源，前端只认识 `Agent`、`RuntimeProfile`、`QuotaSnapshot` 和 `Session`。
+4. 面板直接读取 Agent 官方本地日志，或由服务端直连额度接口；所有响应先脱敏再发给浏览器。
+5. 数据源失败必须局部降级，并保留最后一次成功快照及采集时间。
+6. 切换始终由用户确认，影响范围明确为“新会话”；历史会话身份不随当前选择变化。
+
+建议的面板自有注册表为 `~/.config/tmux-web-panel/agent-profiles.json`。账号和 Provider 数量很少，使用带文件锁和原子替换的 JSON 足够；用量历史增长到需要索引后，再单独使用 SQLite。兼容导入应保留 `source` 和外部 ID，避免重复导入，但外部数据库结构不成为内部模型。
+
+## 可迁移功能清单
+
+| 优先级 | 功能 | 主要参考 | 落地方式 | 是否产生外部副作用 |
+| --- | --- | --- | --- | --- |
+| P0 | 最后成功快照、`fresh/stale/error/unconfigured` 状态 | CodexBar、CC Switch | 服务端缓存数据、时间和错误；失败保留旧值 | 否 |
+| P0 | 自适应刷新、请求合并、账号查询并发限制 | CodexBar | 前台快、后台慢；同一数据源只保留一个进行中请求 | 否 |
+| P0 | Codex 周额度严格按接口窗口展示 | CodexBar、codex-switcher | 有 `windowMinutes` 才显示周期；缺失时只写“额度” | 否 |
+| P0 | Codex TOML 原文保护 | CC Switch | 只修改面板拥有字段，保留注释、顺序、快照与回滚 | 是，用户确认切换时写配置 |
+| P1 | Codex 账号画像与 Reset Credits | codex-switcher | 单账号展开后延迟请求，401 最多刷新重试一次 | 只读网络请求 |
+| P1 | 日/周/月/会话 Token 与成本时间线 | ccusage、CC Switch、CodexBar | 直接解析本地日志，统一模型与价格来源 | 否 |
+| P1 | 会话搜索、筛选、详情、复制恢复命令 | CC Switch | 默认只读；恢复操作由用户显式触发 | 恢复时创建会话 |
+| P1 | 官方状态事故与 Provider 可达性 | CodexBar、CC Switch | 状态页查询；自定义 Provider 只做 DNS/TLS/HTTP 探测 | 只读网络请求 |
+| P1 | 额度阈值提醒与最低使用率账号建议 | CodexBar、subswapper | 只提醒和建议，默认不自动切换 | 否 |
+| P2 | 声明式 Provider 额度模板 | CC Switch | 固定 HTTP 请求和字段映射，不执行用户脚本 | 只读网络请求 |
+| P2 | 使用指定身份新建 tmux Window | Claude Code Router | 启动时绑定身份快照；按 Agent 能力决定是否隔离 | 创建本地会话 |
+| P2 | MCP 配置只读总览与差异预览 | CC Switch | 先扫描和比较，写入必须再次确认 | 默认否 |
+| P2 | 当前会话上下文、Token 速度、压缩次数 | ccstatusline | 由已有 Hook/会话日志提供，放入会话详情 | 否 |
+
+### Provider 额度模板边界
+
+CC Switch 支持自定义 JavaScript 查询，但本项目首版只允许声明式 HTTP 与字段映射。模板必须满足：
+
+- 仅允许 HTTPS，目标为 Provider 的已配置域名或内置允许域名。
+- 禁止 `file:`、localhost、环回、链路本地和私有网段，防止 SSRF。
+- 设置连接/读取超时和响应大小上限。
+- 凭据只在服务端插值，调试日志和浏览器响应均脱敏。
+- 不允许模板执行 JavaScript、Shell、动态模块或任意文件读取。
+
+### 为什么当前不做自动暖号
+
+暖号会向模型发送真实请求，消耗额度并改变额度窗口，因此它不是纯观察功能。当前不建议默认实现的原因是：
+
+1. 本机 Codex 当前只有周额度，没有通过提前请求来固定 5 小时窗口的收益；暖号只会消耗周额度。
+2. 定时暖号可能在机器唤醒、网络恢复或账号切换后产生用户没有直接发起的请求。
+3. 多账号同时暖号会触发限流、风控或 Token 轮换，增加账号失效和并发写凭据的风险。
+4. 暖号请求本身会污染用量、活跃天数、会话和成本统计，需要额外标记并排除。
+5. 面板的核心职责是查看、解释和显式切换；定时产生模型流量属于调度器职责。
+
+这不是永久禁止。只有某个 Agent/套餐重新出现可通过首个请求启动的短周期窗口，并且用户明确需要时，才考虑提供可选暖号；届时必须逐账号开启、默认关闭、展示预计消耗、跳过周额度已耗尽账号，并把暖号记录标记为 `system_warmup`，不得混入正常会话统计。
+
+## 许可证与代码复用边界
+
+- CodexBar、CC Switch、ccusage、Claude Code Router 为 MIT，可在保留许可证和署名的前提下选择性移植代码。
+- 当前本地 codex-switcher 未声明许可证，只能独立重写相同行为，不能复制实现。
+- 即使许可证允许，也不整包搬入 Swift/Rust/Tauri 模块；只迁移本项目实际需要的最小解析、映射或聚合逻辑。
+- 从外部项目复制的实质性代码必须在仓库许可证/NOTICE 中记录来源、原作者和对应许可证。
 
 ## 当前实现
 
