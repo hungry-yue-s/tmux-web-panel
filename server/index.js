@@ -37,7 +37,7 @@ import { createAgentEventsRouter } from './api/agent-events.js';
 import { createSceneDiscoverRouter } from './api/scene-discover.js';
 import createClaudeUsageRouter from './api/claude-usage.js';
 import createCodexUsageRouter from './api/codex-usage.js';
-import { createAgentHubRouter } from './api/agent-hub.js';
+import { createAgentHubRouter, createAgentHubService } from './api/agent-hub.js';
 import { PinStore } from './pins.js';
 import { createPinsRouter } from './api/pins.js';
 import { ShareStore } from './share-store.js';
@@ -297,7 +297,8 @@ app.use('/api/upload', createUploadRouter('/tmp/tmux-web-panel-uploads'));
 app.use('/api/files', createFilesRouter([homedir(), '/tmp']));
 app.use('/api/claude-usage', createClaudeUsageRouter());
 app.use('/api/codex-usage', createCodexUsageRouter());
-app.use('/api/agent-hub', createAgentHubRouter());
+const agentHubService = createAgentHubService();
+app.use('/api/agent-hub', createAgentHubRouter(agentHubService));
 
 // --- HTTP(S) + WebSocket Server ---
 
@@ -465,6 +466,9 @@ function shutdown(signal) {
   // Stop notification reaper
   notificationStore.stopReaper();
 
+  // Stop automatic Codex warm-up checks.
+  agentHubService.stopAutoWarmup();
+
   // Destroy all terminal PTY connections
   terminalManager.destroyAll();
 
@@ -507,6 +511,7 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 statusMonitor.start(config.pollInterval);
 terminalManager.startReaper();
 notificationStore.startReaper();
+agentHubService.startAutoWarmup();
 // Server liveness and capability detection, with its own per-server backoff.
 healthService.start(5000);
 // Reclaim SSH panes whose detached TTL has elapsed.

@@ -8164,7 +8164,7 @@ button.list-row:hover {
 .ah-profile-card.active { border-color: color-mix(in srgb, var(--accent-green) 50%, var(--border-subtle)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-green) 12%, transparent), 0 12px 30px rgba(0, 0, 0, .08); }
 .ah-account-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .ah-account-top > div { min-width: 0; }
-.ah-card-controls { display: flex; align-items: center; gap: 6px; }
+.ah-card-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; }
 .ah-account-name { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .ah-profile-type { margin-bottom: 5px; color: var(--accent-blue); font: 700 9px/1 var(--ms-mono); text-transform: uppercase; }
 .ah-account-meta { margin-top: 3px; overflow: hidden; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }

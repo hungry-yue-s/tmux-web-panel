@@ -151,17 +151,17 @@ CC Switch 支持自定义 JavaScript 查询，但本项目首版只允许声明�
 
 ### 暖号边界
 
-当前只实现手动、单账号暖号。暖号会向模型发送真实请求并消耗额度，因此每次都要求用户确认，不提供批量、定时或自动执行。当前不建议自动暖号的原因是：
+暖号会向模型发送真实请求并消耗周额度。手动暖号每次都要求确认；自动暖号默认关闭，必须在每个 OAuth 账号卡片上单独确认开启。不提供“全部开启”或固定时刻的批量调度。
 
-1. 本机 Codex 当前只有周额度，没有通过提前请求来固定 5 小时窗口的收益；暖号只会消耗周额度。
-2. 定时暖号可能在机器唤醒、网络恢复或账号切换后产生用户没有直接发起的请求。
-3. 多账号同时暖号会触发限流、风控或 Token 轮换，增加账号失效和并发写凭据的风险。
-4. 暖号请求本身会污染用量、活跃天数、会话和成本统计，需要额外标记并排除。
-5. 面板的核心职责是查看、解释和显式切换；定时产生模型流量属于调度器职责。
+自动策略严格按当前 Codex 周额度运行：
 
-手动暖号成功后只更新独立的 `agent-warmups.json`，不创建面板会话，也不改变当前运行身份。OpenAI 公开文档没有提供消费订阅账号的“暖号 API”，当前兼容请求属于隔离适配点；接口变化时应失败并提示，不得自动改用 API Key 或切换账号重试。
+1. 只识别额度接口明确返回的 `10080` 分钟窗口，不推测 5 小时窗口。
+2. launchd 维护的面板服务每 30 秒检查已开启账号；页面或 Swift 窗口关闭不影响调度。
+3. 只在新周窗口开始后的 5 分钟内发送，每个 `resetAt` 最多成功一次；最近一小时内已手动暖号时也不重复发送。
+4. 账号额度已耗尽、额度无法读取、非 OAuth 账号或 Token 失效时跳过；失败后至少间隔一分钟才重试。
+5. 多账号串行执行，不切换当前账号，不自动刷新 Token，不降级为 API Key。
 
-只有某个 Agent/套餐重新出现可通过首个请求启动的短周期窗口，并且用户明确需要时，才考虑自动暖号；届时必须逐账号开启、默认关闭、展示预计消耗、跳过周额度已耗尽账号，并把暖号记录标记为 `system_warmup`，不得混入正常会话统计。
+成功后只更新独立的 `agent-warmups.json`，并将来源标记为 `manual` 或 `automatic`；不创建面板会话，也不改变当前运行身份。[OpenAI 公开文档](https://learn.chatgpt.com/docs/enterprise/access-tokens) 支持信任环境中的非交互 Codex 自动化，但未将“暖号”定义为稳定公开 API；当前请求仍是隔离的兼容适配点。
 
 ## 许可证与代码复用边界
 
@@ -175,6 +175,7 @@ CC Switch 支持自定义 JavaScript 查询，但本项目首版只允许声明�
 - `GET /api/agent-hub`：兼容读取并返回脱敏后的 Codex 账号额度、Claude/Codex Provider 状态、Qoder Credits、本地会话和身份事件。
 - `POST /api/agent-hub/codex-switcher/:accountId/activate`：在同一排他事务中先切回 OpenAI Official，再切换 Codex 账号，并保留轮换后的凭据。
 - `POST /api/agent-hub/codex-switcher/:accountId/warmup`：用指定 Codex OAuth 账号发送一次低推理强度的最小请求；不切换账号，不支持 API Key，不自动刷新或轮换 Token。
+- `POST /api/agent-hub/codex-switcher/:accountId/auto-warmup`：保存该账号的自动暖号开关；后台调度属于面板服务，不依赖浏览器或第三方项目运行。
 - `POST /api/agent-hub/providers/:providerId/activate`：按请求中的 Agent 投影 Claude 或 Codex Provider，并同步当前 Provider 状态。
 - `POST /api/agent-hub/qoder/session`：显式保存 Qoder 网页会话 Cookie（文件权限 `0600`），用于读取 Credits；浏览器响应永不包含 Cookie。
 - Codex/Claude Provider 与 Codex 账号切换都有排他锁、快照、崩溃恢复日志和失败回滚；切换记录只用于之后新建会话的身份归属。
@@ -184,7 +185,7 @@ CC Switch 支持自定义 JavaScript 查询，但本项目首版只允许声明�
 
 ## 数据源边界
 
-- Codex：账号仓库来自 `~/.codex-switcher/accounts.json`，当前认证来自 `~/.codex/auth.json`；暖号成功时间单独保存在 `~/.config/tmux-web-panel/agent-warmups.json`，不含 Token 或响应内容。
+- Codex：账号仓库来自 `~/.codex-switcher/accounts.json`，当前认证来自 `~/.codex/auth.json`；暖号开关、成功时间、来源和最后成功的周窗口键单独保存在 `~/.config/tmux-web-panel/agent-warmups.json`，不含 Token 或响应内容。
 - CC Switch 兼容数据：读取 `~/.cc-switch/cc-switch.db` 和 `settings.json`，但不要求 CC Switch 安装或运行。Provider 切换由面板内置逻辑完成。代理接管模式下会拒绝直接写入，避免与代理的 live config 所有权冲突。
 - Qoder：统计 `~/.qoder/tasks`，并解析 `~/.qoder/projects/*/*.jsonl` 的会话、模型及日志中确实存在的 Token；当前 Qoder 日志没有 Token 字段时显示 `—`，不以 `0` 冒充真实消耗。macOS 拒绝读取日志时降级为文件元数据。实时 Credits 由用户在面板显式配置网页 Cookie；不扫描浏览器、钥匙串或其他进程。
 - ChatGPT 账号额度请求失败时保留账号和本地使用数据，不阻断整个面板。

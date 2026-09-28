@@ -18,6 +18,16 @@ const CHATGPT_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const CHATGPT_CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses';
 const CODEX_WARMUP_MODEL = 'gpt-5.6-luna';
 const USAGE_TTL_MS = 60_000;
+const AUTO_WARMUP_CHECK_MS = 30_000;
+const AUTO_WARMUP_RETRY_MS = 60_000;
+const WEEKLY_WINDOW_MINUTES = 7 * 24 * 60;
+const AUTO_WARMUP_SLACK_MINUTES = 5;
+const MIN_WARMUP_INTERVAL_MS = 60 * 60 * 1000;
+
+function validProfileId(value) {
+  return typeof value === 'string' && PROFILE_ID_RE.test(value)
+    && !['__proto__', 'prototype', 'constructor'].includes(value);
+}
 
 function safeDate(value) {
   if (!value) return null;
@@ -57,6 +67,23 @@ function sanitizeWhamUsage(payload) {
     } : null,
     observedAt: new Date().toISOString(),
   };
+}
+
+function dueAutoWarmupWindow(usage, history, nowMs = Date.now()) {
+  const weekly = [usage && usage.primary, usage && usage.secondary]
+    .find((window) => window && Number(window.windowMinutes) === WEEKLY_WINDOW_MINUTES);
+  const usedPercent = Number(weekly && weekly.usedPercent);
+  if (!weekly || !Number.isFinite(Number(weekly.resetsAt))
+    || !Number.isFinite(usedPercent) || usedPercent >= 99.5) return null;
+  const remainingMs = Number(weekly.resetsAt) * 1000 - nowMs;
+  const minute = 60 * 1000;
+  if (remainingMs < (WEEKLY_WINDOW_MINUTES - AUTO_WARMUP_SLACK_MINUTES) * minute
+    || remainingMs > (WEEKLY_WINDOW_MINUTES + AUTO_WARMUP_SLACK_MINUTES) * minute) return null;
+  const key = `weekly:${WEEKLY_WINDOW_MINUTES}:${weekly.resetsAt}`;
+  if (history && history.lastAutoWindowKey === key) return null;
+  const lastSuccess = Date.parse(history && history.lastSuccessAt || '');
+  if (Number.isFinite(lastSuccess) && nowMs - lastSuccess < MIN_WARMUP_INTERVAL_MS) return null;
+  return key;
 }
 
 function publicCodexProfile(account, store, usage) {
@@ -373,10 +400,21 @@ export function createAgentHubService(options = {}) {
   let qoderUsageCache = { expiresAt: 0, value: null };
   let switchQueue = Promise.resolve();
   let eventQueue = Promise.resolve();
+  let autoWarmupTimer = null;
+  let autoWarmupRunning = false;
+  const autoWarmupRetryAt = new Map();
   const recovery = Promise.all([
     typeof switchProvider.recover === 'function' ? switchProvider.recover() : null,
     typeof switchClaudeProvider.recover === 'function' ? switchClaudeProvider.recover() : null,
   ]).then(() => recoverAccountSwitch());
+
+  async function readWarmupHistory() {
+    let history = await readJSON(warmupHistoryPath, { version: 1, accounts: {} });
+    if (!history || typeof history !== 'object' || Array.isArray(history)) history = { version: 1, accounts: {} };
+    history.version = 1;
+    if (!history.accounts || typeof history.accounts !== 'object' || Array.isArray(history.accounts)) history.accounts = {};
+    return history;
+  }
 
   async function fetchProfileUsage(account) {
     const auth = account.auth_data || {};
@@ -558,7 +596,7 @@ export function createAgentHubService(options = {}) {
       includeCodex ? qoderActivity(qoderTasksPath) : { installed: false, taskCount: 0, lastActivityAt: null },
       includeCodex ? qoderSessions(qoderProjectsPath) : { installed: false, recentSessions: [], totalSessions: 0, totalMessages: 0, totalTokens: null, lastActivityAt: null },
       includeCodex ? fetchQoderUsage() : null,
-      includeCodex ? readJSON(warmupHistoryPath, { accounts: {} }) : { accounts: {} },
+      includeCodex ? readWarmupHistory() : { accounts: {} },
     ]);
     const qoder = {
       installed: qoderTasks.installed || qoderHistory.installed,
@@ -593,6 +631,11 @@ export function createAgentHubService(options = {}) {
         accounts: accounts.map((account) => ({
           ...publicCodexProfile(account, store, usages.get(account.id)),
           lastWarmupAt: safeDate(warmups && warmups.accounts && warmups.accounts[account.id] && warmups.accounts[account.id].lastSuccessAt),
+          lastWarmupMode: warmups && warmups.accounts && warmups.accounts[account.id]
+            && ['manual', 'automatic'].includes(warmups.accounts[account.id].lastMode)
+            ? warmups.accounts[account.id].lastMode : null,
+          autoWarmupEnabled: Boolean(warmups && warmups.accounts && warmups.accounts[account.id]
+            && warmups.accounts[account.id].autoEnabled),
         })),
       },
       ccSwitch: { available: providers.length > 0, providers },
@@ -602,7 +645,7 @@ export function createAgentHubService(options = {}) {
   }
 
   async function activateCodex(accountId) {
-    if (!PROFILE_ID_RE.test(accountId || '')) {
+    if (!validProfileId(accountId)) {
       throw new AppError(ErrorCode.VALIDATION_ERROR, '无效的账号 ID');
     }
     const operation = switchQueue.catch(() => {}).then(async () => {
@@ -662,12 +705,20 @@ export function createAgentHubService(options = {}) {
     return operation;
   }
 
-  async function warmupCodex(accountId) {
-    if (!PROFILE_ID_RE.test(accountId || '') || ['__proto__', 'prototype', 'constructor'].includes(accountId)) {
+  async function warmupCodex(accountId, options = {}) {
+    if (!validProfileId(accountId)) {
       throw new AppError(ErrorCode.VALIDATION_ERROR, '无效的账号 ID');
     }
+    const automatic = options.mode === 'automatic';
     const operation = switchQueue.catch(() => {}).then(async () => {
       await recovery;
+      const history = await readWarmupHistory();
+      const previous = history.accounts[accountId] || {};
+      const previousSuccess = Date.parse(previous.lastSuccessAt || '');
+      if (automatic && (!previous.autoEnabled || previous.lastAutoWindowKey === options.windowKey
+        || (Number.isFinite(previousSuccess) && Date.now() - previousSuccess < MIN_WARMUP_INTERVAL_MS))) {
+        return { accountId, skipped: true, mode: 'automatic' };
+      }
       const store = await readJSON(accountsPath);
       if (!store || !Array.isArray(store.accounts)) {
         throw new AppError(ErrorCode.UNSUPPORTED, 'Codex Switcher 尚未配置');
@@ -730,21 +781,91 @@ export function createAgentHubService(options = {}) {
       }
 
       const warmedAt = new Date().toISOString();
-      let history = await readJSON(warmupHistoryPath, { version: 1, accounts: {} });
-      if (!history || typeof history !== 'object' || Array.isArray(history)) history = { version: 1, accounts: {} };
-      history.version = 1;
-      history.accounts = history.accounts && typeof history.accounts === 'object' ? history.accounts : {};
-      history.accounts[accountId] = { lastSuccessAt: warmedAt, model: CODEX_WARMUP_MODEL };
+      history.accounts[accountId] = {
+        ...previous,
+        lastSuccessAt: warmedAt,
+        lastMode: automatic ? 'automatic' : 'manual',
+        model: CODEX_WARMUP_MODEL,
+        ...(automatic ? { lastAutoWindowKey: options.windowKey } : {}),
+      };
       await atomicJSONWrite(warmupHistoryPath, history);
       usageCache.expiresAt = 0;
-      return { accountId, warmedAt, model: CODEX_WARMUP_MODEL, consumedQuota: true };
+      return { accountId, warmedAt, mode: automatic ? 'automatic' : 'manual', model: CODEX_WARMUP_MODEL, consumedQuota: true };
     });
     switchQueue = operation;
     return operation;
   }
 
+  async function configureAutoWarmup(accountId, enabled) {
+    if (!validProfileId(accountId) || typeof enabled !== 'boolean') {
+      throw new AppError(ErrorCode.VALIDATION_ERROR, '无效的自动暖号配置');
+    }
+    const operation = switchQueue.catch(() => {}).then(async () => {
+      await recovery;
+      const store = await readJSON(accountsPath);
+      const account = store && Array.isArray(store.accounts)
+        ? store.accounts.find((candidate) => candidate.id === accountId) : null;
+      if (!account) throw new AppError(ErrorCode.VALIDATION_ERROR, '账号不存在', { status: 404 });
+      if (authKind(account.auth_data) !== 'chatgpt') {
+        throw new AppError(ErrorCode.UNSUPPORTED, '自动暖号仅支持 Codex 官方订阅账号');
+      }
+      const history = await readWarmupHistory();
+      history.accounts[accountId] = { ...(history.accounts[accountId] || {}), autoEnabled: enabled };
+      await atomicJSONWrite(warmupHistoryPath, history);
+      if (!enabled) autoWarmupRetryAt.delete(accountId);
+      return { accountId, enabled };
+    });
+    switchQueue = operation;
+    return operation;
+  }
+
+  async function runAutoWarmups(nowMs = Date.now()) {
+    if (autoWarmupRunning) return [];
+    autoWarmupRunning = true;
+    try {
+      await recovery;
+      const history = await readWarmupHistory();
+      const enabledIds = new Set(Object.entries(history.accounts)
+        .filter(([, value]) => value && value.autoEnabled).map(([id]) => id));
+      if (!enabledIds.size) return [];
+      const store = await readJSON(accountsPath, { accounts: [] });
+      const accounts = Array.isArray(store.accounts)
+        ? store.accounts.filter((account) => enabledIds.has(account.id) && authKind(account.auth_data) === 'chatgpt') : [];
+      const usages = await usageFor(accounts);
+      const results = [];
+      for (const account of accounts) {
+        if ((autoWarmupRetryAt.get(account.id) || 0) > nowMs) continue;
+        const windowKey = dueAutoWarmupWindow(usages.get(account.id), history.accounts[account.id], nowMs);
+        if (!windowKey) continue;
+        try {
+          const result = await warmupCodex(account.id, { mode: 'automatic', windowKey });
+          autoWarmupRetryAt.delete(account.id);
+          if (!result.skipped) results.push(result);
+        } catch (error) {
+          autoWarmupRetryAt.set(account.id, nowMs + AUTO_WARMUP_RETRY_MS);
+          console.warn(`[agent-hub] automatic warm-up failed for ${account.id}: ${error.message || 'unknown error'}`);
+        }
+      }
+      return results;
+    } finally {
+      autoWarmupRunning = false;
+    }
+  }
+
+  function startAutoWarmup() {
+    if (autoWarmupTimer) return;
+    runAutoWarmups().catch(() => {});
+    autoWarmupTimer = setInterval(() => { runAutoWarmups().catch(() => {}); }, AUTO_WARMUP_CHECK_MS);
+    if (autoWarmupTimer.unref) autoWarmupTimer.unref();
+  }
+
+  function stopAutoWarmup() {
+    if (autoWarmupTimer) clearInterval(autoWarmupTimer);
+    autoWarmupTimer = null;
+  }
+
   async function activateProvider(providerId, agent = 'codex') {
-    if (!PROFILE_ID_RE.test(providerId || '')) {
+    if (!validProfileId(providerId)) {
       throw new AppError(ErrorCode.VALIDATION_ERROR, '无效的供应商 ID');
     }
     if (!['claude', 'codex'].includes(agent)) throw new AppError(ErrorCode.VALIDATION_ERROR, '不支持的 Agent');
@@ -766,7 +887,10 @@ export function createAgentHubService(options = {}) {
     return operation;
   }
 
-  return { status, activateCodex, warmupCodex, activateProvider, configureQoderSession };
+  return {
+    status, activateCodex, warmupCodex, configureAutoWarmup, runAutoWarmups,
+    startAutoWarmup, stopAutoWarmup, activateProvider, configureQoderSession,
+  };
 }
 
 export function createAgentHubRouter(service = createAgentHubService()) {
@@ -778,6 +902,9 @@ export function createAgentHubRouter(service = createAgentHubService()) {
   })));
   router.post('/codex-switcher/:accountId/activate', handle((req) => service.activateCodex(req.params.accountId)));
   router.post('/codex-switcher/:accountId/warmup', handle((req) => service.warmupCodex(req.params.accountId)));
+  router.post('/codex-switcher/:accountId/auto-warmup', handle((req) => service.configureAutoWarmup(
+    req.params.accountId, req.body && req.body.enabled,
+  )));
   router.post('/providers/:providerId/activate', handle((req) => service.activateProvider(req.params.providerId, req.body && req.body.agent)));
   router.post('/qoder/session', handle((req) => service.configureQoderSession(req.body)));
   return router;

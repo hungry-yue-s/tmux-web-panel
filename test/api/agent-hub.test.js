@@ -126,7 +126,7 @@ describe('Agent hub service', () => {
     });
 
     const result = await service.warmupCodex('acct-a');
-    expect(result).toMatchObject({ accountId: 'acct-a', model: 'gpt-5.6-luna', consumedQuota: true });
+    expect(result).toMatchObject({ accountId: 'acct-a', mode: 'manual', model: 'gpt-5.6-luna', consumedQuota: true });
     expect(JSON.stringify(result)).not.toMatch(/rotated-access|rotated-refresh/);
     const [url, request] = fetchImpl.mock.calls[0];
     expect(url).toBe('https://chatgpt.com/backend-api/codex/responses');
@@ -139,6 +139,41 @@ describe('Agent hub service', () => {
     const history = JSON.parse(await readFile(paths.warmupHistoryPath, 'utf8'));
     expect(history.accounts['acct-a']).toMatchObject({ model: 'gpt-5.6-luna' });
     expect(JSON.stringify(history)).not.toMatch(/rotated-access|rotated-refresh/);
+  });
+
+  it('automatically warms an enabled account once when a weekly window resets', async () => {
+    const paths = await fixture();
+    const nowMs = Date.now();
+    const resetAt = Math.floor(nowMs / 1000) + 7 * 24 * 60 * 60;
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.includes('/wham/usage')) return {
+        ok: true,
+        json: async () => ({
+          rate_limit: { primary_window: { used_percent: 0, limit_window_seconds: 604800, reset_at: resetAt } },
+        }),
+      };
+      return { ok: true, status: 200, text: async () => 'data: [DONE]' };
+    });
+    const service = createAgentHubService({
+      ...paths,
+      fetchImpl,
+      runSQLite: vi.fn().mockResolvedValue('[]'),
+    });
+
+    await expect(service.configureAutoWarmup('acct-a', true)).resolves.toEqual({ accountId: 'acct-a', enabled: true });
+    await expect(service.runAutoWarmups(nowMs)).resolves.toHaveLength(1);
+    await expect(service.runAutoWarmups(nowMs + 1000)).resolves.toEqual([]);
+
+    const warmupCalls = fetchImpl.mock.calls.filter(([url]) => url.includes('/codex/responses'));
+    expect(warmupCalls).toHaveLength(1);
+    const history = JSON.parse(await readFile(paths.warmupHistoryPath, 'utf8'));
+    expect(history.accounts['acct-a']).toMatchObject({
+      autoEnabled: true,
+      lastMode: 'automatic',
+      lastAutoWindowKey: `weekly:10080:${resetAt}`,
+    });
+    const profile = (await service.status()).codexSwitcher.accounts.find((account) => account.id === 'acct-a');
+    expect(profile).toMatchObject({ autoWarmupEnabled: true, lastWarmupMode: 'automatic' });
   });
 
   it('switches an API provider through the embedded adapter', async () => {
