@@ -113,6 +113,23 @@ describe('AgentHub', () => {
     hub.stop();
   });
 
+  it('requires confirmation before warming one Codex OAuth account', async () => {
+    const { win, hub } = loadHub({
+      hub: {
+        codexSwitcher: { accounts: [{ id: 'acct', name: 'Weekly', authKind: 'chatgpt', active: true, usage: {} }] },
+        ccSwitch: { providers: [] }, qoder: {},
+      },
+    });
+    win.showConfirm = vi.fn().mockResolvedValue(true);
+    hub.start();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    win.document.querySelector('[data-ah-action="warmup-account"]').click();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    expect(win.showConfirm.mock.calls[0][0].message).toContain('消耗该账号的周额度');
+    expect(win.Api.post).toHaveBeenCalledWith('/api/agent-hub/codex-switcher/acct/warmup');
+    hub.stop();
+  });
+
   it('keeps a stored Claude official profile switchable and renders Qoder sessions', async () => {
     const { win, hub } = loadHub({
       hub: {

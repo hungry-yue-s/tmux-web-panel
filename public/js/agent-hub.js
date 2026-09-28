@@ -4,7 +4,7 @@ var AgentHub = (function () {
   var POLL_MS = 30000;
   var timer = null;
   var root = null;
-  var state = { hub: null, claude: null, codex: null, selectedAgent: 'codex', loading: false, error: null };
+  var state = { hub: null, claude: null, codex: null, selectedAgent: 'codex', loading: false, error: null, warmingAccountId: null };
 
   function esc(value) {
     if (typeof window.escapeHtml === 'function') return window.escapeHtml(value);
@@ -147,6 +147,7 @@ var AgentHub = (function () {
         secondary: !account.masked && account.email && account.email !== account.name ? account.email : null,
         kind: account.authKind === 'api_key' ? 'api' : 'subscription',
         current: Boolean(account.active && codexOfficial), switchable: true, switchAction: 'activate-account',
+        warmupAction: account.authKind === 'chatgpt', lastWarmupAt: account.lastWarmupAt,
         lastUsedAt: account.lastUsedAt, expiresAt: account.subscriptionExpiresAt,
         message: usage.error || usage.unavailable || null,
         quota: quotaItems(usage, ['5 小时', '7 天']),
@@ -263,24 +264,29 @@ var AgentHub = (function () {
   function renderProfiles(agent) {
     if (!agent.profiles.length) return '<div class="ah-empty">未发现可用运行身份。</div>';
     return '<div class="ah-profile-grid">' + agent.profiles.map(function (profile) {
-      var control = '';
+      var controls = [];
       if (profile.configureAction) {
-        control = '<div class="ah-card-controls"><span class="ms-badge green">当前</span><button class="ms-btn ghost compact" data-ah-action="configure-qoder">配置额度</button></div>';
+        controls.push('<span class="ms-badge green">当前</span><button class="ms-btn ghost compact" data-ah-action="configure-qoder">配置额度</button>');
       } else if (profile.current) {
-        control = '<span class="ms-badge green">当前</span>';
+        controls.push('<span class="ms-badge green">当前</span>');
       } else if (profile.switchable) {
         var idAttr = profile.switchAction === 'activate-account' ? ' data-account-id="' : ' data-provider-id="';
-        control = '<button class="ms-btn ghost compact" data-ah-action="' + esc(profile.switchAction) + '" data-agent-id="' + esc(profile.agentId || 'codex') + '" data-target-name="' + esc(profile.name) + '"'
-          + idAttr + esc(profile.id) + '">切换</button>';
+        controls.push('<button class="ms-btn ghost compact" data-ah-action="' + esc(profile.switchAction) + '" data-agent-id="' + esc(profile.agentId || 'codex') + '" data-target-name="' + esc(profile.name) + '"'
+          + idAttr + esc(profile.id) + '">切换</button>');
       } else {
-        control = '<span class="ms-badge muted">只读</span>';
+        controls.push('<span class="ms-badge muted">只读</span>');
       }
+      if (profile.warmupAction) controls.push('<button class="ms-btn ghost compact" data-ah-action="warmup-account" data-account-id="' + esc(profile.id)
+        + '" data-target-name="' + esc(profile.name) + '"' + (state.warmingAccountId === profile.id ? ' disabled' : '') + '>'
+        + (state.warmingAccountId === profile.id ? '暖号中…' : '暖号') + '</button>');
+      var control = '<div class="ah-card-controls">' + controls.join('') + '</div>';
       return '<article class="ah-profile-card' + (profile.current ? ' active' : '') + '"><div class="ah-account-top"><div>'
         + '<div class="ah-profile-type">' + esc(profileTypeLabel(profile)) + '</div><div class="ah-account-name">' + esc(profile.name) + '</div>'
         + '<div class="ah-account-meta">' + esc(profile.detail || '') + (profile.secondary ? ' · ' + esc(profile.secondary) : '') + '</div></div>' + control + '</div>'
         + renderProfileQuota(profile)
         + '<div class="ah-account-foot"><span>' + (profile.current ? '新会话将使用此身份' : (profile.switchable ? '切换不影响运行中的会话' : '当前仅查看，暂不支持面板内切换')) + '</span>'
-        + (profile.expiresAt ? '<span>订阅至 ' + esc(profile.expiresAt.slice(0, 10)) + '</span>' : (profile.lastUsedAt ? '<span>最近使用 ' + esc(relative(profile.lastUsedAt)) + '</span>' : ''))
+        + (profile.lastWarmupAt ? '<span>最近暖号 ' + esc(relative(profile.lastWarmupAt)) + '</span>'
+          : (profile.expiresAt ? '<span>订阅至 ' + esc(profile.expiresAt.slice(0, 10)) + '</span>' : (profile.lastUsedAt ? '<span>最近使用 ' + esc(relative(profile.lastUsedAt)) + '</span>' : '')))
         + '</div></article>';
     }).join('') + '</div>';
   }
@@ -409,6 +415,32 @@ var AgentHub = (function () {
         return window.Api.post('/api/agent-hub/qoder/session', { cookieHeader: cookieHeader, site: 'international' })
           .then(function () { window.AppShell.toast('Qoder 额度配置已保存'); return load(); })
           .catch(function (error) { button.disabled = false; window.AppShell.toast(error.message || '配置失败'); });
+      });
+      return;
+    }
+    if (action === 'warmup-account') {
+      var warmupAccountId = button.dataset.accountId;
+      var warmupName = button.dataset.targetName || '这个账号';
+      var confirmWarmup = window.showConfirm ? window.showConfirm({
+        title: '暖号 ' + warmupName,
+        message: '这会向 OpenAI 发送一次最小模型请求，并消耗该账号的周额度。暖号不会切换当前账号，是否继续？',
+        confirmText: '暖号',
+      }) : Promise.resolve(window.confirm('暖号会消耗周额度，是否继续？'));
+      confirmWarmup.then(function (yes) {
+        if (!yes) return;
+        state.warmingAccountId = warmupAccountId;
+        paint();
+        return window.Api.post('/api/agent-hub/codex-switcher/' + encodeURIComponent(warmupAccountId) + '/warmup')
+          .then(function () {
+            window.AppShell.toast('已完成 ' + warmupName + ' 的暖号请求');
+            state.warmingAccountId = null;
+            return load();
+          })
+          .catch(function (error) {
+            state.warmingAccountId = null;
+            paint();
+            window.AppShell.toast(error.message || '暖号失败');
+          });
       });
       return;
     }

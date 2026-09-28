@@ -15,6 +15,8 @@ import { requireSameOrigin } from './servers.js';
 const execFileAsync = promisify(execFile);
 const PROFILE_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const CHATGPT_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
+const CHATGPT_CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses';
+const CODEX_WARMUP_MODEL = 'gpt-5.6-luna';
 const USAGE_TTL_MS = 60_000;
 
 function safeDate(value) {
@@ -349,6 +351,7 @@ export function createAgentHubService(options = {}) {
   const qoderProjectsPath = options.qoderProjectsPath || join(home, '.qoder', 'projects');
   const qoderSessionPath = options.qoderSessionPath || join(home, '.config', 'tmux-web-panel', 'qoder-session.json');
   const profileEventsPath = options.profileEventsPath || join(home, '.config', 'tmux-web-panel', 'agent-profile-events.json');
+  const warmupHistoryPath = options.warmupHistoryPath || join(home, '.config', 'tmux-web-panel', 'agent-warmups.json');
   const accountJournalPath = options.accountJournalPath || join(home, '.config', 'tmux-web-panel', 'codex-account-switch.json');
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const runSQLite = options.runSQLite || (async (path, sql) => {
@@ -549,12 +552,13 @@ export function createAgentHubService(options = {}) {
     const store = await readJSON(accountsPath, { accounts: [], active_account_id: null, masked_account_ids: [] });
     const accounts = includeCodex && Array.isArray(store.accounts) ? store.accounts : [];
     const providerAgents = [includeClaude && 'claude', includeCodex && 'codex'].filter(Boolean);
-    const [usages, providers, qoderTasks, qoderHistory, qoderUsage] = await Promise.all([
+    const [usages, providers, qoderTasks, qoderHistory, qoderUsage, warmups] = await Promise.all([
       includeCodex ? usageFor(accounts) : new Map(),
       ccSwitchProviders(ccSwitchDatabase, runSQLite, cachedProviderUsage, false, providerAgents),
       includeCodex ? qoderActivity(qoderTasksPath) : { installed: false, taskCount: 0, lastActivityAt: null },
       includeCodex ? qoderSessions(qoderProjectsPath) : { installed: false, recentSessions: [], totalSessions: 0, totalMessages: 0, totalTokens: null, lastActivityAt: null },
       includeCodex ? fetchQoderUsage() : null,
+      includeCodex ? readJSON(warmupHistoryPath, { accounts: {} }) : { accounts: {} },
     ]);
     const qoder = {
       installed: qoderTasks.installed || qoderHistory.installed,
@@ -586,7 +590,10 @@ export function createAgentHubService(options = {}) {
       observedAt: new Date().toISOString(),
       codexSwitcher: {
         available: accounts.length > 0,
-        accounts: accounts.map((account) => publicCodexProfile(account, store, usages.get(account.id))),
+        accounts: accounts.map((account) => ({
+          ...publicCodexProfile(account, store, usages.get(account.id)),
+          lastWarmupAt: safeDate(warmups && warmups.accounts && warmups.accounts[account.id] && warmups.accounts[account.id].lastSuccessAt),
+        })),
       },
       ccSwitch: { available: providers.length > 0, providers },
       qoder: { ...qoder, usage: qoderUsage },
@@ -655,6 +662,87 @@ export function createAgentHubService(options = {}) {
     return operation;
   }
 
+  async function warmupCodex(accountId) {
+    if (!PROFILE_ID_RE.test(accountId || '') || ['__proto__', 'prototype', 'constructor'].includes(accountId)) {
+      throw new AppError(ErrorCode.VALIDATION_ERROR, '无效的账号 ID');
+    }
+    const operation = switchQueue.catch(() => {}).then(async () => {
+      await recovery;
+      const store = await readJSON(accountsPath);
+      if (!store || !Array.isArray(store.accounts)) {
+        throw new AppError(ErrorCode.UNSUPPORTED, 'Codex Switcher 尚未配置');
+      }
+      const currentAuth = await readJSON(codexAuthPath);
+      if (syncActiveTokens(store, currentAuth)) await atomicJSONWrite(accountsPath, store);
+      const account = store.accounts.find((candidate) => candidate.id === accountId);
+      if (!account) throw new AppError(ErrorCode.VALIDATION_ERROR, '账号不存在', { status: 404 });
+      const auth = account.auth_data || {};
+      if (authKind(auth) !== 'chatgpt') {
+        throw new AppError(ErrorCode.UNSUPPORTED, '暖号仅支持 Codex 官方订阅账号');
+      }
+      if (!auth.access_token) throw new AppError(ErrorCode.VALIDATION_ERROR, '账号缺少访问令牌，请重新登录');
+
+      const headers = {
+        authorization: `Bearer ${auth.access_token}`,
+        accept: 'application/json, text/plain, */*',
+        'accept-language': 'en-US,en;q=0.9',
+        'content-type': 'application/json',
+        origin: 'https://chatgpt.com',
+        referer: 'https://chatgpt.com/',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin',
+        'user-agent': 'Mozilla/5.0 tmux-web-panel-agent-hub',
+      };
+      if (auth.account_id) headers['chatgpt-account-id'] = auth.account_id;
+      const payload = {
+        model: CODEX_WARMUP_MODEL,
+        instructions: 'You are Codex.',
+        input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Reply OK' }] }],
+        tools: [],
+        tool_choice: 'auto',
+        parallel_tool_calls: false,
+        reasoning: { effort: 'low' },
+        store: false,
+        stream: true,
+      };
+
+      let response;
+      try {
+        response = await fetchImpl(CHATGPT_CODEX_RESPONSES_URL, {
+          method: 'POST', headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(30_000),
+        });
+        await response.text();
+      } catch {
+        throw new AppError(ErrorCode.INTERNAL, '暖号请求未完成，请稍后重试', { status: 502, retryable: true, action: 'retry' });
+      }
+      if (!response.ok) {
+        const messages = {
+          401: '账号登录已过期，请重新登录后再暖号',
+          403: '账号无权执行暖号，或请求被上游拒绝',
+          429: '账号额度不足或请求过于频繁',
+        };
+        throw new AppError(ErrorCode.INTERNAL, messages[response.status] || `暖号失败 (${response.status})`, {
+          status: response.status === 429 ? 429 : 502,
+          retryable: response.status !== 401 && response.status !== 403,
+          action: response.status === 401 ? 'login' : 'retry',
+        });
+      }
+
+      const warmedAt = new Date().toISOString();
+      let history = await readJSON(warmupHistoryPath, { version: 1, accounts: {} });
+      if (!history || typeof history !== 'object' || Array.isArray(history)) history = { version: 1, accounts: {} };
+      history.version = 1;
+      history.accounts = history.accounts && typeof history.accounts === 'object' ? history.accounts : {};
+      history.accounts[accountId] = { lastSuccessAt: warmedAt, model: CODEX_WARMUP_MODEL };
+      await atomicJSONWrite(warmupHistoryPath, history);
+      usageCache.expiresAt = 0;
+      return { accountId, warmedAt, model: CODEX_WARMUP_MODEL, consumedQuota: true };
+    });
+    switchQueue = operation;
+    return operation;
+  }
+
   async function activateProvider(providerId, agent = 'codex') {
     if (!PROFILE_ID_RE.test(providerId || '')) {
       throw new AppError(ErrorCode.VALIDATION_ERROR, '无效的供应商 ID');
@@ -678,7 +766,7 @@ export function createAgentHubService(options = {}) {
     return operation;
   }
 
-  return { status, activateCodex, activateProvider, configureQoderSession };
+  return { status, activateCodex, warmupCodex, activateProvider, configureQoderSession };
 }
 
 export function createAgentHubRouter(service = createAgentHubService()) {
@@ -689,6 +777,7 @@ export function createAgentHubRouter(service = createAgentHubService()) {
     codex: req.query.codex !== '0',
   })));
   router.post('/codex-switcher/:accountId/activate', handle((req) => service.activateCodex(req.params.accountId)));
+  router.post('/codex-switcher/:accountId/warmup', handle((req) => service.warmupCodex(req.params.accountId)));
   router.post('/providers/:providerId/activate', handle((req) => service.activateProvider(req.params.providerId, req.body && req.body.agent)));
   router.post('/qoder/session', handle((req) => service.configureQoderSession(req.body)));
   return router;

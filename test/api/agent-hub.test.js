@@ -16,6 +16,7 @@ async function fixture() {
   const qoderProjectsPath = join(root, '.qoder', 'projects');
   const qoderSessionPath = join(root, '.config', 'tmux-web-panel', 'qoder-session.json');
   const profileEventsPath = join(root, '.config', 'tmux-web-panel', 'agent-profile-events.json');
+  const warmupHistoryPath = join(root, '.config', 'tmux-web-panel', 'agent-warmups.json');
   await mkdir(join(qoderTasksPath, 'task-one'), { recursive: true });
   await mkdir(join(qoderProjectsPath, '-Users-test-work'), { recursive: true });
   await writeFile(join(qoderProjectsPath, '-Users-test-work', 'session-one.jsonl'), [
@@ -53,7 +54,7 @@ async function fixture() {
       access_token: 'rotated-access-a', refresh_token: 'rotated-refresh-a',
     },
   }));
-  return { root, accountsPath, codexAuthPath, qoderTasksPath, qoderProjectsPath, qoderSessionPath, profileEventsPath };
+  return { root, accountsPath, codexAuthPath, qoderTasksPath, qoderProjectsPath, qoderSessionPath, profileEventsPath, warmupHistoryPath };
 }
 
 afterEach(async () => {
@@ -113,6 +114,31 @@ describe('Agent hub service', () => {
     });
     const auth = JSON.parse(await readFile(paths.codexAuthPath, 'utf8'));
     expect(auth.tokens).toMatchObject({ account_id: 'chat-b', access_token: 'access-b', refresh_token: 'refresh-b' });
+  });
+
+  it('manually warms one OAuth account with its latest active token and records only public metadata', async () => {
+    const paths = await fixture();
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => 'data: [DONE]' });
+    const service = createAgentHubService({
+      ...paths,
+      fetchImpl,
+      runSQLite: vi.fn().mockResolvedValue('[]'),
+    });
+
+    const result = await service.warmupCodex('acct-a');
+    expect(result).toMatchObject({ accountId: 'acct-a', model: 'gpt-5.6-luna', consumedQuota: true });
+    expect(JSON.stringify(result)).not.toMatch(/rotated-access|rotated-refresh/);
+    const [url, request] = fetchImpl.mock.calls[0];
+    expect(url).toBe('https://chatgpt.com/backend-api/codex/responses');
+    expect(request).toMatchObject({ method: 'POST' });
+    expect(request.headers.authorization).toBe('Bearer rotated-access-a');
+    expect(request.headers['chatgpt-account-id']).toBe('chat-a');
+    expect(JSON.parse(request.body)).toMatchObject({
+      model: 'gpt-5.6-luna', stream: true, store: false, reasoning: { effort: 'low' },
+    });
+    const history = JSON.parse(await readFile(paths.warmupHistoryPath, 'utf8'));
+    expect(history.accounts['acct-a']).toMatchObject({ model: 'gpt-5.6-luna' });
+    expect(JSON.stringify(history)).not.toMatch(/rotated-access|rotated-refresh/);
   });
 
   it('switches an API provider through the embedded adapter', async () => {
