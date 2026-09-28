@@ -1,4 +1,4 @@
-/* global Terminal, FitAddon, WebglAddon, Theme, Auth, api, state, navigate, escapeHtml, renderPaneLayout, renderPanePills, _promptSetActivePaneLabel, FilePreview, LinkDetect */
+/* global Terminal, FitAddon, WebglAddon, Theme, Auth, api, state, navigate, escapeHtml, renderPaneLayout, renderPanePills, updatePanePills, _promptSetActivePaneLabel, FilePreview, LinkDetect */
 
 // === Clipboard Helper ===
 
@@ -318,6 +318,7 @@ function _terminalContainer() {
 // === Cleanup ===
 
 function _cleanupTerminalResources() {
+  terminalState.renderVersion = (terminalState.renderVersion || 0) + 1;
   terminalState.termContainer = null;
   if (terminalState._resizeHandler) {
     window.removeEventListener('resize', terminalState._resizeHandler);
@@ -449,6 +450,20 @@ function _openFilePreviewFromBuffer() {
 function switchPane(newPaneId) {
   if (newPaneId === state.currentPane) return;
   state.currentPane = newPaneId;
+
+  // Keep the mobile strip mounted so its scroll position animates across panes.
+  var strip = document.querySelector('.mobile-pane-strip .pane-pills');
+  var previous = terminalState.termContainer;
+  if (window.innerWidth < 768 && strip && previous && previous.isConnected) {
+    _cleanupTerminalResources();
+    var next = document.createElement('div');
+    next.className = 'terminal-container';
+    previous.replaceWith(next);
+    terminalState.termContainer = next;
+    updatePanePills(strip, newPaneId, true);
+    _mountTerminal(next, false);
+    return;
+  }
 
   // Always do full reconnect so the new pane gets zoomed
   var content = _terminalContainer();
@@ -688,6 +703,7 @@ function connectTerminalWs(paneId, term, nozoom) {
   };
 
   ws.onclose = function (event) {
+    if (terminalState.term !== term) return;
     // Clean close (1000) = tmux detached us: another client attached with `-d`
     // and took over, or the session ended. Reconnecting would just kick that
     // client back — an endless ping-pong between two web views. 1008/1013 are
@@ -782,12 +798,27 @@ function _terminalFontIcon(sign) {
     + '<span>' + sign + '</span></span>';
 }
 
+function _watchTerminalViewport(container) {
+  if (terminalState._resizeHandler) window.removeEventListener('resize', terminalState._resizeHandler);
+  var desktop = window.innerWidth >= 768;
+  terminalState._resizeHandler = function () {
+    if (desktop === (window.innerWidth >= 768)) return;
+    if (state.currentTab !== 'terminal' || !container || !container.isConnected) return;
+    renderTerminal(container);
+  };
+  window.addEventListener('resize', terminalState._resizeHandler);
+}
+
 function renderTerminal(container) {
   // Cleanup previous terminal resources without removing body class
   _cleanupTerminalResources();
   // Remember where we were mounted; cleanup leaves this alone so re-renders and
   // the resize handler can find the real container instead of hidden #content.
   if (container) terminalState.mountContainer = container;
+  var renderVersion = terminalState.renderVersion;
+  // Watch before fetching: a breakpoint can change while panes are loading.
+  _watchTerminalViewport(container);
+  var displayMode = window.innerWidth < 768 ? 'tab' : _terminalMode;
 
   // Reset scroll position — if #content was scrolled (e.g. long window list),
   // the terminal header would be pushed above the visible area.
@@ -822,9 +853,9 @@ function renderTerminal(container) {
     '<button type="button" class="btn terminal-tool-btn terminal-refresh-btn" title="刷新终端" aria-label="刷新终端">' +
     _terminalToolIcon('<path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/>') + '</button>' +
     '<div class="terminal-mode-toggle" role="group" aria-label="终端布局模式">' +
-    '<button type="button" class="btn terminal-tool-btn terminal-mode-opt' + (_terminalMode === 'tab' ? ' active' : '') + '" data-mode="tab" title="标签页模式" aria-label="标签页模式" aria-pressed="' + (_terminalMode === 'tab' ? 'true' : 'false') + '">' +
+    '<button type="button" class="btn terminal-tool-btn terminal-mode-opt' + (displayMode === 'tab' ? ' active' : '') + '" data-mode="tab" title="标签页模式" aria-label="标签页模式" aria-pressed="' + (displayMode === 'tab' ? 'true' : 'false') + '">' +
     _terminalToolIcon('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><path d="M7 6.5h4"/>') + '</button>' +
-    '<button type="button" class="btn terminal-tool-btn terminal-mode-opt' + (_terminalMode === 'split' ? ' active' : '') + '" data-mode="split" title="分屏模式 · 再点一次打开布局选择器" aria-label="分屏模式" aria-pressed="' + (_terminalMode === 'split' ? 'true' : 'false') + '">' +
+    '<button type="button" class="btn terminal-tool-btn terminal-mode-opt' + (displayMode === 'split' ? ' active' : '') + '" data-mode="split" title="分屏模式 · 再点一次打开布局选择器" aria-label="分屏模式" aria-pressed="' + (displayMode === 'split' ? 'true' : 'false') + '">' +
     _terminalToolIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/><path d="M3 12h18"/>') + '</button>' +
     '</div>' +
     '<div class="terminal-font-toggle" role="group" aria-label="终端字号">' +
@@ -855,6 +886,9 @@ function renderTerminal(container) {
   // into the single Window Bar before the asynchronous pane fetch resolves.
   var headerPillsEl = view.querySelector('.terminal-header-pills');
   var paneSwitcher = view.querySelector('.terminal-pane-switcher');
+  if (window.innerWidth < 768 && !(window.MsApp && window.MsApp.embedTerminalChrome)) {
+    headerPillsEl.classList.add('mobile-pane-strip');
+  }
   var termContainer = view.querySelector('.terminal-container');
   terminalState.termContainer = termContainer;
   var exitFsBtn = view.querySelector('.terminal-exit-fullscreen-btn');
@@ -1014,6 +1048,7 @@ function renderTerminal(container) {
   // Fetch panes and set up terminal
   TerminalTarget.listPanes(state.currentSession, state.currentWindow)
     .then(function (panes) {
+      if (renderVersion !== terminalState.renderVersion || !view.isConnected) return;
       state.panes = panes;
 
       // Clean up font offsets for panes that no longer exist
@@ -1047,6 +1082,7 @@ function renderTerminal(container) {
       }
     })
     .catch(function (err) {
+      if (renderVersion !== terminalState.renderVersion || !view.isConnected) return;
       termContainer.innerHTML =
         '<div style="padding: 24px; text-align: center; color: var(--accent-red);">' +
         'Failed to load panes: ' + escapeHtml(err.message) +
@@ -1184,6 +1220,7 @@ function _mountTerminal(termContainer, nozoom) {
 
   // Small delay to ensure DOM is ready for fitting
   setTimeout(function () {
+    if (terminalState.term !== term) return;
     fitAddon.fit();
     // The socket can open before this final fit. Send the fitted dimensions
     // again so tmux never keeps drawing at the default/narrow PTY width.
@@ -1497,12 +1534,13 @@ function _mountTerminal(termContainer, nozoom) {
     flingRaf = requestAnimationFrame(step);
   }
 
-  // Unified touch handler: vertical = tmux scroll; horizontal is ignored.
+  // Unified touch handler: vertical = tmux scroll; horizontal = adjacent pane.
   var ts = {
     startX: 0, startY: 0, lastY: 0,
     moved: false, scrollAccum: 0,
     direction: null,  // null | 'vertical' | 'horizontal'
     startTime: 0,
+    cancelled: false,
     lastMoveTime: 0,
   };
   var refocusOnClick = false;
@@ -1518,6 +1556,7 @@ function _mountTerminal(termContainer, nozoom) {
 
   overlay.addEventListener('touchstart', function (e) {
     _stopFling();
+    if (e.touches.length > 1) ts.cancelled = true;
     if (e.touches.length === 2) {
       // Start pinch-to-zoom
       clearTimeout(longPress.timer);
@@ -1530,6 +1569,7 @@ function _mountTerminal(termContainer, nozoom) {
     }
     if (e.touches.length === 1) {
       pinch.active = false;
+      ts.cancelled = false;
       cellCache = null;
       var t = e.touches[0];
       ts.startX = t.clientX;
@@ -1609,8 +1649,7 @@ function _mountTerminal(termContainer, nozoom) {
     ts.moved = true;
 
     if (ts.direction === 'horizontal') {
-      // Keep the gesture local so an accidental horizontal drag cannot trigger
-      // browser history navigation, but do not leave the terminal route.
+      // Keep horizontal gestures local instead of triggering browser history.
       e.preventDefault();
     } else {
       // Vertical: tmux scroll
@@ -1659,6 +1698,7 @@ function _mountTerminal(termContainer, nozoom) {
       pinch.active = false;
       return;
     }
+    if (ts.cancelled || e.touches.length) return;
     if (!ts.moved) {
       // Tap: check if tapped on a link (file path OR URL) first
       if (typeof FilePreview !== 'undefined') {
@@ -1683,6 +1723,15 @@ function _mountTerminal(termContainer, nozoom) {
       return;
     }
 
+    if (ts.direction === 'horizontal' && window.innerWidth < 768) {
+      var dx = e.changedTouches[0].clientX - ts.startX;
+      if (Math.abs(dx) >= 56) {
+        e.preventDefault();
+        switchPaneByDirection(dx < 0 ? 1 : -1);
+      }
+      return;
+    }
+
     if (ts.direction === 'vertical') {
       // A finger that paused before lifting is a deliberate stop, not a flick.
       var idleMs = Date.now() - ts.lastMoveTime;
@@ -1694,6 +1743,15 @@ function _mountTerminal(termContainer, nozoom) {
       return;
     }
 
+  });
+
+  overlay.addEventListener('touchcancel', function () {
+    clearTimeout(longPress.timer);
+    longPress.timer = null;
+    ts.cancelled = true;
+    pinch.active = false;
+    sel.dragging = false;
+    _stopFling();
   });
 
   // Chrome focuses the touched overlay while dispatching its compatibility
@@ -1798,22 +1856,7 @@ function _mountTerminal(termContainer, nozoom) {
   terminalState.resizeObserver = resizeObserver;
   terminalState._vpHandler = vpHandler;
 
-  // Track viewport width to re-render when crossing mobile/desktop threshold
-  var _lastIsDesktop = window.innerWidth >= 768;
-  var _resizeHandler = function () {
-    var isDesktop = window.innerWidth >= 768;
-    if (isDesktop !== _lastIsDesktop) {
-      _lastIsDesktop = isDesktop;
-      // Viewport crossed 768px threshold — re-render to switch tab/split layout
-      if (state.currentTab === 'terminal' && terminalState.term === term) {
-        var content = _terminalContainer();
-        if (content) renderTerminal(content);
-      }
-    }
-  };
-  window.addEventListener('resize', _resizeHandler);
-  // Store for cleanup
-  terminalState._resizeHandler = _resizeHandler;
+  _watchTerminalViewport(_terminalContainer());
 }
 
 // === Reconnect Overlay ===

@@ -326,12 +326,12 @@ describe('TerminalManager refusal reporting', () => {
 
 describe('buildTmuxAttachCommand', () => {
   it('detaches other clients in both modes so this client owns the size', () => {
-    expect(buildTmuxAttachCommand('%5', { nozoom: false })).toContain("tmux attach-session -d -t '%5'");
-    expect(buildTmuxAttachCommand('%5', { nozoom: true })).toContain("tmux attach-session -d -t '%5'");
+    expect(buildTmuxAttachCommand('%5', { nozoom: false })).toContain("attach-session -d -t '%5'");
+    expect(buildTmuxAttachCommand('%5', { nozoom: true })).toContain("attach-session -d -t '%5'");
   });
 
-  it('only installs the unzoom trap in zoom mode', () => {
-    expect(buildTmuxAttachCommand('%5', { nozoom: false })).toContain('trap');
+  it('never changes zoom when an old attachment exits', () => {
+    expect(buildTmuxAttachCommand('%5', { nozoom: false })).not.toContain('trap');
     expect(buildTmuxAttachCommand('%5', { nozoom: true })).not.toContain('trap');
   });
 

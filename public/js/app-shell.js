@@ -415,8 +415,8 @@
       var serverId = this.activeServerId();
       var server = this.server(serverId);
       var isTerminal = route && route.name === 'terminal';
-      trigger.hidden = !isTerminal;
-      trigger.disabled = !isTerminal;
+      trigger.hidden = false;
+      trigger.disabled = false;
       trigger.setAttribute('aria-expanded', String(this.isMobileWorkspaceOpen()));
 
       if (isTerminal) {
@@ -425,11 +425,14 @@
         var session = this._findSession(workspace, params.sessionId);
         var win = this._findWindow(session, params.windowId);
         title.textContent = win ? (win.index + ' ' + win.name) : '选择工作区';
-        subtitle.textContent = (server ? server.name : serverId) + (session ? ' · ' + session.name : '');
+        subtitle.textContent = session ? session.name : (server ? server.name : serverId);
       } else {
         title.textContent = this._titleFor(route);
         subtitle.textContent = server ? server.name : serverId;
       }
+
+      trigger.title = subtitle.textContent + ' / ' + title.textContent;
+      trigger.setAttribute('aria-label', trigger.title + ' · 工作区与导航菜单');
 
       var home = global.document.querySelector('[data-terminal-home]');
       if (home) {
@@ -449,12 +452,13 @@
       var tree = el('ms-mobile-workspace-tree');
       if (!tree) return;
       var route = global.Store.getState().route || {};
-      tree.innerHTML = this._renderTree(this.activeServerId(), route);
+      tree.innerHTML = route.name === 'terminal' ? this._renderTree(this.activeServerId(), route) : '';
+      el('ms-mobile-workspace-sheet').classList.toggle('has-terminal', route.name === 'terminal');
     },
 
     _syncMobileWorkspaceSheet: function (route) {
       if (!this.isMobileWorkspaceOpen()) return;
-      if (!route || route.name !== 'terminal' || global.innerWidth >= 768) {
+      if (!route || global.innerWidth >= 768) {
         this.closeMobileWorkspaceSheet({ restoreFocus: false });
         return;
       }
@@ -463,7 +467,7 @@
 
     openMobileWorkspaceSheet: function () {
       var route = global.Store.getState().route || {};
-      if (global.innerWidth >= 768 || !route || route.name !== 'terminal' || this.isMobileWorkspaceOpen()) return;
+      if (global.innerWidth >= 768 || this.isMobileWorkspaceOpen()) return;
       this.hideServerPicker();
 
       var overlay = global.document.createElement('div');
@@ -475,16 +479,24 @@
       sheet.className = 'ms-mobile-workspace-sheet';
       sheet.setAttribute('role', 'dialog');
       sheet.setAttribute('aria-modal', 'true');
-      sheet.setAttribute('aria-label', '切换 Session 和 Window');
+      sheet.setAttribute('aria-label', '工作区与导航菜单');
       sheet.innerHTML = '<div class="ms-mobile-workspace-head">'
-        + '<strong>切换工作区</strong>'
-        + '<button class="icon-btn" data-action="mobile-workspace-close" aria-label="关闭工作区">×</button>'
-        + '</div><div id="ms-mobile-workspace-tree" class="ms-mobile-workspace-tree"></div>'
-        + '<div id="ms-mobile-workspace-tools" class="ms-mobile-workspace-tools"></div>';
+        + '<strong>工作区与导航</strong>'
+        + '<button class="icon-btn" data-action="mobile-workspace-close" aria-label="关闭菜单">×</button>'
+        + '</div><nav class="mobile-menu-nav" aria-label="主导航">'
+        + '<button class="ms-btn" data-route="' + esc(global.Router.serialize({ name: 'terminal', params: { serverId: this.activeServerId() } })) + '" data-terminal-home>工作区</button>'
+        + '<button class="ms-btn" data-route="#/servers">状态</button>'
+        + '<button class="ms-btn" data-action="notifications">通知</button>'
+        + '<button class="ms-btn" data-route="#/settings">设置</button>'
+        + '</nav><div id="ms-mobile-workspace-tree" class="ms-mobile-workspace-tree"></div>'
+        + '<div id="ms-mobile-workspace-tools" class="ms-mobile-workspace-tools"></div>'
+        + '<button class="ms-btn mobile-menu-server" data-action="mobile-server">切换服务器 · '
+        + esc((this.server(this.activeServerId()) || {}).name || this.activeServerId()) + '</button>';
 
       global.document.body.appendChild(overlay);
       global.document.body.appendChild(sheet);
       this._renderMobileWorkspaceTree();
+      this._syncNav(route);
       this._moveMobileToolsToSheet();
       var trigger = this._mobileWorkspaceTrigger();
       if (trigger) trigger.setAttribute('aria-expanded', 'true');
@@ -551,7 +563,7 @@
     /** Marks the active top-level entry, matching the demo's rules. */
     _syncNav: function (route) {
       var name = route && route.name ? route.name : 'terminal';
-      var nodes = global.document.querySelectorAll('.sidebar-footer [data-route], .bottom-nav [data-route]');
+      var nodes = global.document.querySelectorAll('.sidebar-footer [data-route], .mobile-menu-nav [data-route]');
       for (var i = 0; i < nodes.length; i += 1) {
         var target = nodes[i].dataset.route || '';
         var isActive = false;

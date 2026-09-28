@@ -61,12 +61,10 @@
 
     <main class="ms-main">
       <header class="mobile-header">
-        <button class="icon-btn" data-action="mobile-server" aria-label="切换服务器"><svg class="ms-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01M17 7h1M17 17h1"/></svg></button>
-        <button class="mobile-workspace-trigger" data-action="mobile-workspace" aria-label="切换 Session 和 Window" aria-expanded="false">
+        <button class="mobile-workspace-trigger" data-action="mobile-workspace" aria-label="工作区与导航菜单" aria-haspopup="dialog" aria-expanded="false">
           <span class="mobile-title"><strong id="ms-mobile-title">终端工作台</strong><small id="ms-mobile-subtitle">本机</small></span>
           <span class="mobile-workspace-chevron" aria-hidden="true">⌄</span>
         </button>
-        <button class="icon-btn" data-action="notifications" aria-label="通知"><svg class="ms-icon" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></button>
         <div class="mobile-tools" id="ms-mobile-tools" aria-hidden="true"></div>
       </header>
       <header class="ms-topbar" id="ms-topbar">
@@ -77,12 +75,7 @@
     </main>
   </div>
 
-  <nav class="bottom-nav" aria-label="移动端主导航">
-    <button data-route="#/terminal/local" data-terminal-home><svg class="ms-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg><span>工作区</span></button>
-    <button data-route="#/servers"><svg class="ms-icon" viewBox="0 0 24 24"><path d="M20 13a8 8 0 1 0-16 0"/><path d="m12 13 4-4"/><path d="M5 19h14"/></svg><span>状态</span></button>
-    <button data-action="notifications"><svg class="ms-icon" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg><span>通知</span></button>
-    <button data-route="#/settings"><svg class="ms-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .4 1.9l-2.9 2.9a1.7 1.7 0 0 0-1.9-.4 1.7 1.7 0 0 0-1 1.6h-4a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.4l-2.9-2.9a1.7 1.7 0 0 0 .4-1.9A1.7 1.7 0 0 0 3 14v-4a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.4-1.9l2.9-2.9a1.7 1.7 0 0 0 1.9.4A1.7 1.7 0 0 0 10 3h4a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.4l2.9 2.9a1.7 1.7 0 0 0-.4 1.9 1.7 1.7 0 0 0 1.6 1v4a1.7 1.7 0 0 0-1.6 1Z"/></svg><span>设置</span></button>
-  </nav>
+
 
   <div class="ms-popover" id="ms-server-popover" hidden></div>
   <div class="ms-modal-backdrop" id="ms-modal" hidden></div>

@@ -117,6 +117,8 @@
       this._hideSidebarContextMenu();
       const view = global.document.getElementById('ms-view');
       if (!view) return;
+      const mobilePills = global.document.querySelector('.mobile-header > .mobile-pane-strip');
+      if (mobilePills) mobilePills.remove();
       if (route.name !== 'terminal') {
         this._setDockContext(null, null);
       }
@@ -379,10 +381,18 @@
 
       // Move the live nodes so their bound listeners keep working. The renderer
       // keeps its own reference to the pills node, so relocating it is safe.
+      const oldMobilePills = global.document.querySelector('.mobile-header > .mobile-pane-strip');
+      if (oldMobilePills) oldMobilePills.remove();
       const pills = header.querySelector('.terminal-header-pills');
       if (pills) {
         pills.classList.add('ms-hoisted-pills');
-        actions.appendChild(pills);
+        if (global.innerWidth < 768) {
+          pills.classList.add('mobile-pane-strip');
+          const mobileHeader = global.document.querySelector('.mobile-header');
+          (mobileHeader || root).appendChild(pills);
+        } else {
+          actions.appendChild(pills);
+        }
       }
       if (toolbar) actions.appendChild(toolbar);
 
@@ -681,7 +691,9 @@
       };
 
       if (action === 'server-switcher' || action === 'mobile-server') {
-        global.AppShell.showServerPicker(node);
+        const anchor = node.closest('#ms-mobile-workspace-sheet')
+          ? global.AppShell._mobileWorkspaceTrigger() : node;
+        global.AppShell.showServerPicker(anchor);
         return;
       }
       if (action === 'mobile-workspace') {
@@ -698,6 +710,7 @@
         return;
       }
       if (action === 'notifications') {
+        global.AppShell.closeMobileWorkspaceSheet({ restoreFocus: false });
         if (global.NotificationPanel) global.NotificationPanel.render();
         return;
       }

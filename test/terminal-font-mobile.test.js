@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const TERMINAL_SRC = readFileSync('public/js/terminal.js', 'utf8');
@@ -137,6 +137,27 @@ describe('mobile touch forwarding', () => {
 });
 
 describe('mobile horizontal swipe', () => {
+  it.each([
+    [-80, 375, false, false, 1],
+    [80, 375, false, false, -1],
+    [-30, 375, false, false, null],
+    [-80, 1024, false, false, null],
+    [-80, 375, true, false, null],
+    [-80, 375, false, true, null],
+  ])('handles dx=%s at width=%s, cancelled=%s, pinch=%s', (dx, width, cancelled, pinching, direction) => {
+    const start = TERMINAL_SRC.indexOf("  overlay.addEventListener('touchend', function (e) {");
+    const end = TERMINAL_SRC.indexOf("  overlay.addEventListener('touchcancel'", start);
+    const switchPaneByDirection = vi.fn();
+    let handler;
+    const install = new Function('overlay', 'window', 'ts', 'longPress', 'pinch', 'switchPaneByDirection', TERMINAL_SRC.slice(start, end));
+    install({ addEventListener: (_, fn) => { handler = fn; } }, { innerWidth: width },
+      { startX: 200, moved: true, direction: 'horizontal', cancelled },
+      { timer: null, active: false }, { active: pinching }, switchPaneByDirection);
+    handler({ touches: [], changedTouches: [{ clientX: 200 + dx }], preventDefault: vi.fn() });
+    if (direction === null) expect(switchPaneByDirection).not.toHaveBeenCalled();
+    else expect(switchPaneByDirection).toHaveBeenCalledExactlyOnceWith(direction);
+  });
+
   it('keeps horizontal terminal drags on the terminal route', () => {
     expect(TERMINAL_SRC).not.toContain('SWIPE_THRESHOLD');
     expect(TERMINAL_SRC).not.toContain('VELOCITY_TRIGGER');

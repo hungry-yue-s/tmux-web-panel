@@ -227,16 +227,35 @@ describe('single Window Bar', () => {
     const doc = embedFixture({ width: 360 }).document;
 
     expect(doc.querySelector('#ms-mobile-tools .terminal-header-actions')).toBeTruthy();
-    expect(doc.querySelector('#ms-mobile-tools .terminal-header-pills')).toBeTruthy();
+    expect(doc.querySelector('.mobile-header > .mobile-pane-strip')).toBeTruthy();
     expect(doc.querySelector('#ms-top-actions').children).toHaveLength(0);
   });
 
-  it('uses the workspace sheet tools slot while a mobile picker is open', () => {
+  it('keeps pane tabs in the header while tools go into the workspace sheet', () => {
     const doc = embedFixture({ width: 360, mobileSheet: true }).document;
 
     expect(doc.querySelector('#ms-mobile-workspace-tools .terminal-header-actions')).toBeTruthy();
-    expect(doc.querySelector('#ms-mobile-workspace-tools .terminal-header-pills')).toBeTruthy();
+    expect(doc.querySelector('.mobile-header > .mobile-pane-strip')).toBeTruthy();
     expect(doc.querySelector('#ms-mobile-tools').children).toHaveLength(0);
+  });
+
+  it('replaces mobile tabs on re-render and removes them on desktop resize', () => {
+    const win = embedFixture({ width: 375 });
+    const root = win.document.querySelector('.terminal-view');
+    function rebuildHeader() {
+      const header = win.document.createElement('div');
+      header.className = 'terminal-header';
+      header.innerHTML = '<div class="terminal-header-pills"><button class="pane-pill">2</button></div>';
+      root.prepend(header);
+      win.MsApp.embedTerminalChrome(root);
+    }
+    rebuildHeader();
+    expect(win.document.querySelectorAll('.mobile-header > .mobile-pane-strip')).toHaveLength(1);
+    expect(root.querySelector('.mobile-pane-strip')).toBeNull();
+    Object.defineProperty(win, 'innerWidth', { value: 1024 });
+    rebuildHeader();
+    expect(win.document.querySelector('.mobile-header > .mobile-pane-strip')).toBeNull();
+    expect(win.document.querySelector('#ms-top-actions .pane-pill').textContent).toBe('2');
   });
 
   it('hoists into the desktop window bar above the breakpoint', () => {

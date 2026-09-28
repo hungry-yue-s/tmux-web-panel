@@ -85,7 +85,7 @@ function renderPaneLayout(container, panes, activePaneId, onPaneClick) {
 }
 
 // Mobile-friendly pane pill switcher.
-// Horizontal scrollable row of pill buttons.
+// Three compact mobile previews, with slightly more room for the active label.
 function renderPanePills(container, panes, activePaneId, onPaneClick) {
   container.innerHTML = '';
 
@@ -93,11 +93,21 @@ function renderPanePills(container, panes, activePaneId, onPaneClick) {
 
   var row = document.createElement('div');
   row.className = 'pane-pills';
+  row.dataset.count = Math.min(3, panes.length);
 
   panes.forEach(function (p) {
     var pill = document.createElement('button');
     pill.className = 'pane-pill' + (p.id === activePaneId ? ' active' : '');
-    pill.textContent = p.index;
+    pill.type = 'button';
+    var index = document.createElement('span');
+    index.className = 'pane-pill-index';
+    index.textContent = p.index;
+    var label = document.createElement('span');
+    label.className = 'pane-pill-label';
+    label.textContent = p.label || p.command || '窗格';
+    pill.append(index, label);
+    pill.title = '窗格 ' + p.index + ' · ' + label.textContent;
+    pill.setAttribute('aria-label', pill.title);
     pill.setAttribute('data-pane-id', p.id);
 
     pill.addEventListener('click', function (e) {
@@ -114,6 +124,27 @@ function renderPanePills(container, panes, activePaneId, onPaneClick) {
   });
 
   container.appendChild(row);
+  updatePanePills(row, activePaneId, false);
+}
+
+function updatePanePills(row, activePaneId, animate) {
+  var pills = Array.from(row.children);
+  var activeIndex = pills.findIndex(function (pill) {
+    return pill.dataset.paneId === String(activePaneId);
+  });
+  pills.forEach(function (pill, index) {
+    pill.classList.toggle('active', index === activeIndex);
+    pill.setAttribute('aria-pressed', String(index === activeIndex));
+  });
+  if (window.innerWidth >= 768 || activeIndex < 0) return;
+  var first = pills[Math.max(0, Math.min(activeIndex - 1, pills.length - 3))];
+  // Wait for the relocated header to have its final width.
+  window.requestAnimationFrame(function () {
+    if (!row.isConnected) return;
+    var left = first.offsetLeft - pills[0].offsetLeft;
+    var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    row.scrollTo({ left: left, behavior: animate && !reduced ? 'smooth' : 'instant' });
+  });
 }
 
 // Long-press (500ms) or right-click a pane element to open its menu
@@ -225,6 +256,12 @@ function _promptSetPaneLabel(pane) {
         .then(function () {
           // Keep the in-memory pane in sync so reopening the menu prefills the new value.
           pane.label = trimmed;
+          document.querySelectorAll('.pane-pill').forEach(function (pill) {
+            if (pill.dataset.paneId !== String(pane.id)) return;
+            pill.querySelector('.pane-pill-label').textContent = trimmed || pane.command || '窗格';
+            pill.title = '窗格 ' + pane.index + ' · ' + (trimmed || pane.command || '窗格');
+            pill.setAttribute('aria-label', pill.title);
+          });
         });
     })
     .catch(function (err) {

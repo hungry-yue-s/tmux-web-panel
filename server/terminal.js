@@ -85,31 +85,14 @@ export function extractOsc52(buf) {
  * remote command of `ssh -tt`, so local and remote attach cannot drift apart.
  */
 export function buildTmuxAttachCommand(paneId, { nozoom = false } = {}) {
-  if (nozoom) {
-    // No-zoom mode: show the full window with native tmux split layout.
-    // Force unzoom first (previous tab-mode connection may have left it zoomed).
-    return [
-      `tmux select-pane -t '${paneId}' 2>/dev/null`,
-      `[ "$(tmux display-message -p -t '${paneId}' '#{window_zoomed_flag}' 2>/dev/null)" = "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
-      // -d: detach other clients so the tmux window follows only this web
-      // client's size (window-size=latest otherwise lets a stale/narrow
-      // client shrink the shared window into a sliver — see CLAUDE.md).
-      `tmux attach-session -d -t '${paneId}'`,
-    ].join('; ');
-  }
-  // Zoom mode: zoom the target pane so only it is visible, then attach.
-  // Trap TERM/HUP to attempt unzoom before exit. _killPty sends SIGTERM first
-  // (giving the trap 500ms to run), then SIGKILL as a hard guarantee.
+  // Apply selection, zoom and attach in one tmux command queue. An old
+  // attachment must never toggle the shared window again when it exits.
+  const toggle = `resize-pane -Z -t ${paneId}`;
   return [
-    `tmux select-pane -t '${paneId}' 2>/dev/null`,
-    `_WZ=$(tmux display-message -p -t '${paneId}' '#{window_zoomed_flag}' 2>/dev/null)`,
-    `trap '[ "$_WZ" != "1" ] && tmux resize-pane -Z -t "'${paneId}'" 2>/dev/null; exit 0' TERM HUP`,
-    `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
-    // -d: detach other clients so this web client alone dictates the
-    // window size (see nozoom branch / CLAUDE.md for the why).
-    `tmux attach-session -d -t '${paneId}'`,
-    `[ "$_WZ" != "1" ] && tmux resize-pane -Z -t '${paneId}' 2>/dev/null`,
-  ].join('; ');
+    `tmux select-pane -t '${paneId}'`,
+    `if-shell -F -t '${paneId}' '#{window_zoomed_flag}' '${nozoom ? toggle : ''}' '${nozoom ? '' : toggle}'`,
+    `attach-session -d -t '${paneId}'`,
+  ].join(' \\; ');
 }
 
 export class TerminalManager {
@@ -376,7 +359,7 @@ export class TerminalManager {
 
     const pid = conn.pty.pid;
 
-    // Send SIGTERM first to give the shell trap a chance to run (unzoom cleanup).
+    // Send SIGTERM first so the attached client can exit cleanly.
     // Then schedule SIGKILL after a short delay as a hard guarantee — SIGTERM alone
     // is unreliable because tmux attach-session may not propagate the signal,
     // leading to zombie tmux client processes accumulating.

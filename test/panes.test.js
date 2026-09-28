@@ -134,8 +134,9 @@ describe('renderPanePills', () => {
   it('shows pane index in pill text', () => {
     dom.window.renderPanePills(container, samplePanes, null, null);
     const pills = container.querySelectorAll('.pane-pill');
-    expect(pills[0].textContent).toBe('0');
-    expect(pills[1].textContent).toBe('1');
+    expect(pills[0].querySelector('.pane-pill-index').textContent).toBe('0');
+    expect(pills[0].querySelector('.pane-pill-label').textContent).toBe('zsh');
+    expect(pills[1].querySelector('.pane-pill-index').textContent).toBe('1');
   });
 
   it('calls onPaneClick with correct pane id', () => {
@@ -144,6 +145,30 @@ describe('renderPanePills', () => {
     const pills = container.querySelectorAll('.pane-pill');
     pills[0].click();
     expect(onClick).toHaveBeenCalledWith(10);
+  });
+
+  it('moves a three-slot rail to the active pane and keeps labels as text', () => {
+    const win = dom.window;
+    win.innerWidth = 375;
+    win.requestAnimationFrame = (fn) => fn();
+    win.matchMedia = () => ({ matches: false });
+    win.HTMLElement.prototype.scrollTo = vi.fn();
+    const panes = Array.from({ length: 6 }, (_, i) => ({ id: '%' + i, index: i, label: i === 3 ? '<b>任务</b>' : '任务' + i }));
+    win.renderPanePills(container, panes, '%0', vi.fn());
+    const row = container.querySelector('.pane-pills');
+    Array.from(row.children).forEach((pill, i) => Object.defineProperty(pill, 'offsetLeft', { get: () => i * 80 }));
+    win.updatePanePills(row, '%3', true);
+    expect(row.dataset.count).toBe('3');
+    expect(row.querySelector('.active').dataset.paneId).toBe('%3');
+    expect(row.querySelector('.active').getAttribute('aria-pressed')).toBe('true');
+    expect(row.querySelector('.active .pane-pill-label').textContent).toBe('<b>任务</b>');
+    expect(row.querySelector('b')).toBeNull();
+    expect(row.scrollTo).toHaveBeenLastCalledWith({ left: 160, behavior: 'smooth' });
+    win.updatePanePills(row, '%5', true);
+    expect(row.scrollTo).toHaveBeenLastCalledWith({ left: 240, behavior: 'smooth' });
+    win.matchMedia = () => ({ matches: true });
+    win.updatePanePills(row, '%0', true);
+    expect(row.scrollTo).toHaveBeenLastCalledWith({ left: 0, behavior: 'instant' });
   });
 
   it('handles empty panes', () => {

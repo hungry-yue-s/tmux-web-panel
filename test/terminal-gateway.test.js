@@ -307,7 +307,7 @@ describe('TerminalGateway', () => {
       expect(options.spawn.file).toBe('ssh');
       expect(options.spawn.args[0]).toBe('-tt');
       const remoteCommand = options.spawn.args[options.spawn.args.length - 1];
-      expect(remoteCommand).toContain("tmux attach-session -d -t '%12'");
+      expect(remoteCommand).toContain("attach-session -d -t '%12'");
       expect(remoteCommand).toContain('tmux select-pane');
     });
 

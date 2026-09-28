@@ -17,8 +17,8 @@ describe('terminal toolbar controls', () => {
   });
 
   it('exposes pressed state for the tab and split mode toggle', () => {
-    expect(terminalSource).toContain('aria-pressed="\' + (_terminalMode === \'tab\' ? \'true\' : \'false\')');
-    expect(terminalSource).toContain('aria-pressed="\' + (_terminalMode === \'split\' ? \'true\' : \'false\')');
+    expect(terminalSource).toContain('aria-pressed="\' + (displayMode === \'tab\' ? \'true\' : \'false\')');
+    expect(terminalSource).toContain('aria-pressed="\' + (displayMode === \'split\' ? \'true\' : \'false\')');
   });
 
   it('keeps desktop controls uniform and theme driven', () => {

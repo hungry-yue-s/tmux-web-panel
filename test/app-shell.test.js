@@ -660,11 +660,13 @@ describe('AppShell mobile workspace sheet', () => {
     const trigger = ctx.document.querySelector('.mobile-workspace-trigger');
     expect(trigger.hidden).toBe(false);
     expect(trigger.textContent).toContain('1 三绿');
-    expect(trigger.textContent).toContain('本机 · DataAnt');
+    expect(ctx.document.getElementById('ms-mobile-subtitle').textContent).toBe('DataAnt');
+    expect(trigger.getAttribute('aria-label')).toContain('DataAnt / 1 三绿');
 
     ctx.Shell.openMobileWorkspaceSheet();
     const sheet = ctx.document.getElementById('ms-mobile-workspace-sheet');
     expect(sheet).not.toBeNull();
+    expect(sheet.querySelector('[data-action="mobile-server"]').textContent).toContain('本机');
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
     const active = sheet.querySelector('.tree-window-row .tree-item.active');
     expect(active.dataset.route).toContain('#/terminal/local/%240/%400');
@@ -695,7 +697,7 @@ describe('AppShell mobile workspace sheet', () => {
     expect(ctx.document.querySelector('#ms-mobile-tools .terminal-refresh-btn')).toBe(tool);
   });
 
-  it('closes the mobile sheet when leaving the terminal route', () => {
+  it('keeps navigation available on settings without terminal controls', () => {
     const ctx = loadShell();
     Object.defineProperty(ctx.win, 'innerWidth', { value: 375, configurable: true });
     seedLocalTmux(ctx.Store);
@@ -705,7 +707,14 @@ describe('AppShell mobile workspace sheet', () => {
     ctx.Store.setRoute({ name: 'settings', params: {} });
     ctx.Shell.render();
 
-    expect(ctx.document.getElementById('ms-mobile-workspace-sheet')).toBeNull();
-    expect(ctx.document.querySelector('.mobile-workspace-trigger').hidden).toBe(true);
+    const sheet = ctx.document.getElementById('ms-mobile-workspace-sheet');
+    expect(sheet).not.toBeNull();
+    expect(sheet.classList.contains('has-terminal')).toBe(false);
+    expect(sheet.querySelectorAll('.mobile-menu-nav button')).toHaveLength(4);
+    expect(sheet.querySelector('[data-route="#/settings"]')).not.toBeNull();
+    expect(ctx.document.querySelector('.mobile-workspace-trigger').hidden).toBe(false);
+    ctx.Shell.closeMobileWorkspaceSheet();
+    ctx.Shell.openMobileWorkspaceSheet();
+    expect(ctx.document.querySelector('.mobile-menu-nav [data-terminal-home]').dataset.route).toBe('#/terminal/local');
   });
 });
