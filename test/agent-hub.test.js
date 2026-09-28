@@ -147,6 +147,41 @@ describe('AgentHub', () => {
     hub.stop();
   });
 
+  it('treats Zhipu Coding Plan as a subscription with provider warm-up controls', async () => {
+    const { win, hub } = loadHub({
+      hub: {
+        codexSwitcher: { accounts: [] },
+        ccSwitch: { providers: [{
+          id: 'glm', agent: 'codex', name: 'Zhipu GLM', category: 'cn_official', active: true,
+          autoWarmupEnabled: false,
+          usage: {
+            primary: { usedPercent: 0, windowMinutes: 300 },
+            secondary: { usedPercent: 20, windowMinutes: 10080 },
+          },
+        }] },
+        qoder: {},
+      },
+    });
+    win.showConfirm = vi.fn().mockResolvedValue(true);
+    hub.start();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+
+    const card = win.document.querySelector('.ah-profile-card');
+    expect(card.textContent).toContain('智谱 Coding Plan');
+    expect(card.textContent).toContain('5 小时');
+    expect(card.textContent).toContain('周额度');
+    win.document.querySelector('[data-ah-action="warmup-provider"]').click();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    expect(win.showConfirm.mock.calls[0][0].message).toContain('5 小时与周订阅额度');
+    expect(win.Api.post).toHaveBeenCalledWith('/api/agent-hub/providers/glm/warmup');
+
+    win.document.querySelector('[data-ah-action="toggle-auto-warmup"]').click();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    expect(win.showConfirm.mock.calls[1][0].message).toContain('5 小时订阅窗口');
+    expect(win.Api.post).toHaveBeenCalledWith('/api/agent-hub/providers/glm/auto-warmup', { enabled: true });
+    hub.stop();
+  });
+
   it('keeps a stored Claude official profile switchable and renders Qoder sessions', async () => {
     const { win, hub } = loadHub({
       hub: {

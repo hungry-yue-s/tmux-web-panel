@@ -57,6 +57,23 @@ async function fixture() {
   return { root, accountsPath, codexAuthPath, qoderTasksPath, qoderProjectsPath, qoderSessionPath, profileEventsPath, warmupHistoryPath };
 }
 
+function zhipuProvider(settings = {}) {
+  return {
+    id: 'glm', app_type: 'codex', name: 'Zhipu GLM', category: 'cn_official', is_current: 0,
+    settings_config: JSON.stringify({
+      auth: { OPENAI_API_KEY: 'private-zhipu-key' },
+      config: [
+        'model_provider = "custom"',
+        'model = "glm-5.3"',
+        '[model_providers.custom]',
+        'base_url = "https://open.bigmodel.cn/api/v1"',
+        'wire_api = "responses"',
+      ].join('\n'),
+      ...settings,
+    }),
+  };
+}
+
 afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -173,6 +190,62 @@ describe('Agent hub service', () => {
       lastAutoWindowKey: `weekly:10080:${resetAt}`,
     });
     const profile = (await service.status()).codexSwitcher.accounts.find((account) => account.id === 'acct-a');
+    expect(profile).toMatchObject({ autoWarmupEnabled: true, lastWarmupMode: 'automatic' });
+  });
+
+  it('manually warms a Zhipu Coding Plan provider without switching or persisting its key', async () => {
+    const paths = await fixture();
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '{"id":"response"}' });
+    const switchProvider = vi.fn();
+    const service = createAgentHubService({
+      ...paths,
+      fetchImpl,
+      switchProvider,
+      runSQLite: vi.fn().mockResolvedValue(JSON.stringify([zhipuProvider()])),
+    });
+
+    await expect(service.warmupProvider('glm')).resolves.toMatchObject({
+      providerId: 'glm', mode: 'manual', model: 'glm-5.3', consumedQuota: true,
+    });
+    expect(switchProvider).not.toHaveBeenCalled();
+    const [url, request] = fetchImpl.mock.calls[0];
+    expect(url).toBe('https://open.bigmodel.cn/api/v1/responses');
+    expect(request.headers.authorization).toBe('Bearer private-zhipu-key');
+    expect(JSON.parse(request.body)).toMatchObject({ model: 'glm-5.3', input: 'Reply OK', max_output_tokens: 8, stream: false });
+    const history = JSON.parse(await readFile(paths.warmupHistoryPath, 'utf8'));
+    expect(history.providers.glm).toMatchObject({ lastMode: 'manual', model: 'glm-5.3' });
+    expect(JSON.stringify(history)).not.toContain('private-zhipu-key');
+  });
+
+  it('automatically warms an enabled Zhipu subscription once per empty five-hour window', async () => {
+    const paths = await fixture();
+    const nowMs = Date.now();
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/responses')) return { ok: true, status: 200, text: async () => '{"id":"response"}' };
+      if (url.includes('/quota/limit')) return { ok: true, status: 200, json: async () => ({
+        success: true,
+        data: { planName: 'Coding Plan', limits: [
+          { type: 'TOKENS_LIMIT', unit: 3, number: 5, usage: 100, remaining: 100, percentage: 0 },
+          { type: 'TOKENS_LIMIT', unit: 6, number: 1, usage: 1000, remaining: 800, percentage: 20 },
+        ] },
+      }) };
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+    const service = createAgentHubService({
+      ...paths,
+      fetchImpl,
+      runSQLite: vi.fn().mockResolvedValue(JSON.stringify([zhipuProvider()])),
+    });
+
+    await expect(service.configureProviderAutoWarmup('glm', true)).resolves.toEqual({ providerId: 'glm', enabled: true });
+    await expect(service.runAutoWarmups(nowMs)).resolves.toHaveLength(1);
+    await expect(service.runAutoWarmups(nowMs + 1000)).resolves.toEqual([]);
+
+    expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('/responses'))).toHaveLength(1);
+    const history = JSON.parse(await readFile(paths.warmupHistoryPath, 'utf8'));
+    expect(history.providers.glm).toMatchObject({ autoEnabled: true, lastMode: 'automatic' });
+    expect(history.providers.glm.lastAutoWindowKey).toContain('five-hour:rolling:');
+    const profile = (await service.status()).ccSwitch.providers.find((provider) => provider.id === 'glm');
     expect(profile).toMatchObject({ autoWarmupEnabled: true, lastWarmupMode: 'automatic' });
   });
 

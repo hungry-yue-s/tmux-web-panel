@@ -6,7 +6,7 @@ var AgentHub = (function () {
   var root = null;
   var state = {
     hub: null, claude: null, codex: null, selectedAgent: 'codex', loading: false, error: null,
-    warmingAccountId: null, updatingAutoAccountId: null,
+    warmingProfileKey: null, updatingAutoProfileKey: null,
   };
 
   function esc(value) {
@@ -159,9 +159,13 @@ var AgentHub = (function () {
     }).concat(codexProviders.filter(function (provider) {
       return !(accounts.length && provider.category === 'official');
     }).map(function (provider) {
+      var zhipuSubscription = provider.category === 'cn_official';
       return {
-        id: provider.id, name: provider.name, detail: provider.category || '自定义接口', kind: provider.category === 'official' ? 'subscription' : 'api',
+        id: provider.id, name: provider.name, detail: zhipuSubscription ? '智谱 Coding Plan' : (provider.category || '自定义接口'),
+        kind: provider.category === 'official' || zhipuSubscription ? 'subscription' : 'api',
         current: provider.active, switchable: true, switchAction: 'activate-provider', agentId: 'codex', provider: provider,
+        warmupAction: zhipuSubscription, warmupTarget: 'provider', lastWarmupAt: provider.lastWarmupAt,
+        lastWarmupMode: provider.lastWarmupMode, autoWarmupEnabled: Boolean(provider.autoWarmupEnabled),
         message: provider.usage && provider.usage.error,
         quota: quotaItems(provider.usage, ['短周期', '长周期']),
       };
@@ -280,14 +284,16 @@ var AgentHub = (function () {
       } else {
         controls.push('<span class="ms-badge muted">只读</span>');
       }
-      if (profile.warmupAction) controls.push('<button class="ms-btn ghost compact" data-ah-action="warmup-account" data-account-id="' + esc(profile.id)
-        + '" data-target-name="' + esc(profile.name) + '"' + (state.warmingAccountId === profile.id ? ' disabled' : '') + '>'
-        + (state.warmingAccountId === profile.id ? '暖号中…' : '暖号') + '</button>');
+      var warmupKey = (profile.warmupTarget || 'account') + ':' + profile.id;
+      var warmupIdAttr = profile.warmupTarget === 'provider' ? ' data-provider-id="' : ' data-account-id="';
+      if (profile.warmupAction) controls.push('<button class="ms-btn ghost compact" data-ah-action="warmup-' + esc(profile.warmupTarget || 'account') + '"'
+        + warmupIdAttr + esc(profile.id) + '" data-target-name="' + esc(profile.name) + '"' + (state.warmingProfileKey === warmupKey ? ' disabled' : '') + '>'
+        + (state.warmingProfileKey === warmupKey ? '暖号中…' : '暖号') + '</button>');
       if (profile.warmupAction) controls.push('<button class="ms-btn ' + (profile.autoWarmupEnabled ? 'primary' : 'ghost')
-        + ' compact" data-ah-action="toggle-auto-warmup" data-account-id="' + esc(profile.id)
+        + ' compact" data-ah-action="toggle-auto-warmup"' + warmupIdAttr + esc(profile.id)
         + '" data-target-name="' + esc(profile.name) + '" data-enabled="' + (profile.autoWarmupEnabled ? 'true' : 'false') + '"'
-        + (state.updatingAutoAccountId === profile.id ? ' disabled' : '') + '>'
-        + (state.updatingAutoAccountId === profile.id ? '保存中…' : ('自动：' + (profile.autoWarmupEnabled ? '开' : '关'))) + '</button>');
+        + (state.updatingAutoProfileKey === warmupKey ? ' disabled' : '') + '>'
+        + (state.updatingAutoProfileKey === warmupKey ? '保存中…' : ('自动：' + (profile.autoWarmupEnabled ? '开' : '关'))) + '</button>');
       var control = '<div class="ah-card-controls">' + controls.join('') + '</div>';
       return '<article class="ah-profile-card' + (profile.current ? ' active' : '') + '"><div class="ah-account-top"><div>'
         + '<div class="ah-profile-type">' + esc(profileTypeLabel(profile)) + '</div><div class="ah-account-name">' + esc(profile.name) + '</div>'
@@ -427,26 +433,31 @@ var AgentHub = (function () {
       });
       return;
     }
-    if (action === 'warmup-account') {
-      var warmupAccountId = button.dataset.accountId;
+    if (action === 'warmup-account' || action === 'warmup-provider') {
+      var warmupProvider = action === 'warmup-provider';
+      var warmupProfileId = warmupProvider ? button.dataset.providerId : button.dataset.accountId;
+      var warmupKey = (warmupProvider ? 'provider:' : 'account:') + warmupProfileId;
       var warmupName = button.dataset.targetName || '这个账号';
       var confirmWarmup = window.showConfirm ? window.showConfirm({
         title: '暖号 ' + warmupName,
-        message: '这会向 OpenAI 发送一次最小模型请求，并消耗该账号的周额度。暖号不会切换当前账号，是否继续？',
+        message: warmupProvider
+          ? '这会向智谱发送一次最小模型请求，并消耗 Coding Plan 的 5 小时与周订阅额度。暖号不会切换当前 Provider，是否继续？'
+          : '这会向 OpenAI 发送一次最小模型请求，并消耗该账号的周额度。暖号不会切换当前账号，是否继续？',
         confirmText: '暖号',
       }) : Promise.resolve(window.confirm('暖号会消耗周额度，是否继续？'));
       confirmWarmup.then(function (yes) {
         if (!yes) return;
-        state.warmingAccountId = warmupAccountId;
+        state.warmingProfileKey = warmupKey;
         paint();
-        return window.Api.post('/api/agent-hub/codex-switcher/' + encodeURIComponent(warmupAccountId) + '/warmup')
+        var endpoint = warmupProvider ? '/api/agent-hub/providers/' : '/api/agent-hub/codex-switcher/';
+        return window.Api.post(endpoint + encodeURIComponent(warmupProfileId) + '/warmup')
           .then(function () {
             window.AppShell.toast('已完成 ' + warmupName + ' 的暖号请求');
-            state.warmingAccountId = null;
+            state.warmingProfileKey = null;
             return load();
           })
           .catch(function (error) {
-            state.warmingAccountId = null;
+            state.warmingProfileKey = null;
             paint();
             window.AppShell.toast(error.message || '暖号失败');
           });
@@ -454,20 +465,23 @@ var AgentHub = (function () {
       return;
     }
     if (action === 'toggle-auto-warmup') {
-      var autoAccountId = button.dataset.accountId;
+      var autoProvider = Boolean(button.dataset.providerId);
+      var autoProfileId = autoProvider ? button.dataset.providerId : button.dataset.accountId;
+      var autoKey = (autoProvider ? 'provider:' : 'account:') + autoProfileId;
       var autoName = button.dataset.targetName || '这个账号';
       var enableAuto = button.dataset.enabled !== 'true';
       var saveAuto = function () {
-        state.updatingAutoAccountId = autoAccountId;
+        state.updatingAutoProfileKey = autoKey;
         paint();
-        return window.Api.post('/api/agent-hub/codex-switcher/' + encodeURIComponent(autoAccountId) + '/auto-warmup', { enabled: enableAuto })
+        var endpoint = autoProvider ? '/api/agent-hub/providers/' : '/api/agent-hub/codex-switcher/';
+        return window.Api.post(endpoint + encodeURIComponent(autoProfileId) + '/auto-warmup', { enabled: enableAuto })
           .then(function () {
             window.AppShell.toast(autoName + '自动暖号已' + (enableAuto ? '开启' : '关闭'));
-            state.updatingAutoAccountId = null;
+            state.updatingAutoProfileKey = null;
             return load();
           })
           .catch(function (error) {
-            state.updatingAutoAccountId = null;
+            state.updatingAutoProfileKey = null;
             paint();
             window.AppShell.toast(error.message || '自动暖号配置失败');
           });
@@ -478,7 +492,9 @@ var AgentHub = (function () {
       }
       var confirmAuto = window.showConfirm ? window.showConfirm({
         title: '开启自动暖号',
-        message: '服务会在新的周额度窗口开始后自动为“' + autoName + '”发送一次最小请求。即使页面关闭，只要本机面板服务运行就会执行，并消耗周额度。',
+        message: autoProvider
+          ? '服务会在智谱新的 5 小时订阅窗口开始时，为“' + autoName + '”发送一次最小请求，并在周额度接近耗尽时停止。页面关闭后仍会运行。'
+          : '服务会在新的周额度窗口开始后自动为“' + autoName + '”发送一次最小请求。即使页面关闭，只要本机面板服务运行就会执行，并消耗周额度。',
         confirmText: '开启',
       }) : Promise.resolve(window.confirm('自动暖号会消耗周额度，是否开启？'));
       confirmAuto.then(function (yes) { if (yes) return saveAuto(); });

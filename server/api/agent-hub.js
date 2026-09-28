@@ -6,6 +6,7 @@ import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 import { Router } from 'express';
+import { parse as parseToml } from 'smol-toml';
 
 import { AppError, ErrorCode, handle } from '../servers/errors.js';
 import { createClaudeProviderSwitcher } from '../agent-providers/claude-provider-switch.js';
@@ -21,8 +22,11 @@ const USAGE_TTL_MS = 60_000;
 const AUTO_WARMUP_CHECK_MS = 30_000;
 const AUTO_WARMUP_RETRY_MS = 60_000;
 const WEEKLY_WINDOW_MINUTES = 7 * 24 * 60;
+const ZHIPU_WINDOW_MINUTES = 5 * 60;
 const AUTO_WARMUP_SLACK_MINUTES = 5;
 const MIN_WARMUP_INTERVAL_MS = 60 * 60 * 1000;
+const ZHIPU_MIN_WARMUP_INTERVAL_MS = (ZHIPU_WINDOW_MINUTES - AUTO_WARMUP_SLACK_MINUTES) * 60 * 1000;
+const ZHIPU_HOSTS = new Set(['open.bigmodel.cn', 'api.z.ai']);
 
 function validProfileId(value) {
   return typeof value === 'string' && PROFILE_ID_RE.test(value)
@@ -84,6 +88,30 @@ function dueAutoWarmupWindow(usage, history, nowMs = Date.now()) {
   const lastSuccess = Date.parse(history && history.lastSuccessAt || '');
   if (Number.isFinite(lastSuccess) && nowMs - lastSuccess < MIN_WARMUP_INTERVAL_MS) return null;
   return key;
+}
+
+function dueZhipuAutoWarmupWindow(usage, history, nowMs = Date.now()) {
+  const windows = [usage && usage.primary, usage && usage.secondary].filter(Boolean);
+  const primary = windows.find((window) => Number(window.windowMinutes) === ZHIPU_WINDOW_MINUTES);
+  const weekly = windows.find((window) => Number(window.windowMinutes) === WEEKLY_WINDOW_MINUTES);
+  const primaryUsed = Number(primary && primary.usedPercent);
+  const weeklyUsed = Number(weekly && weekly.usedPercent);
+  if (!primary || primary.usedPercent === null || primary.usedPercent === undefined
+    || !Number.isFinite(primaryUsed) || primaryUsed > 0.01
+    || (weekly && (weekly.usedPercent === null || weekly.usedPercent === undefined
+      || !Number.isFinite(weeklyUsed) || weeklyUsed >= 99.5))) return null;
+  const lastSuccess = Date.parse(history && history.lastSuccessAt || '');
+  if (Number.isFinite(lastSuccess) && nowMs - lastSuccess < ZHIPU_MIN_WARMUP_INTERVAL_MS) return null;
+  if (primary.resetsAt === null || primary.resetsAt === undefined || !Number.isFinite(Number(primary.resetsAt))) {
+    const key = `five-hour:rolling:${Math.floor(nowMs / 1000)}`;
+    return history && history.lastAutoWindowKey === key ? null : key;
+  }
+  const remainingMs = Number(primary.resetsAt) * 1000 - nowMs;
+  const minute = 60 * 1000;
+  if (remainingMs < (ZHIPU_WINDOW_MINUTES - AUTO_WARMUP_SLACK_MINUTES) * minute
+    || remainingMs > (ZHIPU_WINDOW_MINUTES + AUTO_WARMUP_SLACK_MINUTES) * minute) return null;
+  const key = `five-hour:${ZHIPU_WINDOW_MINUTES}:${primary.resetsAt}`;
+  return history && history.lastAutoWindowKey === key ? null : key;
 }
 
 function publicCodexProfile(account, store, usage) {
@@ -341,6 +369,31 @@ function providerAuth(settingsConfig) {
   return auth.OPENAI_API_KEY || auth.openai_api_key || auth.api_key || null;
 }
 
+function zhipuRuntime(settingsConfig) {
+  const settings = typeof settingsConfig === 'string' ? JSON.parse(settingsConfig || '{}') : (settingsConfig || {});
+  const config = parseToml(String(settings.config || ''));
+  const providerName = config.model_provider;
+  const provider = providerName && config.model_providers && config.model_providers[providerName];
+  let base;
+  try { base = new URL(String(provider && provider.base_url || '')); } catch {
+    throw new AppError(ErrorCode.VALIDATION_ERROR, '智谱 Provider 缺少有效的 API 地址');
+  }
+  if (base.protocol !== 'https:' || !ZHIPU_HOSTS.has(base.hostname)) {
+    throw new AppError(ErrorCode.UNSUPPORTED, '智谱 Provider 地址不受支持');
+  }
+  if (provider.wire_api !== 'responses') {
+    throw new AppError(ErrorCode.UNSUPPORTED, '智谱暖号当前仅支持 Responses 协议');
+  }
+  const model = String(config.model || '').trim();
+  const apiKey = providerAuth(settings);
+  if (!model || !apiKey) throw new AppError(ErrorCode.VALIDATION_ERROR, '智谱 Provider 缺少模型或 API Key');
+  return {
+    endpoint: `${base.toString().replace(/\/$/, '')}/responses`,
+    model,
+    apiKey,
+  };
+}
+
 async function ccSwitchProviders(databasePath, runSQLite, usageForProvider, strict = false, agents = ['claude', 'codex']) {
   const selected = agents.filter((agent) => ['claude', 'codex'].includes(agent));
   if (!selected.length) return [];
@@ -413,7 +466,16 @@ export function createAgentHubService(options = {}) {
     if (!history || typeof history !== 'object' || Array.isArray(history)) history = { version: 1, accounts: {} };
     history.version = 1;
     if (!history.accounts || typeof history.accounts !== 'object' || Array.isArray(history.accounts)) history.accounts = {};
+    if (!history.providers || typeof history.providers !== 'object' || Array.isArray(history.providers)) history.providers = {};
     return history;
+  }
+
+  async function codexProviderRows() {
+    const query = `select id, app_type, name, category, settings_config
+      from providers where app_type = 'codex' order by sort_index`;
+    const stdout = await runSQLite(ccSwitchDatabase, query);
+    const rows = JSON.parse(stdout || '[]');
+    return Array.isArray(rows) ? rows : [];
   }
 
   async function fetchProfileUsage(account) {
@@ -607,12 +669,21 @@ export function createAgentHubService(options = {}) {
       totalTokens: qoderHistory.totalTokens,
       lastActivityAt: [qoderTasks.lastActivityAt, qoderHistory.lastActivityAt].filter(Boolean).sort().at(-1) || null,
     };
-    const activeCodexProvider = providers.find((provider) => provider.agent === 'codex' && provider.active);
-    const activeClaudeProvider = providers.find((provider) => provider.agent === 'claude' && provider.active);
+    const publicProviders = providers.map((provider) => {
+      const warmup = warmups.providers && warmups.providers[provider.id];
+      return {
+        ...provider,
+        lastWarmupAt: safeDate(warmup && warmup.lastSuccessAt),
+        lastWarmupMode: warmup && ['manual', 'automatic'].includes(warmup.lastMode) ? warmup.lastMode : null,
+        autoWarmupEnabled: Boolean(warmup && warmup.autoEnabled),
+      };
+    });
+    const activeCodexProvider = publicProviders.find((provider) => provider.agent === 'codex' && provider.active);
+    const activeClaudeProvider = publicProviders.find((provider) => provider.agent === 'claude' && provider.active);
     const activeAccount = accounts.find((account) => account.id === store.active_account_id);
     const observedProfiles = [];
     if (activeCodexProvider && activeCodexProvider.category !== 'official') {
-      observedProfiles.push(['codex', { id: activeCodexProvider.id, name: activeCodexProvider.name, kind: 'api' }]);
+      observedProfiles.push(['codex', { id: activeCodexProvider.id, name: activeCodexProvider.name, kind: activeCodexProvider.category === 'cn_official' ? 'subscription' : 'api' }]);
     } else if (activeAccount) {
       observedProfiles.push(['codex', { id: activeAccount.id, name: activeAccount.name || activeAccount.email, kind: authKind(activeAccount.auth_data) === 'chatgpt' ? 'subscription' : 'api' }]);
     } else if (activeCodexProvider) {
@@ -638,7 +709,7 @@ export function createAgentHubService(options = {}) {
             && warmups.accounts[account.id].autoEnabled),
         })),
       },
-      ccSwitch: { available: providers.length > 0, providers },
+      ccSwitch: { available: publicProviders.length > 0, providers: publicProviders },
       qoder: { ...qoder, usage: qoderUsage },
       profileEvents: events,
     };
@@ -812,8 +883,107 @@ export function createAgentHubService(options = {}) {
       const history = await readWarmupHistory();
       history.accounts[accountId] = { ...(history.accounts[accountId] || {}), autoEnabled: enabled };
       await atomicJSONWrite(warmupHistoryPath, history);
-      if (!enabled) autoWarmupRetryAt.delete(accountId);
+      if (!enabled) autoWarmupRetryAt.delete(`account:${accountId}`);
       return { accountId, enabled };
+    });
+    switchQueue = operation;
+    return operation;
+  }
+
+  async function warmupProvider(providerId, options = {}) {
+    if (!validProfileId(providerId)) {
+      throw new AppError(ErrorCode.VALIDATION_ERROR, '无效的供应商 ID');
+    }
+    const automatic = options.mode === 'automatic';
+    const operation = switchQueue.catch(() => {}).then(async () => {
+      await recovery;
+      const history = await readWarmupHistory();
+      const previous = history.providers[providerId] || {};
+      const previousSuccess = Date.parse(previous.lastSuccessAt || '');
+      const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+      if (automatic && (!previous.autoEnabled || previous.lastAutoWindowKey === options.windowKey
+        || (Number.isFinite(previousSuccess) && nowMs - previousSuccess < ZHIPU_MIN_WARMUP_INTERVAL_MS))) {
+        return { providerId, skipped: true, mode: 'automatic' };
+      }
+      const rows = await codexProviderRows();
+      const provider = rows.find((candidate) => String(candidate.id) === providerId);
+      if (!provider) throw new AppError(ErrorCode.VALIDATION_ERROR, 'Codex 供应商不存在', { status: 404 });
+      if (provider.category !== 'cn_official') {
+        throw new AppError(ErrorCode.UNSUPPORTED, '暖号仅支持智谱 Coding Plan 订阅 Provider');
+      }
+      let runtime;
+      try { runtime = zhipuRuntime(provider.settings_config); } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw new AppError(ErrorCode.VALIDATION_ERROR, '智谱 Provider 配置无法解析');
+      }
+      let response;
+      try {
+        response = await fetchImpl(runtime.endpoint, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${runtime.apiKey}`,
+            accept: 'application/json',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: runtime.model,
+            input: 'Reply OK',
+            max_output_tokens: 8,
+            stream: false,
+            store: false,
+          }),
+          signal: AbortSignal.timeout(30_000),
+        });
+        await response.text();
+      } catch {
+        throw new AppError(ErrorCode.INTERNAL, '智谱暖号请求未完成，请稍后重试', { status: 502, retryable: true, action: 'retry' });
+      }
+      if (!response.ok) {
+        const messages = {
+          401: '智谱 API Key 已失效，请更新后再暖号',
+          403: '智谱订阅无权执行暖号，或请求被上游拒绝',
+          429: '智谱订阅额度不足或请求过于频繁',
+        };
+        throw new AppError(ErrorCode.INTERNAL, messages[response.status] || `智谱暖号失败 (${response.status})`, {
+          status: response.status === 429 ? 429 : 502,
+          retryable: response.status !== 401 && response.status !== 403,
+          action: 'retry',
+        });
+      }
+      const warmedAt = new Date(nowMs).toISOString();
+      history.providers[providerId] = {
+        ...previous,
+        lastSuccessAt: warmedAt,
+        lastMode: automatic ? 'automatic' : 'manual',
+        model: runtime.model,
+        ...(automatic ? { lastAutoWindowKey: options.windowKey } : {}),
+      };
+      await atomicJSONWrite(warmupHistoryPath, history);
+      providerUsageCache.expiresAt = 0;
+      return { providerId, warmedAt, mode: automatic ? 'automatic' : 'manual', model: runtime.model, consumedQuota: true };
+    });
+    switchQueue = operation;
+    return operation;
+  }
+
+  async function configureProviderAutoWarmup(providerId, enabled) {
+    if (!validProfileId(providerId) || typeof enabled !== 'boolean') {
+      throw new AppError(ErrorCode.VALIDATION_ERROR, '无效的自动暖号配置');
+    }
+    const operation = switchQueue.catch(() => {}).then(async () => {
+      await recovery;
+      const rows = await codexProviderRows();
+      const provider = rows.find((candidate) => String(candidate.id) === providerId);
+      if (!provider) throw new AppError(ErrorCode.VALIDATION_ERROR, 'Codex 供应商不存在', { status: 404 });
+      if (provider.category !== 'cn_official') {
+        throw new AppError(ErrorCode.UNSUPPORTED, '自动暖号仅支持智谱 Coding Plan 订阅 Provider');
+      }
+      zhipuRuntime(provider.settings_config);
+      const history = await readWarmupHistory();
+      history.providers[providerId] = { ...(history.providers[providerId] || {}), autoEnabled: enabled };
+      await atomicJSONWrite(warmupHistoryPath, history);
+      if (!enabled) autoWarmupRetryAt.delete(`provider:${providerId}`);
+      return { providerId, enabled };
     });
     switchQueue = operation;
     return operation;
@@ -827,23 +997,46 @@ export function createAgentHubService(options = {}) {
       const history = await readWarmupHistory();
       const enabledIds = new Set(Object.entries(history.accounts)
         .filter(([, value]) => value && value.autoEnabled).map(([id]) => id));
-      if (!enabledIds.size) return [];
+      const enabledProviderIds = new Set(Object.entries(history.providers)
+        .filter(([, value]) => value && value.autoEnabled).map(([id]) => id));
+      if (!enabledIds.size && !enabledProviderIds.size) return [];
       const store = await readJSON(accountsPath, { accounts: [] });
       const accounts = Array.isArray(store.accounts)
         ? store.accounts.filter((account) => enabledIds.has(account.id) && authKind(account.auth_data) === 'chatgpt') : [];
       const usages = await usageFor(accounts);
       const results = [];
       for (const account of accounts) {
-        if ((autoWarmupRetryAt.get(account.id) || 0) > nowMs) continue;
+        const retryKey = `account:${account.id}`;
+        if ((autoWarmupRetryAt.get(retryKey) || 0) > nowMs) continue;
         const windowKey = dueAutoWarmupWindow(usages.get(account.id), history.accounts[account.id], nowMs);
         if (!windowKey) continue;
         try {
           const result = await warmupCodex(account.id, { mode: 'automatic', windowKey });
-          autoWarmupRetryAt.delete(account.id);
+          autoWarmupRetryAt.delete(retryKey);
           if (!result.skipped) results.push(result);
         } catch (error) {
-          autoWarmupRetryAt.set(account.id, nowMs + AUTO_WARMUP_RETRY_MS);
+          autoWarmupRetryAt.set(retryKey, nowMs + AUTO_WARMUP_RETRY_MS);
           console.warn(`[agent-hub] automatic warm-up failed for ${account.id}: ${error.message || 'unknown error'}`);
+        }
+      }
+      if (enabledProviderIds.size) {
+        const rows = (await codexProviderRows()).filter((provider) => enabledProviderIds.has(String(provider.id))
+          && provider.category === 'cn_official');
+        for (const provider of rows) {
+          const providerId = String(provider.id);
+          const retryKey = `provider:${providerId}`;
+          if ((autoWarmupRetryAt.get(retryKey) || 0) > nowMs) continue;
+          const usage = await cachedProviderUsage(provider);
+          const windowKey = dueZhipuAutoWarmupWindow(usage, history.providers[providerId], nowMs);
+          if (!windowKey) continue;
+          try {
+            const result = await warmupProvider(providerId, { mode: 'automatic', windowKey, nowMs });
+            autoWarmupRetryAt.delete(retryKey);
+            if (!result.skipped) results.push(result);
+          } catch (error) {
+            autoWarmupRetryAt.set(retryKey, nowMs + AUTO_WARMUP_RETRY_MS);
+            console.warn(`[agent-hub] automatic warm-up failed for provider ${providerId}: ${error.message || 'unknown error'}`);
+          }
         }
       }
       return results;
@@ -879,7 +1072,7 @@ export function createAgentHubService(options = {}) {
       await recordProfile(agent, {
         id: target.id,
         name: target.name,
-        kind: target.category === 'official' ? 'subscription' : 'api',
+        kind: target.category === 'official' || (agent === 'codex' && target.category === 'cn_official') ? 'subscription' : 'api',
       });
       return { providerId, agent, active: true };
     });
@@ -888,7 +1081,7 @@ export function createAgentHubService(options = {}) {
   }
 
   return {
-    status, activateCodex, warmupCodex, configureAutoWarmup, runAutoWarmups,
+    status, activateCodex, warmupCodex, configureAutoWarmup, warmupProvider, configureProviderAutoWarmup, runAutoWarmups,
     startAutoWarmup, stopAutoWarmup, activateProvider, configureQoderSession,
   };
 }
@@ -906,6 +1099,10 @@ export function createAgentHubRouter(service = createAgentHubService()) {
     req.params.accountId, req.body && req.body.enabled,
   )));
   router.post('/providers/:providerId/activate', handle((req) => service.activateProvider(req.params.providerId, req.body && req.body.agent)));
+  router.post('/providers/:providerId/warmup', handle((req) => service.warmupProvider(req.params.providerId)));
+  router.post('/providers/:providerId/auto-warmup', handle((req) => service.configureProviderAutoWarmup(
+    req.params.providerId, req.body && req.body.enabled,
+  )));
   router.post('/qoder/session', handle((req) => service.configureQoderSession(req.body)));
   return router;
 }
