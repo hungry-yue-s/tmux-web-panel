@@ -43,7 +43,7 @@ var AgentHub = (function () {
     };
   }
 
-  function claudeWindow(quotaWindow) {
+  function claudeWindow(quotaWindow, windowMinutes) {
     if (!quotaWindow) return null;
     var used = Number(quotaWindow.utilization);
     var limit = Number(quotaWindow.limit);
@@ -53,8 +53,16 @@ var AgentHub = (function () {
     }
     return {
       usedPercent: used,
+      windowMinutes: windowMinutes,
       resetsAt: Date.parse(quotaWindow.resets_at || quotaWindow.reset_at || '') / 1000,
     };
+  }
+
+  function timeProgress(quotaWindow) {
+    var windowMs = Number(quotaWindow && quotaWindow.windowMinutes) * 60000;
+    var resetMs = Number(quotaWindow && quotaWindow.resetsAt) * 1000;
+    if (!(windowMs > 0) || !(resetMs > 0)) return null;
+    return Math.max(0, Math.min(100, ((Date.now() - (resetMs - windowMs)) / windowMs) * 100));
   }
 
   function quotaTone(percent) {
@@ -82,12 +90,16 @@ var AgentHub = (function () {
       return '<div class="ah-quota unavailable"><span>' + esc(label) + '</span><strong>—</strong></div>';
     }
     var percent = Math.max(0, Math.min(100, Number(quotaWindow.usedPercent)));
+    var elapsed = timeProgress(quotaWindow);
     var reset = quotaWindow.resetsAt ? new Date(Number(quotaWindow.resetsAt) * 1000) : null;
     var resetText = reset && !Number.isNaN(reset.getTime())
       ? '重置 ' + reset.toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
       : '重置时间未知';
+    if (elapsed !== null) resetText += ' · 时间 ' + Math.round(elapsed) + '%';
     return '<div class="ah-quota"><div><span>' + esc(label) + '</span><small>' + esc(resetText) + '</small></div>'
-      + '<div class="ah-quota-track"><i class="' + quotaTone(percent) + '" style="width:' + percent + '%"></i></div>'
+      + '<div class="ah-quota-track" title="额度已用 ' + Math.round(percent) + '%' + (elapsed === null ? '' : '；时间已过 ' + Math.round(elapsed) + '%') + '">'
+      + '<i class="ah-quota-used ' + quotaTone(percent) + '" style="width:' + percent + '%"></i>'
+      + (elapsed === null ? '' : '<i class="ah-quota-time" style="width:' + elapsed + '%"></i>') + '</div>'
       + '<strong>' + Math.round(percent) + '%</strong></div>';
   }
 
@@ -126,8 +138,8 @@ var AgentHub = (function () {
       detail: (claude.subscription && claude.subscription.type) || '已检测到官方登录',
       kind: 'subscription', current: claudeDetected && !activeClaudeProvider, switchable: false,
       quota: [
-        { label: '5 小时', value: claudeWindow(claude.utilization && claude.utilization.five_hour) },
-        { label: '7 天', value: claudeWindow(claude.utilization && claude.utilization.seven_day) },
+        { label: '5 小时', value: claudeWindow(claude.utilization && claude.utilization.five_hour, 300) },
+        { label: '7 天', value: claudeWindow(claude.utilization && claude.utilization.seven_day, 10080) },
       ],
     }] : []).concat(claudeProviders.map(function (provider) {
       var official = provider.category === 'official';
@@ -136,8 +148,8 @@ var AgentHub = (function () {
         current: provider.active, switchable: true, switchAction: 'activate-provider', agentId: 'claude', provider: provider,
         message: provider.usage && provider.usage.error,
         quota: official ? [
-          { label: '5 小时', value: claudeWindow(claude.utilization && claude.utilization.five_hour) },
-          { label: '7 天', value: claudeWindow(claude.utilization && claude.utilization.seven_day) },
+          { label: '5 小时', value: claudeWindow(claude.utilization && claude.utilization.five_hour, 300) },
+          { label: '7 天', value: claudeWindow(claude.utilization && claude.utilization.seven_day, 10080) },
         ] : quotaItems(provider.usage, ['短周期', '长周期']),
       };
     }));

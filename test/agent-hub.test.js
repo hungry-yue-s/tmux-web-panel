@@ -249,6 +249,35 @@ describe('AgentHub', () => {
     hub.stop();
   });
 
+  it('shows elapsed time in the same quota progress track when the window is known', async () => {
+    const nowMs = Date.parse('2026-10-01T12:00:00Z');
+    const { win, hub } = loadHub({
+      hub: {
+        codexSwitcher: { accounts: [{
+          id: 'acct', name: 'Weekly', active: true,
+          usage: {
+            primary: {
+              usedPercent: 25,
+              windowMinutes: 10080,
+              resetsAt: (nowMs + 3.5 * 24 * 60 * 60 * 1000) / 1000,
+            },
+          },
+        }] },
+        ccSwitch: { providers: [] }, qoder: {},
+      },
+    });
+    vi.spyOn(win.Date, 'now').mockReturnValue(nowMs);
+    hub.start();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+
+    const track = win.document.querySelector('.ah-quota-track');
+    expect(track.title).toBe('额度已用 25%；时间已过 50%');
+    expect(track.querySelector('.ah-quota-used').style.width).toBe('25%');
+    expect(track.querySelector('.ah-quota-time').style.width).toBe('50%');
+    expect(win.document.getElementById('agent-hub').textContent).toContain('时间 50%');
+    hub.stop();
+  });
+
   it('does not request or render data sources disabled in settings', async () => {
     const { win, hub } = loadHub({ ui: { showClaude: false, showCodex: true } });
     hub.start();

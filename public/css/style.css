@@ -8134,11 +8134,13 @@ button.list-row:hover {
 .ah-quota > div:first-child { display: grid; gap: 2px; }
 .ah-quota small { overflow: hidden; color: var(--text-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .ah-quota > strong { text-align: right; font: 700 12px/1 var(--ms-mono); }
-.ah-quota-track { height: 5px; overflow: hidden; border-radius: 999px; background: var(--bg-primary); }
-.ah-quota-track i { height: 100%; display: block; border-radius: inherit; background: var(--text-muted); }
-.ah-quota-track i.green { background: var(--accent-green); }
-.ah-quota-track i.yellow { background: var(--accent-yellow); }
-.ah-quota-track i.red { background: var(--accent-red); }
+.ah-quota-track { position: relative; height: 7px; overflow: hidden; border-radius: 999px; background: var(--bg-primary); }
+.ah-quota-track i { position: absolute; left: 0; display: block; border-radius: inherit; }
+.ah-quota-used { top: 0; height: 100%; background: var(--text-muted); }
+.ah-quota-used.green { background: var(--accent-green); }
+.ah-quota-used.yellow { background: var(--accent-yellow); }
+.ah-quota-used.red { background: var(--accent-red); }
+.ah-quota-time { bottom: 0; height: 2px; background: color-mix(in srgb, var(--text-primary) 75%, transparent); }
 .ah-source-stats { display: flex; justify-content: space-between; gap: 12px; margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--border-subtle); color: var(--text-muted); font-size: 10px; }
 .ah-source-stats strong { color: var(--text-primary); font: 700 12px/1 var(--ms-mono); }
 .ah-card-route { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; min-height: 46px; }
