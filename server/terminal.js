@@ -85,11 +85,13 @@ export function extractOsc52(buf) {
  * remote command of `ssh -tt`, so local and remote attach cannot drift apart.
  */
 export function buildTmuxAttachCommand(paneId, { nozoom = false } = {}) {
+  // xterm.js supports UTF-8 even when SSH does not forward a UTF-8 locale.
+  // Without -u, tmux replaces Chinese and prompt icons with underscores.
   // Apply selection, zoom and attach in one tmux command queue. An old
   // attachment must never toggle the shared window again when it exits.
   const toggle = `resize-pane -Z -t ${paneId}`;
   return [
-    `tmux select-pane -t '${paneId}'`,
+    `tmux -u select-pane -t '${paneId}'`,
     `if-shell -F -t '${paneId}' '#{window_zoomed_flag}' '${nozoom ? toggle : ''}' '${nozoom ? '' : toggle}'`,
     `attach-session -d -t '${paneId}'`,
   ].join(' \\; ');

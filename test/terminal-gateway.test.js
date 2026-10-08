@@ -308,7 +308,7 @@ describe('TerminalGateway', () => {
       expect(options.spawn.args[0]).toBe('-tt');
       const remoteCommand = options.spawn.args[options.spawn.args.length - 1];
       expect(remoteCommand).toContain("attach-session -d -t '%12'");
-      expect(remoteCommand).toContain('tmux select-pane');
+      expect(remoteCommand).toContain('tmux -u select-pane');
     });
 
     it('passes nozoom through to the template', async () => {
