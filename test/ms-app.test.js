@@ -480,6 +480,39 @@ describe('MsApp mobile workspace action', () => {
     return { ...ctx, sheet: ctx.document.getElementById('ms-mobile-workspace-sheet') };
   }
 
+  it.each(['session', 'window'])('toggles the same %s menu and switches to another row on tap', (entity) => {
+    const ctx = mobileWorkspace('local', 'tmux');
+    const triggers = ctx.sheet.querySelectorAll('[data-sidebar-entity="' + entity + '"] .tree-menu-button');
+    const first = triggers[0];
+    const second = triggers[1];
+
+    first.click();
+    const menu = ctx.document.getElementById('ms-sidebar-context-menu');
+    expect(menu.hidden).toBe(false);
+    expect(first.getAttribute('aria-expanded')).toBe('true');
+
+    first.click();
+    expect(menu.hidden).toBe(true);
+    expect(menu.children).toHaveLength(0);
+    expect(first.getAttribute('aria-expanded')).toBe('false');
+    expect(ctx.document.activeElement).toBe(first);
+    expect(ctx.win.AppShell.isMobileWorkspaceOpen()).toBe(true);
+
+    first.click();
+    expect(menu.hidden).toBe(false);
+    second.click();
+    expect(menu.hidden).toBe(false);
+    expect(first.getAttribute('aria-expanded')).toBe('false');
+    expect(second.getAttribute('aria-expanded')).toBe('true');
+    expect(menu.querySelector('[data-action]').dataset.entityName)
+      .toBe(entity === 'session' ? 'Other work' : 'Build logs');
+
+    ctx.sheet.querySelector('.ms-mobile-workspace-head strong').click();
+    expect(menu.hidden).toBe(true);
+    expect(second.getAttribute('aria-expanded')).toBe('false');
+    ctx.win.close();
+  });
+
   it.each([['local', 'tmux'], ['api-linux', 'ssh']])('creates sessions and windows on %s via visible buttons', async (serverId, provider) => {
     const ctx = mobileWorkspace(serverId, provider);
     ctx.win.showPrompt = vi.fn().mockResolvedValueOnce('New work').mockResolvedValueOnce('');

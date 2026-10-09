@@ -598,7 +598,10 @@
     /** Single delegated listener for the whole shell. */
     _bindEvents() {
       global.document.addEventListener('click', (event) => {
-        this._hideSidebarContextMenu();
+        const actionTarget = event.target.closest('[data-action]');
+        if (!actionTarget || actionTarget.dataset.action !== 'workspace-entity-menu') {
+          this._hideSidebarContextMenu();
+        }
         const routeTarget = event.target.closest('[data-route]');
         if (routeTarget) {
           if (routeTarget.closest('#ms-mobile-workspace-sheet')) {
@@ -626,7 +629,6 @@
           return;
         }
 
-        const actionTarget = event.target.closest('[data-action]');
         if (!actionTarget) {
           if (!event.target.closest('#ms-server-popover')) global.AppShell.hideServerPicker();
           return;
@@ -706,7 +708,11 @@
       };
 
       if (action === 'workspace-entity-menu') {
-        if (row) this._showSidebarContextMenu(row, {});
+        if (row && row === this._sidebarContextOrigin) {
+          this._hideSidebarContextMenu({ restoreFocus: true });
+        } else if (row) {
+          this._showSidebarContextMenu(row, {});
+        }
         return;
       }
       if (action === 'server-switcher' || action === 'mobile-server') {
