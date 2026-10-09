@@ -651,6 +651,41 @@ describe('AppShell sidebar width applies immediately', () => {
 });
 
 describe('AppShell mobile workspace sheet', () => {
+  it('exposes creation and per-row menus while keeping desktop controls intact', () => {
+    const ctx = loadShell();
+    Object.defineProperty(ctx.win, 'innerWidth', { value: 375, configurable: true });
+    seedLocalTmux(ctx.Store);
+    ctx.Shell.render();
+    ctx.Shell.openMobileWorkspaceSheet();
+
+    const sheet = ctx.document.getElementById('ms-mobile-workspace-sheet');
+    expect(sheet.querySelector('.tree-section-head [data-action="new-session"]')).not.toBeNull();
+    expect(sheet.querySelector('[data-action="new-window"]').dataset.session).toBe('$0');
+    expect(sheet.querySelectorAll('[data-action="workspace-entity-menu"]')).toHaveLength(3);
+    expect(sheet.querySelector('[data-action="close-session"]')).toBeNull();
+    expect(sheet.querySelector('[data-action="close-window"]')).toBeNull();
+    expect(ctx.document.querySelector('.ms-sidebar [data-action="close-session"]')).not.toBeNull();
+    expect(ctx.document.querySelector('.ms-sidebar .tree-menu-button')).toBeNull();
+    ctx.win.close();
+  });
+
+  it('offers session creation in an empty workspace and hides unsupported operations', () => {
+    const ctx = loadShell();
+    Object.defineProperty(ctx.win, 'innerWidth', { value: 375, configurable: true });
+    seedLocalTmux(ctx.Store, { sessions: [] });
+    ctx.Shell.render();
+    ctx.Shell.openMobileWorkspaceSheet();
+    const sheet = ctx.document.getElementById('ms-mobile-workspace-sheet');
+    expect(sheet.querySelector('[data-action="new-session"]')).not.toBeNull();
+
+    seedLocalTmux(ctx.Store);
+    ctx.Store.setWorkspace('local', { ...ctx.Shell.workspace('local'), actions: {} });
+    ctx.Shell.render();
+    expect(sheet.querySelector('.tree-add-button')).toBeNull();
+    expect(sheet.querySelectorAll('.tree-window-row')).toHaveLength(2);
+    ctx.win.close();
+  });
+
   it('uses the title trigger to expose active session and window navigation on phones', () => {
     const ctx = loadShell();
     Object.defineProperty(ctx.win, 'innerWidth', { value: 375, configurable: true });

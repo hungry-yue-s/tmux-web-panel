@@ -516,8 +516,10 @@
       if (!menu || menu.hidden) return;
       menu.hidden = true;
       menu.replaceChildren();
+      const trigger = this._sidebarContextOrigin && this._sidebarContextOrigin.querySelector('.tree-menu-button');
+      if (trigger) trigger.setAttribute('aria-expanded', 'false');
       if (restoreFocus && this._sidebarContextOrigin && this._sidebarContextOrigin.isConnected) {
-        const target = this._sidebarContextOrigin.querySelector('.tree-item');
+        const target = trigger || this._sidebarContextOrigin.querySelector('.tree-item');
         if (target) target.focus();
       }
       this._sidebarContextOrigin = null;
@@ -533,6 +535,15 @@
       menu.style.visibility = 'hidden';
       menu.hidden = false;
       const rect = menu.getBoundingClientRect();
+      const trigger = row.querySelector('.tree-menu-button');
+      if (trigger) {
+        const anchor = trigger.getBoundingClientRect();
+        left = anchor.right - rect.width;
+        top = anchor.bottom + 4;
+        if (top + rect.height > global.innerHeight - gutter) {
+          top = anchor.top - rect.height - 4;
+        }
+      }
       left = Math.max(gutter, Math.min(left, global.innerWidth - rect.width - gutter));
       top = Math.max(gutter, Math.min(top, global.innerHeight - rect.height - gutter));
       menu.style.left = Math.round(left) + 'px';
@@ -561,6 +572,7 @@
       if (available.length === 0) return;
 
       const menu = this._ensureSidebarContextMenu();
+      menu.classList.toggle('mobile-entity-menu', !!row.closest('#ms-mobile-workspace-sheet'));
       menu.setAttribute('aria-label', (entity === 'session' ? 'Session' : 'Window') + ' 操作');
       menu.innerHTML = available.map((entry) => {
         const action = entry[0];
@@ -576,6 +588,8 @@
           + entry[1] + '</button>';
       }).join('');
       this._sidebarContextOrigin = row;
+      const trigger = row.querySelector('.tree-menu-button');
+      if (trigger) trigger.setAttribute('aria-expanded', 'true');
       this._positionSidebarContextMenu(menu, row, event);
       const first = menu.querySelector('[role="menuitem"]');
       if (first) first.focus();
@@ -684,12 +698,17 @@
     },
 
     async _handleAction(action, node) {
-      const serverId = node.dataset.serverId || global.AppShell.activeServerId();
+      const row = node.closest('[data-sidebar-entity]');
+      const serverId = node.dataset.serverId || (row && row.dataset.serverId) || global.AppShell.activeServerId();
       const entityContext = {
-        provider: node.dataset.provider || null,
-        name: node.dataset.entityName || null,
+        provider: node.dataset.provider || (row && row.dataset.provider) || null,
+        name: node.dataset.entityName || (row && row.dataset.entityName) || null,
       };
 
+      if (action === 'workspace-entity-menu') {
+        if (row) this._showSidebarContextMenu(row, {});
+        return;
+      }
       if (action === 'server-switcher' || action === 'mobile-server') {
         const anchor = node.closest('#ms-mobile-workspace-sheet')
           ? global.AppShell._mobileWorkspaceTrigger() : node;

@@ -456,6 +456,93 @@ function fakeAgentHub() {
 }
 
 describe('MsApp mobile workspace action', () => {
+  function mobileWorkspace(serverId, provider) {
+    const ctx = loadStatusShell();
+    Object.defineProperty(ctx.win, 'innerWidth', { value: 375, configurable: true });
+    ctx.Store.setWorkspace(serverId, {
+      serverId, provider, actions: {
+        createSession: true, createWindow: true, renameSession: true, closeSession: true,
+        renameWindow: true, closeWindow: true,
+      },
+      sessions: [
+        { id: '$1', name: 'Active', windows: [{ id: '@0', index: 0, name: 'Active window', panes: [] }] },
+        { id: '$7', name: 'Other work', windows: [{ id: '@9', index: 1, name: 'Build logs', panes: [] }] },
+      ],
+    });
+    ctx.Store.setRoute({ name: 'terminal', params: { serverId, sessionId: '$1', windowId: '@0' } });
+    ctx.Store.setSessionExpanded(serverId, '$7', true);
+    ctx.win.AppShell.render();
+    ctx.MsApp._bindEvents();
+    ctx.win.AppShell.openMobileWorkspaceSheet();
+    ctx.win.Api.request = vi.fn(async () => ({}));
+    ctx.MsApp.refreshWorkspace = vi.fn(async () => ctx.win.AppShell.workspace(serverId));
+    ctx.MsApp._onRoute = vi.fn(async () => {});
+    return { ...ctx, sheet: ctx.document.getElementById('ms-mobile-workspace-sheet') };
+  }
+
+  it.each([['local', 'tmux'], ['api-linux', 'ssh']])('creates sessions and windows on %s via visible buttons', async (serverId, provider) => {
+    const ctx = mobileWorkspace(serverId, provider);
+    ctx.win.showPrompt = vi.fn().mockResolvedValueOnce('New work').mockResolvedValueOnce('');
+
+    ctx.sheet.querySelector('[data-action="new-session"]').click();
+    await vi.waitFor(() => expect(ctx.MsApp.refreshWorkspace).toHaveBeenCalledOnce());
+    expect(ctx.win.Api.request).toHaveBeenNthCalledWith(1, 'POST', '/api/servers/' + serverId + '/sessions',
+      { name: 'New work' }, { headers: { 'X-Workspace-Provider': provider } });
+
+    ctx.sheet.querySelector('[data-session="$7"] [data-action="new-window"]').click();
+    await vi.waitFor(() => expect(ctx.MsApp.refreshWorkspace).toHaveBeenCalledTimes(2));
+    expect(ctx.win.Api.request).toHaveBeenNthCalledWith(2, 'POST', '/api/servers/' + serverId + '/sessions/%247/windows',
+      {}, { headers: { 'X-Workspace-Provider': provider } });
+    ctx.win.close();
+  });
+
+  it.each([
+    ['local', 'tmux', 'session', 'close-session', '/sessions/%247', 'Other work'],
+    ['api-linux', 'ssh', 'session', 'close-session', '/sessions/%247', 'Other work'],
+    ['local', 'tmux', 'window', 'close-window', '/windows/%409', 'Build logs'],
+    ['api-linux', 'ssh', 'window', 'close-window', '/windows/%409', 'Build logs'],
+  ])('closes the chosen %s %s %s through the tap menu', async (serverId, provider, entity, action, path, name) => {
+    const ctx = mobileWorkspace(serverId, provider);
+    ctx.win.showConfirm = vi.fn(async () => true);
+    const target = ctx.sheet.querySelector('[data-sidebar-entity="' + entity + '"]['
+      + (entity === 'session' ? 'data-session="$7"' : 'data-window="@9"') + ']');
+    target.querySelector('.tree-menu-button').click();
+    const menu = ctx.document.getElementById('ms-sidebar-context-menu');
+    expect(menu.hidden).toBe(false);
+    expect(menu.classList.contains('mobile-entity-menu')).toBe(true);
+    menu.querySelector('[data-action="' + action + '"]').click();
+
+    await vi.waitFor(() => expect(ctx.MsApp.refreshWorkspace).toHaveBeenCalledOnce());
+    expect(ctx.win.showConfirm).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining(name), danger: true }));
+    expect(ctx.win.Api.request).toHaveBeenCalledWith('DELETE', '/api/servers/' + serverId + path, undefined,
+      { headers: { 'X-Workspace-Provider': provider } });
+    expect(menu.hidden).toBe(true);
+    expect(target.querySelector('.tree-menu-button').getAttribute('aria-expanded')).toBe('false');
+    ctx.win.close();
+  });
+
+  it('cancels deletion without making a request and dismisses menus independently', async () => {
+    const ctx = mobileWorkspace('local', 'tmux');
+    ctx.win.showConfirm = vi.fn(async () => false);
+    const trigger = ctx.sheet.querySelector('[data-window="@9"] .tree-menu-button');
+    trigger.click();
+    const menu = ctx.document.getElementById('ms-sidebar-context-menu');
+    ctx.document.dispatchEvent(new ctx.win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(menu.hidden).toBe(true);
+    expect(ctx.document.activeElement).toBe(trigger);
+    expect(ctx.win.AppShell.isMobileWorkspaceOpen()).toBe(true);
+
+    trigger.click();
+    menu.querySelector('[data-action="close-window"]').click();
+    await vi.waitFor(() => expect(ctx.win.showConfirm).toHaveBeenCalledOnce());
+    expect(ctx.win.Api.request).not.toHaveBeenCalled();
+
+    trigger.click();
+    ctx.win.AppShell.closeMobileWorkspaceSheet();
+    expect(menu.hidden).toBe(true);
+    ctx.win.close();
+  });
+
   it('delegates the title trigger to the AppShell sheet toggle', async () => {
     const ctx = loadStatusShell();
     const toggle = vi.fn();
@@ -639,6 +726,32 @@ describe('MsApp sidebar context menu', () => {
     ctx.document.querySelector('.ms-sidebar').appendChild(el);
     return el;
   }
+
+  it.each([
+    [352, 184, 228, 204, 232],
+    [352, 760, 804, 204, 656],
+    [100, 184, 228, 8, 232],
+    [375, 184, 228, 219, 232],
+  ])('positions a tap menu beside its button within the viewport (%s, %s)', (right, top, bottom, expectedLeft, expectedTop) => {
+    const ctx = loadStatusShell();
+    Object.defineProperty(ctx.win, 'innerWidth', { value: 375, configurable: true });
+    Object.defineProperty(ctx.win, 'innerHeight', { value: 812, configurable: true });
+    const target = row(ctx, 'window');
+    target.getBoundingClientRect = () => ({ left: 16, right: 359, top, bottom });
+    const trigger = ctx.document.createElement('button');
+    trigger.className = 'tree-menu-button';
+    trigger.getBoundingClientRect = () => ({ left: right - 44, right, top, bottom });
+    target.appendChild(trigger);
+    const menu = ctx.MsApp._ensureSidebarContextMenu();
+    menu.getBoundingClientRect = () => ({ width: 148, height: 100 });
+
+    ctx.MsApp._positionSidebarContextMenu(menu, target, {});
+
+    expect(parseInt(menu.style.left, 10)).toBe(expectedLeft);
+    expect(parseInt(menu.style.top, 10)).toBe(expectedTop);
+    expect(menu.hidden).toBe(false);
+    ctx.win.close();
+  });
 
   it('offers new window, rename and close for Session rows and rename/close for Window rows', () => {
     const ctx = loadStatusShell();

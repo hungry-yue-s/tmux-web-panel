@@ -279,7 +279,7 @@
      * Session bubbles with their windows nested inside, matching the demo. The
      * tree is the terminal entry point, so it stays visible on every page.
      */
-    _renderTree: function (serverId, route) {
+    _renderTree: function (serverId, route, mobile) {
       var workspace = this.workspace(serverId);
       var health = this.health(serverId);
 
@@ -329,11 +329,11 @@
           + '<span>' + esc(session.name) + '</span>'
           + '<span class="cmd">' + (session.windows || []).length + ' windows</span>'
           + '</button>'
-          + (actions.renameSession
+          + (!mobile && actions.renameSession
             ? '<button class="tree-add-button" data-action="rename-session" data-session="' + esc(session.id) + '"'
               + ' title="重命名 ' + esc(session.name) + '" aria-label="重命名 Session">✎</button>'
             : '')
-          + (actions.closeSession
+          + (!mobile && actions.closeSession
             ? '<button class="tree-add-button" data-action="close-session" data-session="' + esc(session.id) + '"'
               + ' title="关闭 ' + esc(session.name) + '" aria-label="关闭 Session">×</button>'
             : '')
@@ -341,8 +341,13 @@
             ? '<button class="tree-add-button" data-action="new-window" data-session="' + esc(session.id) + '"'
               + ' title="在 ' + esc(session.name) + ' 中新建 Window" aria-label="新建 Window">+</button>'
             : '')
+          + (mobile && (actions.createWindow || actions.renameSession || actions.closeSession)
+            ? '<button type="button" class="tree-add-button tree-menu-button" data-action="workspace-entity-menu"'
+              + ' aria-label="' + esc(session.name) + ' 的会话操作" aria-haspopup="menu" aria-expanded="false"'
+              + ' aria-controls="ms-sidebar-context-menu">⋯</button>'
+            : '')
           + '</div>'
-          + (expanded ? self._renderWindows(serverId, session, params) : '')
+          + (expanded ? self._renderWindows(serverId, session, params, mobile) : '')
           + '</div>';
       }).join('');
 
@@ -353,7 +358,7 @@
       return head + '<div class="tree">' + tree + '</div>' + lifecycle;
     },
 
-    _renderWindows: function (serverId, session, params) {
+    _renderWindows: function (serverId, session, params, mobile) {
       var windows = session.windows || [];
       if (windows.length === 0) return '';
       var workspace = this.workspace(serverId);
@@ -382,13 +387,18 @@
           + (active ? ' aria-current="page"' : '')
           + '><span class="tree-item-name">' + esc(win.name) + '</span>'
           + '<span class="cmd">' + esc(command) + '</span></button>'
-          + (actions.renameWindow
+          + (!mobile && actions.renameWindow
             ? '<button class="tree-add-button" data-action="rename-window" data-window="' + esc(win.id) + '"'
               + ' title="重命名 ' + esc(win.name) + '" aria-label="重命名 Window">✎</button>'
             : '')
-          + (actions.closeWindow
+          + (!mobile && actions.closeWindow
             ? '<button class="tree-add-button" data-action="close-window" data-window="' + esc(win.id) + '"'
               + ' title="关闭 ' + esc(win.name) + '" aria-label="关闭 Window">×</button>'
+            : '')
+          + (mobile && (actions.renameWindow || actions.closeWindow)
+            ? '<button type="button" class="tree-add-button tree-menu-button" data-action="workspace-entity-menu"'
+              + ' aria-label="' + esc(win.name) + ' 的窗口操作" aria-haspopup="menu" aria-expanded="false"'
+              + ' aria-controls="ms-sidebar-context-menu">⋯</button>'
             : '')
           + '</div>';
       }).join('') + '</div>';
@@ -452,7 +462,7 @@
       var tree = el('ms-mobile-workspace-tree');
       if (!tree) return;
       var route = global.Store.getState().route || {};
-      tree.innerHTML = route.name === 'terminal' ? this._renderTree(this.activeServerId(), route) : '';
+      tree.innerHTML = route.name === 'terminal' ? this._renderTree(this.activeServerId(), route, true) : '';
       el('ms-mobile-workspace-sheet').classList.toggle('has-terminal', route.name === 'terminal');
     },
 
@@ -504,7 +514,7 @@
       var self = this;
       overlay.addEventListener('click', function () { self.closeMobileWorkspaceSheet(); });
       this._mobileWorkspaceKeydown = function (event) {
-        if (event.key !== 'Escape') return;
+        if (event.key !== 'Escape' || event.defaultPrevented) return;
         event.preventDefault();
         self.closeMobileWorkspaceSheet();
       };
@@ -517,6 +527,7 @@
       var sheet = el('ms-mobile-workspace-sheet');
       var overlay = el('ms-mobile-workspace-overlay');
       if (!sheet && !overlay) return;
+      if (global.MsApp) global.MsApp._hideSidebarContextMenu();
       this._moveMobileToolsToStaging();
       if (sheet) sheet.remove();
       if (overlay) overlay.remove();

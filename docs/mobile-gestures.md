@@ -22,6 +22,17 @@ tail, dragging up shows the head.
   (decay matched to UIScrollView).
 - Horizontal drags stay in the terminal and do not navigate back.
 
+## Sessions and windows
+
+Tap the title at the top of the screen to open the workspace menu.
+
+- Tap **+** beside **Sessions** to create a session, including when the workspace is empty.
+- Tap **+** beside a session to add a window to that session.
+- Tap **⋯** beside a session or window to rename or close it. Closing requires confirmation;
+  closing a session ends all of its windows.
+
+These actions use the selected server and its current workspace capabilities.
+
 ## The key drawer
 
 The floating button opens a scene-aware key drawer. It is mutually exclusive

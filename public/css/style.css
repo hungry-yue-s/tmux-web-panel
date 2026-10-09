@@ -8035,8 +8035,17 @@ button.list-row:hover {
   overscroll-behavior: contain;
 }
 
-.ms-mobile-workspace-tree .tree-section-head { display: none; }
-.ms-mobile-workspace-tree .tree-add-button { display: none !important; }
+.ms-mobile-workspace-tree .tree-section-head { min-height: 44px; }
+.ms-mobile-workspace-tree .provider-badge { flex: 0 0 auto; }
+.ms-mobile-workspace-tree .tree-add-button {
+  display: inline-grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  opacity: 1;
+}
+.ms-mobile-workspace-tree .tree-menu-button { font-size: 24px; }
+#ms-sidebar-context-menu.mobile-entity-menu .context-menu-item { min-height: 44px; }
 .ms-mobile-workspace-tree .tree-session-row,
 .ms-mobile-workspace-tree .tree-window-row { min-height: 44px; }
 .ms-mobile-workspace-tree .tree-item { min-height: 44px; }
