@@ -215,6 +215,7 @@
         { value: 'terminal-set', label: '终端套（方向+Tab+C-c）' },
         { value: 'vim-set', label: 'Vim 套（Esc+方向+:w）' },
         { value: 'claude-set', label: 'Claude 套（方向+Alt+T）' },
+        { value: 'codex-set', label: 'Codex 套（方向+Tab+历史）' },
         { value: 'arrow-only', label: '纯方向键' },
         { value: 'none', label: '无' },
       ];
@@ -226,6 +227,7 @@
       var inheritOpts = [
         { value: 'terminal', label: '终端' },
         { value: 'claude', label: 'Claude' },
+        { value: 'codex', label: 'Codex' },
         { value: 'vim', label: 'Vim' },
         { value: 'lazygit', label: 'Lazygit' },
         { value: 'empty', label: '空白' },
@@ -240,13 +242,16 @@
       var saveBtn = h('button', { class: 'fab-form-btn save', onclick: function () {
         var name = nameInput.value.trim();
         if (!name) { nameInput.focus(); return; }
+        var inheritedScene = global.FabScene.getBuiltinScenes().find(function (scene) {
+          return scene.id === inheritSel.value;
+        });
         var def = {
           id: existingScene ? existingScene.id : ('custom-' + Date.now()),
           name: name,
           icon: iconInput.value.trim() || '🔧',
           detect: detectInput.value.split(',').map(function(s) { return s.trim(); }).filter(Boolean),
           fixtures: getFixtureTemplate(fixtureSel.value),
-          tabs: [
+          tabs: inheritedScene ? inheritedScene.tabs : [
             { key: 'common', name: '常用' },
             { key: 'keys', name: '按键' },
             { key: 'cmd', name: '命令' },
@@ -281,6 +286,10 @@
       if (kind === 'terminal-set') return [pad, { id: 'tab', label: 'Tab', send: '\t' }, { id: 'c-c', label: 'C-c', send: '\x03', color: 'red' }];
       if (kind === 'vim-set') return [{ id: 'esc-big', label: 'Esc', send: '\x1b', color: 'red', size: 'wide' }, pad, { id: 'colon-w', label: ':w', send: ':w\r' }];
       if (kind === 'claude-set') return [pad, { id: 'alt-t', label: 'Alt+T', send: '\x1bt', color: 'orange' }, { id: 'c-o', label: 'Ctrl+O', send: '\x0f', color: 'orange' }];
+      if (kind === 'codex-set') {
+        var codex = global.FabScene.getBuiltinScenes().find(function (scene) { return scene.id === 'codex'; });
+        return codex ? codex.fixtures : [pad];
+      }
       if (kind === 'arrow-only') return [pad];
       return [];
     }

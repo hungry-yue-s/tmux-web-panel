@@ -28,10 +28,32 @@ The floating button opens a scene-aware key drawer. It is mutually exclusive
 with the soft keyboard: focusing the terminal input closes the drawer, and
 opening the drawer does not steal focus from a running TUI.
 
-Built-in scenes — **Terminal**, **Claude**, **Vim**, **Lazygit** — are
+Built-in scenes — **Terminal**, **Claude**, **Codex**, **Vim**, **Lazygit** — are
 auto-detected from the command running in the active pane. Each scene ships a
 fixture pad (arrows with long-press repeat, Esc, Tab, C-c, …) plus tabs of keys,
 commands, slash-commands and templates.
+
+The **Codex** scene follows the default shortcuts in the
+[official OpenAI CLI command reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli)
+and [CLI customization guide](https://learn.chatgpt.com/docs/cli-customization):
+
+| Button | Action |
+|--------|--------|
+| Tab | Complete input; queue a follow-up while Codex is working |
+| C-r | Search prompt history |
+| C-o | Copy the latest completed Codex response on the host |
+| C-g | Open the host's `VISUAL` or `EDITOR` prompt editor |
+| Shift+← | Send a Shift-modified left arrow key to the TUI |
+| C-l | Clear the terminal view while keeping the chat |
+| Esc | Cancel; tap twice with an empty composer to edit the previous message |
+| @ / ! / / | Insert a file mention, shell command prefix, or command-menu prefix |
+
+The Slash tab includes `/model`, `/plan`, `/permissions`, `/status`, `/compact`,
+`/diff`, `/review`, `/resume`, `/new`, `/copy`, `/mcp`, `/skills`, `/agent`, `/ps`
+and `/keymap`. Command buttons send the command followed by Enter; prefix buttons
+only insert text. If you have remapped Codex with `/keymap`, customize the drawer
+to match. Tap the scene badge to switch to Codex manually when process detection
+is unavailable. The terminal scene also includes a `codex` launch button.
 
 You can add your own scenes: a name, an emoji, the process names that trigger
 it, and custom keys written with `\x03`-style escapes. Buttons are ranked by

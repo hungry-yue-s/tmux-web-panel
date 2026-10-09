@@ -170,12 +170,16 @@ function _createFabPanel(container) {
         },
         onClose: function () { toggleDrawer(false); },
       });
+    }
 
-      // Set initial scene from pre-existing pane-cmd data
-      var curPane = state.currentPane;
-      if (curPane && window._paneSceneMap && window._paneSceneMap[curPane]) {
-        fabDrawerApi.setScene(window._paneSceneMap[curPane]);
-      }
+    // The multi-server shell supplies pane commands directly. Resolve on every
+    // open so switching panes cannot leave the drawer on the previous scene.
+    if (willOpen && fabDrawerApi && window.FabScene) {
+      var currentPane = (state.panes || []).find(function (pane) { return pane.id === state.currentPane; });
+      var sceneId = currentPane && currentPane.command
+        ? window.FabScene.matchScene(currentPane.command, window.FabScene.loadScenes())
+        : (window._paneSceneMap && window._paneSceneMap[state.currentPane]) || 'terminal';
+      fabDrawerApi.setScene(sceneId);
     }
 
     drawerMountEl.classList.toggle('open', willOpen);

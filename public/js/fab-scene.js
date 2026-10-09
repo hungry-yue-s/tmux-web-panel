@@ -51,6 +51,7 @@ const BUILTIN_SCENES = [
       ],
       commands: [
         { id: 'claude',     label: 'claude',     send: 'claude --dangerously-skip-permissions\r' },
+        { id: 'codex',      label: 'codex',      send: 'codex\r' },
         { id: 'lazygit',    label: 'lazygit',    send: 'lazygit\r' },
         { id: 'vim',        label: 'vim',        send: 'vim ' },
         { id: 'ls',         label: 'ls',         send: 'ls\r' },
@@ -142,6 +143,72 @@ const BUILTIN_SCENES = [
         { id: 'tpl-tdd',      label: '用 TDD 实现这个功能',         send: '用 TDD 实现这个功能\r' },
         { id: 'tpl-pr',       label: '写一份 PR 描述并列出测试点',   send: '写一份 PR 描述并列出测试点\r' },
         { id: 'tpl-refactor', label: '帮我重构，保持接口不变',       send: '帮我重构，保持接口不变\r' },
+      ],
+    },
+  },
+
+  {
+    id: 'codex',
+    name: 'Codex',
+    icon: '◎',
+    detect: ['codex'],
+    builtin: true,
+    createdAt: 0,
+    // Defaults from official OpenAI CLI docs (2026-10-08):
+    // https://learn.chatgpt.com/docs/developer-commands?surface=cli
+    // https://learn.chatgpt.com/docs/cli-customization
+    fixtures: [
+      ARROW_PAD,
+      { id: 'tab',    label: 'Tab 排队',    send: '\t',   color: 'accent' },
+      { id: 'ctrl-r', label: 'C-r 历史',    send: '\x12' },
+      { id: 'ctrl-o', label: 'C-o 复制',    send: '\x0f' },
+      { id: 'ctrl-g', label: 'C-g 编辑',    send: '\x07' },
+      { id: 'shift-left',  label: 'Shift+←', send: '\x1b[1;2D' },
+    ],
+    tabs: [
+      { key: 'common',    name: '常用' },
+      { key: 'keys',      name: '按键' },
+      { key: 'slash',     name: 'Slash' },
+      { key: 'templates', name: '模板' },
+    ],
+    defaultItems: {
+      common: [],
+      keys: [
+        { id: 'esc',    label: 'Esc',         send: '\x1b' },
+        { id: 'ctrl-c', label: 'C-c',         send: '\x03' },
+        { id: 'enter',  label: 'Enter',       send: '\r' },
+        { id: 'tab',    label: 'Tab 排队',    send: '\t' },
+        { id: 'shift-left',  label: 'Shift+←', send: '\x1b[1;2D' },
+        { id: 'ctrl-r', label: 'C-r 历史',    send: '\x12' },
+        { id: 'ctrl-o', label: 'C-o 复制',    send: '\x0f' },
+        { id: 'ctrl-g', label: 'C-g 编辑',    send: '\x07' },
+        { id: 'ctrl-l', label: 'C-l 清屏',    send: '\x0c' },
+        { id: 'mention', label: '@ 文件',     send: '@' },
+        { id: 'shell',   label: '! 命令',     send: '!' },
+        { id: 'slash',   label: '/ 命令菜单', send: '/' },
+      ],
+      slash: [
+        { id: 'model',       label: '/model',       send: '/model\r' },
+        { id: 'plan',        label: '/plan',        send: '/plan\r' },
+        { id: 'permissions', label: '/permissions', send: '/permissions\r' },
+        { id: 'status',      label: '/status',      send: '/status\r' },
+        { id: 'compact',     label: '/compact',     send: '/compact\r' },
+        { id: 'diff',        label: '/diff',        send: '/diff\r' },
+        { id: 'review',      label: '/review',      send: '/review\r' },
+        { id: 'resume',      label: '/resume',      send: '/resume\r' },
+        { id: 'new',         label: '/new',         send: '/new\r' },
+        { id: 'copy',        label: '/copy',        send: '/copy\r' },
+        { id: 'mcp',         label: '/mcp',         send: '/mcp\r' },
+        { id: 'skills',      label: '/skills',      send: '/skills\r' },
+        { id: 'agent',       label: '/agent',       send: '/agent\r' },
+        { id: 'ps',          label: '/ps',          send: '/ps\r' },
+        { id: 'keymap',      label: '/keymap',      send: '/keymap\r' },
+      ],
+      templates: [
+        { id: 'tpl-analyze', label: '分析这段代码的性能瓶颈',    send: '分析这段代码的性能瓶颈\r' },
+        { id: 'tpl-review',  label: '审查改动，指出风险和测试点', send: '审查改动，指出风险和测试点\r' },
+        { id: 'tpl-test',    label: '运行相关测试并修复失败项',   send: '运行相关测试并修复失败项\r' },
+        { id: 'tpl-pr',      label: '写一份 PR 描述并列出测试点', send: '写一份 PR 描述并列出测试点\r' },
       ],
     },
   },
@@ -390,4 +457,3 @@ function matchScene(cmd, scenes) {
     target.FabScene = { getBuiltinScenes, loadScenes, addScene, deleteScene, matchScene };
   }
 })();
-

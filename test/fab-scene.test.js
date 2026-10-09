@@ -12,9 +12,9 @@ const scene = window.FabScene;
 describe('fab-scene builtin scenes', () => {
   beforeEach(() => localStorage.clear());
 
-  it('exports 4 builtin scenes', () => {
+  it('exports 5 builtin scenes', () => {
     const scenes = scene.getBuiltinScenes();
-    expect(scenes.map(s => s.id)).toEqual(['terminal', 'claude', 'vim', 'lazygit']);
+    expect(scenes.map(s => s.id)).toEqual(['terminal', 'claude', 'codex', 'vim', 'lazygit']);
   });
 
   it('each scene has required fields', () => {
@@ -36,6 +36,13 @@ describe('fab-scene matching', () => {
   it('matches claude command to claude scene', () => {
     const scenes = scene.loadScenes();
     expect(scene.matchScene('claude', scenes)).toBe('claude');
+  });
+
+  it('recognizes Codex in pane commands and preserves user overrides', () => {
+    expect(scene.matchScene('codex', scene.loadScenes())).toBe('codex');
+    expect(scene.matchScene('/usr/local/bin/codex --resume', scene.loadScenes())).toBe('codex');
+    scene.addScene({ id: 'custom-codex', name: 'My Codex', detect: ['codex'] });
+    expect(scene.matchScene('codex', scene.loadScenes())).toBe('custom-codex');
   });
 
   it('matches nvim to vim scene', () => {
