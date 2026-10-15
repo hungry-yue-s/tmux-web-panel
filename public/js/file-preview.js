@@ -359,6 +359,7 @@ var FilePreview = (function () {
   }
 
   function _replacePreviewBody(body, renderedBody) {
+    _pauseVideos(body);
     _disposeMermaid(body);
     body.innerHTML = '';
     while (renderedBody.firstChild) body.appendChild(renderedBody.firstChild);
@@ -535,6 +536,7 @@ var FilePreview = (function () {
 
   function _hideDock(persistHidden) {
     if (!_dockOverlay) return;
+    _pauseVideos(_dockOverlay);
     if (document.__fpActiveMermaidDialogClose) document.__fpActiveMermaidDialogClose();
     _previewGeneration++;
     _stopAutoRefresh();
@@ -573,6 +575,7 @@ var FilePreview = (function () {
     _activeDockTabId = tab.id;
     var panels = _dockOverlay.querySelector('.fp-dock-panels');
     if (panels) {
+      _pauseVideos(panels);
       panels.innerHTML = '';
       panels.appendChild(tab.modal);
     }
@@ -603,6 +606,7 @@ var FilePreview = (function () {
     }
     if (index < 0) return;
     var wasActive = _activeDockTabId === tabId;
+    _pauseVideos(_dockTabs[index].modal);
     _disposeMermaid(_dockTabs[index].modal);
     _dockTabs[index].modal.remove();
     _dockTabs.splice(index, 1);
@@ -632,6 +636,8 @@ var FilePreview = (function () {
     _stopAutoRefresh();
     _cleanupSideResize();
     var separateOverlay = _overlay && _overlay !== _dockOverlay ? _overlay : null;
+    _pauseVideos(separateOverlay);
+    _dockTabs.forEach(function (tab) { _pauseVideos(tab.modal); });
     _disposeMermaid(separateOverlay);
     if (separateOverlay) separateOverlay.remove();
     _dockTabs.forEach(function (tab) { _disposeMermaid(tab.modal); });
@@ -664,6 +670,7 @@ var FilePreview = (function () {
     var path = (_currentFile && _currentFile.absPath) || _currentOpenPath || '';
     for (var i = 0; i < _dockTabs.length; i++) {
       if (path && _dockTabs[i].path === path) {
+        _pauseVideos(modalOverlay);
         _disposeMermaid(modalOverlay);
         modalOverlay.remove();
         _activeDockTabId = _dockTabs[i].id;
@@ -830,8 +837,10 @@ var FilePreview = (function () {
     _stopAutoRefresh();
     if (document.__fpActiveMermaidDialogClose) document.__fpActiveMermaidDialogClose();
     if (_placement === 'side') {
+      _pauseVideos(_overlay);
       _saveActiveDockTab();
     } else if (_overlay) {
+      _pauseVideos(_overlay);
       _disposeMermaid(_overlay);
       _overlay.remove();
     }
@@ -1644,7 +1653,7 @@ var FilePreview = (function () {
       '.fp-md-wrap pre{background:var(--bg-primary);border-radius:6px;padding:12px;overflow-x:auto;}',
       ".fp-md-wrap code{font-family:'JetBrains Mono',monospace;font-size:0.82rem;}",
       '.fp-md-wrap :not(pre) > code{background:var(--bg-primary);padding:2px 5px;border-radius:3px;}',
-      '.fp-md-wrap img{max-width:100%;border-radius:6px;}',
+      '.fp-md-wrap img,.fp-md-wrap video{max-width:100%;border-radius:6px;}',
       '.fp-md-wrap table{border-collapse:collapse;width:100%;margin:1em 0;}',
       '.fp-md-wrap th,.fp-md-wrap td{border:1px solid var(--border-subtle);padding:6px 10px;text-align:left;}',
       '.fp-md-wrap th{background:var(--bg-primary);}',
@@ -1767,6 +1776,13 @@ var FilePreview = (function () {
     // Always clone: we strip interactive bits and inline images without
     // mutating what's on screen.
     var capture = rendered.cloneNode(true);
+    // Local video streams need live authentication and can be very large.
+    // Keep their label in snapshots without exposing a token or local path.
+    capture.querySelectorAll('video[src^="/api/files/raw?"]').forEach(function (video) {
+      var label = document.createElement('span');
+      label.textContent = (video.getAttribute('aria-label') || '视频') + '（请在文件预览中播放）';
+      video.replaceWith(label);
+    });
     capture.querySelectorAll('.fp-colfilter-btn, .fp-table-search').forEach(function (b) { b.remove(); });
     capture.querySelectorAll('.fp-task-checkbox').forEach(function (checkbox) {
       checkbox.disabled = true;
@@ -2108,6 +2124,7 @@ var FilePreview = (function () {
     _previewGeneration++;
     _previewReady = false;
     _stopAutoRefresh();
+    _pauseVideos(_overlay);
     _disposeMermaid(_overlay);
     if (_overlay) _overlay.remove();
     _overlay = null;
@@ -2169,6 +2186,39 @@ var FilePreview = (function () {
   function _notifyFailure(message) { _toast(message); }
 
   // --- Renderers ---
+
+  var VIDEO_RE = /\.(mp4|m4v|webm|ogv|ogg|mov)(?:[?#]|$)/i;
+
+  function _pauseVideos(root) {
+    if (!root) return;
+    root.querySelectorAll('video').forEach(function (video) { video.pause(); });
+  }
+
+  function _createVideo(url, label) {
+    var video = document.createElement('video');
+    video.controls = true;
+    video.preload = 'metadata';
+    video.setAttribute('playsinline', '');
+    video.setAttribute('aria-label', label || '视频预览');
+    video.src = url;
+    video.textContent = '当前浏览器不支持视频播放。';
+    video.addEventListener('error', function () {
+      if (video.nextElementSibling && video.nextElementSibling.classList.contains('fp-video-error')) return;
+      var message = document.createElement('span');
+      message.className = 'fp-video-error';
+      message.textContent = '视频加载失败或浏览器不支持此编码，请下载原文件播放。';
+      video.after(message);
+    });
+    return video;
+  }
+
+  function _renderVideo(body, url, filename) {
+    body.innerHTML = '';
+    var wrap = document.createElement('div');
+    wrap.className = 'fp-video-wrap';
+    wrap.appendChild(_createVideo(url, filename));
+    body.appendChild(wrap);
+  }
 
   function _renderImage(body, url) {
     body.innerHTML = '';
@@ -2817,8 +2867,7 @@ var FilePreview = (function () {
       return true;
     });
 
-    // ![[embed]]  ->  inline image (relative src is rewritten to the raw API
-    // by the existing post-render pass) or a placeholder for non-images.
+    // Video embeds share the image token and are promoted after rendering.
     md.inline.ruler.before('image', 'obs_embed', function (state, silent) {
       var s = state.src, p = state.pos;
       if (s.charCodeAt(p) !== 0x21 || s.charCodeAt(p + 1) !== 0x5B || s.charCodeAt(p + 2) !== 0x5B) return false;
@@ -2831,7 +2880,7 @@ var FilePreview = (function () {
         var target = parts[0].split('#')[0].trim();
         var label = (parts[1] != null ? parts[1] : parts[0]).trim();
         var t = state.push('html_inline', '', 0);
-        if (IMG_RE.test(target)) {
+        if (IMG_RE.test(target) || VIDEO_RE.test(target)) {
           t.content = '<img class="fp-embed-img" src="' + esc(target) + '" alt="' + esc(label) + '">';
         } else {
           t.content = '<span class="fp-embed" title="Obsidian 嵌入: ' + esc(target) + '">\u{1F4CE} ' + esc(label) + '</span>';
@@ -3095,6 +3144,25 @@ var FilePreview = (function () {
     });
   }
 
+  function _prepareMarkdownVideos(wrap, filePath) {
+    var tokenQs = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
+    wrap.querySelectorAll('img[src]').forEach(function (img) {
+      var src = img.getAttribute('src');
+      if (!VIDEO_RE.test(src)) return;
+      var target = _resolveMarkdownHref(filePath, src);
+      if (target.kind !== 'file' && target.kind !== 'web') {
+        img.replaceWith(document.createTextNode(img.alt || '视频地址无效'));
+        return;
+      }
+      var url = target.kind === 'web' ? target.href
+        : '/api/files/raw?path=' + encodeURIComponent(target.path) + (tokenQs ? '&' + tokenQs : '');
+      // Preserve media fragments such as #t=5,10 on local video URLs.
+      var hashAt = src.indexOf('#');
+      if (target.kind === 'file' && hashAt >= 0) url += src.slice(hashAt);
+      img.replaceWith(_createVideo(url, img.alt));
+    });
+  }
+
   function _renderMarkdown(body, content, filePath, paneId) {
     body.innerHTML = '<div class="fp-loading">Rendering Markdown\u2026</div>';
     var baseDir = filePath.substring(0, filePath.lastIndexOf('/'));
@@ -3142,19 +3210,18 @@ var FilePreview = (function () {
         };
         var html = md.renderer.render(md.parse(fmExtract.body, env), md.options, env);
 
-        var _mdTp = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
-        html = html.replace(
-          /(<img\s+[^>]*src=")(?!https?:\/\/|data:|\/)([^"]+)(")/g,
-          function (_, pre, src, post) {
-            var absImgPath = baseDir + '/' + src;
-            return pre + '/api/files/raw?path=' + encodeURIComponent(absImgPath) + (_mdTp ? '&' + _mdTp : '') + post;
-          }
-        );
-
         body.innerHTML = '';
         var wrap = document.createElement('div');
         wrap.className = 'fp-md-wrap';
         wrap.innerHTML = fmHtml + html;
+        _prepareMarkdownVideos(wrap, filePath);
+        var _mdTp = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
+        wrap.querySelectorAll('img[src]').forEach(function (img) {
+          var src = img.getAttribute('src');
+          if (/^(?:https?:\/\/|data:|\/)/.test(src)) return;
+          img.setAttribute('src', '/api/files/raw?path=' + encodeURIComponent(baseDir + '/' + src)
+            + (_mdTp ? '&' + _mdTp : ''));
+        });
         body.appendChild(wrap);
 
         _replaceTaskMarkers(wrap);
@@ -3588,6 +3655,7 @@ var FilePreview = (function () {
       filename: filename,
       isText: info.isText,
       isImage: info.isImage,
+      isVideo: info.isVideo,
       isPdf: info.isPdf,
       isXlsx: info.isXlsx,
       isMarkdown: info.isMarkdown,
@@ -3599,6 +3667,9 @@ var FilePreview = (function () {
     var renderPromise;
     if (info.isImage) {
       _renderImage(renderedBody, rawUrl);
+      renderPromise = Promise.resolve();
+    } else if (info.isVideo) {
+      _renderVideo(renderedBody, rawUrl, filename);
       renderPromise = Promise.resolve();
     } else if (info.isPdf) {
       _renderPdf(renderedBody, rawUrl);
@@ -4125,6 +4196,9 @@ var FilePreview = (function () {
       installMarkdownTasks: _installMarkdownTasks,
       replaceTaskMarkers: _replaceTaskMarkers,
       prepareMarkdownNavigation: _prepareMarkdownNavigation,
+      prepareMarkdownVideos: _prepareMarkdownVideos,
+      obsidianMarkdown: _obsidianMarkdown,
+      buildStandaloneDoc: _buildStandaloneDoc,
       buildArchiveTree: _buildArchiveTree,
       renderArchiveTree: _renderArchiveTree,
       formatBytes: _formatBytes,

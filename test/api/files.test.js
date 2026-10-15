@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { gzipSync } from 'node:zlib';
@@ -31,6 +31,95 @@ describe('files info API', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.data.size).toBe(expected.size);
     expect(res.body.data.mtimeMs).toBeCloseTo(expected.mtimeMs, 0);
+  });
+});
+
+describe('video streaming API', () => {
+  async function setup(filename = 'clip.mp4') {
+    const root = await mkdtemp(join(tmpdir(), 'tmux-panel-video-'));
+    tempDirs.push(root);
+    const file = join(root, filename);
+    await writeFile(file, '0123456789');
+    const app = express();
+    app.use('/api/files', createFilesRouter([root]));
+    return { root, file, app };
+  }
+
+  it.each([
+    ['mp4', 'video/mp4'], ['M4V', 'video/mp4'], ['webm', 'video/webm'],
+    ['ogv', 'video/ogg'], ['ogg', 'video/ogg'], ['mov', 'video/quicktime'],
+  ])('recognizes .%s as binary video with the correct MIME type', async (extension, mimeType) => {
+    const { app, file } = await setup('clip.' + extension);
+    const info = await request(app).get('/api/files/info').query({ path: file });
+    expect(info.status).toBe(200);
+    expect(info.body.data).toMatchObject({ isVideo: true, isText: false, mimeType });
+    expect((await request(app).get('/api/files/content').query({ path: file })).status).toBe(400);
+    const raw = await request(app).head('/api/files/raw').query({ path: file });
+    expect(raw.status).toBe(200);
+    expect(raw.headers['content-type']).toBe(mimeType);
+    expect(raw.headers['content-length']).toBe('10');
+    expect(raw.headers['accept-ranges']).toBe('bytes');
+  });
+
+  it('previews videos larger than the text size limit without buffering them', async () => {
+    const { app, file } = await setup();
+    await truncate(file, 32 * 1024 * 1024);
+    const info = await request(app).get('/api/files/info').query({ path: file });
+    expect(info.status).toBe(200);
+    expect(info.body.data.size).toBe(32 * 1024 * 1024);
+    const raw = await request(app).get('/api/files/raw').query({ path: file }).set('Range', 'bytes=0-9');
+    expect(raw.status).toBe(206);
+    expect(raw.headers['content-range']).toBe('bytes 0-9/33554432');
+    expect(raw.body.toString()).toBe('0123456789');
+  });
+
+  it.each([
+    ['bytes=2-5', '2345', 'bytes 2-5/10'],
+    ['bytes=7-', '789', 'bytes 7-9/10'],
+    ['bytes=-3', '789', 'bytes 7-9/10'],
+    ['bytes=8-99', '89', 'bytes 8-9/10'],
+  ])('serves a seek request %s', async (range, body, contentRange) => {
+    const { app, file } = await setup();
+    const res = await request(app).get('/api/files/raw').query({ path: file }).set('Range', range);
+    expect(res.status).toBe(206);
+    expect(res.headers['content-range']).toBe(contentRange);
+    expect(Number(res.headers['content-length'])).toBe(body.length);
+    expect(res.body.toString()).toBe(body);
+  });
+
+  it('handles full downloads, unsatisfiable ranges and empty files', async () => {
+    const { app, file } = await setup();
+    const full = await request(app).get('/api/files/raw').query({ path: file, download: 1 });
+    expect(full.status).toBe(200);
+    expect(full.body.toString()).toBe('0123456789');
+    expect(full.headers['content-disposition']).toContain('attachment;');
+    const invalid = await request(app).get('/api/files/raw').query({ path: file }).set('Range', 'bytes=10-');
+    expect(invalid.status).toBe(416);
+    expect(invalid.headers['content-range']).toBe('bytes */10');
+    expect(invalid.body.success).toBe(false);
+    await truncate(file, 0);
+    const empty = await request(app).get('/api/files/raw').query({ path: file });
+    expect(empty.status).toBe(200);
+    expect(empty.headers['content-length']).toBe('0');
+  });
+
+  it('keeps validated hidden paths accessible and blocks sensitive files and escaping symlinks', async () => {
+    const { app, root } = await setup('.clip.mp4');
+    expect((await request(app).get('/api/files/raw').query({ path: join(root, '.clip.mp4') })).status).toBe(200);
+    const secret = join(root, 'secret.key');
+    await writeFile(secret, 'secret');
+    expect((await request(app).get('/api/files/raw').query({ path: secret }).set('Range', 'bytes=0-1')).status).toBe(403);
+    const outside = await mkdtemp(join(tmpdir(), 'tmux-panel-video-outside-'));
+    tempDirs.push(outside);
+    await writeFile(join(outside, 'clip.mp4'), 'outside');
+    const escape = join(root, 'escape.mp4');
+    await symlink(join(outside, 'clip.mp4'), escape);
+    expect((await request(app).get('/api/files/raw').query({ path: escape }).set('Range', 'bytes=0-1')).status).toBe(403);
+    const svg = join(root, 'image.svg');
+    await writeFile(svg, '<svg/>');
+    const image = await request(app).get('/api/files/raw').query({ path: svg });
+    expect(image.headers['content-type']).toContain('image/svg+xml');
+    expect(image.headers['content-security-policy']).toBe('sandbox');
   });
 });
 

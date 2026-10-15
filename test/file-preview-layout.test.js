@@ -7,7 +7,7 @@ const appSource = fs.readFileSync('public/js/app.js', 'utf8');
 const msAppSource = fs.readFileSync('public/js/ms-app.js', 'utf8');
 const styles = fs.readFileSync('public/css/style.css', 'utf8');
 
-function createPreview({ storage = {}, missingPaths = [], context = ['local', '@0'] } = {}) {
+function createPreview({ storage = {}, missingPaths = [], context = ['local', '@0'], auth } = {}) {
   const dom = new JSDOM(
     '<!doctype html><body><div id="main-layout"><main id="content"><div class="terminal-view"></div></main></div></body>',
     { url: 'https://panel.test/' }
@@ -39,7 +39,7 @@ function createPreview({ storage = {}, missingPaths = [], context = ['local', '@
     });
   });
 
-  new Function('window', 'document', 'fetch', source)(dom.window, dom.window.document, fetch);
+  new Function('window', 'document', 'fetch', 'Auth', source)(dom.window, dom.window.document, fetch, auth);
   const preview = dom.window.FilePreview;
   if (context) preview.switchDockContext(context[0], context[1]);
   return { dom, preview, fetch };
@@ -1313,6 +1313,102 @@ describe('FilePreview failure notifications', () => {
     wrap.querySelector('a').click();
 
     expect(toast).toHaveBeenCalledWith('已阻止不安全链接：javascript:alert(1)');
+  });
+});
+
+describe('video previews', () => {
+  it('opens video files without fetching text content and pauses when hidden or closed', async () => {
+    const { dom, preview, fetch } = createPreview({
+      auth: { headers: () => ({}), wsTokenParam: () => 'token=test-video' },
+    });
+    fetch.mockImplementation((url) => {
+      expect(String(url)).toContain('/api/files/info');
+      const path = new URL(String(url), 'https://panel.test').searchParams.get('path');
+      return Promise.resolve({ status: 200, json: async () => ({
+        success: true, data: { absPath: path, isVideo: true, isText: false, size: 32000000, mtimeMs: 42 },
+      }) });
+    });
+    await preview.openFile('/tmp/视频.mp4', '%1');
+    const video = dom.window.document.querySelector('.fp-video-wrap video');
+    expect(video.controls).toBe(true);
+    expect(video.preload).toBe('metadata');
+    expect(video.hasAttribute('playsinline')).toBe(true);
+    expect(video.autoplay).toBe(false);
+    const url = new URL(video.src);
+    expect(url.searchParams.get('path')).toBe('/tmp/视频.mp4');
+    expect(url.searchParams.get('token')).toBe('test-video');
+    expect(url.searchParams.get('v')).toBe('42');
+    video.dispatchEvent(new dom.window.Event('error'));
+    expect(video.nextElementSibling.textContent).toContain('下载原文件');
+    const pause = vi.spyOn(video, 'pause').mockImplementation(() => {});
+    dom.window.document.querySelector('.fp-btn-placement').click();
+    dom.window.document.querySelector('.fp-btn-placement').click();
+    expect(pause).toHaveBeenCalled();
+    dom.window.document.querySelector('.fp-dock-restore').click();
+    pause.mockClear();
+    preview.close();
+    expect(pause).toHaveBeenCalled();
+    expect(dom.window.document.querySelector('video')).toBeNull();
+  });
+
+  it('resolves Markdown video embeds against the document and keeps remote queries intact', () => {
+    const { dom, preview } = createPreview({
+      auth: { headers: () => ({}), wsTokenParam: () => 'token=video-test' },
+    });
+    const wrap = dom.window.document.createElement('div');
+    wrap.innerHTML = '<img src="../视频/clip%20one.MP4#t=5,10" alt="演示">'
+      + '<img src="/tmp/absolute.webm">'
+      + '<img src="https://cdn.test/clip.mov?sig=a&amp;key=b#t=2">'
+      + '<img src="//cdn.test/clip.ogv">'
+      + '<img src="javascript:evil.mp4" alt="无效视频">'
+      + '<img src="cover.png">';
+    preview._test.prepareMarkdownVideos(wrap, '/notes/docs/current.md');
+    const videos = Array.from(wrap.querySelectorAll('video'));
+    expect(videos).toHaveLength(4);
+    expect(new URL(videos[0].src).searchParams.get('path')).toBe('/notes/视频/clip one.MP4');
+    expect(new URL(videos[0].src).searchParams.get('token')).toBe('video-test');
+    expect(new URL(videos[0].src).hash).toBe('#t=5,10');
+    expect(videos[0].getAttribute('aria-label')).toBe('演示');
+    expect(new URL(videos[1].src).searchParams.get('path')).toBe('/tmp/absolute.webm');
+    expect(videos[2].src).toBe('https://cdn.test/clip.mov?sig=a&key=b#t=2');
+    expect(videos[3].src).toBe('https://cdn.test/clip.ogv');
+    expect(wrap.textContent).toContain('无效视频');
+    expect(wrap.querySelectorAll('img')).toHaveLength(1);
+    expect(wrap.querySelector('img').getAttribute('src')).toBe('cover.png');
+  });
+
+  it('renders Obsidian video embeds through the same media path', () => {
+    const { dom, preview } = createPreview();
+    const rules = {};
+    preview._test.obsidianMarkdown({ inline: { ruler: {
+      before: (_before, name, rule) => { rules[name] = rule; }, push: () => {},
+    } } });
+    const token = {};
+    const state = { src: '![[clips/演示.mp4|播放演示]]', pos: 0, push: () => token };
+    expect(rules.obs_embed(state, false)).toBe(true);
+    const wrap = dom.window.document.createElement('div');
+    wrap.innerHTML = token.content;
+    preview._test.prepareMarkdownVideos(wrap, '/notes/current.md');
+    const video = wrap.querySelector('video');
+    expect(new URL(video.src).searchParams.get('path')).toBe('/notes/clips/演示.mp4');
+    expect(video.getAttribute('aria-label')).toBe('播放演示');
+  });
+
+  it('removes local video stream credentials from standalone snapshots without changing playback', async () => {
+    const { dom, preview } = createLivePreview();
+    await preview.openFile('/tmp/live.csv', '%1');
+    const body = dom.window.document.querySelector('.fp-body');
+    body.innerHTML = '<div class="fp-md-wrap">'
+      + '<video src="/api/files/raw?path=%2Fprivate%2Fclip.mp4&amp;token=secret" aria-label="演示"></video>'
+      + '<video src="https://cdn.test/clip.mp4" controls></video></div>';
+    const snapshot = await preview._test.buildStandaloneDoc();
+    expect(snapshot.html).not.toContain('token=secret');
+    expect(snapshot.html).not.toContain('%2Fprivate');
+    expect(snapshot.html).toContain('演示（请在文件预览中播放）');
+    expect(snapshot.html).toContain('https://cdn.test/clip.mp4');
+    expect(body.querySelector('video').getAttribute('src')).toContain('token=secret');
+    vi.spyOn(dom.window.HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    preview.close();
   });
 });
 

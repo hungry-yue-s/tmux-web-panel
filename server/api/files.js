@@ -4,7 +4,6 @@ import { stat, lstat, realpath, readFile, readdir, open } from 'node:fs/promises
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
-import { createReadStream } from 'node:fs';
 import { getArchiveType, listArchive, MAX_ENTRIES as ARCHIVE_MAX_ENTRIES } from './archive.js';
 
 const execFileAsync = promisify(execFile);
@@ -114,6 +113,8 @@ const MIME_MAP = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp',
   '.bmp': 'image/bmp', '.ico': 'image/x-icon',
+  '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.webm': 'video/webm',
+  '.ogv': 'video/ogg', '.ogg': 'video/ogg', '.mov': 'video/quicktime',
   '.pdf': 'application/pdf',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.xlsm': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -127,14 +128,15 @@ function getFileInfo(filePath) {
   const base = basename(filePath);
   const mimeType = MIME_MAP[ext] || 'text/plain';
   const isImage = mimeType.startsWith('image/');
+  const isVideo = mimeType.startsWith('video/');
   const isPdf = mimeType === 'application/pdf';
   const isXlsx = mimeType === XLSX_MIME;
   const isMarkdown = mimeType === 'text/markdown';
   const archiveType = getArchiveType(filePath) || null;
   const isArchive = archiveType !== null;
-  const isText = !isImage && !isPdf && !isXlsx && !isArchive;
+  const isText = !isImage && !isVideo && !isPdf && !isXlsx && !isArchive;
   const language = LANG_MAP[ext] || BASENAME_MAP[base] || null;
-  return { mimeType, isText, isImage, isPdf, isXlsx, isMarkdown, isArchive, archiveType, language };
+  return { mimeType, isText, isImage, isVideo, isPdf, isXlsx, isMarkdown, isArchive, archiveType, language };
 }
 
 // Detect language from shebang line (e.g. #!/usr/bin/env python3)
@@ -150,6 +152,7 @@ function detectShebangLanguage(content) {
 }
 
 function getSizeLimit(info) {
+  if (info.isVideo) return Infinity; // Videos are streamed; /content rejects binary files.
   if (info.isImage) return SIZE_LIMITS.image;
   if (info.isPdf) return SIZE_LIMITS.pdf;
   if (info.isXlsx) return SIZE_LIMITS.xlsx;
@@ -204,7 +207,7 @@ async function validateFilePath(rawPath, allowedRoots, { skipSizeLimit = false }
 
   const info = getFileInfo(t.realPath);
   // The size cap exists to protect endpoints that buffer the file (e.g.
-  // /content reads it into a JSON response). /raw streams via createReadStream,
+  // /content reads it into a JSON response). /raw streams via sendFile,
   // so it serves any size — skipping the cap lets downloads of large files work.
   if (!skipSizeLimit) {
     const limit = getSizeLimit(info);
@@ -597,7 +600,6 @@ export function createFilesRouter(allowedRoots) {
       const asciiName = filename.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '\\"');
       const utf8Name = encodeURIComponent(filename);
       res.setHeader('Content-Type', result.info.mimeType);
-      res.setHeader('Content-Length', result.size);
       res.setHeader(
         'Content-Disposition',
         `${disposition}; filename="${asciiName}"; filename*=UTF-8''${utf8Name}`,
@@ -605,7 +607,11 @@ export function createFilesRouter(allowedRoots) {
       if (result.info.mimeType === 'image/svg+xml') {
         res.setHeader('Content-Security-Policy', 'sandbox');
       }
-      createReadStream(result.realPath).pipe(res);
+      // sendFile handles byte ranges, HEAD and aborted requests without buffering.
+      res.sendFile(result.realPath, { dotfiles: 'allow', cacheControl: false }, (err) => {
+        if (!err || res.headersSent || res.destroyed) return;
+        res.status(err.status || 500).type('json').json({ success: false, data: null, error: err.message });
+      });
     } catch (err) {
       res.status(500).json({ success: false, data: null, error: err.message });
     }
