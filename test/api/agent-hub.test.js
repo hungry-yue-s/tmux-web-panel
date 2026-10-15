@@ -107,6 +107,9 @@ describe('Agent hub service', () => {
       session_id: 'session-one', project_path: '/Users/test/work', model: 'qoder-model', tokens: 150, messages: 2,
     });
     expect(status.qoder).toMatchObject({ totalSessions: 1, totalMessages: 2, totalTokens: 150 });
+    expect(status.qoder.modelUsage['qoder-model']).toMatchObject({ inputTokens: 120, outputTokens: 30 });
+    expect(status.qoder.usageScope).toBe('最近 1 个会话');
+    expect(status.qoder.usage.unavailable).toContain('尚未配置 Qoder');
     const serialized = JSON.stringify(status);
     expect(serialized).not.toContain('access-b');
     expect(serialized).not.toContain('refresh-b');
@@ -293,6 +296,42 @@ describe('Agent hub service', () => {
     expect(status.ccSwitch.providers[0].usage.primary.usedPercent).toBe(30);
     expect(JSON.stringify(status)).not.toContain('private-cookie');
     expect(JSON.stringify(status)).not.toContain('private-zhipu-key');
+  });
+
+  it('reads Claude GLM credentials and isolates quota caches for matching provider IDs', async () => {
+    const paths = await fixture();
+    const fetchImpl = vi.fn(async (url, request) => {
+      if (url.includes('/quota/limit')) return { ok: true, json: async () => ({
+        success: true, data: { limits: [{ type: 'TOKENS_LIMIT', unit: 3, number: 5,
+          usage: 100, remaining: request.headers.authorization === 'Bearer private-claude-key' ? 25 : 75,
+        }] },
+      }) };
+      return { ok: false, status: 404 };
+    });
+    const rows = [zhipuProvider(), {
+      id: 'glm', app_type: 'claude', name: 'Claude GLM', category: 'cn_official', is_current: 1,
+      settings_config: JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'private-claude-key' } }),
+    }];
+    const service = createAgentHubService({ ...paths, fetchImpl, runSQLite: vi.fn().mockResolvedValue(JSON.stringify(rows)) });
+    const status = await service.status();
+    expect(status.ccSwitch.providers.find((p) => p.agent === 'claude').usage.primary)
+      .toMatchObject({ usedPercent: 75, used: 75, total: 100, remaining: 25 });
+    expect(status.ccSwitch.providers.find((p) => p.agent === 'codex').usage.primary.usedPercent).toBe(25);
+    await service.status();
+    expect(fetchImpl.mock.calls.filter(([url]) => url.includes('/quota/limit'))).toHaveLength(2);
+    expect(JSON.stringify(status)).not.toMatch(/private-claude-key|private-zhipu-key/);
+  });
+
+  it('keeps missing quota values unknown and explains unsupported provider quotas', async () => {
+    const paths = await fixture();
+    const rows = [zhipuProvider(), { id: 'custom', app_type: 'claude', name: 'Custom', category: 'custom' }];
+    const fetchImpl = vi.fn(async (url) => url.includes('/quota/limit') ? { ok: true, json: async () => ({
+      success: true, data: { limits: [{ type: 'TOKENS_LIMIT', usage: null, remaining: null, percentage: null }] },
+    }) } : { ok: false, status: 404 });
+    const service = createAgentHubService({ ...paths, fetchImpl, runSQLite: vi.fn().mockResolvedValue(JSON.stringify(rows)) });
+    const status = await service.status();
+    expect(status.ccSwitch.providers[0].usage.primary).toBeNull();
+    expect(status.ccSwitch.providers[1].usage.unavailable).toContain('未接入额度查询');
   });
 
   it('switches Claude providers and records a profile event', async () => {

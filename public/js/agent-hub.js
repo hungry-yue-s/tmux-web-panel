@@ -45,7 +45,7 @@ var AgentHub = (function () {
 
   function claudeWindow(quotaWindow, windowMinutes) {
     if (!quotaWindow) return null;
-    var used = Number(quotaWindow.utilization);
+    var used = Number(quotaWindow.utilization == null ? NaN : quotaWindow.utilization);
     var limit = Number(quotaWindow.limit);
     var remaining = Number(quotaWindow.remaining);
     if (!Number.isFinite(used) && Number.isFinite(limit) && limit > 0 && Number.isFinite(remaining)) {
@@ -86,7 +86,7 @@ var AgentHub = (function () {
   }
 
   function quotaBar(label, quotaWindow) {
-    if (!quotaWindow || !Number.isFinite(Number(quotaWindow.usedPercent))) {
+    if (!quotaWindow || quotaWindow.usedPercent == null || !Number.isFinite(Number(quotaWindow.usedPercent))) {
       return '<div class="ah-quota unavailable"><span>' + esc(label) + '</span><strong>—</strong></div>';
     }
     var percent = Math.max(0, Math.min(100, Number(quotaWindow.usedPercent)));
@@ -96,11 +96,17 @@ var AgentHub = (function () {
       ? '重置 ' + reset.toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
       : '重置时间未知';
     if (elapsed !== null) resetText += ' · 时间 ' + Math.round(elapsed) + '%';
+    var used = quotaWindow.usedCredits == null ? quotaWindow.used : quotaWindow.usedCredits;
+    var total = quotaWindow.totalCredits == null ? quotaWindow.total : quotaWindow.totalCredits;
+    var remaining = quotaWindow.remainingCredits == null ? quotaWindow.remaining : quotaWindow.remainingCredits;
+    var counts = Number.isFinite(used) && Number.isFinite(total) ? '已用 ' + fmt(used) + ' / ' + fmt(total) : '';
+    if (Number.isFinite(remaining)) counts += (counts ? ' · ' : '') + '剩余 ' + fmt(remaining);
     return '<div class="ah-quota"><div><span>' + esc(label) + '</span><small>' + esc(resetText) + '</small></div>'
       + '<div class="ah-quota-track" title="额度已用 ' + Math.round(percent) + '%' + (elapsed === null ? '' : '；时间已过 ' + Math.round(elapsed) + '%') + '">'
       + '<i class="ah-quota-used ' + quotaTone(percent) + '" style="width:' + percent + '%"></i>'
       + (elapsed === null ? '' : '<i class="ah-quota-time" style="width:' + elapsed + '%"></i>') + '</div>'
-      + '<strong>' + Math.round(percent) + '%</strong></div>';
+      + '<strong>' + Math.round(percent) + '%</strong>'
+      + (counts ? '<small class="ah-quota-counts">' + esc(counts) + '</small>' : '') + '</div>';
   }
 
   function renderSkeleton() {
@@ -129,7 +135,7 @@ var AgentHub = (function () {
     var activeCodexProvider = codexProviders.find(function (provider) { return provider.active; });
     var codexOfficial = !activeCodexProvider || activeCodexProvider.category === 'official';
     var claudeDetected = Boolean(claude.subscription || claude.aggregate || claude.utilization || claudeProviders.length);
-    var claudeOfficialDetected = Boolean(claude.subscription || claude.aggregate || claude.utilization
+    var claudeOfficialDetected = Boolean(claude.subscription || claude.utilization
       || (activeClaudeProvider && activeClaudeProvider.category === 'official'));
 
     var storedClaudeOfficial = claudeProviders.find(function (provider) { return provider.category === 'official'; });
@@ -137,16 +143,18 @@ var AgentHub = (function () {
       id: 'claude-official', name: 'Anthropic 官方订阅',
       detail: (claude.subscription && claude.subscription.type) || '已检测到官方登录',
       kind: 'subscription', current: claudeDetected && !activeClaudeProvider, switchable: false,
+      message: claude.quotaUnavailable,
       quota: [
         { label: '5 小时', value: claudeWindow(claude.utilization && claude.utilization.five_hour, 300) },
         { label: '7 天', value: claudeWindow(claude.utilization && claude.utilization.seven_day, 10080) },
       ],
     }] : []).concat(claudeProviders.map(function (provider) {
       var official = provider.category === 'official';
+      var zhipuSubscription = provider.category === 'cn_official';
       return {
-        id: provider.id, name: provider.name, detail: official ? 'Anthropic 官方订阅' : (provider.category || '自定义接口'), kind: official ? 'subscription' : 'api',
+        id: provider.id, name: provider.name, detail: official ? 'Anthropic 官方订阅' : (zhipuSubscription ? '智谱 Coding Plan' : (provider.category || '自定义接口')), kind: official || zhipuSubscription ? 'subscription' : 'api',
         current: provider.active, switchable: true, switchAction: 'activate-provider', agentId: 'claude', provider: provider,
-        message: provider.usage && provider.usage.error,
+        message: official ? claude.quotaUnavailable : (provider.usage && (provider.usage.error || provider.usage.unavailable)),
         quota: official ? [
           { label: '5 小时', value: claudeWindow(claude.utilization && claude.utilization.five_hour, 300) },
           { label: '7 天', value: claudeWindow(claude.utilization && claude.utilization.seven_day, 10080) },
@@ -178,7 +186,7 @@ var AgentHub = (function () {
         current: provider.active, switchable: true, switchAction: 'activate-provider', agentId: 'codex', provider: provider,
         warmupAction: zhipuSubscription, warmupTarget: 'provider', lastWarmupAt: provider.lastWarmupAt,
         lastWarmupMode: provider.lastWarmupMode, autoWarmupEnabled: Boolean(provider.autoWarmupEnabled),
-        message: provider.usage && provider.usage.error,
+        message: provider.usage && (provider.usage.error || provider.usage.unavailable),
         quota: quotaItems(provider.usage, ['短周期', '长周期']),
       };
     }));
@@ -187,14 +195,17 @@ var AgentHub = (function () {
       {
         id: 'claude', name: 'Claude', mark: 'C', installed: claudeDetected,
         profiles: claudeProfiles, sessions: claude.recentSessions || [],
+        modelUsage: claude.modelUsage || {},
         consumption: [
           { label: '会话', value: fmt(claude.aggregate && claude.aggregate.totalSessions) },
           { label: '消息', value: fmt(claude.aggregate && claude.aggregate.totalMessages) },
+          { label: 'Tokens', value: claude.aggregate && claude.aggregate.totalTokens != null ? fmt(claude.aggregate.totalTokens) : '—' },
         ],
       },
       {
         id: 'codex', name: 'Codex', mark: 'X', installed: Boolean(codex.subscription || codex.aggregate || codexProfiles.length),
         profiles: codexProfiles, sessions: codex.recentSessions || [],
+        modelUsage: codex.modelUsage || {},
         consumption: [
           { label: '会话', value: fmt(codex.aggregate && codex.aggregate.totalSessions) },
           { label: 'Tokens', value: fmt(codex.aggregate && codex.aggregate.totalTokens) },
@@ -204,13 +215,15 @@ var AgentHub = (function () {
         id: 'qoder', name: 'Qoder', mark: 'Q', installed: Boolean(qoder.installed),
         profiles: qoder.installed ? [{
           id: 'qoder-official', name: 'Qoder 当前登录', detail: '官方账号', kind: 'subscription', current: true, switchable: false,
-          message: qoder.usage && qoder.usage.error,
+          message: qoder.usage && (qoder.usage.error || qoder.usage.unavailable),
           configureAction: 'configure-qoder',
-          quota: qoder.usage ? [{ label: 'Credits', value: qoder.usage }] : [],
+          quota: qoder.usage && qoder.usage.usedPercent != null ? [{ label: 'Credits', value: qoder.usage }] : [],
         }] : [],
         sessions: qoder.recentSessions || [],
+        modelUsage: qoder.modelUsage || {}, usageScope: qoder.usageScope,
         consumption: [
           { label: '会话', value: fmt(qoder.totalSessions || 0) },
+          { label: '消息（近期）', value: fmt(qoder.totalMessages || 0) },
           { label: 'Tokens', value: Number.isFinite(qoder.totalTokens) ? fmt(qoder.totalTokens) : '—' },
           { label: '本地任务', value: fmt(qoder.taskCount || 0) },
         ],
@@ -228,7 +241,7 @@ var AgentHub = (function () {
   function primaryQuota(profile) {
     if (!profile) return '未识别运行身份';
     var quota = (profile.quota || []).find(function (item) {
-      return item.value && Number.isFinite(Number(item.value.usedPercent));
+      return item.value && item.value.usedPercent != null && Number.isFinite(Number(item.value.usedPercent));
     });
     if (quota) return quota.label + '已用 ' + Math.round(Number(quota.value.usedPercent)) + '%';
     if (profile.provider && Number.isFinite(profile.provider.monthlyLimitUsd)) return '月预算 $' + profile.provider.monthlyLimitUsd;
@@ -261,7 +274,7 @@ var AgentHub = (function () {
   }
 
   function renderProfileQuota(profile) {
-    if (profile.message) return '<div class="ah-account-message">' + esc(profile.message) + '</div>';
+    var notice = profile.message ? '<div class="ah-account-message">' + esc(profile.message) + '</div>' : '';
     var bars = (profile.quota || []).map(function (item) { return quotaBar(item.label, item.value); }).join('');
     var provider = profile.provider;
     var usage = provider && provider.usage;
@@ -271,14 +284,14 @@ var AgentHub = (function () {
         + (Number.isFinite(usage.balance) ? '<span>余额 <strong>¥' + esc(usage.balance.toFixed(2)) + '</strong></span>' : '')
         + (Number.isFinite(usage.spent) ? '<span>累计消费 <strong>¥' + esc(usage.spent.toFixed(2)) + '</strong></span>' : '') + '</div>';
     }
-    if (bars) return bars + financials;
-    if (financials) return financials;
+    if (bars) return notice + bars + financials;
+    if (financials) return notice + financials;
     if (provider && (Number.isFinite(provider.dailyLimitUsd) || Number.isFinite(provider.monthlyLimitUsd))) {
-      return '<div class="ah-budget-list">'
+      return notice + '<div class="ah-budget-list">'
         + (Number.isFinite(provider.dailyLimitUsd) ? '<span>日预算 <strong>$' + esc(provider.dailyLimitUsd) + '</strong></span>' : '')
         + (Number.isFinite(provider.monthlyLimitUsd) ? '<span>月预算 <strong>$' + esc(provider.monthlyLimitUsd) + '</strong></span>' : '') + '</div>';
     }
-    return '<div class="ah-account-message">' + (profile.kind === 'api' ? '用量由 API 服务侧计费' : '暂未读取到额度') + '</div>';
+    return notice || '<div class="ah-account-message">' + (profile.kind === 'api' ? '用量由 API 服务侧计费' : '暂未读取到额度') + '</div>';
   }
 
   function renderProfiles(agent) {
@@ -321,10 +334,25 @@ var AgentHub = (function () {
   function renderUsage(agent) {
     var profile = currentProfile(agent);
     var quota = profile ? renderProfileQuota(profile) : '<div class="ah-account-message">当前运行身份未识别</div>';
+    var models = Object.entries(agent.modelUsage || {}).map(function (entry) {
+      var usage = entry[1];
+      var cache = Number(usage.cachedInputTokens || 0) + Number(usage.cacheReadInputTokens || 0) + Number(usage.cacheCreationInputTokens || 0);
+      // Codex input includes cached tokens; Claude/Qoder report them separately.
+      var input = Math.max(0, Number(usage.inputTokens || 0) - Number(usage.cachedInputTokens || 0));
+      var output = Number(usage.outputTokens || 0);
+      var total = usage.totalTokens == null ? input + output + cache : Number(usage.totalTokens);
+      return { name: entry[0], input: input, output: output, cache: cache, total: total };
+    }).sort(function (a, b) { return b.total - a.total; });
+    var details = models.length ? '<div class="ah-model-usage"><table><caption>模型用量 · ' + esc(agent.usageScope || '本地历史会话')
+      + '</caption><thead><tr><th>模型</th><th>非缓存输入</th><th>输出</th><th>缓存</th><th>总 Tokens</th></tr></thead><tbody>'
+      + models.map(function (model) {
+        return '<tr><th scope="row">' + esc(model.name) + '</th><td>' + fmt(model.input) + '</td><td>' + fmt(model.output)
+          + '</td><td>' + fmt(model.cache) + '</td><td>' + fmt(model.total) + '</td></tr>';
+      }).join('') + '</tbody></table></div>' : '<div class="ah-account-message">本地日志尚未记录 Token 明细</div>';
     return '<div class="ah-usage-grid"><article class="ah-usage-card"><div class="ah-usage-title"><strong>额度</strong><span>归属当前运行身份</span></div>' + quota + '</article>'
-      + '<article class="ah-usage-card"><div class="ah-usage-title"><strong>本地消耗</strong><span>由历史会话汇总</span></div><div class="ah-consumption">'
+      + '<article class="ah-usage-card"><div class="ah-usage-title"><strong>本地消耗</strong><span>' + esc(agent.usageScope || '由历史会话汇总') + '</span></div><div class="ah-consumption">'
       + agent.consumption.map(function (item) { return '<div><strong>' + esc(item.value) + '</strong><span>' + esc(item.label) + '</span></div>'; }).join('')
-      + '</div></article></div>';
+      + '</div></article></div>' + details;
   }
 
   function renderSessions(agent) {

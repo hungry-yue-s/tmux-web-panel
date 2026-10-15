@@ -287,4 +287,72 @@ describe('AgentHub', () => {
     expect(win.document.getElementById('agent-hub').textContent).not.toContain('Claude');
     hub.stop();
   });
+
+  it('shows Claude GLM subscription quota and per-model tokens without an official login', async () => {
+    const { win, hub } = loadHub({
+      hub: { codexSwitcher: { accounts: [] }, ccSwitch: { providers: [{
+        id: 'claude-glm', agent: 'claude', name: 'GLM', category: 'cn_official', active: true,
+        usage: { primary: { usedPercent: 25, windowMinutes: 300, used: 25, total: 100, remaining: 75 }, balance: 42.5 },
+      }] }, qoder: {} },
+      claude: { subscription: null, aggregate: { totalSessions: 2, totalMessages: 8, totalTokens: 190 }, modelUsage: {
+        'glm-5.3': { inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 30, cacheCreationInputTokens: 10 },
+      } },
+    });
+    hub.start();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    win.document.querySelector('[data-agent-id="claude"]').click();
+    const text = win.document.getElementById('agent-hub').textContent;
+    expect(text).toContain('智谱 Coding Plan');
+    expect(text).toContain('已用 25 / 100 · 剩余 75');
+    expect(text).toContain('¥42.50');
+    expect(text).not.toContain('Anthropic 官方订阅');
+    const cells = [...win.document.querySelectorAll('.ah-model-usage tbody tr > *')].map((cell) => cell.textContent);
+    expect(cells).toEqual(['glm-5.3', '100', '50', '40', '190']);
+    expect(win.document.querySelector('[data-ah-action="warmup-provider"]')).toBeNull();
+    hub.stop();
+  });
+
+  it('shows Qoder credit counts and marks the sampled history scope', async () => {
+    const { win, hub } = loadHub({ hub: {
+      codexSwitcher: { accounts: [] }, ccSwitch: { providers: [] }, qoder: {
+        installed: true, totalSessions: 30, totalMessages: 50, totalTokens: 150, usageScope: '最近 20 个会话',
+        usage: { usedPercent: 20, usedCredits: 20, totalCredits: 100, remainingCredits: 80 },
+        modelUsage: { 'qoder-model': { inputTokens: 120, outputTokens: 30 } },
+      },
+    } });
+    hub.start();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    win.document.querySelector('[data-agent-id="qoder"]').click();
+    const text = win.document.getElementById('agent-hub').textContent;
+    expect(text).toContain('已用 20 / 100 · 剩余 80');
+    expect(text).toContain('模型用量 · 最近 20 个会话');
+    expect(text).toContain('qoder-model');
+    hub.stop();
+  });
+
+  it('separates cached Codex input without adding it to the total a second time', async () => {
+    const { win, hub } = loadHub({ codex: { modelUsage: {
+      'codex-model': { inputTokens: 100, outputTokens: 20, cachedInputTokens: 40, totalTokens: 120 },
+    } } });
+    hub.start();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    const cells = [...win.document.querySelectorAll('.ah-model-usage tbody tr > *')].map((cell) => cell.textContent);
+    expect(cells).toEqual(['codex-model', '60', '20', '40', '120']);
+    hub.stop();
+  });
+
+  it('does not turn unknown quotas into zero-percent usage', async () => {
+    const { win, hub } = loadHub({ hub: {
+      codexSwitcher: { accounts: [] }, ccSwitch: { providers: [{
+        id: 'unknown', agent: 'claude', name: 'Unknown quota', active: true,
+        usage: { primary: { usedPercent: null } },
+      }] }, qoder: {},
+    } });
+    hub.start();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    win.document.querySelector('[data-agent-id="claude"]').click();
+    expect(win.document.querySelector('.ah-quota-used')).toBeNull();
+    expect(win.document.querySelector('.ah-source-card.claude').textContent).not.toContain('已用 0%');
+    hub.stop();
+  });
 });

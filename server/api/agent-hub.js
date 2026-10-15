@@ -238,6 +238,7 @@ async function readQoderSession(path, projectDirectory, info) {
     output_tokens: 0,
     messages: 0,
     model: null,
+    modelUsage: {},
     token_usage_recorded: false,
   };
   let first = Number.POSITIVE_INFINITY;
@@ -259,6 +260,14 @@ async function readQoderSession(path, projectDirectory, info) {
       session.input_tokens += Number(usage.input_tokens || usage.inputTokens || 0)
         + Number(usage.cache_creation_input_tokens || 0) + Number(usage.cache_read_input_tokens || 0);
       session.output_tokens += Number(usage.output_tokens || usage.outputTokens || 0);
+      if (Object.keys(usage).length) {
+        const model = record.model || message.model || 'unknown';
+        const total = session.modelUsage[model] ||= { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
+        total.inputTokens += Number(usage.input_tokens || usage.inputTokens || 0);
+        total.outputTokens += Number(usage.output_tokens || usage.outputTokens || 0);
+        total.cacheReadInputTokens += Number(usage.cache_read_input_tokens || 0);
+        total.cacheCreationInputTokens += Number(usage.cache_creation_input_tokens || 0);
+      }
       if (record.type === 'user' || record.type === 'assistant' || message.role === 'user' || message.role === 'assistant') {
         session.messages += 1;
       }
@@ -297,17 +306,27 @@ async function qoderSessions(qoderProjectsPath) {
   files.sort((a, b) => b.info.mtimeMs - a.info.mtimeMs);
   const recentSessions = await Promise.all(files.slice(0, 20).map((file) => readQoderSession(file.path, file.directory, file.info)));
   const recordedTokens = recentSessions.filter((session) => session.token_usage_recorded);
+  const modelUsage = {};
+  for (const session of recentSessions) {
+    for (const [model, usage] of Object.entries(session.modelUsage)) {
+      const total = modelUsage[model] ||= { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
+      for (const key of Object.keys(total)) total[key] += usage[key];
+    }
+  }
   return {
     installed: true,
     recentSessions,
     totalSessions: files.length,
     totalMessages: recentSessions.reduce((sum, session) => sum + session.messages, 0),
     totalTokens: recordedTokens.length ? recordedTokens.reduce((sum, session) => sum + session.tokens, 0) : null,
+    modelUsage,
+    usageScope: `最近 ${recentSessions.length} 个会话`,
     lastActivityAt: files[0] ? new Date(files[0].info.mtimeMs).toISOString() : null,
   };
 }
 
 function quotaNumber(value) {
+  if (value == null || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : null;
 }
@@ -358,6 +377,9 @@ function zhipuWindow(limit) {
   const reset = quotaNumber(limit.nextResetTime);
   return {
     usedPercent: usedPercent === null ? null : Math.max(0, Math.min(100, usedPercent)),
+    total,
+    used: total !== null && remaining !== null ? Math.max(0, total - remaining) : current,
+    remaining,
     windowMinutes,
     resetsAt: reset === null ? null : Math.floor(reset / 1000),
   };
@@ -366,7 +388,8 @@ function zhipuWindow(limit) {
 function providerAuth(settingsConfig) {
   const settings = typeof settingsConfig === 'string' ? JSON.parse(settingsConfig || '{}') : (settingsConfig || {});
   const auth = settings.auth || {};
-  return auth.OPENAI_API_KEY || auth.openai_api_key || auth.api_key || null;
+  const env = settings.env || {};
+  return auth.OPENAI_API_KEY || auth.openai_api_key || auth.api_key || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY || null;
 }
 
 function zhipuRuntime(settingsConfig) {
@@ -510,7 +533,9 @@ export function createAgentHubService(options = {}) {
   }
 
   async function fetchProviderUsage(row) {
-    if (row.app_type !== 'codex' || row.category !== 'cn_official') return null;
+    if (!['claude', 'codex'].includes(row.app_type) || row.category !== 'cn_official') {
+      return { unavailable: row.category === 'official' ? '官方额度需要对应账号登录' : '该供应商未接入额度查询；本地消耗见下方统计' };
+    }
     let key;
     try { key = providerAuth(row.settings_config); } catch { return { error: '供应商配置无法解析' }; }
     if (!key) return { error: '缺少供应商 API Key' };
@@ -555,10 +580,9 @@ export function createAgentHubService(options = {}) {
     if (Date.now() >= providerUsageCache.expiresAt) {
       providerUsageCache = { expiresAt: Date.now() + USAGE_TTL_MS, byId: new Map() };
     }
-    if (providerUsageCache.byId.has(row.id)) return providerUsageCache.byId.get(row.id);
-    const usage = await fetchProviderUsage(row);
-    providerUsageCache.byId.set(row.id, usage);
-    return usage;
+    const cacheKey = `${row.app_type}:${row.id}`;
+    if (!providerUsageCache.byId.has(cacheKey)) providerUsageCache.byId.set(cacheKey, fetchProviderUsage(row));
+    return providerUsageCache.byId.get(cacheKey);
   }
 
   async function fetchQoderUsage() {
@@ -566,7 +590,7 @@ export function createAgentHubService(options = {}) {
     const session = await readJSON(qoderSessionPath, null);
     const cookieHeader = options.qoderCookie || process.env.QODER_COOKIE || (session && session.cookieHeader);
     const site = options.qoderSite || process.env.QODER_SITE || (session && session.site) || 'international';
-    if (!cookieHeader) return null;
+    if (!cookieHeader) return { unavailable: '尚未配置 Qoder 网页登录凭证，配置额度后可读取 Credits' };
     const origin = site === 'china' ? 'https://qoder.com.cn' : 'https://qoder.com';
     let value;
     try {
@@ -667,6 +691,8 @@ export function createAgentHubService(options = {}) {
       totalSessions: qoderHistory.totalSessions,
       totalMessages: qoderHistory.totalMessages,
       totalTokens: qoderHistory.totalTokens,
+      modelUsage: qoderHistory.modelUsage || {},
+      usageScope: qoderHistory.usageScope,
       lastActivityAt: [qoderTasks.lastActivityAt, qoderHistory.lastActivityAt].filter(Boolean).sort().at(-1) || null,
     };
     const publicProviders = providers.map((provider) => {

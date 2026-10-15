@@ -3,13 +3,13 @@
 // and optionally fetches live utilization from the Anthropic OAuth API.
 
 import { Router } from 'express';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 const execFileAsync = promisify(execFile);
 
@@ -70,6 +70,60 @@ async function readStatsCache() {
   }
 }
 
+export async function readClaudeConversation(path) {
+  const session = { session_id: basename(path, '.jsonl'), tool_counts: {}, modelUsage: {} };
+  const messages = new Map();
+  const tools = new Set();
+  let first = Infinity;
+  let last = 0;
+  const lines = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
+  for await (const line of lines) {
+    let record;
+    try { record = JSON.parse(line); } catch { continue; }
+    if (!record || !['user', 'assistant'].includes(record.type)) continue;
+    session.session_id = record.sessionId || record.session_id || session.session_id;
+    session.project_path = record.cwd || session.project_path;
+    const timestamp = Date.parse(record.timestamp || '');
+    if (Number.isFinite(timestamp)) {
+      first = Math.min(first, timestamp);
+      last = Math.max(last, timestamp);
+    }
+    const message = record.message || {};
+    const id = message.id || record.uuid || `line-${messages.size}`;
+    const previous = messages.get(id) || { type: record.type, model: message.model, usage: {} };
+    // Streaming blocks can repeat a message's cumulative usage. Count each
+    // message once and retain the largest recorded count for each token kind.
+    for (const key of ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens']) {
+      previous.usage[key] = Math.max(previous.usage[key] || 0, Number(message.usage?.[key]) || 0);
+    }
+    messages.set(id, previous);
+    for (const content of Array.isArray(message.content) ? message.content : []) {
+      if (content?.type !== 'tool_use' || !content.name) continue;
+      const toolId = content.id || `${id}:${content.name}`;
+      if (tools.has(toolId)) continue;
+      tools.add(toolId);
+      session.tool_counts[content.name] = (session.tool_counts[content.name] || 0) + 1;
+    }
+  }
+  session.user_message_count = 0;
+  session.assistant_message_count = 0;
+  for (const message of messages.values()) {
+    session[`${message.type}_message_count`] += 1;
+    if (message.type !== 'assistant' || !message.model || message.model === '<synthetic>') continue;
+    session.model = message.model;
+    const usage = session.modelUsage[message.model] ||= { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
+    usage.inputTokens += message.usage.input_tokens;
+    usage.outputTokens += message.usage.output_tokens;
+    usage.cacheReadInputTokens += message.usage.cache_read_input_tokens;
+    usage.cacheCreationInputTokens += message.usage.cache_creation_input_tokens;
+  }
+  session.input_tokens = Object.values(session.modelUsage).reduce((sum, usage) => sum + usage.inputTokens + usage.cacheReadInputTokens + usage.cacheCreationInputTokens, 0);
+  session.output_tokens = Object.values(session.modelUsage).reduce((sum, usage) => sum + usage.outputTokens, 0);
+  if (Number.isFinite(first)) session.start_time = new Date(first).toISOString();
+  if (last) session.updated_at = new Date(last).toISOString();
+  return session;
+}
+
 async function readSessionsMeta() {
   const cached = sessionsCache.get();
   if (cached) return cached;
@@ -86,6 +140,35 @@ async function readSessionsMeta() {
     }
     const value = (session, camel, snake) => session[camel] ?? session[snake];
     const millis = (input) => typeof input === 'number' ? input : Date.parse(input || '') || 0;
+
+    // Native conversation logs also exist when Claude uses an API provider
+    // without an Anthropic login or stats-cache.json.
+    const projDir = join(CLAUDE_DIR, 'projects');
+    const byId = new Map(sessions.map((session) => [value(session, 'sessionId', 'session_id'), session]));
+    const modelUsage = {};
+    for (const folder of await readdir(projDir).catch(() => [])) {
+      const folderPath = join(projDir, folder);
+      for (const file of await readdir(folderPath).catch(() => [])) {
+        if (!file.endsWith('.jsonl')) continue;
+        try {
+          const conversation = await readClaudeConversation(join(folderPath, file));
+          if (!conversation.user_message_count && !conversation.assistant_message_count) continue;
+          const existing = byId.get(conversation.session_id);
+          if (existing?.modelUsage && millis(value(existing, 'updatedAt', 'updated_at')) > millis(conversation.updated_at)) continue;
+          // Prefer recorded conversation counts over transient session metadata.
+          const merged = { ...existing, ...conversation };
+          for (const key of ['inputTokens', 'outputTokens', 'userMessageCount', 'assistantMessageCount', 'toolCounts', 'startedAt', 'updatedAt']) delete merged[key];
+          byId.set(conversation.session_id, merged);
+        } catch { /* history can rotate while scanning */ }
+      }
+    }
+    sessions.splice(0, sessions.length, ...byId.values());
+    for (const session of sessions) {
+      for (const [model, usage] of Object.entries(session.modelUsage || {})) {
+        const total = modelUsage[model] ||= { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
+        for (const key of Object.keys(total)) total[key] += usage[key];
+      }
+    }
     sessions.sort((a, b) => millis(value(b, 'startedAt', 'start_time')) - millis(value(a, 'startedAt', 'start_time')));
 
     const recent = sessions.slice(0, 10).map((s) => {
@@ -136,49 +219,13 @@ async function readSessionsMeta() {
     }
     const dailyActivity = Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date));
 
-    // 2. Scan recent conversation JSONL files for tool usage
+    // 2. Aggregate tool counts from metadata and native conversation logs.
     const aggregatedTools = {};
     for (const session of sessions) {
       const tools = value(session, 'toolCounts', 'tool_counts') || {};
       for (const [name, count] of Object.entries(tools)) {
         aggregatedTools[name] = (aggregatedTools[name] || 0) + (Number(count) || 0);
       }
-    }
-    const hasMetadataTools = Object.keys(aggregatedTools).length > 0;
-    const projDir = join(CLAUDE_DIR, 'projects');
-    const projFolders = await readdir(projDir).catch(() => []);
-    const allJsonl = [];
-    for (const folder of projFolders) {
-      const folderPath = join(projDir, folder);
-      const files = await readdir(folderPath).catch(() => []);
-      for (const f of files) {
-        if (!f.endsWith('.jsonl')) continue;
-        try {
-          const s = await stat(join(folderPath, f));
-          allJsonl.push({ path: join(folderPath, f), mtime: s.mtimeMs });
-        } catch { /* skip */ }
-      }
-    }
-    allJsonl.sort((a, b) => b.mtime - a.mtime);
-    const recentJsonl = hasMetadataTools ? [] : allJsonl.slice(0, 20);
-
-    for (const { path } of recentJsonl) {
-      try {
-        const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
-        for await (const line of rl) {
-          if (!line.includes('"tool_use"')) continue;
-          try {
-            const rec = JSON.parse(line);
-            const content = rec?.message?.content;
-            if (!Array.isArray(content)) continue;
-            for (const c of content) {
-              if (c?.type === 'tool_use' && c.name) {
-                aggregatedTools[c.name] = (aggregatedTools[c.name] || 0) + 1;
-              }
-            }
-          } catch { /* skip malformed lines */ }
-        }
-      } catch { /* skip unreadable files */ }
     }
 
     // 3. Get code change stats from git across recent project dirs
@@ -205,7 +252,7 @@ async function readSessionsMeta() {
     }
 
     const result = {
-      recent, aggregatedTools,
+      recent, aggregatedTools, modelUsage,
       totalLinesAdded, totalLinesRemoved, totalCommits,
       totalSessions: sessions.length,
       totalMessages,
@@ -323,25 +370,34 @@ function transformCcusageDaily(daily) {
 
 async function refreshSnapshot() {
   try {
-    const creds = await readCredentials();
-    if (!creds || !creds.claudeAiOauth) return;
-    const oauth = creds.claudeAiOauth;
-
-    const [utilization, stats, sessionData, ccusage] = await Promise.all([
-      fetchUtilization(oauth.accessToken),
-      readStatsCache(),
-      readSessionsMeta(),
+    const [creds, stats, sessionData] = await Promise.all([
+      readCredentials(), readStatsCache(), readSessionsMeta(),
+    ]);
+    const oauth = creds?.claudeAiOauth;
+    if (!oauth && !sessionData.totalSessions && !Object.keys(stats?.modelUsage || {}).length) {
+      latestSnapshot = null;
+      return;
+    }
+    const [utilization, ccusage] = await Promise.all([
+      oauth?.accessToken ? fetchUtilization(oauth.accessToken) : null,
       readCcusageDaily(),
     ]);
 
-    const modelUsage    = stats?.modelUsage || {};
+    const modelUsage = Object.keys(sessionData.modelUsage).length ? sessionData.modelUsage : (stats?.modelUsage || {});
+    const tokenTotals = Object.values(modelUsage).reduce((total, usage) => {
+      total.totalInputTokens += usage.inputTokens || 0;
+      total.totalOutputTokens += usage.outputTokens || 0;
+      total.totalCachedTokens += (usage.cacheReadInputTokens || 0) + (usage.cacheCreationInputTokens || 0);
+      return total;
+    }, { totalInputTokens: 0, totalOutputTokens: 0, totalCachedTokens: 0 });
     const estimatedCost = estimateCost(modelUsage);
 
     latestSnapshot = {
-      subscription: {
+      subscription: oauth ? {
         type: oauth.subscriptionType,
         rateLimitTier: oauth.rateLimitTier,
-      },
+      } : null,
+      quotaUnavailable: !oauth ? '未登录 Anthropic 官方账号；第三方服务额度请查看对应运行身份' : (!utilization ? '暂时无法读取 Anthropic 官方额度' : null),
       utilization,
       modelUsage,
       estimatedCost,
@@ -350,6 +406,8 @@ async function refreshSnapshot() {
       dailyActivity:    sessionData.dailyActivity,
       hourCounts:       sessionData.hourCounts,
       aggregate: {
+        ...tokenTotals,
+        totalTokens: tokenTotals.totalInputTokens + tokenTotals.totalOutputTokens + tokenTotals.totalCachedTokens,
         totalSessions:    sessionData.totalSessions,
         totalMessages:    sessionData.totalMessages,
         firstSessionDate: sessionData.firstDate,
@@ -372,7 +430,8 @@ export default function createRouter() {
 
   // Start background polling immediately
   const initialRefresh = refreshSnapshot();
-  setInterval(refreshSnapshot, POLL_INTERVAL);
+  const poller = setInterval(refreshSnapshot, POLL_INTERVAL);
+  poller.unref?.();
 
   router.get('/', async (_req, res) => {
     await initialRefresh;

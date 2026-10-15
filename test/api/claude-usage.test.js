@@ -233,6 +233,25 @@ describe('GET /api/claude-usage', () => {
     expect(res.body.error).toBe('not_configured');
   });
 
+  it('serves local consumption without an Anthropic login or quota request', async () => {
+    const session = makeFakeSession('sess-api', '2026-04-20T10:00:00Z');
+    mockReadFile.mockImplementation(async (path) => {
+      if (path.includes('stats-cache.json')) return JSON.stringify(FAKE_STATS_CACHE);
+      if (path.includes('sess-api.json')) return JSON.stringify(session);
+      throw new Error('ENOENT');
+    });
+    mockReaddir.mockResolvedValue(['sess-api.json']);
+
+    const { default: createRouter } = await import('../../server/api/claude-usage.js');
+    const res = await get(makeApp(createRouter), '/api/claude-usage');
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.subscription).toBeNull();
+    expect(res.body.data.utilization).toBeNull();
+    expect(res.body.data.quotaUnavailable).toContain('未登录 Anthropic');
+    expect(res.body.data.aggregate).toMatchObject({ totalSessions: 1, totalTokens: 603000, totalCachedTokens: 600000 });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('should return utilization=null when OAuth API fails, rest of data present', async () => {
     // Arrange
     const session1 = makeFakeSession('sess-1', '2026-04-20T10:00:00Z');
