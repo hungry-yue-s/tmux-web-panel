@@ -1362,7 +1362,7 @@ describe('video previews', () => {
       + '<img src="//cdn.test/clip.ogv">'
       + '<img src="javascript:evil.mp4" alt="无效视频">'
       + '<img src="cover.png">';
-    preview._test.prepareMarkdownVideos(wrap, '/notes/docs/current.md');
+    preview._test.prepareMarkdownMedia(wrap, '/notes/docs/current.md');
     const videos = Array.from(wrap.querySelectorAll('video'));
     expect(videos).toHaveLength(4);
     expect(new URL(videos[0].src).searchParams.get('path')).toBe('/notes/视频/clip one.MP4');
@@ -1374,7 +1374,7 @@ describe('video previews', () => {
     expect(videos[3].src).toBe('https://cdn.test/clip.ogv');
     expect(wrap.textContent).toContain('无效视频');
     expect(wrap.querySelectorAll('img')).toHaveLength(1);
-    expect(wrap.querySelector('img').getAttribute('src')).toBe('cover.png');
+    expect(new URL(wrap.querySelector('img').src).searchParams.get('path')).toBe('/notes/docs/cover.png');
   });
 
   it('renders Obsidian video embeds through the same media path', () => {
@@ -1388,10 +1388,49 @@ describe('video previews', () => {
     expect(rules.obs_embed(state, false)).toBe(true);
     const wrap = dom.window.document.createElement('div');
     wrap.innerHTML = token.content;
-    preview._test.prepareMarkdownVideos(wrap, '/notes/current.md');
+    preview._test.prepareMarkdownMedia(wrap, '/notes/current.md');
     const video = wrap.querySelector('video');
     expect(new URL(video.src).searchParams.get('path')).toBe('/notes/clips/演示.mp4');
     expect(video.getAttribute('aria-label')).toBe('播放演示');
+  });
+
+  it('shows inline players for the video links used in the defense document', () => {
+    const { dom, preview } = createPreview();
+    const wrap = dom.window.document.createElement('div');
+    wrap.innerHTML = '<p><a href="演示素材/源视频.mp4">源视频</a>与'
+      + '<a href="演示素材/注入后录像.mp4">注入后录像</a>。'
+      + '<a href="参考资料/说明.md">参考资料</a></p>';
+    preview._test.prepareMarkdownMedia(wrap, '/Users/me/workspace/转正答辩/转正答辩内容稿-30分钟.md');
+    const videos = Array.from(wrap.querySelectorAll('video'));
+    expect(videos.map((video) => video.getAttribute('aria-label'))).toEqual(['源视频', '注入后录像']);
+    expect(videos.map((video) => new URL(video.src).searchParams.get('path'))).toEqual([
+      '/Users/me/workspace/转正答辩/演示素材/源视频.mp4',
+      '/Users/me/workspace/转正答辩/演示素材/注入后录像.mp4',
+    ]);
+    expect(wrap.querySelectorAll('a')).toHaveLength(3);
+    expect(wrap.querySelector('a').nextElementSibling).toBe(videos[0]);
+  });
+
+  it('decodes Chinese and escaped image paths once before requesting the raw file', () => {
+    const { dom, preview } = createPreview({
+      auth: { headers: () => ({}), wsTokenParam: () => 'token=image-test' },
+    });
+    const wrap = dom.window.document.createElement('div');
+    wrap.innerHTML = '<img src="' + encodeURI('演示素材/网页联调界面.png') + '">'
+      + '<img src="' + encodeURI('../图片/空 格 & 截图.png') + '">'
+      + '<img src="/tmp/绝对路径.png">'
+      + '<img src="https://cdn.test/cover.png?key=a&amp;size=b">'
+      + '<img src="data:image/png;base64,cG5n">';
+    preview._test.prepareMarkdownMedia(wrap, '/workspace/转正答辩/文稿.md');
+    const imgs = Array.from(wrap.querySelectorAll('img'));
+    expect(imgs.slice(0, 3).map((img) => new URL(img.src).searchParams.get('path'))).toEqual([
+      '/workspace/转正答辩/演示素材/网页联调界面.png',
+      '/workspace/图片/空 格 & 截图.png',
+      '/tmp/绝对路径.png',
+    ]);
+    expect(new URL(imgs[0].src).searchParams.get('token')).toBe('image-test');
+    expect(imgs[3].src).toBe('https://cdn.test/cover.png?key=a&size=b');
+    expect(imgs[4].src).toBe('data:image/png;base64,cG5n');
   });
 
   it('removes local video stream credentials from standalone snapshots without changing playback', async () => {

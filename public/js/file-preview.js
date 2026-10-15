@@ -1653,7 +1653,7 @@ var FilePreview = (function () {
       '.fp-md-wrap pre{background:var(--bg-primary);border-radius:6px;padding:12px;overflow-x:auto;}',
       ".fp-md-wrap code{font-family:'JetBrains Mono',monospace;font-size:0.82rem;}",
       '.fp-md-wrap :not(pre) > code{background:var(--bg-primary);padding:2px 5px;border-radius:3px;}',
-      '.fp-md-wrap img,.fp-md-wrap video{max-width:100%;border-radius:6px;}',
+      '.fp-md-wrap img,.fp-md-wrap video{max-width:100%;border-radius:6px;}.fp-md-wrap video{display:block;margin:12px 0;}',
       '.fp-md-wrap table{border-collapse:collapse;width:100%;margin:1em 0;}',
       '.fp-md-wrap th,.fp-md-wrap td{border:1px solid var(--border-subtle);padding:6px 10px;text-align:left;}',
       '.fp-md-wrap th{background:var(--bg-primary);}',
@@ -3144,14 +3144,17 @@ var FilePreview = (function () {
     });
   }
 
-  function _prepareMarkdownVideos(wrap, filePath) {
+  function _prepareMarkdownMedia(wrap, filePath) {
     var tokenQs = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
-    wrap.querySelectorAll('img[src]').forEach(function (img) {
-      var src = img.getAttribute('src');
-      if (!VIDEO_RE.test(src)) return;
+    wrap.querySelectorAll('img[src], a[href]').forEach(function (element) {
+      var isLink = element.tagName === 'A';
+      var src = element.getAttribute(isLink ? 'href' : 'src');
+      var isVideo = VIDEO_RE.test(src);
+      if (isLink && !isVideo) return;
+      if (!isLink && /^data:/i.test(src)) return;
       var target = _resolveMarkdownHref(filePath, src);
       if (target.kind !== 'file' && target.kind !== 'web') {
-        img.replaceWith(document.createTextNode(img.alt || '视频地址无效'));
+        if (!isLink) element.replaceWith(document.createTextNode(element.alt || '媒体地址无效'));
         return;
       }
       var url = target.kind === 'web' ? target.href
@@ -3159,13 +3162,18 @@ var FilePreview = (function () {
       // Preserve media fragments such as #t=5,10 on local video URLs.
       var hashAt = src.indexOf('#');
       if (target.kind === 'file' && hashAt >= 0) url += src.slice(hashAt);
-      img.replaceWith(_createVideo(url, img.alt));
+      if (!isVideo) {
+        element.setAttribute('src', url);
+        return;
+      }
+      var video = _createVideo(url, isLink ? element.textContent : element.alt);
+      if (isLink) element.after(video);
+      else element.replaceWith(video);
     });
   }
 
   function _renderMarkdown(body, content, filePath, paneId) {
     body.innerHTML = '<div class="fp-loading">Rendering Markdown\u2026</div>';
-    var baseDir = filePath.substring(0, filePath.lastIndexOf('/'));
 
     return Promise.all([
       _loadScript(CDN.markdownIt),
@@ -3214,14 +3222,7 @@ var FilePreview = (function () {
         var wrap = document.createElement('div');
         wrap.className = 'fp-md-wrap';
         wrap.innerHTML = fmHtml + html;
-        _prepareMarkdownVideos(wrap, filePath);
-        var _mdTp = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
-        wrap.querySelectorAll('img[src]').forEach(function (img) {
-          var src = img.getAttribute('src');
-          if (/^(?:https?:\/\/|data:|\/)/.test(src)) return;
-          img.setAttribute('src', '/api/files/raw?path=' + encodeURIComponent(baseDir + '/' + src)
-            + (_mdTp ? '&' + _mdTp : ''));
-        });
+        _prepareMarkdownMedia(wrap, filePath);
         body.appendChild(wrap);
 
         _replaceTaskMarkers(wrap);
@@ -4196,7 +4197,7 @@ var FilePreview = (function () {
       installMarkdownTasks: _installMarkdownTasks,
       replaceTaskMarkers: _replaceTaskMarkers,
       prepareMarkdownNavigation: _prepareMarkdownNavigation,
-      prepareMarkdownVideos: _prepareMarkdownVideos,
+      prepareMarkdownMedia: _prepareMarkdownMedia,
       obsidianMarkdown: _obsidianMarkdown,
       buildStandaloneDoc: _buildStandaloneDoc,
       buildArchiveTree: _buildArchiveTree,

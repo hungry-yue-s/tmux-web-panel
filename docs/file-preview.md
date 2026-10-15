@@ -36,9 +36,11 @@ per machine and per terminal window.
 | Others | Images, PDF, directory listings |
 
 Markdown video embeds use `![Demo](clips/demo.mp4)` or Obsidian syntax
-`![[clips/demo.mp4]]`. Relative paths resolve from the Markdown file; absolute
-paths and HTTP(S) video URLs also work. Links to local videos open in the file
-preview. Raw HTML remains disabled. Local videos stream with byte-range support
+`![[clips/demo.mp4]]`. Video links such as `[Demo](clips/demo.mp4)` also show an
+inline player and keep the original link. Relative paths resolve from the
+Markdown file; absolute paths and HTTP(S) video URLs also work. Links to local
+videos open in the file preview. Raw HTML remains disabled. Local videos stream
+with byte-range support
 without the text preview size limit. Closing or hiding a preview, or switching
 dock tabs, pauses playback. Standalone HTML exports and shares keep a label for
 local videos instead of embedding the video data or live authentication URL.
