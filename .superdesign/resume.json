@@ -17,7 +17,7 @@
         "public/js/servers.js"
       ],
       "fingerprints": {
-        ".superdesign/design-system.md": "3da954919c0ec127b853dc3d09bf5c9934a7fd17f844fc820b926912f8e888f8",
+        ".superdesign/design-system.md": "932fdc7c0276b633502b26fbf22a40756118266209ef0187819435cebbbf5730",
         ".superdesign/context/current-terminal.html": "3478f2b47f0d61d0347d664d4a399b1bede6bcfd9ab0ededd3a68e6373e7fde1",
         "public/css/style.css": "d62f062ec8fc5fb4c6715b068c22f754feee35e8d031813009b17b876a722fba",
         "public/js/servers.js": "322daa3f79efd8751ff6dcd6e3bf5f71c0f0637f162f29c74aa922779e018063"
@@ -31,12 +31,12 @@
       ],
       "drafts": {
         "b0ab4875-7894-4135-a01a-e7386eb8f10e": {
-          "title": "Tmux Panel Redesign - Quiet Native Workspace",
-          "visualDirection": "quiet native workspace with interactive terminal/status/settings; demo only, production implementation pending design approval",
-          "currentVersion": 3
+          "title": "Tmux Panel - Crafted Graphite Workspace",
+          "visualDirection": "crafted graphite materials, refined Chinese document typography, inset controls; v5 interaction corrections; production implementation pending design approval",
+          "currentVersion": 5
         }
       },
-      "updatedAt": "2026-10-21T07:53:40.977098+00:00"
+      "updatedAt": "2026-10-21T08:15:30.676416+00:00"
     }
   }
 }
