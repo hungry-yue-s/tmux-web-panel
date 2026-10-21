@@ -93,7 +93,7 @@ body.fp-side-resizing .fp-side-resizer::after { width: 1px; background: var(--fp
   min-height: 32px;
   padding: 6px 12px;
 }
-.fp-md-wrap { max-width: 76ch; margin: 0 auto; padding: 28px 30px 40px; color: var(--fp-text); font-size: 14px; line-height: 1.8; }
+.fp-md-wrap { width: 100%; margin: 0; padding: 28px 30px 40px; color: var(--fp-text); font-size: 14px; line-height: 1.8; }
 .fp-md-wrap > :first-child { margin-top: 0; }
 .fp-md-wrap h1 { font-size: 24px; font-weight: 600; line-height: 1.4; letter-spacing: -.02em; border: 0; padding: 0; }
 .fp-md-wrap h2 { font-size: 18px; font-weight: 600; line-height: 1.5; margin-top: 1.6em; }
