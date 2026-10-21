@@ -117,6 +117,8 @@
       this._hideSidebarContextMenu();
       const view = global.document.getElementById('ms-view');
       if (!view) return;
+      const desktopPills = global.document.getElementById('workspace-pane-strip');
+      if (desktopPills) desktopPills.replaceChildren();
       const mobilePills = global.document.querySelector('.mobile-header > .mobile-pane-strip');
       if (mobilePills) mobilePills.remove();
       if (route.name !== 'terminal') {
@@ -383,6 +385,8 @@
       // keeps its own reference to the pills node, so relocating it is safe.
       const oldMobilePills = global.document.querySelector('.mobile-header > .mobile-pane-strip');
       if (oldMobilePills) oldMobilePills.remove();
+      const paneStrip = global.document.getElementById('workspace-pane-strip');
+      if (paneStrip) paneStrip.replaceChildren();
       const pills = header.querySelector('.terminal-header-pills');
       if (pills) {
         pills.classList.add('ms-hoisted-pills');
@@ -391,10 +395,38 @@
           const mobileHeader = global.document.querySelector('.mobile-header');
           (mobileHeader || root).appendChild(pills);
         } else {
-          actions.appendChild(pills);
+          (paneStrip || actions).appendChild(pills);
         }
       }
-      if (toolbar) actions.appendChild(toolbar);
+      if (toolbar) {
+        const secondary = ['.terminal-label-btn', '.terminal-popout-btn', '.terminal-fullscreen-btn']
+          .map((selector) => toolbar.querySelector(selector)).filter(Boolean);
+        if (secondary.length) {
+          const more = global.document.createElement('details');
+          more.className = 'workspace-terminal-more';
+          const summary = global.document.createElement('summary');
+          summary.setAttribute('aria-label', '更多终端操作');
+          summary.title = '更多终端操作';
+          summary.innerHTML = '<svg class="ms-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>';
+          const panel = global.document.createElement('div');
+          panel.className = 'workspace-terminal-menu';
+          for (const button of secondary) {
+            const label = global.document.createElement('span');
+            label.textContent = button.getAttribute('aria-label') || button.title;
+            button.appendChild(label);
+            panel.appendChild(button);
+          }
+          more.append(summary, panel);
+          more.addEventListener('click', (event) => {
+            if (event.target.closest('button')) more.open = false;
+          });
+          more.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') { event.preventDefault(); more.open = false; summary.focus(); }
+          });
+          toolbar.appendChild(more);
+        }
+        actions.appendChild(toolbar);
+      }
 
       // Nothing left worth showing: remove it so only one bar exists.
       header.remove();
@@ -615,6 +647,9 @@
         if (output) output.textContent = global.Theme.getTransparency() + '%';
       });
       global.document.addEventListener('click', (event) => {
+        for (const more of global.document.querySelectorAll('.workspace-terminal-more[open]')) {
+          if (!more.contains(event.target)) more.open = false;
+        }
         const actionTarget = event.target.closest('[data-action]');
         if (!actionTarget || actionTarget.dataset.action !== 'workspace-entity-menu') {
           this._hideSidebarContextMenu();

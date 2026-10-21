@@ -107,6 +107,15 @@ describe('renderPaneLayout', () => {
     expect(boxes[0].getAttribute('title')).toBe('Pane 0: zsh (80x24)');
     expect(boxes[1].getAttribute('title')).toBe('Pane 1: vim (40x24)');
   });
+
+  it('uses array positions for missing layout indexes without replacing explicit indexes', () => {
+    dom.window.renderPaneLayout(container, [
+      { id: '%0', command: 'bash', width: 80, height: 24 },
+      { id: '%1', index: 6, command: 'vim', width: 80, height: 24, left: 80 },
+    ], '%0', null);
+    expect([...container.querySelectorAll('.pane-box-index')].map(node => node.textContent)).toEqual(['P0', 'P6']);
+    expect(container.querySelector('.pane-box').title).toBe('Pane 0: bash (80x24)');
+  });
 });
 
 describe('renderPanePills', () => {
@@ -137,6 +146,24 @@ describe('renderPanePills', () => {
     expect(pills[0].querySelector('.pane-pill-index').textContent).toBe('0');
     expect(pills[0].querySelector('.pane-pill-label').textContent).toBe('zsh');
     expect(pills[1].querySelector('.pane-pill-index').textContent).toBe('1');
+  });
+
+  it('labels index-free Store panes with array positions and retains user labels', () => {
+    const panes = [
+      { id: '%9', label: '主任务', command: 'bash' },
+      { id: '%12', index: null, command: 'node' },
+      { id: '%4', index: 0, command: 'zsh' },
+      { id: '%8', index: 7, label: '<b>日志</b>', command: 'tail' },
+    ];
+    dom.window.renderPanePills(container, panes, '%9', null);
+    const pills = [...container.querySelectorAll('.pane-pill')];
+    expect(pills.map(pill => pill.querySelector('.pane-pill-index').textContent)).toEqual(['0', '1', '0', '7']);
+    expect(pills.map(pill => pill.querySelector('.pane-pill-label').textContent)).toEqual(['主任务', 'node', 'zsh', '<b>日志</b>']);
+    expect(pills.map(pill => pill.getAttribute('aria-label'))).toEqual([
+      '窗格 0 · 主任务', '窗格 1 · node', '窗格 0 · zsh', '窗格 7 · <b>日志</b>',
+    ]);
+    expect(container.querySelector('b')).toBeNull();
+    expect(panes[0]).not.toHaveProperty('index');
   });
 
   it('calls onPaneClick with correct pane id', () => {
@@ -218,7 +245,7 @@ describe('pane context menu (label)', () => {
     dom.window.api = { put: (url, body) => { putArgs = { url, body }; return Promise.resolve({ success: true }); } };
     dom.window.showPrompt = () => Promise.resolve('  构建  ');
     dom.window.showAlert = () => {};
-    const panes = [{ id: 10, index: 0, command: 'zsh', label: '' }];
+    const panes = [{ id: 10, command: 'zsh', label: '' }];
     dom.window.renderPanePills(container, panes, null, null);
     rightClick(container.querySelector('.pane-pill'));
     dom.window.document
@@ -229,6 +256,7 @@ describe('pane context menu (label)', () => {
     expect(putArgs.url).toContain('/label');
     expect(putArgs.body).toEqual({ label: '构建' });
     expect(panes[0].label).toBe('构建'); // in-memory sync so re-open prefills new value
+    expect(container.querySelector('.pane-pill').getAttribute('aria-label')).toBe('窗格 0 · 构建');
   });
 });
 

@@ -644,9 +644,10 @@ export function createTmuxApi(executor) {
 }
 
 // Border title shown by tmux on each pane's top border (pane-border-status top).
-// [label] only when @pane_label is set; the active pane is reversed for contrast.
+// Keep title text in the terminal foreground. Only the leading marker uses
+// theme-resolved ANSI colors; no global border style or user option is replaced.
 export const PANE_BORDER_FORMAT =
-  '#{?pane_active,#[reverse],} #{?#{@pane_label},[#{@pane_label}] ,}#{pane_index}:#{pane_current_command} #[default]';
+  '#{?pane_active,#[fg=colour4]▸#[default]#[bold],#[fg=colour8]·#[default]} #{?#{@pane_label},[#{@pane_label}] ,}#{pane_index}:#{pane_current_command} #[default]';
 
 // The local tmux binding. Every pre-existing caller keeps importing these named
 // exports; remote hosts get their own instance from createTmuxApi(sshExecutor).

@@ -147,8 +147,20 @@
     render: function () {
       var route = global.Store.getState().route || {};
       this._syncMode(route);
+      var context = el('ms-server-context');
+      var focused = global.document.activeElement;
+      var attrs = ['data-route', 'data-session-toggle', 'data-action', 'data-session', 'data-window'];
+      var identity = context && context.contains(focused) && focused.tagName === 'BUTTON'
+        ? attrs.map(function (name) { return focused.getAttribute(name); }) : null;
       this._renderSidebar(route);
+      if (identity && !focused.isConnected) {
+        var replacement = Array.from(context.querySelectorAll('button')).find(function (button) {
+          return attrs.every(function (name, index) { return button.getAttribute(name) === identity[index]; });
+        });
+        if (replacement) replacement.focus({ preventScroll: true });
+      }
       this._renderMobile(route);
+      this._renderWindowStrip(route);
       this._syncMobileWorkspaceSheet(route);
       this._syncNav(route);
       if (typeof global.NotificationPanel !== 'undefined' && global.NotificationPanel.syncAttention) {
@@ -183,14 +195,15 @@
       var health = this.health(serverId);
       var stateTone = tone(health.state);
 
-      var switcher = '<button class="server-switcher" data-action="server-switcher">'
+      var switcher = '<button class="server-switcher" data-action="server-switcher" aria-label="切换服务器，当前 '
+        + esc(server ? server.name : serverId) + '" title="切换服务器">'
         + '<span class="dot ' + stateTone.dot + '"></span>'
         + '<span><strong>' + esc(server ? server.name : serverId) + '</strong>'
-        + '<small>当前服务器 · ' + esc(this._addressOf(server)) + ' · '
+        + '<small>' + esc(this._addressOf(server)) + ' · '
         + esc(this._latencyOf(health)) + '</small></span>'
         + '<span>⌄</span></button>';
 
-      context.innerHTML = switcher + '<div class="subnav">' + this._renderTree(serverId, route) + '</div>';
+      context.innerHTML = '<div class="subnav">' + this._renderTree(serverId, route) + '</div>' + switcher;
     },
 
     /**
@@ -287,7 +300,7 @@
         if (health.state === 'offline' || health.state === 'auth_required' || health.state === 'host_key_error') {
           return this._renderUnavailableTree(serverId, health);
         }
-        return '<div class="tree-section-head"><span>Workspace</span></div>'
+        return '<div class="tree-section-head"><span>工作区</span></div>'
           + '<div class="workspace-missing"><strong>正在检测</strong><p>正在确认该服务器的 tmux 与 SSH 能力。</p></div>';
       }
 
@@ -295,19 +308,19 @@
 
       var sessions = workspace.sessions || [];
       var actions = workspace.actions || {};
-      var head = '<div class="tree-section-head"><span>Sessions</span>'
+      var head = '<div class="tree-section-head"><span>会话</span>'
         + providerBadge(workspace)
         + (actions.createSession
-          ? '<button class="tree-add-button" data-action="new-session" title="在当前服务器新建 Session"'
-            + ' aria-label="新建 Session">+</button>'
+          ? '<button class="tree-add-button" data-action="new-session" title="在当前服务器新建会话"'
+            + ' aria-label="新建会话">+</button>'
           : '')
         + '</div>';
 
       if (sessions.length === 0) {
-        return head + '<div class="workspace-missing"><strong>还没有 Session</strong>'
+        return head + '<div class="workspace-missing"><strong>还没有会话</strong>'
           + '<p>' + (workspace.provider === 'ssh'
             ? '由面板服务托管 SSH 连接，面板重启后会话结束。'
-            : '远端 tmux 可用，新建 Session 后即可进入。')
+            : '远端 tmux 可用，新建会话 后即可进入。')
           + '</p></div>';
       }
 
@@ -327,21 +340,13 @@
           + ' aria-expanded="' + (expanded ? 'true' : 'false') + '">'
           + '<span>' + (expanded ? '▾' : '▸') + '</span>'
           + '<span>' + esc(session.name) + '</span>'
-          + '<span class="cmd">' + (session.windows || []).length + ' windows</span>'
+          + '<span class="cmd">' + (session.windows || []).length + ' 个窗口</span>'
           + '</button>'
-          + (!mobile && actions.renameSession
-            ? '<button class="tree-add-button" data-action="rename-session" data-session="' + esc(session.id) + '"'
-              + ' title="重命名 ' + esc(session.name) + '" aria-label="重命名 Session">✎</button>'
-            : '')
-          + (!mobile && actions.closeSession
-            ? '<button class="tree-add-button" data-action="close-session" data-session="' + esc(session.id) + '"'
-              + ' title="关闭 ' + esc(session.name) + '" aria-label="关闭 Session">×</button>'
-            : '')
           + (actions.createWindow
-            ? '<button class="tree-add-button" data-action="new-window" data-session="' + esc(session.id) + '"'
-              + ' title="在 ' + esc(session.name) + ' 中新建 Window" aria-label="新建 Window">+</button>'
+            ? '<button type="button" class="tree-add-button tree-create-window" data-action="new-window"'
+              + ' data-session="' + esc(session.id) + '" title="新建窗口" aria-label="在 ' + esc(session.name) + ' 中新建窗口">+</button>'
             : '')
-          + (mobile && (actions.createWindow || actions.renameSession || actions.closeSession)
+          + ((actions.createWindow || actions.renameSession || actions.closeSession)
             ? '<button type="button" class="tree-add-button tree-menu-button" data-action="workspace-entity-menu"'
               + ' aria-label="' + esc(session.name) + ' 的会话操作" aria-haspopup="menu" aria-expanded="false"'
               + ' aria-controls="ms-sidebar-context-menu">⋯</button>'
@@ -387,15 +392,7 @@
           + (active ? ' aria-current="page"' : '')
           + '><span class="tree-item-name">' + esc(win.name) + '</span>'
           + '<span class="cmd">' + esc(command) + '</span></button>'
-          + (!mobile && actions.renameWindow
-            ? '<button class="tree-add-button" data-action="rename-window" data-window="' + esc(win.id) + '"'
-              + ' title="重命名 ' + esc(win.name) + '" aria-label="重命名 Window">✎</button>'
-            : '')
-          + (!mobile && actions.closeWindow
-            ? '<button class="tree-add-button" data-action="close-window" data-window="' + esc(win.id) + '"'
-              + ' title="关闭 ' + esc(win.name) + '" aria-label="关闭 Window">×</button>'
-            : '')
-          + (mobile && (actions.renameWindow || actions.closeWindow)
+          + ((actions.renameWindow || actions.closeWindow)
             ? '<button type="button" class="tree-add-button tree-menu-button" data-action="workspace-entity-menu"'
               + ' aria-label="' + esc(win.name) + ' 的窗口操作" aria-haspopup="menu" aria-expanded="false"'
               + ' aria-controls="ms-sidebar-context-menu">⋯</button>'
@@ -411,7 +408,7 @@
           + esc(global.Router.serialize({ name: 'server', params: { serverId: serverId, section: 'connection' } }))
           + '">修复连接</button>'
         : '<button class="ms-btn primary" data-action="probe">' + icon('refresh') + '重新检测</button>';
-      return '<div class="tree-section-head"><span>Workspace</span></div>'
+      return '<div class="tree-section-head"><span>工作区</span></div>'
         + '<div class="workspace-missing"><strong>' + esc(stateTone.label) + '</strong>'
         + '<p>当前无法建立 tmux 或 SSH Session。</p>'
         + '<div class="workspace-missing-actions">' + repair + '</div></div>';
@@ -582,10 +579,33 @@
         else if (name === 'servers' || name === 'server') isActive = target === '#/servers';
         else isActive = target === '#/' + name;
         nodes[i].classList.toggle('active', isActive);
+        nodes[i].setAttribute('aria-current', isActive ? 'page' : 'false');
       }
     },
 
-    /** Sets the compact Window Bar used on the terminal route. */
+    _renderWindowStrip: function (route) {
+      var strip = el('workspace-window-strip');
+      if (!strip) return;
+      var params = route.params || {};
+      var workspace = this.workspace(params.serverId || 'local');
+      var session = route.name === 'terminal' && this._findSession(workspace, params.sessionId);
+      var html = session ? (session.windows || []).map(function (win) {
+        var pane = (win.panes || []).find(function (item) { return item.active; }) || (win.panes || [])[0];
+        var target = { name: 'terminal', params: { serverId: params.serverId || 'local',
+          sessionId: session.id, windowId: win.id, paneId: pane && pane.id } };
+        return '<button type="button" class="workspace-window' + (params.windowId === win.id ? ' active' : '')
+          + '" data-route="' + esc(global.Router.serialize(target)) + '" aria-current="'
+          + (params.windowId === win.id ? 'page' : 'false') + '" title="' + esc(win.name) + '">'
+          + icon('terminal') + '<span>' + esc(win.name || '窗口 ' + win.index) + '</span></button>';
+      }).join('') : '';
+      // Preserve keyboard focus and horizontal scroll during background refreshes.
+      if (strip._workspaceMarkup !== html) {
+        strip.innerHTML = html;
+        strip._workspaceMarkup = html;
+      }
+    },
+
+    /** Window name is the primary context; machine and session stay above it. */
     setTerminalHeader: function (serverId, workspace, params) {
       var topbar = el('ms-topbar');
       var crumb = el('ms-crumb');
@@ -594,14 +614,10 @@
       topbar.classList.add('terminal-layout');
 
       var server = this.server(serverId);
-      var parts = [server ? server.name : serverId];
       var session = this._findSession(workspace, params.sessionId);
       var win = this._findWindow(session, params.windowId);
-      if (session) parts.push(session.name);
-      if (win) parts.push(win.index + ' ' + win.name);
-
-      crumb.textContent = server ? server.name : serverId;
-      pageTitle.textContent = parts.join(' / ');
+      crumb.textContent = (server ? server.name : serverId) + (session ? ' / ' + session.name : '');
+      pageTitle.textContent = win ? win.name : (session ? session.name : '终端工作台');
     },
 
     setHeader: function (crumbText, title, actionsHtml) {

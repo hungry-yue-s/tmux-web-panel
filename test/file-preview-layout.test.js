@@ -6,6 +6,8 @@ const source = fs.readFileSync('public/js/file-preview.js', 'utf8');
 const appSource = fs.readFileSync('public/js/app.js', 'utf8');
 const msAppSource = fs.readFileSync('public/js/ms-app.js', 'utf8');
 const styles = fs.readFileSync('public/css/style.css', 'utf8');
+const paletteSource = fs.readFileSync('public/js/command-palette.js', 'utf8');
+const workspaceStyles = fs.readFileSync('public/css/workspace.css', 'utf8');
 
 function createPreview({ storage = {}, missingPaths = [], context = ['local', '@0'], auth } = {}) {
   const dom = new JSDOM(
@@ -179,6 +181,14 @@ function createDirectoryPreview() {
       held.resolve(data);
     },
   };
+}
+
+function installPalette(dom) {
+  const Router = { serialize: JSON.stringify, go: vi.fn() };
+  dom.window.CommandPalette = new Function('window', 'document', 'Router', paletteSource + '; return CommandPalette;')(
+    dom.window, dom.window.document, Router,
+  );
+  return { palette: dom.window.CommandPalette, go: Router.go };
 }
 
 async function flush() {
@@ -903,7 +913,7 @@ describe('file preview dock tabs', () => {
 
     expect(await preview.switchDockContext('local', '@42')).toBe(true);
     expect(dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('window-two.md');
-    expect(dom.window.document.querySelector('.fp-dock').style.width).toBe('650px');
+    expect(dom.window.document.querySelector('.fp-dock').style.width).toBe('576px');
 
     expect(await preview.switchDockContext(null, null)).toBe(false);
     expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
@@ -1017,10 +1027,273 @@ describe('file preview dock tabs', () => {
     dockCurrent(dom);
 
     const dock = dom.window.document.querySelector('.fp-dock');
-    const cap = Math.floor(dom.window.innerWidth * 0.7);
+    const cap = Math.min(820, Math.floor(dom.window.innerWidth * 0.4), dom.window.innerWidth - 480);
     expect(parseInt(dock.style.flexBasis, 10)).toBeLessThanOrEqual(cap);
     expect(parseInt(dock.style.flexBasis, 10)).toBeGreaterThanOrEqual(320);
     expect(dock.style.width).toBe(dock.style.flexBasis);
+  });
+
+  it('defaults to a 360px inspector and keeps at least 60 percent of the workstage for the terminal', async () => {
+    const { dom, preview } = createPreview();
+    const doc = dom.window.document;
+    // Legacy layout includes its sidebar; the modern shell passes only ms-main.
+    const layout = doc.querySelector('#main-layout');
+    layout.getBoundingClientRect = () => ({ width: 1200 });
+    const sidebar = doc.createElement('aside'); sidebar.id = 'sidebar';
+    sidebar.getBoundingClientRect = () => ({ width: 248 }); layout.prepend(sidebar);
+    await preview.openFile('/tmp/one.md', '%1'); dockCurrent(dom);
+    const dock = doc.querySelector('.fp-dock');
+    expect(dock.style.width).toBe('360px');
+    const grip = dock.querySelector('[role="separator"]');
+    grip.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+    expect(dock.style.width).toBe('380px');
+    const terminalWidth = 1200 - 248 - parseInt(dock.style.width, 10);
+    expect(terminalWidth).toBe(572);
+    expect(terminalWidth).toBeGreaterThanOrEqual((1200 - 248) * 0.6);
+    expect(terminalWidth).toBeGreaterThanOrEqual(480);
+    preview.closeDocked(); dom.window.close();
+  });
+
+  it('clamps restored width against the modern workstage budget and falls back safely when narrowed', async () => {
+    const { dom, preview } = createPreview();
+    const doc = dom.window.document;
+    Object.defineProperty(dom.window, 'innerWidth', { value: 1200, configurable: true });
+    const app = doc.createElement('div'); app.className = 'ms-app mode-terminal';
+    const main = doc.createElement('main'); main.className = 'ms-main';
+    main.appendChild(doc.querySelector('.terminal-view')); app.appendChild(main); doc.body.appendChild(app);
+    let workstageWidth = 952;
+    main.getBoundingClientRect = () => ({ width: workstageWidth });
+    const key = preview._test.dockStateKey('local', '@0');
+    dom.window.localStorage.setItem(key, JSON.stringify({
+      version: 1, tabs: [{ path: '/tmp/one.md', paneId: '%1' }],
+      activePath: '/tmp/one.md', hidden: false, width: 666,
+    }));
+    await preview.openFile('/tmp/one.md', '%1'); dockCurrent(dom);
+    const dock = doc.querySelector('.fp-dock');
+    expect(dock.style.width).toBe('380px');
+    expect(workstageWidth - parseInt(dock.style.width, 10)).toBe(572);
+    expect(workstageWidth - parseInt(dock.style.width, 10)).toBeGreaterThanOrEqual(workstageWidth * 0.6);
+    expect(JSON.parse(dom.window.localStorage.getItem(key)).width).toBe(380);
+    // An explicit drag cannot grow the inspector back over the terminal budget.
+    dock.getBoundingClientRect = () => ({ width: parseFloat(dock.style.width) });
+    const grip = dock.querySelector('.fp-side-resizer');
+    grip.dispatchEvent(new dom.window.MouseEvent('pointerdown', { clientX: 800, bubbles: true }));
+    dom.window.dispatchEvent(new dom.window.MouseEvent('pointermove', { clientX: 0, bubbles: true }));
+    dom.window.dispatchEvent(new dom.window.MouseEvent('pointerup', { bubbles: true }));
+    expect(dock.style.width).toBe('380px');
+    expect(JSON.parse(dom.window.localStorage.getItem(key)).width).toBe(380);
+    workstageWidth = 650;
+    dom.window.dispatchEvent(new dom.window.Event('resize'));
+    expect(doc.querySelector('.fp-dock')).toBeNull();
+    expect(doc.querySelector('.fp-dock-restore')).not.toBeNull();
+    await preview.openFile('/tmp/two.md', '%1');
+    dockCurrent(dom);
+    expect(doc.querySelector('.fp-dock')).toBeNull();
+    expect(doc.querySelector('.fp-modal')).not.toBeNull();
+    preview.close();
+    workstageWidth = 952;
+    doc.querySelector('.fp-dock-restore').click();
+    expect(doc.querySelector('.fp-dock').style.width).toBe('380px');
+    expect(doc.querySelectorAll('.fp-dock-tab')).toHaveLength(1);
+    preview.closeDocked(); dom.window.close();
+  });
+
+  it('opens the palette above the file modal and returns focus on Escape without closing the file', async () => {
+    const { dom, preview } = createPreview();
+    const doc = dom.window.document;
+    const { palette } = installPalette(dom);
+    await preview.openFile('/tmp/one.md', '%1');
+    const modal = doc.querySelector('.fp-modal');
+    const opener = modal.querySelector('.fp-btn-close'); opener.focus();
+    palette.open(opener);
+    const input = doc.querySelector('.cmd-palette-input');
+    const style = doc.createElement('style');
+    style.textContent = styles.match(/\.fp-overlay\s*\{[^}]*\}/)[0]
+      + workspaceStyles.match(/\.cmd-palette-overlay\s*\{[^}]*z-index[^}]*\}/)[0];
+    doc.head.appendChild(style);
+    expect(Number(dom.window.getComputedStyle(doc.querySelector('.cmd-palette-overlay')).zIndex))
+      .toBeGreaterThan(Number(dom.window.getComputedStyle(modal.parentElement).zIndex));
+    opener.focus(); // Only the top overlay may own focus while the palette is open.
+    expect(doc.activeElement).toBe(input);
+    input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+    expect(doc.activeElement).toBe(doc.querySelector('.cmd-palette-close'));
+    doc.activeElement.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(palette.isOpen()).toBe(false);
+    expect(doc.querySelector('.fp-modal')).toBe(modal);
+    expect(doc.activeElement).toBe(opener);
+    preview.close(); dom.window.close();
+  });
+
+  it('lets palette Escape dismiss only the palette above a file action menu or diagram viewer', async () => {
+    const { dom, preview } = createPreview();
+    const doc = dom.window.document;
+    const { palette } = installPalette(dom);
+    await preview.openFile('/tmp/one.md', '%1');
+    doc.querySelector('.fp-btn-download').click();
+    const menu = doc.querySelector('.fp-menu');
+    palette.open(doc.activeElement);
+    doc.querySelector('.cmd-palette-input').dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+      key: 'Escape', bubbles: true, cancelable: true,
+    }));
+    expect(palette.isOpen()).toBe(false);
+    expect(doc.querySelector('.fp-menu')).toBe(menu);
+    expect(menu.contains(doc.activeElement)).toBe(true);
+    doc.activeElement.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    const embed = doc.createElement('div');
+    embed.className = 'mermaid'; embed.innerHTML = '<svg viewBox="0 0 400 200"></svg>';
+    doc.querySelector('.fp-body').appendChild(embed);
+    preview._test.prepareMermaid(embed); preview._test.installMermaidInteractions(embed);
+    embed.querySelector('.fp-mermaid-open').click();
+    const viewer = doc.querySelector('.fp-mermaid-dialog');
+    const viewerFocus = doc.activeElement;
+    palette.open(viewerFocus);
+    doc.querySelector('.cmd-palette-input').dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+      key: 'Escape', bubbles: true, cancelable: true,
+    }));
+    expect(palette.isOpen()).toBe(false);
+    expect(doc.querySelector('.fp-mermaid-dialog')).toBe(viewer);
+    expect(doc.activeElement).toBe(viewerFocus);
+    preview.close(); dom.window.close();
+  });
+
+  it('dismisses only a transient modal when the palette selects a route, retaining dock tabs', async () => {
+    const { dom, preview } = createPreview();
+    const doc = dom.window.document;
+    const { palette, go } = installPalette(dom);
+    await preview.openFile('/tmp/one.md', '%1'); dockCurrent(dom);
+    const dock = doc.querySelector('.fp-dock');
+    const body = dock.querySelector('.fp-body'); body.scrollTop = 200;
+    await preview.openFile('/tmp/two.md', '%1');
+    palette.open(doc.querySelector('.fp-overlay:not(.fp-dock) .fp-btn-close'));
+    const input = doc.querySelector('.cmd-palette-input');
+    input.value = '设置'; input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    expect(go).toHaveBeenCalledWith({ name: 'settings', params: {} });
+    expect(doc.querySelector('.cmd-palette-overlay')).toBeNull();
+    expect(doc.querySelector('.fp-overlay:not(.fp-dock)')).toBeNull();
+    expect(doc.querySelector('.fp-dock')).toBe(dock);
+    expect(doc.querySelector('.fp-body')).toBe(body);
+    expect(body.scrollTop).toBe(200);
+    expect(dock.querySelectorAll('.fp-dock-tab')).toHaveLength(1);
+    // Selecting again while only docked must not close the active tab.
+    palette.open(dock.querySelector('.fp-dock-tab'));
+    doc.querySelector('.cmd-palette-input').dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    expect(doc.querySelector('.fp-dock')).toBe(dock);
+    expect(dock.querySelectorAll('.fp-dock-tab')).toHaveLength(1);
+    preview.closeDocked(); dom.window.close();
+  });
+
+  it('opens directory navigation from a dock in a modal without changing the retained tab', async () => {
+    const { dom, preview } = createPreview();
+    const doc = dom.window.document;
+    await preview.openFile('/tmp/one.md', '%1'); dockCurrent(dom);
+    const dock = doc.querySelector('.fp-dock');
+    const body = dock.querySelector('.fp-body');
+    body.scrollTop = 120;
+    dock.querySelector('.fp-dir-parent').click(); await flush();
+    const modalOverlay = Array.from(doc.querySelectorAll('.fp-overlay')).find((el) => !el.classList.contains('fp-dock'));
+    expect(modalOverlay).not.toBeUndefined();
+    expect(dock.querySelector('.fp-body')).toBe(body);
+    expect(dock.querySelector('.fp-dock-tab').textContent).toBe('one.md');
+    expect(body.scrollTop).toBe(120);
+    preview.close();
+    expect(doc.querySelector('.fp-dock')).toBe(dock);
+    expect(doc.querySelector('.fp-body')).toBe(body);
+    preview.closeDocked(); dom.window.close();
+  });
+
+  it('resizes with the keyboard, exposes the current width and caps large desktops at 820px', async () => {
+    const { dom, preview } = createPreview();
+    Object.defineProperty(dom.window, 'innerWidth', { value: 2560, configurable: true });
+    await preview.openFile('/tmp/one.md', '%1'); dockCurrent(dom);
+    const doc = dom.window.document;
+    const dock = doc.querySelector('.fp-dock');
+    const grip = dock.querySelector('[role="separator"]');
+    const key = preview._test.dockStateKey('local', '@0');
+    const press = (key, shiftKey = false) => grip.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+      key, shiftKey, bubbles: true, cancelable: true,
+    }));
+    expect(grip.tabIndex).toBe(0);
+    press('End');
+    expect(dock.style.width).toBe('820px');
+    expect(grip.getAttribute('aria-valuemax')).toBe('820');
+    press('ArrowRight', true);
+    expect(grip.getAttribute('aria-valuenow')).toBe('770');
+    expect(JSON.parse(dom.window.localStorage.getItem(key)).width).toBe(770);
+    press('Home'); press('ArrowRight');
+    expect(dock.style.width).toBe('320px');
+    press('ArrowLeft');
+    expect(dock.style.width).toBe('340px');
+    preview.closeDocked();
+    dom.window.close();
+  });
+
+  it('restores the modal opener on Escape and traps links and inputs, excluding hidden controls', async () => {
+    const { dom, preview } = createPreview();
+    const doc = dom.window.document;
+    const opener = doc.createElement('button');
+    doc.body.appendChild(opener); opener.focus();
+    await preview.openFile('/tmp/one.md', '%1');
+    const modal = doc.querySelector('.fp-modal');
+    expect(modal.getAttribute('aria-modal')).toBe('true');
+    modal.querySelector('.fp-btn-back').style.display = 'none';
+    const input = doc.createElement('input');
+    const disabled = doc.createElement('button'); disabled.disabled = true;
+    modal.querySelector('.fp-body').append(input, disabled);
+    input.focus();
+    input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+    expect(doc.activeElement).toBe(modal.querySelector('.fp-btn-refresh'));
+    doc.activeElement.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
+    expect(doc.activeElement).toBe(input);
+    input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(doc.querySelector('.fp-overlay')).toBeNull();
+    expect(doc.activeElement).toBe(opener);
+    dom.window.close();
+  });
+
+  it('keeps dock tabs and reading position when Escape hides the dock, and restores keyboard focus', async () => {
+    const { dom, preview } = createPreview();
+    const doc = dom.window.document;
+    await preview.openFile('/tmp/one.md', '%1'); dockCurrent(dom);
+    const body = doc.querySelector('.fp-body'); body.scrollTop = 240;
+    doc.querySelector('.fp-dock-tab').focus();
+    doc.activeElement.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(doc.querySelector('.fp-dock')).toBeNull();
+    const restore = doc.querySelector('.fp-dock-restore');
+    expect(doc.activeElement).toBe(restore);
+    restore.click();
+    expect(doc.querySelector('.fp-body')).toBe(body);
+    expect(body.scrollTop).toBe(240);
+    expect(doc.activeElement).toBe(doc.querySelector('[role="tab"][aria-selected="true"]'));
+    preview.closeDocked(); dom.window.close();
+  });
+
+  it('switches dock tabs with arrow keys and closes only the selected tab with Delete', async () => {
+    const { dom, preview, fetch } = createPreview();
+    const doc = dom.window.document;
+    const opener = doc.createElement('button'); doc.body.appendChild(opener); opener.focus();
+    await preview.openFile('/tmp/one.md', '%1'); dockCurrent(dom);
+    const one = doc.querySelector('.fp-body'); one.scrollTop = 160;
+    await preview.openFile('/tmp/two.md', '%1'); dockCurrent(dom);
+    const count = fetch.mock.calls.length;
+    const press = (key) => doc.activeElement.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+      key, bubbles: true, cancelable: true,
+    }));
+    doc.querySelector('[role="tab"][aria-selected="true"]').focus();
+    press('ArrowLeft');
+    expect(doc.activeElement.textContent).toBe('one.md');
+    expect(doc.querySelector('.fp-body')).toBe(one);
+    expect(one.scrollTop).toBe(160);
+    expect(doc.querySelector('[role="tabpanel"]').getAttribute('aria-labelledby')).toBe(doc.activeElement.id);
+    expect(doc.querySelector('[role="tabpanel"]').hasAttribute('aria-modal')).toBe(false);
+    expect(fetch.mock.calls.length).toBe(count);
+    press('Delete');
+    expect(doc.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    expect(doc.activeElement.textContent).toBe('two.md');
+    press('Delete');
+    expect(doc.querySelector('.fp-dock')).toBeNull();
+    expect(doc.activeElement).toBe(opener);
+    dom.window.close();
   });
 
   it('resizes the dock from the left grip and persists the width', async () => {
@@ -1053,8 +1326,8 @@ describe('file preview dock tabs', () => {
 
     preview.openFile('/tmp/one.md', '%1'); await flush(); dockCurrent(dom);
     const dock = dom.window.document.querySelector('.fp-dock');
-    dock.style.width = '620px';
-    dock.style.flexBasis = '620px';
+    dock.style.width = '500px';
+    dock.style.flexBasis = '500px';
 
     dock.querySelector('[aria-label="Maximize"]').click();
     expect(dock.classList.contains('fp-side-maximized')).toBe(true);
@@ -1063,7 +1336,7 @@ describe('file preview dock tabs', () => {
 
     dock.querySelector('[aria-label="Restore"]').click();
     expect(dock.classList.contains('fp-side-maximized')).toBe(false);
-    expect(dom.window.getComputedStyle(dock).width).toBe('620px');
+    expect(dom.window.getComputedStyle(dock).width).toBe('500px');
   });
 
   it('refreshes changed content in place while preserving scroll, maximize and the active dock tab', async () => {

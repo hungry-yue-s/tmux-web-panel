@@ -343,7 +343,12 @@ function _cleanupTerminalResources() {
     terminalState.resizeObserver.disconnect();
     terminalState.resizeObserver = null;
   }
+  if (terminalState._fontReadyCleanup) {
+    terminalState._fontReadyCleanup();
+    terminalState._fontReadyCleanup = null;
+  }
   if (terminalState.ws) {
+    clearTimeout(terminalState.ws._resizeTimer);
     terminalState.ws.close();
     terminalState.ws = null;
   }
@@ -542,8 +547,8 @@ function renderPaneNavBar(container, panes, activePaneId, onSwitch) {
 
 // === Per-pane/window Font Size Offset ===
 //
-// In tab mode, font offset is stored per pane (key = pane ID, e.g. "%0").
-// In split mode, font offset is stored per window (key = "session:windowIndex").
+// In tab mode, font offset is stored per server/pane.
+// In split mode, font offset is stored per server/session/window.
 // All offsets are stored in a single localStorage JSON object under 'tmux_font_offsets'.
 
 var _fontOffsets = (function () {
@@ -552,24 +557,30 @@ var _fontOffsets = (function () {
     localStorage.removeItem('tmux_font_offset');
   } catch (_e) {}
   try {
-    return JSON.parse(localStorage.getItem('tmux_font_offsets')) || {};
+    var saved = JSON.parse(localStorage.getItem('tmux_font_offsets'));
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
   } catch (_e) { return {}; }
 })();
 
 function _fontOffsetKey() {
-  if (_terminalMode === 'split') {
-    return (state.currentSession || '') + ':' +
-      (state.currentWindow != null ? state.currentWindow : '');
-  }
-  return state.currentPane || '';
+  var serverId = typeof TerminalTarget !== 'undefined' && TerminalTarget.serverId || 'local';
+  var target = _terminalMode === 'split'
+    ? (state.currentSession || '') + ':' + (state.currentWindow != null ? state.currentWindow : '')
+    : state.currentPane || '';
+  return serverId + ':' + target;
 }
 
 function _getFontOffset() {
-  return _fontOffsets[_fontOffsetKey()] || 0;
+  var key = _fontOffsetKey();
+  var value = _fontOffsets[key];
+  // Preserve old local preferences without sharing them with remote hosts.
+  if (value === undefined && key.indexOf('local:') === 0) value = _fontOffsets[key.slice(6)];
+  return typeof value === 'number' && isFinite(value) ? value : 0;
 }
 
 function _setFontOffset(val) {
   var key = _fontOffsetKey();
+  if (key.indexOf('local:') === 0) delete _fontOffsets[key.slice(6)];
   if (val === 0) {
     delete _fontOffsets[key];
   } else {
@@ -582,28 +593,13 @@ function _saveFontOffsets() {
   try { localStorage.setItem('tmux_font_offsets', JSON.stringify(_fontOffsets)); } catch (_e) {}
 }
 
-// Clean up offsets for pane IDs that no longer exist
-function _cleanupFontOffsets(validPaneIds) {
-  var changed = false;
-  var keys = Object.keys(_fontOffsets);
-  for (var i = 0; i < keys.length; i++) {
-    var k = keys[i];
-    // Pane keys start with '%', window keys contain ':'
-    if (k.charAt(0) === '%' && validPaneIds.indexOf(k) === -1) {
-      delete _fontOffsets[k];
-      changed = true;
-    }
-  }
-  if (changed) _saveFontOffsets();
-}
-
 function _adjustFontSize(dir) {
   if (!terminalState.term || !terminalState.fitAddon) return;
   var current = terminalState.term.options.fontSize || 14;
-  var next = Math.max(8, Math.min(22, current + dir));
+  var mobile = window.innerWidth < 768;
+  var next = Math.max(mobile ? MOBILE_MIN_FONT_SIZE : 8, Math.min(22, current + dir));
   if (next === current) return;
-  var offset = _getFontOffset() + dir;
-  _setFontOffset(offset);
+  _setFontOffset(next - (mobile ? MOBILE_BASE_FONT_SIZE : DESKTOP_BASE_FONT_SIZE));
   terminalState.term.options.fontSize = next;
   terminalState.fitAddon.fit();
   _syncTerminalSize(terminalState.ws, terminalState.term);
@@ -618,34 +614,18 @@ var _terminalMode = (function () {
 /** Readable starting point on phones, where fitting to a pane's geometry is wrong. */
 var MOBILE_BASE_FONT_SIZE = 13;
 var MOBILE_MIN_FONT_SIZE = 11;
+var DESKTOP_BASE_FONT_SIZE = 14;
 var TERMINAL_FONT_FAMILY = "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
 
 function _calcTerminalFontSize(paneCols, paneRows, containerEl) {
-  // On a phone the pane's cols/rows come from a desktop-sized tmux window, so
-  // fitting to them yields unreadable ~8px text. FitAddon resizes the terminal
-  // and reports the real dimensions to tmux regardless, so start from a
-  // readable base instead and only honor the user's own offset.
+  // FitAddon changes the grid to fit the viewport. Old tmux geometry must not
+  // change typography when switching windows or opening the document dock.
   if (window.innerWidth < 768) {
     var mobileSize = MOBILE_BASE_FONT_SIZE + _getFontOffset();
     return Math.max(MOBILE_MIN_FONT_SIZE, Math.min(22, mobileSize));
   }
 
-  var container = containerEl || document.querySelector('.terminal-container');
-  var w = container ? container.clientWidth : window.innerWidth;
-  var h = container ? container.clientHeight : window.innerHeight;
-
-  // Use tmux pane's actual cols/rows as target
-  var cols = paneCols || 80;
-  var rows = paneRows || 24;
-
-  // Monospace char width ≈ 0.6 * fontSize, line height ≈ 1.2 * fontSize
-  // Subtract small padding (8px total)
-  var fromWidth = (w - 8) / (cols * 0.6);
-  var fromHeight = (h - 8) / (rows * 1.2);
-  var size = Math.min(fromWidth, fromHeight);
-  var base = Math.max(10, Math.min(16, Math.round(size)));
-  // Apply user's manual offset (from A+/A- buttons), clamped to [8, 22]
-  return Math.max(8, Math.min(22, base + _getFontOffset()));
+  return Math.max(8, Math.min(22, DESKTOP_BASE_FONT_SIZE + _getFontOffset()));
 }
 
 // === Create xterm Terminal ===
@@ -689,11 +669,13 @@ function connectTerminalWs(paneId, term, nozoom) {
   var ws = new WebSocket(wsUrl);
 
   ws.onopen = function () {
+    if (terminalState.term !== term) return;
     // Send initial resize
     _syncTerminalSize(ws, term, true);
   };
 
   ws.onmessage = function (e) {
+    if (terminalState.term !== term) return;
     try {
       var msg = JSON.parse(e.data);
       if (msg.type === 'output') {
@@ -1062,9 +1044,6 @@ function renderTerminal(container) {
       if (renderVersion !== terminalState.renderVersion || !view.isConnected) return;
       state.panes = panes;
 
-      // Clean up font offsets for panes that no longer exist
-      _cleanupFontOffsets(panes.map(function (p) { return p.id; }));
-
       // If no current pane or current pane not in this window, pick first
       if (!state.currentPane || !panes.some(function (p) { return p.id === state.currentPane; })) {
         state.currentPane = panes.length > 0 ? panes[0].id : null;
@@ -1104,11 +1083,7 @@ function renderTerminal(container) {
 // === Mount Terminal Instance ===
 
 function _mountTerminal(termContainer, nozoom) {
-  // Get current pane's tmux dimensions (in split/nozoom mode, pass null to auto-fit)
-  var currentPane = state.panes ? state.panes.find(function (p) { return p.id === state.currentPane; }) : null;
-  var paneCols = nozoom ? null : (currentPane ? currentPane.width : null);
-  var paneRows = nozoom ? null : (currentPane ? currentPane.height : null);
-  var term = createTerminalInstance(paneCols, paneRows, nozoom);
+  var term = createTerminalInstance(null, null, nozoom);
   var fitAddon = new FitAddon.FitAddon();
 
   term.loadAddon(fitAddon);
@@ -1196,34 +1171,42 @@ function _mountTerminal(termContainer, nozoom) {
   // the default renderer until fonts settle, then enable WebGL and repaint.
   var fontsReady = (document.fonts && document.fonts.load)
     ? Promise.all([
-      document.fonts.load("400 13px 'Tmux Panel Mono'"),
-      document.fonts.load("700 13px 'Tmux Panel Mono'")
-    ]) : Promise.resolve();
+      document.fonts.load("400 14px 'Tmux Panel Mono'"),
+      document.fonts.load("700 14px 'Tmux Panel Mono'")
+    ]).then(function () { return true; }, function () { return false; }) : Promise.resolve(false);
+  var fontWriteCleanup;
   var firstWrite = new Promise(function (resolve) {
     var listener = term.onWriteParsed(function () {
       listener.dispose();
       resolve();
     });
+    fontWriteCleanup = function () { listener.dispose(); resolve(); };
   });
-  Promise.all([fontsReady, firstWrite]).then(function () {
+  Promise.all([fontsReady, firstWrite]).then(function (ready) {
     if (terminalState.term !== term) return;
-    term.options.fontFamily = TERMINAL_FONT_FAMILY;
+    if (ready[0]) term.options.fontFamily = TERMINAL_FONT_FAMILY;
     if (typeof WebglAddon !== 'undefined') {
       try {
         var webglAddon = new WebglAddon.WebglAddon();
         webglAddon.onContextLoss(function () {
           webglAddon.dispose();
+          if (terminalState.term === term) term.refresh(0, term.rows - 1);
         });
         term.loadAddon(webglAddon);
       } catch (_e) {
+        if (webglAddon) {
+          try { webglAddon.dispose(); } catch (_disposeError) {}
+        }
         // WebGL not available — keep the default renderer
       }
     }
     if (typeof term.clearTextureAtlas === 'function') {
       term.clearTextureAtlas();
     }
-    fitAddon.fit();
-    _syncTerminalSize(ws, term, true);
+    if (termContainer.clientWidth > 0 && termContainer.clientHeight > 0) {
+      fitAddon.fit();
+      _syncTerminalSize(ws, term, true);
+    }
     term.refresh(0, term.rows - 1);
   }).catch(function () { /* keep the working default renderer and font */ });
 
@@ -1231,7 +1214,7 @@ function _mountTerminal(termContainer, nozoom) {
 
   // Small delay to ensure DOM is ready for fitting
   setTimeout(function () {
-    if (terminalState.term !== term) return;
+    if (terminalState.term !== term || !termContainer.clientWidth || !termContainer.clientHeight) return;
     fitAddon.fit();
     // The socket can open before this final fit. Send the fitted dimensions
     // again so tmux never keeps drawing at the default/narrow PTY width.
@@ -1632,10 +1615,9 @@ function _mountTerminal(termContainer, nozoom) {
       var dist = _pinchDist(e);
       var scale = dist / pinch.startDist;
       var newSize = Math.round(pinch.startFontSize * scale);
-      newSize = Math.max(8, Math.min(22, newSize));
+      newSize = Math.max(window.innerWidth < 768 ? MOBILE_MIN_FONT_SIZE : 8, Math.min(22, newSize));
       if (newSize !== term.options.fontSize) {
-        var delta = newSize - term.options.fontSize;
-        _setFontOffset(_getFontOffset() + delta);
+        _setFontOffset(newSize - (window.innerWidth < 768 ? MOBILE_BASE_FONT_SIZE : DESKTOP_BASE_FONT_SIZE));
         term.options.fontSize = newSize;
         fitAddon.fit();
         cellCache = null;
@@ -1777,6 +1759,7 @@ function _mountTerminal(termContainer, nozoom) {
 
   // ResizeObserver for auto-fit
   var resizeObserver = new ResizeObserver(function () {
+    if (terminalState.term !== term || !termContainer.clientWidth || !termContainer.clientHeight) return;
     fitAddon.fit();
     cellCache = null;
     _syncTerminalSize(ws, term);
@@ -1794,6 +1777,7 @@ function _mountTerminal(termContainer, nozoom) {
     _wheelZoomDir += e.deltaY;
     clearTimeout(_wheelZoomTimer);
     _wheelZoomTimer = setTimeout(function () {
+      if (terminalState.term !== term) return;
       if (_wheelZoomDir !== 0) {
         _adjustFontSize(_wheelZoomDir < 0 ? 1 : -1);
       }
@@ -1866,6 +1850,7 @@ function _mountTerminal(termContainer, nozoom) {
   terminalState.fitAddon = fitAddon;
   terminalState.resizeObserver = resizeObserver;
   terminalState._vpHandler = vpHandler;
+  terminalState._fontReadyCleanup = fontWriteCleanup;
 
   _watchTerminalViewport(_terminalContainer());
 }

@@ -3,6 +3,8 @@ var FilePreview = (function () {
   'use strict';
 
   var _overlay = null;
+  var _modalReturnFocus = null;
+  var _dockReturnFocus = null;
   var _maximized = false;
   var _currentFile = null;
   var _currentPaneId = null;
@@ -180,10 +182,10 @@ var FilePreview = (function () {
 
     var available = Math.max(0, layoutWidth - sidebarWidth);
     var min = 320;
-    // Dragging left may grow the dock to at most 70% of the space it shares
-    // with the terminal, keeping a usable terminal strip beside it.
-    var max = Math.floor(available * 0.7);
-    var preferred = Math.min(max, Math.max(min, Math.round(available * 0.44)));
+    // Terminal work takes at least 60% and 480px, including restored widths.
+    // When a 320px inspector cannot fit that budget, keep the file in a modal.
+    var max = Math.max(0, Math.min(820, Math.floor(available * 0.4), Math.floor(available - 480)));
+    var preferred = Math.min(max, 360);
     return { min: min, max: max, preferred: Math.min(preferred, max) };
   }
 
@@ -209,30 +211,55 @@ var FilePreview = (function () {
     grip.setAttribute('role', 'separator');
     grip.setAttribute('aria-label', '\u8C03\u6574\u53F3\u4FA7\u9884\u89C8\u5BBD\u5EA6');
     grip.setAttribute('aria-orientation', 'vertical');
+    grip.tabIndex = 0;
+    grip.title = '调整预览宽度（方向键，Home / End）';
     sideOverlay.insertBefore(grip, sideOverlay.firstChild);
 
     var startX = 0, startWidth = 0;
-    function onMove(e) {
-      var next = _clampSideWidth(startWidth + startX - e.clientX);
+    function setWidth(width) {
+      var next = Math.round(_clampSideWidth(width));
       sideOverlay.style.flexBasis = next + 'px';
       sideOverlay.style.width = next + 'px';
+      grip.setAttribute('aria-valuemin', '320');
+      grip.setAttribute('aria-valuemax', String(_sideWidthBounds().max));
+      grip.setAttribute('aria-valuenow', String(next));
+      grip.setAttribute('aria-valuetext', next + ' 像素');
+      return next;
     }
+    function onMove(e) { setWidth(startWidth + startX - e.clientX); }
+    function onKeydown(e) {
+      var width = parseFloat(sideOverlay.style.width) || sideOverlay.getBoundingClientRect().width;
+      var step = e.shiftKey ? 50 : 20;
+      if (e.key === 'ArrowLeft') width += step;
+      else if (e.key === 'ArrowRight') width -= step;
+      else if (e.key === 'Home') width = 320;
+      else if (e.key === 'End') width = _sideWidthBounds().max;
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+      _persistDockState(setWidth(width));
+    }
+    setWidth(parseFloat(sideOverlay.style.width) || 0);
     function onUp() {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
       document.body.classList.remove('fp-side-resizing');
       var width = Math.round(sideOverlay.getBoundingClientRect().width);
       _persistDockState(width);
     }
     function onDown(e) {
+      if (e.button !== 0) return;
       e.preventDefault();
       startX = e.clientX;
       startWidth = sideOverlay.getBoundingClientRect().width;
       document.body.classList.add('fp-side-resizing');
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
     }
     grip.addEventListener('pointerdown', onDown);
+    grip.addEventListener('keydown', onKeydown);
 
     function onLayoutResize() {
       if (!sideOverlay.isConnected) return;
@@ -241,21 +268,21 @@ var FilePreview = (function () {
         return;
       }
       var current = parseFloat(sideOverlay.style.flexBasis) || sideOverlay.getBoundingClientRect().width;
-      var next = _clampSideWidth(current);
-      sideOverlay.style.flexBasis = next + 'px';
-      sideOverlay.style.width = next + 'px';
+      setWidth(current);
     }
     window.addEventListener('resize', onLayoutResize);
     var layoutObserver = null;
     if (typeof ResizeObserver !== 'undefined') {
       layoutObserver = new ResizeObserver(onLayoutResize);
-      var mainLayout = document.getElementById('main-layout');
+      var mainLayout = _dockLayout();
       if (mainLayout) layoutObserver.observe(mainLayout);
     }
     _sideResizeCleanup = function () {
       grip.removeEventListener('pointerdown', onDown);
+      grip.removeEventListener('keydown', onKeydown);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
       window.removeEventListener('resize', onLayoutResize);
       if (layoutObserver) layoutObserver.disconnect();
       document.body.classList.remove('fp-side-resizing');
@@ -463,6 +490,7 @@ var FilePreview = (function () {
     tab.maximized = _maximized;
     tab.modeDir = _dockOverlay && _dockOverlay.classList.contains('fp-mode-dir');
     tab.hasBack = _dockOverlay && _dockOverlay.classList.contains('fp-has-back');
+    tab.scrollState = _capturePreviewScroll(tab.modal.querySelector('.fp-body'));
     if (_currentFile && _currentFile.absPath) tab.path = _currentFile.absPath;
     _persistDockState();
   }
@@ -471,17 +499,41 @@ var FilePreview = (function () {
     if (!_dockOverlay) return;
     var bar = _dockOverlay.querySelector('.fp-dock-tabs');
     if (!bar) return;
+    var focusedTab = document.activeElement && document.activeElement.closest('.fp-dock-tab-item');
+    var focusWasClose = focusedTab && document.activeElement.classList.contains('fp-dock-tab-close');
+    var focusedId = focusedTab && focusedTab.getAttribute('data-tab-id');
     bar.innerHTML = '';
     _dockTabs.forEach(function (tab) {
       var item = document.createElement('div');
       item.className = 'fp-dock-tab-item' + (tab.id === _activeDockTabId ? ' active' : '');
+      item.setAttribute('data-tab-id', tab.id);
       var select = document.createElement('button');
       select.className = 'fp-dock-tab';
       select.setAttribute('role', 'tab');
+      select.id = 'fp-tab-' + tab.id;
+      select.tabIndex = tab.id === _activeDockTabId ? 0 : -1;
+      select.setAttribute('aria-controls', 'fp-panel-' + tab.id);
       select.setAttribute('aria-selected', tab.id === _activeDockTabId ? 'true' : 'false');
       select.title = tab.path || _tabTitle(tab);
       select.textContent = _tabTitle(tab);
       select.addEventListener('click', function () { _activateDockTab(tab.id); });
+      select.addEventListener('keydown', function (e) {
+        var index = _dockTabs.indexOf(tab), next;
+        if (e.key === 'ArrowRight') next = (index + 1) % _dockTabs.length;
+        else if (e.key === 'ArrowLeft') next = (index + _dockTabs.length - 1) % _dockTabs.length;
+        else if (e.key === 'Home') next = 0;
+        else if (e.key === 'End') next = _dockTabs.length - 1;
+        else if (e.key === 'Delete') {
+          e.preventDefault();
+          _closeDockTab(tab.id);
+          var active = document.getElementById('fp-tab-' + _activeDockTabId);
+          if (active) active.focus();
+          return;
+        } else return;
+        e.preventDefault();
+        _activateDockTab(_dockTabs[next].id);
+        document.getElementById('fp-tab-' + _activeDockTabId).focus();
+      });
       var closeTab = document.createElement('button');
       closeTab.className = 'fp-dock-tab-close';
       closeTab.setAttribute('aria-label', '\u5173\u95ED ' + _tabTitle(tab));
@@ -494,12 +546,24 @@ var FilePreview = (function () {
       item.appendChild(closeTab);
       bar.appendChild(item);
     });
+    if (focusedId) {
+      var replacement = bar.querySelector('[data-tab-id="' + focusedId + '"] ' + (focusWasClose ? '.fp-dock-tab-close' : '.fp-dock-tab'));
+      if (replacement) replacement.focus();
+    }
   }
 
   function _ensureDockOverlay() {
     if (_dockOverlay) return;
+    _dockReturnFocus = _modalReturnFocus;
     _dockOverlay = document.createElement('div');
     _dockOverlay.className = 'fp-overlay fp-side fp-dock';
+    _dockOverlay.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      e.preventDefault();
+      e.stopPropagation();
+      _hideDock();
+      if (_dockRestoreButton) _dockRestoreButton.focus();
+    });
     var tabs = document.createElement('div');
     tabs.className = 'fp-dock-tabs';
     tabs.setAttribute('role', 'tablist');
@@ -554,7 +618,11 @@ var FilePreview = (function () {
       _dockRestoreButton = document.createElement('button');
       _dockRestoreButton.className = 'fp-dock-restore';
       _dockRestoreButton.setAttribute('aria-label', '\u5C55\u5F00\u53F3\u4FA7\u6587\u4EF6\u9884\u89C8');
-      _dockRestoreButton.addEventListener('click', function () { _showDock(); });
+      _dockRestoreButton.addEventListener('click', function () {
+        _showDock();
+        var active = document.getElementById('fp-tab-' + _activeDockTabId);
+        if (active) active.focus();
+      });
       var layout = _dockLayout();
       if (layout) layout.appendChild(_dockRestoreButton);
     }
@@ -578,6 +646,7 @@ var FilePreview = (function () {
       _pauseVideos(panels);
       panels.innerHTML = '';
       panels.appendChild(tab.modal);
+      if (tab.scrollState) _restorePreviewScroll(tab.modal.querySelector('.fp-body'), tab.scrollState);
     }
     _overlay = _dockOverlay;
     _placement = 'side';
@@ -605,13 +674,18 @@ var FilePreview = (function () {
       if (_dockTabs[i].id === tabId) { index = i; break; }
     }
     if (index < 0) return;
+    var focused = document.activeElement;
+    var item = focused && focused.closest('.fp-dock-tab-item');
+    var hadFocus = _dockTabs[index].modal.contains(focused) || (item && item.getAttribute('data-tab-id') === String(tabId));
     var wasActive = _activeDockTabId === tabId;
     _pauseVideos(_dockTabs[index].modal);
     _disposeMermaid(_dockTabs[index].modal);
     _dockTabs[index].modal.remove();
     _dockTabs.splice(index, 1);
     if (_dockTabs.length === 0) {
+      var opener = _dockReturnFocus;
       _destroyDock();
+      if (hadFocus && opener && opener.isConnected) opener.focus();
       return;
     }
     if (wasActive) {
@@ -626,6 +700,10 @@ var FilePreview = (function () {
     }
     _renderDockTabs();
     if (_dockRestoreButton) _dockRestoreButton.textContent = '\u25E7 ' + _dockTabs.length;
+    if (hadFocus) {
+      var active = document.getElementById('fp-tab-' + _activeDockTabId);
+      if (active) active.focus();
+    }
     _persistDockState();
   }
 
@@ -645,6 +723,7 @@ var FilePreview = (function () {
     if (_dockOverlay) _dockOverlay.remove();
     _removeDockRestoreButton();
     _dockOverlay = null;
+    _dockReturnFocus = null;
     _dockTabs = [];
     _activeDockTabId = null;
     _dockHidden = false;
@@ -693,6 +772,10 @@ var FilePreview = (function () {
       hasBack: modalOverlay.classList.contains('fp-has-back'),
     };
     modal.classList.remove('fp-maximized');
+    modal.id = 'fp-panel-' + tab.id;
+    modal.setAttribute('role', 'tabpanel');
+    modal.setAttribute('aria-labelledby', 'fp-tab-' + tab.id);
+    modal.removeAttribute('aria-modal');
     _dockTabs.push(tab);
     _activeDockTabId = tab.id;
     _showDock(true);
@@ -834,6 +917,9 @@ var FilePreview = (function () {
   // --- Modal ---
 
   function _createModal(title) {
+    var opener = document.activeElement;
+    if (!_overlay || _placement === 'side' || !_overlay.contains(opener)) _modalReturnFocus = opener;
+    _closeActionMenu();
     _stopAutoRefresh();
     if (document.__fpActiveMermaidDialogClose) document.__fpActiveMermaidDialogClose();
     if (_placement === 'side') {
@@ -856,7 +942,8 @@ var FilePreview = (function () {
     var modal = document.createElement('div');
     modal.className = 'fp-modal';
     modal.setAttribute('role', 'dialog');
-    modal.setAttribute('aria-label', 'File Preview');
+    modal.setAttribute('aria-label', '文件预览：' + title);
+    modal.setAttribute('aria-modal', 'true');
 
     var header = document.createElement('div');
     header.className = 'fp-header';
@@ -957,7 +1044,7 @@ var FilePreview = (function () {
 
     var body = document.createElement('div');
     body.className = 'fp-body';
-    body.innerHTML = '<div class="fp-loading">Loading\u2026</div>';
+    body.innerHTML = '<div class="fp-loading" role="status">正在读取文件\u2026</div>';
 
     modal.appendChild(header);
     modal.appendChild(body);
@@ -968,9 +1055,13 @@ var FilePreview = (function () {
 
     btnClose.focus();
     _overlay.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') { close(); e.stopPropagation(); }
+      if (window.CommandPalette && window.CommandPalette.isOpen && window.CommandPalette.isOpen()) return;
+      if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); close(); e.stopPropagation(); }
       if (e.key === 'Tab') {
-        var focusable = modal.querySelectorAll('button, [tabindex]');
+        var focusable = Array.prototype.filter.call(modal.querySelectorAll('button, a[href], input, select, textarea, [tabindex]'), function (el) {
+          return !el.disabled && el.tabIndex >= 0 && !el.closest('[hidden], [inert]')
+            && window.getComputedStyle(el).display !== 'none' && window.getComputedStyle(el).visibility !== 'hidden';
+        });
         if (focusable.length === 0) return;
         var first = focusable[0], last = focusable[focusable.length - 1];
         if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
@@ -1083,6 +1174,7 @@ var FilePreview = (function () {
       if (!el.contains(e.target) && e.target !== anchor) _closeActionMenu();
     };
     var onKeydown = function (e) {
+      if (window.CommandPalette && window.CommandPalette.isOpen && window.CommandPalette.isOpen()) return;
       if (e.key !== 'Escape') return;
       e.stopPropagation();
       _closeActionMenu();
@@ -1455,6 +1547,7 @@ var FilePreview = (function () {
         }
         function readableScale() { return Math.max(MIN_READABLE, Math.min(1, fitScale())); }
         function onKey(e) {
+          if (win.CommandPalette && win.CommandPalette.isOpen && win.CommandPalette.isOpen()) return;
           if (e.key !== 'Escape' || doc.fullscreenElement) return;
           e.preventDefault();
           closeViewer();
@@ -2143,6 +2236,13 @@ var FilePreview = (function () {
     } else if (!_dockOverlay) {
       document.body.classList.remove('fp-side-open');
     }
+    var returnFocus = _modalReturnFocus;
+    _modalReturnFocus = null;
+    if (returnFocus && returnFocus.isConnected && typeof returnFocus.focus === 'function') returnFocus.focus();
+  }
+
+  function closeModal() {
+    if (_overlay && _placement !== 'side') close();
   }
 
   function closeDocked() {
@@ -2153,6 +2253,7 @@ var FilePreview = (function () {
     body.innerHTML = '';
     var wrap = document.createElement('div');
     wrap.className = 'fp-error';
+    wrap.setAttribute('role', 'alert');
     var msg = document.createElement('div');
     msg.textContent = message;
     wrap.appendChild(msg);
@@ -2361,7 +2462,7 @@ var FilePreview = (function () {
   }
 
   function _renderXlsx(body, rawUrl) {
-    body.innerHTML = '<div class="fp-loading">Loading spreadsheet…</div>';
+    body.innerHTML = '<div class="fp-loading" role="status">正在读取表格…</div>';
     var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
     return Promise.all([
       _loadScript(CDN.exceljs),
@@ -3173,7 +3274,7 @@ var FilePreview = (function () {
   }
 
   function _renderMarkdown(body, content, filePath, paneId) {
-    body.innerHTML = '<div class="fp-loading">Rendering Markdown\u2026</div>';
+    body.innerHTML = '<div class="fp-loading" role="status">正在排版文档\u2026</div>';
 
     return Promise.all([
       _loadScript(CDN.markdownIt),
@@ -3819,6 +3920,9 @@ var FilePreview = (function () {
   }
 
   function _navDir(body, dirPath) {
+    // A directory reached from a docked preview is a new modal preview too.
+    // Never replace the retained tab's directory or reading state in place.
+    if (_placement === 'side') return openFile(dirPath, _currentPaneId);
     _stopAutoRefresh();
     var requestId = ++_previewGeneration;
     var previous = _currentFile;
@@ -3831,7 +3935,7 @@ var FilePreview = (function () {
     };
     var fileAtStart = _currentFile;
     _saveActiveDockTab();
-    body.innerHTML = '<div class="fp-loading">Loading directory…</div>';
+    body.innerHTML = '<div class="fp-loading" role="status">正在读取目录…</div>';
     var renderedBody = document.createElement('div');
     _renderDirectory(renderedBody, dirPath, {
       navBody: body, requestId: requestId, expectedFile: fileAtStart, expectedPath: dirPath,
@@ -3912,7 +4016,7 @@ var FilePreview = (function () {
   }
 
   function _renderArchive(body, info) {
-    body.innerHTML = '<div class="fp-loading">解析压缩包…</div>';
+    body.innerHTML = '<div class="fp-loading" role="status">正在读取压缩包…</div>';
     var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
     return fetch('/api/files/archive?path=' + encodeURIComponent(info.absPath), {
       headers: headers, cache: 'no-store',
@@ -3946,7 +4050,7 @@ var FilePreview = (function () {
   function _renderDirectory(body, dirPath, options) {
     options = options || {};
     var navBody = options.navBody || body;
-    body.innerHTML = '<div class="fp-loading">Loading directory…</div>';
+    body.innerHTML = '<div class="fp-loading" role="status">正在读取目录…</div>';
     var _authHeaders = typeof Auth !== 'undefined' ? Auth.headers() : {};
     var qs = '?path=' + encodeURIComponent(dirPath);
     if (_currentPaneId) qs += '&paneId=' + encodeURIComponent(_currentPaneId);
@@ -4019,6 +4123,8 @@ var FilePreview = (function () {
           var upRow = document.createElement('div');
           upRow.className = 'fp-dir-row fp-dir-parent';
           upRow.tabIndex = 0;
+          upRow.setAttribute('role', 'button');
+          upRow.setAttribute('aria-label', '返回上级目录');
           upRow.innerHTML = '<span class="fp-dir-icon">↰</span>'
             + '<span class="fp-dir-name">..</span>'
             + '<span class="fp-dir-size"></span>'
@@ -4034,7 +4140,8 @@ var FilePreview = (function () {
         if (data.entries.length === 0) {
           var empty = document.createElement('div');
           empty.className = 'fp-dir-empty';
-          empty.textContent = '(empty directory)';
+          empty.textContent = '此目录为空';
+          empty.setAttribute('role', 'status');
           list.appendChild(empty);
         }
 
@@ -4045,7 +4152,9 @@ var FilePreview = (function () {
           if (entry.unreadable) row.className += ' fp-dir-unreadable';
           var isDir = entry.type === 'dir' || entry.targetType === 'dir';
           if (isDir) row.className += ' fp-dir-isdir';
-          row.tabIndex = 0;
+          row.tabIndex = entry.unreadable ? -1 : 0;
+          row.setAttribute('role', 'button');
+          if (entry.unreadable) row.setAttribute('aria-disabled', 'true');
 
           var fullPath = (data.absPath === '/' ? '' : data.absPath) + '/' + entry.name;
 
@@ -4170,7 +4279,7 @@ var FilePreview = (function () {
 
   return {
     registerLinkProvider: registerLinkProvider, openFile: openFile,
-    openFromBuffer: openFromBuffer, close: close, closeDocked: closeDocked,
+    openFromBuffer: openFromBuffer, close: close, closeModal: closeModal, closeDocked: closeDocked,
     restoreDocked: restoreDocked, switchDockContext: switchDockContext, hitTest: hitTest,
     activateHit: _activateLink,
     // Test seam (no DOM): exercised by test/file-preview-links.test.js.

@@ -80,6 +80,24 @@ var Theme = (function () {
   }
 
   var themes = {
+    'deep-current': {
+      name: 'Deep Current',
+      ui: {
+        '--bg-primary': '#101b1e', '--bg-deep': '#173b40', '--bg-card': '#223236',
+        '--bg-hover': '#2b4549', '--border': '#526b6a', '--border-subtle': '#344f51',
+        '--text-primary': '#e5efeb', '--text-secondary': '#a1b7b5', '--text-muted': '#a1b7b5',
+        '--accent-blue': '#7aa2f7', '--accent-green': '#9ece6a', '--accent-red': '#f7768e',
+        '--accent-yellow': '#e0af68', '--accent-purple': '#bb9af7',
+      },
+      workspace: { '--workspace-accent': '#edbd8b' },
+      terminal: {
+        background: '#101b1e', foreground: '#e5efeb', cursor: '#edbd8b', cursorAccent: '#101b1e',
+        selectionBackground: '#42524a', black: '#101b1e', red: '#f7768e', green: '#9ece6a',
+        yellow: '#e0af68', blue: '#7aa2f7', magenta: '#bb9af7', cyan: '#7dcfff', white: '#c0caf5',
+        brightBlack: '#718b89', brightRed: '#f7768e', brightGreen: '#9ece6a', brightYellow: '#e0af68',
+        brightBlue: '#7aa2f7', brightMagenta: '#bb9af7', brightCyan: '#7dcfff', brightWhite: '#e5efeb',
+      },
+    },
     'tokyo-night': {
       name: 'Tokyo Night',
       ui: {
@@ -538,6 +556,68 @@ var Theme = (function () {
     },
   };
 
+  // Workbench contrast corrections leave the terminal ANSI palette unchanged.
+  // The 8% backdrop samples below provide headroom for tinted surfaces; native
+  // window alpha is controlled separately and can reveal arbitrary desktop colors.
+  function rgb(hex) {
+    return [1, 3, 5].map(function (offset) { return parseInt(hex.slice(offset, offset + 2), 16); });
+  }
+
+  function mix(a, b, amount) {
+    return a.map(function (channel, index) { return Math.round(channel * (1 - amount) + b[index] * amount); });
+  }
+
+  function hex(channels) {
+    return '#' + channels.map(function (channel) { return ('0' + channel.toString(16)).slice(-2); }).join('');
+  }
+
+  function luminance(channels) {
+    var linear = channels.map(function (channel) {
+      var value = channel / 255;
+      return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+    });
+    return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+  }
+
+  function contrast(a, b) {
+    var first = luminance(a), second = luminance(b);
+    return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+  }
+
+  function readable(color, surfaces, light, ratio) {
+    var original = rgb(color), end = light ? [0, 0, 0] : [255, 255, 255];
+    for (var step = 0; step <= 100; step++) {
+      var candidate = mix(original, end, step / 100);
+      if (surfaces.every(function (surface) { return contrast(candidate, surface) >= ratio; })) return hex(candidate);
+    }
+    return hex(end);
+  }
+
+  Object.keys(themes).forEach(function (id) {
+    var theme = themes[id], ui = theme.ui;
+    var light = luminance(rgb(ui['--bg-primary'])) > 0.5;
+    theme.colorScheme = light ? 'light' : 'dark';
+    var workspace = {
+      '--workspace-bg': ui['--bg-primary'], '--workspace-sidebar': ui['--bg-deep'],
+      '--workspace-panel': ui['--bg-card'], '--workspace-hover': ui['--bg-hover'],
+      '--workspace-text': ui['--text-primary'], '--workspace-muted': ui['--text-secondary'],
+      '--workspace-accent': ui['--accent-blue'], '--workspace-line': ui['--border-subtle'],
+      '--workspace-line-strong': ui['--border'],
+    };
+    Object.assign(workspace, theme.workspace || {});
+    var surfaces = ['--workspace-bg', '--workspace-sidebar', '--workspace-panel', '--workspace-hover']
+      .map(function (key) { return rgb(workspace[key]); });
+    var backdrops = surfaces.slice();
+    surfaces.forEach(function (surface) {
+      backdrops.push(mix(surface, [0, 0, 0], 0.08), mix(surface, [255, 255, 255], 0.08));
+    });
+    ['--workspace-text', '--workspace-muted', '--workspace-accent'].forEach(function (key) {
+      workspace[key] = readable(workspace[key], backdrops, light, 4.6);
+    });
+    workspace['--workspace-line-strong'] = readable(workspace['--workspace-line-strong'], backdrops, light, 3.1);
+    Object.assign(ui, workspace);
+  });
+
   function getCurrent() {
     try {
       var saved = localStorage.getItem(STORAGE_KEY);
@@ -561,6 +641,7 @@ var Theme = (function () {
 
     // Set data attribute for potential CSS selectors
     root.setAttribute('data-theme', themeId);
+    root.style.colorScheme = t.colorScheme;
     applyTransparency(themeId);
 
     // Persist

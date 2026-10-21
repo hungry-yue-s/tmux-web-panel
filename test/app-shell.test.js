@@ -22,6 +22,7 @@ const SHELL_DOM = `<!DOCTYPE html><html><body>
         <div class="crumb" id="ms-crumb"></div><h1 id="ms-page-title"></h1>
         <div id="ms-top-actions"></div>
       </header>
+      <nav id="workspace-window-strip" aria-label="当前会话窗口"></nav>
       <div id="ms-view"></div>
     </main>
   </div>
@@ -190,14 +191,38 @@ describe('AppShell sidebar tree', () => {
     });
   });
 
-  it('offers session and window lifecycle controls when the provider allows them', () => {
+  it('keeps creation direct and exposes permitted lifecycle actions through row menus', () => {
     expect(ctx.document.querySelector('[data-action="new-session"]')).toBeTruthy();
-    expect(ctx.document.querySelector('[data-action="rename-session"]').dataset.session).toBe('$0');
-    expect(ctx.document.querySelector('[data-action="close-session"]').dataset.session).toBe('$0');
     expect(ctx.document.querySelector('[data-action="new-window"]').dataset.session).toBe('$0');
-    expect(ctx.document.querySelector('[data-action="rename-window"]').dataset.window).toBe('@0');
-    const closeWindows = [...ctx.document.querySelectorAll('[data-action="close-window"]')];
-    expect(closeWindows.map((node) => node.dataset.window)).toEqual(['@0', '@2']);
+    const menus = [...ctx.document.querySelectorAll('[data-action="workspace-entity-menu"]')];
+    expect(menus).toHaveLength(3);
+    expect(menus.map(button => button.closest('[data-sidebar-entity]').dataset.window || '$0')).toEqual(['$0', '@0', '@2']);
+    menus.forEach(button => {
+      expect(button.getAttribute('aria-haspopup')).toBe('menu');
+      expect(button.getAttribute('aria-controls')).toBe('ms-sidebar-context-menu');
+    });
+    expect(ctx.document.querySelector('[data-action^="rename-"],[data-action^="close-"]')).toBeNull();
+    ctx.Store.setWorkspace('local', { ...ctx.Shell.workspace('local'), actions: { createSession: true } });
+    ctx.Shell.render();
+    expect(ctx.document.querySelector('[data-action="new-session"]')).toBeTruthy();
+    expect(ctx.document.querySelector('[data-action="new-window"],[data-action="workspace-entity-menu"]')).toBeNull();
+  });
+
+  it('restores the same sidebar keyboard target on refresh without stealing terminal focus', () => {
+    const original = ctx.document.querySelector('[data-window="@2"] .tree-item');
+    original.focus();
+    ctx.Store.setHealth('local', { state: 'online', latencyMs: 4, capabilities: {} });
+    ctx.Shell.render();
+    const replacement = ctx.document.querySelector('[data-window="@2"] .tree-item');
+    expect(replacement).not.toBe(original);
+    expect(original.isConnected).toBe(false);
+    expect(ctx.document.activeElement).toBe(replacement);
+    const terminalInput = ctx.document.createElement('textarea');
+    ctx.document.getElementById('ms-view').append(terminalInput);
+    terminalInput.focus();
+    ctx.Store.setHealth('local', { state: 'online', latencyMs: 5, capabilities: {} });
+    ctx.Shell.render();
+    expect(ctx.document.activeElement).toBe(terminalInput);
   });
 
   it('escapes a hostile session name', () => {
@@ -251,8 +276,10 @@ describe('AppShell ssh workspace', () => {
 
   it('still offers pane and window lifecycle, which the ssh provider supports', () => {
     expect(ctx.document.querySelector('[data-action="new-session"]')).toBeTruthy();
-    expect(ctx.document.querySelector('[data-action="rename-window"]')).toBeTruthy();
-    expect(ctx.document.querySelector('[data-action="close-window"]')).toBeTruthy();
+    const row = ctx.document.querySelector('[data-sidebar-entity="window"]');
+    expect(row.dataset).toMatchObject({ serverId: 'api-linux', provider: 'ssh', window: 'win_1' });
+    expect(row.querySelector('[data-action="workspace-entity-menu"]')).toBeTruthy();
+    expect(row.querySelector('[data-action="rename-window"],[data-action="close-window"]')).toBeNull();
   });
 
   it('routes ssh ids through the encoder', () => {
@@ -326,7 +353,7 @@ describe('AppShell sidebar preferences', () => {
 });
 
 describe('AppShell window bar', () => {
-  it('shows server, session and window with no back button', () => {
+  it('emphasizes the window title while retaining server and session in the breadcrumb', () => {
     const ctx = loadShell();
     seedLocalTmux(ctx.Store);
     const workspace = ctx.Store.getState().entities.workspaceByServerId.local;
@@ -334,21 +361,94 @@ describe('AppShell window bar', () => {
     ctx.Shell.setTerminalHeader('local', workspace, { sessionId: '$0', windowId: '@0' });
 
     expect(ctx.document.getElementById('ms-topbar').classList.contains('terminal-layout')).toBe(true);
-    expect(ctx.document.getElementById('ms-page-title').textContent).toBe('本机 / DataAnt / 1 三绿');
+    expect(ctx.document.getElementById('ms-page-title').textContent).toBe('三绿');
+    expect(ctx.document.getElementById('ms-crumb').textContent).toBe('本机 / DataAnt');
     expect(ctx.document.querySelector('.terminal-back-btn')).toBeNull();
   });
 
-  it('centers the title inside the space left of the toolbar', () => {
-    const styles = readFileSync('public/css/style.css', 'utf8');
-    const bar = styles.slice(
-      styles.indexOf('.ms-topbar.terminal-layout {'),
-      styles.indexOf('.ms-topbar.terminal-layout .terminal-tool-button'),
-    );
+  it('shows only the routed server and session windows even when stable IDs overlap', () => {
+    const ctx = loadShell();
+    seedLocalTmux(ctx.Store);
+    ctx.Store.setServers([
+      { id: 'local', name: '本机', kind: 'local' },
+      { id: 'edge', name: '远端', kind: 'remote' },
+    ]);
+    const local = ctx.Store.getState().entities.workspaceByServerId.local;
+    ctx.Store.setWorkspace('local', { ...local, sessions: [...local.sessions, {
+      id: '$9', name: '另一会话', windows: [{ id: '@8', index: 8, name: '独立任务', panes: [] }],
+    }] });
+    ctx.Store.setWorkspace('edge', { ...local, serverId: 'edge', sessions: [{
+      id: '$0', name: '远端会话', windows: [{ id: '@0', index: 1, name: '远端工作区', panes: [{ id: '%95' }] }],
+    }] });
+    const strip = ctx.document.getElementById('workspace-window-strip');
+    ctx.Shell.render();
+    expect([...strip.querySelectorAll('button span')].map((node) => node.textContent)).toEqual(['三绿', '风控点总结']);
+    expect(strip.querySelector('.active').getAttribute('aria-current')).toBe('page');
+    expect(strip.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
+    expect(strip.querySelector('button:not(.active)').getAttribute('aria-current')).toBe('false');
+    ctx.Store.setRoute({ name: 'terminal', params: { serverId: 'edge', sessionId: '$0', windowId: '@0' } });
+    ctx.Shell.render();
+    expect(strip.querySelectorAll('button')).toHaveLength(1);
+    expect(strip.textContent).toBe('远端工作区');
+    expect(ctx.win.Router.parse(strip.querySelector('button').dataset.route)).toEqual({ name: 'terminal',
+      params: { serverId: 'edge', sessionId: '$0', windowId: '@0', paneId: '%95' } });
+    ctx.Store.setRoute({ name: 'terminal', params: { serverId: 'local', sessionId: '$9', windowId: '@8' } });
+    ctx.Shell.render();
+    expect(strip.textContent).toBe('独立任务');
+    expect(strip.querySelector('.active')).not.toBeNull();
+    ctx.win.close();
+  });
 
-    expect(bar).toContain('display: grid');
-    expect(bar).toContain('grid-template-columns: minmax(0, 1fr) auto');
-    expect(bar).toMatch(/\.ms-topbar\.terminal-layout \.crumbs\s*\{[^}]*text-align:\s*center/);
-    expect(bar).toMatch(/\.ms-topbar\.terminal-layout \.top-actions\s*\{[^}]*margin-left:\s*0/);
+  it('preserves window nodes, keyboard focus and horizontal position on background workspace refresh', () => {
+    const ctx = loadShell();
+    seedLocalTmux(ctx.Store);
+    ctx.Shell.render();
+    const strip = ctx.document.getElementById('workspace-window-strip');
+    const original = strip.querySelector('button');
+    original.focus();
+    strip.scrollLeft = 80;
+    const workspace = ctx.Store.getState().entities.workspaceByServerId.local;
+    ctx.Store.setWorkspace('local', { ...workspace, revision: workspace.revision + 1 });
+    ctx.Shell.render();
+    expect(strip.querySelector('button')).toBe(original);
+    expect(ctx.document.activeElement).toBe(original);
+    expect(strip.scrollLeft).toBe(80);
+    const terminalInput = ctx.document.createElement('textarea');
+    ctx.document.getElementById('ms-view').appendChild(terminalInput);
+    terminalInput.focus();
+    ctx.Shell.render();
+    expect(ctx.document.activeElement).toBe(terminalInput);
+    ctx.win.close();
+  });
+
+  it('clears the strip outside terminal routes and for unresolved session targets', () => {
+    const ctx = loadShell();
+    seedLocalTmux(ctx.Store);
+    const strip = ctx.document.getElementById('workspace-window-strip');
+    ctx.Shell.render();
+    expect(strip.querySelectorAll('button')).toHaveLength(2);
+    for (const route of [
+      { name: 'settings', params: {} },
+      { name: 'server', params: { serverId: 'local', section: 'performance' } },
+      { name: 'terminal', params: { serverId: 'local', sessionId: '$missing' } },
+    ]) {
+      ctx.Store.setRoute(route);
+      ctx.Shell.render();
+      expect(strip.childElementCount).toBe(0);
+    }
+    ctx.win.close();
+  });
+
+  it('keeps useful context when a routed window or session disappears', () => {
+    const ctx = loadShell();
+    seedLocalTmux(ctx.Store);
+    const workspace = ctx.Store.getState().entities.workspaceByServerId.local;
+    ctx.Shell.setTerminalHeader('local', workspace, { sessionId: '$0', windowId: '@gone' });
+    expect(ctx.document.getElementById('ms-page-title').textContent).toBe('DataAnt');
+    expect(ctx.document.getElementById('ms-crumb').textContent).toBe('本机 / DataAnt');
+    ctx.Shell.setTerminalHeader('local', workspace, { sessionId: '$gone' });
+    expect(ctx.document.getElementById('ms-page-title').textContent).toBe('终端工作台');
+    expect(ctx.document.getElementById('ms-crumb').textContent).toBe('本机');
   });
 
   it('drops the terminal layout for a non-terminal page', () => {
@@ -651,7 +751,7 @@ describe('AppShell sidebar width applies immediately', () => {
 });
 
 describe('AppShell mobile workspace sheet', () => {
-  it('exposes creation and per-row menus while keeping desktop controls intact', () => {
+  it('exposes the same creation shortcuts and per-row menus on desktop and mobile', () => {
     const ctx = loadShell();
     Object.defineProperty(ctx.win, 'innerWidth', { value: 375, configurable: true });
     seedLocalTmux(ctx.Store);
@@ -664,8 +764,8 @@ describe('AppShell mobile workspace sheet', () => {
     expect(sheet.querySelectorAll('[data-action="workspace-entity-menu"]')).toHaveLength(3);
     expect(sheet.querySelector('[data-action="close-session"]')).toBeNull();
     expect(sheet.querySelector('[data-action="close-window"]')).toBeNull();
-    expect(ctx.document.querySelector('.ms-sidebar [data-action="close-session"]')).not.toBeNull();
-    expect(ctx.document.querySelector('.ms-sidebar .tree-menu-button')).toBeNull();
+    expect(ctx.document.querySelector('.ms-sidebar [data-action="close-session"]')).toBeNull();
+    expect(ctx.document.querySelectorAll('.ms-sidebar .tree-menu-button')).toHaveLength(3);
     ctx.win.close();
   });
 

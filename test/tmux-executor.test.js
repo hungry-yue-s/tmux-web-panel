@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import { createTmuxApi, sessionTarget, validateSessionId } from '../server/tmux.js';
+import { createTmuxApi, sessionTarget, validateSessionId, PANE_BORDER_FORMAT } from '../server/tmux.js';
 
 /** Records every argv the API sends and replays canned stdout. */
 function fakeExecutor(responses = {}) {
@@ -26,6 +26,21 @@ describe('createTmuxApi', () => {
   it('rejects an executor without exec()', () => {
     expect(() => createTmuxApi(null)).toThrow(/requires an executor/);
     expect(() => createTmuxApi({})).toThrow(/requires an executor/);
+  });
+
+  it('updates only the owned pane title options and resolves markers through the terminal palette', async () => {
+    const { executor, calls } = fakeExecutor();
+    await createTmuxApi(executor).ensurePaneBorderConfig();
+    expect(calls.map(({ args }) => args)).toEqual([
+      ['set-option', '-g', 'pane-border-status', 'top'],
+      ['set-option', '-g', 'pane-border-format', PANE_BORDER_FORMAT],
+    ]);
+    expect(PANE_BORDER_FORMAT).toContain('#[fg=colour4]▸#[default]#[bold]');
+    expect(PANE_BORDER_FORMAT).toContain('#[fg=colour8]·#[default]');
+    expect(PANE_BORDER_FORMAT).toContain('#{@pane_label}');
+    expect(PANE_BORDER_FORMAT).toContain('#{pane_current_command}');
+    expect(PANE_BORDER_FORMAT).not.toContain('reverse');
+    expect(PANE_BORDER_FORMAT).not.toMatch(/#[0-9a-f]{6}/i);
   });
 
   it('asks list-sessions for the stable session id', async () => {

@@ -93,6 +93,87 @@ describe('extended terminal themes', () => {
   });
 });
 
+// Independent WCAG calculation for opaque colors and an 8% backdrop stress case.
+// This does not guarantee contrast at arbitrary user-selected window transparency.
+function contrastRatio(foreground, background) {
+  const linear = (value) => {
+    const channel = value / 255;
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = (color) => color.reduce((sum, value, index) =>
+    sum + linear(value) * [0.2126, 0.7152, 0.0722][index], 0);
+  const [a, b] = [luminance(foreground), luminance(background)];
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
+const channels = (color) => [1, 3, 5].map((offset) => parseInt(color.slice(offset, offset + 2), 16));
+
+describe('workbench semantic palettes', () => {
+  it('keeps all saved themes and adds Deep Current without changing the default', () => {
+    const Theme = loadTheme();
+    expect(Theme.getCurrent()).toBe('tokyo-night');
+    expect(Theme.getThemeList().map(({ id }) => id)).toEqual(expect.arrayContaining([
+      'deep-current', 'tokyo-night', 'catppuccin-mocha', 'dracula', 'nord', 'solarized-dark',
+      'solarized-light', 'github-light', 'gruvbox-dark', 'one-dark',
+      'catppuccin-mocha-pastel', 'rose-pine-moon', 'tokyo-night-storm',
+    ]));
+    expect(Theme.getThemeList()).toHaveLength(13);
+  });
+
+  it('provides readable text and accent across opaque surfaces and lightly tinted backdrops', () => {
+    const Theme = loadTheme();
+    for (const { id, colors } of Theme.getThemeList()) {
+      Theme.apply(id);
+      const root = dom.window.document.documentElement;
+      const alpha = 0.92;
+      const scheme = ['github-light', 'solarized-light'].includes(id) ? 'light' : 'dark';
+      expect(root.style.colorScheme, id).toBe(scheme);
+      for (const surface of ['bg', 'sidebar', 'panel', 'hover']) {
+        const hex = colors['--workspace-' + surface];
+        expect(hex, id + ': ' + surface).toMatch(/^#[0-9a-f]{6}$/i);
+        expect(root.style.getPropertyValue('--workspace-' + surface)).toBe(hex);
+        const opaque = channels(hex);
+        // Stress the surface with 8% black/white, independently of native sliders.
+        const backdrops = [opaque, ...[0, 255].map((value) =>
+          opaque.map((channel) => channel * alpha + value * (1 - alpha)))];
+        for (const background of backdrops) {
+          for (const name of ['text', 'muted', 'accent']) {
+            const contrast = contrastRatio(channels(colors['--workspace-' + name]), background);
+            expect(contrast, id + '/' + surface + '/' + name).toBeGreaterThanOrEqual(4.5);
+          }
+          expect(contrastRatio(channels(colors['--workspace-line-strong']), background),
+            id + '/' + surface + '/control boundary').toBeGreaterThanOrEqual(3);
+        }
+      }
+    }
+  });
+
+  it('keeps terminal ANSI semantic colors independent from workbench contrast corrections', () => {
+    const Theme = loadTheme();
+    for (const [id, foreground, blue, red] of [
+      ['tokyo-night', '#c0caf5', '#7aa2f7', '#f7768e'],
+      ['catppuccin-mocha', '#cdd6f4', '#89b4fa', '#f38ba8'],
+      ['dracula', '#f8f8f2', '#bd93f9', '#ff5555'],
+      ['nord', '#d8dee9', '#81a1c1', '#bf616a'],
+      ['solarized-dark', '#839496', '#268bd2', '#dc322f'],
+      ['solarized-light', '#657b83', '#268bd2', '#dc322f'],
+      ['github-light', '#1f2328', '#0969da', '#cf222e'],
+      ['gruvbox-dark', '#ebdbb2', '#458588', '#cc241d'],
+      ['one-dark', '#abb2bf', '#61afef', '#e06c75'],
+      ['catppuccin-mocha-pastel', '#cdd6f4', '#89b4fa', '#f38ba8'],
+      ['rose-pine-moon', '#e0def4', '#9ccfd8', '#eb6f92'],
+      ['tokyo-night-storm', '#c0caf5', '#7aa2f7', '#f7768e'],
+    ]) {
+      expect(Theme.getTerminalTheme(id), id).toMatchObject({ foreground, blue, red });
+    }
+    const palette = Theme.getTerminalTheme('deep-current');
+    expect(palette.blue).toBe('#7aa2f7');
+    expect(palette.cursor).toBe('#edbd8b');
+    palette.blue = '#000000';
+    expect(Theme.getTerminalTheme('deep-current').blue).toBe('#7aa2f7');
+  });
+});
+
 describe('native glass intensity', () => {
   it('only exposes the control on clients with the native appearance bridge', () => {
     const Theme = loadTheme(null, { native: true, glass: '35' });

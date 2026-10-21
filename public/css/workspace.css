@@ -1,0 +1,180 @@
+/* Shared workspace chrome; rendering, navigation and previews keep their real owners. */
+body{color:var(--workspace-text,var(--text-primary));--text-muted:var(--workspace-muted,var(--text-secondary));--workspace-chrome-height:48px}
+html.tmux-native-titlebar body{--workspace-chrome-height:44px}
+.ms-app,.ms-modal-backdrop,.ms-popover,.cmd-palette-overlay{
+ --bg-primary:var(--workspace-bg);--bg-deep:var(--workspace-sidebar);--bg-card:var(--workspace-panel);--bg-hover:var(--workspace-hover);
+ --text-primary:var(--workspace-text);--text-secondary:var(--workspace-muted);--text-muted:var(--workspace-muted);--accent-blue:var(--workspace-accent);--border-subtle:var(--workspace-line);--border:var(--workspace-line-strong);
+}
+.ms-app{height:100dvh;min-height:0;overflow:hidden;grid-template-columns:var(--ms-sidebar-effective-width) minmax(0,1fr);grid-template-rows:var(--workspace-chrome-height) minmax(0,1fr);background:var(--workspace-bg);font-size:13px}
+.workspace-chrome{grid-row:1;grid-column:1/-1;display:grid;grid-template-columns:var(--ms-sidebar-effective-width) minmax(0,1fr);min-width:0;height:var(--workspace-chrome-height);background:var(--workspace-bg);border-bottom:1px solid var(--workspace-line);z-index:35}
+.workspace-chrome .brand{height:100%;min-height:0;padding:0 10px 0 16px;gap:8px;background:var(--workspace-sidebar);border:0;overflow:hidden}
+.workspace-chrome .brand-mark,.workspace-chrome .brand-meta{display:none}
+.workspace-chrome .brand-copy{flex:1;min-width:0}.workspace-chrome .brand-name{font-size:13px;font-weight:600;letter-spacing:-.02em}
+.workspace-chrome .brand .icon-btn,.workspace-chrome .sidebar-toggle{width:28px;height:28px;min-width:28px;flex:0 0 28px;border:0;background:transparent;border-radius:5px;color:var(--workspace-muted)}
+.workspace-chrome .brand .icon-btn:hover,.workspace-chrome .sidebar-toggle:hover{background:var(--workspace-hover);color:var(--workspace-text)}
+.workspace-chrome .ms-topbar,.workspace-chrome .ms-topbar.terminal-layout{display:flex;align-items:center;gap:12px;position:relative;top:auto;grid-row:auto;grid-column:auto;width:100%;height:100%;min-height:0;margin:0;padding:0 16px;border:0;border-radius:0;background:transparent;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none}
+.workspace-chrome .crumbs,.workspace-chrome .terminal-layout .crumbs{display:flex;align-items:center;gap:10px;min-width:0;text-align:left;flex:1}
+.workspace-chrome .crumb{display:none}.workspace-chrome .page-title,.workspace-chrome .terminal-layout .page-title{margin:0;font-size:13px;font-weight:550;line-height:1.4;letter-spacing:0;text-shadow:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--workspace-text)}
+.workspace-chrome .top-actions,.workspace-chrome .terminal-layout .top-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;padding:0;margin:0;border:0;background:none;border-radius:0;box-shadow:none}
+.workspace-chrome .terminal-header-actions{display:flex;align-items:center;gap:6px;padding:0;background:none;border:0;box-shadow:none;flex-wrap:nowrap}
+.workspace-chrome .terminal-tool-btn,.workspace-chrome .terminal-tool-button{flex:0 0 28px;width:28px;min-width:28px;height:28px;min-height:28px;padding:0;border:0;border-radius:5px;background:none;box-shadow:none;color:var(--workspace-muted)}
+.workspace-chrome .terminal-tool-btn:hover,.workspace-chrome .terminal-tool-button:hover{color:var(--workspace-text);background:var(--workspace-hover)}
+.workspace-chrome .terminal-mode-toggle{padding:2px;gap:2px;border:1px solid var(--workspace-line);border-radius:7px;background:var(--workspace-panel)}
+.workspace-chrome .terminal-font-toggle{border:0;background:none;gap:0;padding:0}
+.workspace-chrome .terminal-mode-opt.active{color:var(--workspace-accent);background:var(--workspace-hover);box-shadow:inset 0 0 0 1px var(--workspace-line-strong)}
+.workspace-jump{display:inline-flex;align-items:center;gap:8px;height:28px;max-width:160px;flex-shrink:0;border:1px solid var(--workspace-line);background:var(--workspace-panel);color:var(--workspace-muted);padding:0 8px;border-radius:6px;font-size:12px;white-space:nowrap}
+.workspace-jump svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6}.workspace-jump kbd{font:11px/1 -apple-system,BlinkMacSystemFont,sans-serif;color:var(--workspace-muted);padding-left:5px}.workspace-jump:hover{border-color:var(--workspace-line-strong);color:var(--workspace-text)}
+.ms-app .ms-sidebar{grid-row:2;grid-column:1;position:relative;top:auto;min-height:0;height:auto;max-height:none;background:var(--workspace-sidebar);border:0;border-right:1px solid var(--workspace-line);box-shadow:none}
+.ms-app .server-context{padding:18px 12px 12px;min-height:0;overflow:auto}
+.ms-app .server-switcher{min-height:52px;padding:8px 10px;gap:10px;border:0;border-radius:7px;background:transparent;box-shadow:none}
+.ms-app .server-switcher:hover{background:var(--workspace-hover)}.ms-app .server-switcher strong{font-size:17px;font-weight:550;letter-spacing:-.02em}.ms-app .server-switcher small{font-size:12px;margin-top:3px;color:var(--workspace-muted)}
+.ms-app .dot{width:6px;height:6px;box-shadow:none}
+.ms-app .subnav{margin-top:20px}.ms-app .tree-section-head{min-height:28px;margin:0 5px 8px;color:var(--workspace-muted);font-size:12px;font-weight:450;letter-spacing:0;text-transform:none}
+.ms-app .tree{gap:8px}.ms-app .tree-session-group,.ms-app .tree-session-group.active{padding:0;background:none;box-shadow:none;border:0;border-radius:0}
+.ms-app .tree-session-row,.ms-app .tree-session-row.active{min-height:34px;padding:0 2px;background:none;border:0;gap:2px}
+.ms-app .tree-session-row>.tree-item,.ms-app .tree-session-row.active>.tree-item{padding:6px 4px;min-height:34px;background:none;color:var(--workspace-text);font-size:13px;font-weight:550;grid-template-columns:12px minmax(0,1fr) auto;gap:6px}
+.ms-app .tree-session-row .cmd{font-size:11px;font-weight:400;color:var(--workspace-muted)}
+.ms-app .tree-session-row .tree-item>span:first-child{font-size:12px;color:var(--workspace-muted)}.ms-app .tree-session-row.active .tree-item>span:first-child{color:var(--workspace-accent)}
+.ms-app .tree-window-list{padding:2px 0 4px;gap:2px;border:0;background:none}
+.ms-app .tree-window-row{display:flex;align-items:center;min-width:0;gap:2px;padding:0 2px;border-radius:5px}
+.ms-app .tree-window-row>.tree-item{position:relative;flex:1;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:32px;padding:6px 8px;border-radius:4px;font-size:13px;background:none;color:var(--workspace-muted)}
+.ms-app .tree-window-row>.tree-item.active{background:color-mix(in srgb,var(--workspace-accent) 10%,transparent);color:var(--workspace-text);box-shadow:none}
+.ms-app .tree-window-row>.tree-item.active::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:2px;background:var(--workspace-accent);border-radius:2px}
+.ms-app .tree-item-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ms-app .tree-window-list .cmd{font-size:11px;flex-shrink:0;color:var(--workspace-muted)}
+.ms-app .tree-item:hover{background:var(--workspace-hover)}.ms-app .tree-menu-button{display:inline-flex;justify-content:center;align-items:center;flex:0 0 24px;width:24px;height:28px;opacity:.8;font-size:18px;font-weight:400;line-height:1;cursor:pointer;background:none;border:0;color:var(--workspace-muted)}
+.ms-app .tree-menu-button:hover,.ms-app .tree-menu-button:focus-visible{background:var(--workspace-hover);color:var(--workspace-text);opacity:1}
+.ms-app .sidebar-footer{padding:10px;border-top:1px solid var(--workspace-line);gap:3px;background:none}
+.ms-app .nav-item{min-height:34px;padding:7px 10px;border:0;border-radius:5px;gap:10px;font-size:13px;font-weight:450;color:var(--workspace-muted);background:none}
+.ms-app .nav-item.active{color:var(--workspace-text);background:color-mix(in srgb,var(--workspace-accent) 8%,transparent);box-shadow:none}.ms-app .nav-item.active .ms-icon{color:var(--workspace-accent)}
+.ms-app.sidebar-collapsed .brand{padding-inline:12px;justify-content:space-between}.ms-app.sidebar-collapsed .brand .icon-btn{display:none}.ms-app.sidebar-collapsed .brand-copy{display:block}.ms-app.sidebar-collapsed .server-context{padding:16px 8px 12px}.ms-app.sidebar-collapsed .server-switcher{padding:6px 7px;min-height:42px}.ms-app.sidebar-collapsed .server-switcher strong{font-size:15px}
+.ms-app.sidebar-collapsed .tree-session-row .tree-menu-button,.ms-app.sidebar-collapsed .tree-window-row .tree-menu-button{display:inline-flex;flex-basis:22px;min-width:22px;width:22px}.ms-app.sidebar-collapsed .tree-window-list .tree-item{padding:6px;min-width:0}.ms-app.sidebar-collapsed .tree-session-row .tree-item{grid-template-columns:12px minmax(0,1fr)}
+.ms-app.sidebar-collapsed .tree-section-head .tree-add-button{display:inline-grid}.ms-app.sidebar-collapsed .sidebar-footer{padding:8px}
+/* The terminal owns all available pixels. The inspector is a sibling column. */
+.ms-app:is(.mode-terminal,.mode-status,.mode-settings) .ms-main{grid-row:2;grid-column:2;display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto minmax(0,1fr);min-width:0;min-height:0;height:auto;overflow:hidden;scrollbar-gutter:auto;background:var(--workspace-bg)}
+.workspace-pane-strip{grid-column:1;grid-row:1;min-width:0;max-width:100%;height:36px;border-bottom:1px solid var(--workspace-line);background:var(--workspace-bg);overflow:hidden}
+.workspace-pane-strip:empty,.workspace-pane-strip:not(:has(.pane-pill:nth-child(2))){display:none}
+.workspace-pane-strip .terminal-header-pills,.workspace-pane-strip .pane-pills{display:flex;align-items:stretch;gap:0;height:100%;min-width:0;overflow:auto;max-width:100%;scrollbar-width:thin}
+.workspace-pane-strip .pane-pill{height:100%;width:auto;min-height:32px;min-width:88px;max-width:220px;padding:0 16px;border:0;border-radius:0;background:none;border-bottom:2px solid transparent;color:var(--workspace-muted);font-size:12px;white-space:nowrap;flex-shrink:0;overflow:hidden;text-overflow:ellipsis}
+.workspace-pane-strip .pane-pill.active{color:var(--workspace-text);border-bottom-color:var(--workspace-accent);background:color-mix(in srgb,var(--workspace-accent) 5%,transparent)}
+.workspace-pane-strip .pane-pill:hover{background:var(--workspace-hover)}
+.ms-app .ms-content{grid-row:2;grid-column:1;width:100%;max-width:1280px;margin:0 auto;min-height:0;overflow:auto;padding:32px 36px 48px;overscroll-behavior:contain}
+.ms-app .ms-content.terminal-mode{max-width:none;min-height:0;height:100%;padding:0;margin:0;overflow:hidden}
+.ms-app .ms-content.terminal-mode .terminal-stage{height:100%;width:100%;margin:0;border:0;border-radius:0;padding:0;box-shadow:none;background:none}
+.ms-app .terminal-stage .terminal-view{height:100%;max-height:100%;border:0;border-radius:0;box-shadow:none;background:none;min-width:0}
+.ms-app .terminal-stage .terminal-container{padding:10px 12px 6px;min-width:0;min-height:0;border:0;border-radius:0;box-shadow:none}
+.ms-app .terminal-stage .xterm-viewport{background:var(--workspace-bg)}
+.ms-app .fp-dock{grid-column:2;grid-row:1/3;min-height:0;height:100%;margin:0;border:0;border-left:1px solid var(--workspace-line);border-radius:0;box-shadow:none}
+.ms-app .fp-dock-restore{grid-column:2;grid-row:1/3;align-self:center;justify-self:end;width:auto;height:auto}
+.ms-app .intro{margin-bottom:28px}.ms-app .intro h2{font-size:27px;font-weight:550;letter-spacing:-.025em;line-height:1.3}.ms-app .intro p{font-size:13px;line-height:1.7;color:var(--workspace-muted);margin-top:8px}
+.ms-app .section-head{margin-bottom:16px}.ms-app .section-head h3{font-size:14px;font-weight:550}.ms-app .section-head>span{font-size:12px;color:var(--workspace-muted)}
+.ms-app .ms-card{border:1px solid var(--workspace-line);border-radius:8px;background:var(--workspace-panel);box-shadow:none}
+.ms-app .server-hero{padding:0 0 24px;background:none;border:0;border-bottom:1px solid var(--workspace-line);border-radius:0;margin-bottom:24px;box-shadow:none}.ms-app .server-hero h2{font-size:23px;font-weight:550;letter-spacing:-.025em}.ms-app .server-icon{border:1px solid var(--workspace-line);background:none;color:var(--workspace-accent);border-radius:10px}
+.ms-app .grid.kpi-grid{gap:0;border-bottom:1px solid var(--workspace-line);padding-bottom:24px}.ms-app .ms-card.kpi{border:0;border-left:1px solid var(--workspace-line);border-radius:0;background:none;padding:12px 24px}.ms-app .ms-card.kpi:first-child{border-left:0;padding-left:0}.ms-app .kpi-value{font-size:34px;font-weight:450;letter-spacing:-.04em;color:var(--workspace-text)}.ms-app .kpi-top,.ms-app .kpi-note{font-size:12px;color:var(--workspace-muted)}
+.ms-app .chart-card{background:none;border:0;border-top:1px solid var(--workspace-line);border-radius:0;padding:22px 0}.ms-app .detail-list{border:0;border-top:1px solid var(--workspace-line);border-radius:0;background:none}.ms-app .detail-row{min-height:44px;border-color:var(--workspace-line);font-size:13px}.ms-app .tabs{gap:20px;border-color:var(--workspace-line)}.ms-app .tab{font-size:13px;font-weight:500}.ms-app .tab.active{color:var(--workspace-text);border-bottom-color:var(--workspace-accent)}
+.ms-app .ms-btn{font-size:12px;font-weight:500;min-height:32px;border-radius:5px;border-color:var(--workspace-line-strong);box-shadow:none}.ms-app .ms-btn.primary{color:var(--workspace-accent);background:color-mix(in srgb,var(--workspace-accent) 10%,var(--workspace-panel));border-color:var(--workspace-accent)}
+.ms-app .theme-grid{gap:14px}.ms-app .theme-card{border-radius:8px;border-color:var(--workspace-line);box-shadow:none}.ms-app .theme-card.active{border-color:var(--workspace-accent);box-shadow:0 0 0 1px var(--workspace-accent)}
+.ms-app .native-transparency-settings{border-top:1px solid var(--workspace-line);padding-top:22px;margin-top:30px}.ms-app .native-transparency-control input{accent-color:var(--workspace-accent)}
+.ms-app .server-rail-card{border:0;border-bottom:1px solid var(--workspace-line);border-radius:0;background:none;box-shadow:none}.ms-app .server-rail-card.active{background:color-mix(in srgb,var(--workspace-accent) 7%,transparent);border-radius:7px;border-bottom-color:transparent}.ms-app .rail-server-name{font-weight:550}
+.ms-modal-backdrop .ms-modal,.ms-popover{background:var(--workspace-panel);color:var(--workspace-text);border-color:var(--workspace-line-strong);box-shadow:0 16px 50px rgba(0,0,0,.2);border-radius:10px}.ms-toast{border-color:var(--workspace-line-strong);background:var(--workspace-panel);color:var(--workspace-text);font-size:13px;border-radius:7px}
+.ms-sidebar-context-menu{background:var(--workspace-panel);color:var(--workspace-text);border:1px solid var(--workspace-line-strong);border-radius:8px;box-shadow:0 10px 36px rgba(0,0,0,.2)}
+.cmd-palette-overlay{position:fixed;inset:0;z-index:13000;background:rgba(0,0,0,.4);padding:clamp(48px,14vh,140px) 20px 24px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.cmd-palette-modal{width:min(640px,100%);max-height:min(620px,75dvh);margin:0 auto;display:flex;flex-direction:column;background:var(--workspace-panel);color:var(--workspace-text);border:1px solid var(--workspace-line-strong);border-radius:12px;box-shadow:0 24px 80px rgba(0,0,0,.3);overflow:hidden}
+.cmd-palette-input-wrap{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--workspace-line)}.cmd-palette-icon{display:flex;color:var(--workspace-accent)}.cmd-palette-icon svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.7}.cmd-palette-input{flex:1;min-width:0;padding:5px 0;font:15px -apple-system,BlinkMacSystemFont,sans-serif;color:var(--workspace-text);border:0;background:none;outline:none}
+.cmd-palette-close{border:1px solid var(--workspace-line);border-radius:4px;padding:3px 5px;background:none;color:var(--workspace-muted);font-size:11px;cursor:pointer}.cmd-palette-results{overflow:auto;min-height:0;padding:6px;overscroll-behavior:contain}.cmd-palette-item{display:flex;align-items:center;gap:12px;min-height:46px;padding:8px 12px;border-radius:6px;background:none;color:var(--workspace-text);cursor:pointer}.cmd-palette-item-active{background:var(--workspace-hover);box-shadow:inset 2px 0 0 var(--workspace-accent)}.cmd-palette-item-name{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.cmd-palette-item-meta{color:var(--workspace-muted);font-size:12px;flex-shrink:0}.cmd-palette-item-icon{display:inline-flex;color:var(--workspace-muted)}.cmd-palette-item-icon svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5}.cmd-palette-empty{padding:36px 20px;text-align:center;color:var(--workspace-muted);font-size:13px}.cmd-palette-footer{border-top:1px solid var(--workspace-line);padding:9px 16px;font-size:11px;color:var(--workspace-muted)}
+.ms-app button:focus-visible,.workspace-jump:focus-visible,.cmd-palette-close:focus-visible{outline:2px solid var(--workspace-accent);outline-offset:-2px}
+html.tmux-native-titlebar .workspace-chrome .brand{padding:0 10px 0 80px;height:100%;min-height:0;justify-content:space-between}html.tmux-native-titlebar .workspace-chrome .brand-copy{min-width:0}html.tmux-native-titlebar .ms-app.sidebar-collapsed .workspace-chrome .brand-copy{display:none}
+html[data-native-transparency] .ms-app{background:transparent!important}html[data-native-transparency] .workspace-chrome{background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}html[data-native-transparency] .ms-app .ms-sidebar,html[data-native-transparency] .workspace-chrome .brand{background:color-mix(in srgb,var(--workspace-sidebar) 12%,transparent)!important;backdrop-filter:none;-webkit-backdrop-filter:none}
+html[data-native-transparency] .ms-app .ms-main,html[data-native-transparency] .ms-app .ms-content.terminal-mode{background:transparent!important}
+button{touch-action:manipulation} @media(prefers-reduced-motion:reduce){.ms-app *,.cmd-palette-overlay *{animation:none!important;transition:none!important}}
+@media(max-width:1200px){.workspace-jump span,.workspace-jump kbd{display:none}.workspace-jump{width:28px;padding:0;justify-content:center;border:0;background:none}.workspace-chrome .ms-topbar{gap:8px;padding-inline:12px}.workspace-chrome .terminal-header-actions{gap:3px}.ms-app .ms-content{padding:28px}}
+@media(min-width:768px) and (max-width:950px){.workspace-chrome .terminal-tool-btn{width:26px;min-width:26px;flex-basis:26px}.workspace-chrome .terminal-header-actions{gap:1px}.workspace-chrome .ms-topbar{gap:6px;padding-inline:8px}.workspace-chrome .page-title{font-size:12px}.ms-app .ms-content{padding:24px}.ms-app .ms-content.terminal-mode{padding:0}}
+@media(max-width:767px){.workspace-chrome{display:none}.ms-app{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr);height:100dvh}.ms-app .ms-sidebar{display:none}.ms-app:is(.mode-terminal,.mode-status,.mode-settings) .ms-main{grid-column:1;grid-row:1;display:flex;flex-direction:column;min-height:0;height:100%;overflow:hidden}.workspace-pane-strip{display:none}.ms-app .mobile-header{flex-shrink:0;background:var(--workspace-sidebar);border-color:var(--workspace-line);min-height:48px}.ms-app .mobile-header .mobile-workspace-trigger{min-height:44px}.ms-app .ms-content{flex:1;min-height:0;overflow:auto;padding:22px 16px 36px;width:100%;max-width:100%}.ms-app .ms-content.terminal-mode{height:auto;flex:1;overflow:hidden;padding:0}.ms-app .terminal-stage .terminal-container{padding:4px 6px}.ms-app .grid.kpi-grid{gap:16px}.ms-app .ms-card.kpi{padding:8px 12px}.ms-app .ms-card.kpi:nth-child(3){border:0;padding-left:0}.ms-app .intro h2{font-size:24px}.ms-app .ms-btn{min-height:44px}.ms-app .theme-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ms-mobile-workspace-sheet{background:var(--workspace-sidebar);color:var(--workspace-text);border-color:var(--workspace-line)}.ms-mobile-workspace-sheet .tree-session-group{background:none}.ms-mobile-workspace-sheet .tree-item,.ms-mobile-workspace-sheet .tree-menu-button{min-height:44px}.ms-mobile-workspace-sheet .tree-menu-button{min-width:44px}.cmd-palette-overlay{padding:12px;display:flex;align-items:flex-start;padding-top:max(12px,env(safe-area-inset-top))}.cmd-palette-modal{max-height:calc(100dvh - 24px);border-radius:12px}.cmd-palette-input{font-size:16px}.cmd-palette-item{min-height:48px}.cmd-palette-item-meta{max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cmd-palette-close{min-width:44px;min-height:44px}.ms-app .tree-menu-button{min-width:44px;min-height:44px}.ms-app .server-hero{flex-wrap:wrap;gap:16px}.ms-app .server-hero h2{font-size:21px}.ms-app .hero-actions{flex-wrap:wrap}}
+
+.ms-app .tree-create-window{flex:0 0 24px;width:24px;height:28px;opacity:.7;display:inline-grid;place-items:center;background:none;border:0;color:var(--workspace-muted);font-size:17px}.ms-app .tree-create-window:hover,.ms-app .tree-create-window:focus-visible{opacity:1;background:var(--workspace-hover);color:var(--workspace-text)}
+.workspace-terminal-more{position:relative;flex-shrink:0}.workspace-terminal-more>summary{display:flex;align-items:center;justify-content:center;list-style:none;width:28px;height:28px;border-radius:5px;color:var(--workspace-muted);cursor:pointer}.workspace-terminal-more>summary::-webkit-details-marker{display:none}.workspace-terminal-more[open]>summary,.workspace-terminal-more>summary:hover{color:var(--workspace-text);background:var(--workspace-hover)}.workspace-terminal-more>summary:focus-visible{outline:2px solid var(--workspace-accent);outline-offset:-2px}.workspace-terminal-menu{position:absolute;top:calc(100% + 7px);right:0;z-index:100;min-width:180px;padding:5px;background:var(--workspace-panel);border:1px solid var(--workspace-line-strong);border-radius:8px;box-shadow:0 10px 32px rgba(0,0,0,.22)}.workspace-chrome .workspace-terminal-menu .terminal-tool-btn{display:flex;width:100%;height:34px;min-width:0;gap:10px;justify-content:flex-start;padding:5px 10px;white-space:nowrap;font-size:12px;color:var(--workspace-text)}.workspace-terminal-menu .terminal-tool-btn>span{font-family:-apple-system,BlinkMacSystemFont,sans-serif}.workspace-terminal-menu .terminal-tool-btn>svg{width:16px;height:16px;flex-shrink:0}
+@media(max-width:767px){.workspace-terminal-menu .terminal-tool-btn{min-height:44px!important}.ms-mobile-workspace-sheet .tree-create-window{width:44px;min-height:44px}}
+
+.ms-app .tree-section-head .provider-badge{flex:0 0 auto;max-width:64px;font-size:10px;letter-spacing:0;padding:1px 5px}.ms-app .server-switcher>span:last-child{flex-shrink:0}.workspace-chrome .brand .sidebar-toggle{font-size:18px}
+
+.workspace-chrome .workspace-notification{display:inline-flex;align-items:center;justify-content:center;flex:0 0 28px;width:28px;height:28px;border:0;border-radius:5px;color:var(--workspace-muted);background:none}.workspace-chrome .workspace-notification:hover{color:var(--workspace-text);background:var(--workspace-hover)}
+
+/* Two levels of navigation: app destinations stay put, session context folds. */
+@media (min-width:768px) {
+  body, html.tmux-native-titlebar body { --workspace-chrome-height:60px; }
+  .workspace-chrome .ms-topbar { padding-inline:20px; gap:14px; }
+  .workspace-chrome .crumbs,.workspace-chrome .terminal-layout .crumbs {
+    flex-direction:column; align-items:flex-start; justify-content:center; gap:2px;
+  }
+  .workspace-chrome .ms-topbar .crumb { display:block; font-size:11px; line-height:15px; color:var(--workspace-muted); }
+  .workspace-chrome .page-title,.workspace-chrome .terminal-layout .page-title {
+    width:100%; font-size:19px; font-weight:600; line-height:24px; letter-spacing:-.025em;
+  }
+  .ms-app .ms-sidebar { display:grid; grid-template-columns:52px minmax(0,1fr); grid-template-rows:minmax(0,1fr); }
+  .ms-app .ms-sidebar .server-context,.ms-app.sidebar-collapsed .ms-sidebar .server-context {
+    grid-column:2; grid-row:1; padding:22px 12px 16px; min-width:0;
+  }
+  .ms-app.mode-terminal .ms-sidebar .server-context { display:flex; flex-direction:column; overflow:hidden; }
+  .ms-app .ms-sidebar .sidebar-footer,.ms-app.sidebar-collapsed .ms-sidebar .sidebar-footer {
+    grid-column:1; grid-row:1; display:flex; flex-direction:column; align-items:center;
+    gap:9px; padding:16px 5px 12px; border:0; border-right:1px solid var(--workspace-line);
+    background:color-mix(in srgb,var(--workspace-bg) 72%,var(--workspace-sidebar));
+  }
+  .ms-app .sidebar-footer .nav-item {
+    width:40px; height:40px; min-height:40px; flex:0 0 40px; padding:0;
+    justify-content:center; border-radius:10px; position:relative;
+  }
+  .ms-app .sidebar-footer .nav-item .ms-icon { width:20px; height:20px; }
+  .ms-app .sidebar-footer .nav-item span { display:none; }
+  .ms-app .sidebar-footer .nav-item.active { color:var(--workspace-text); background:var(--workspace-hover); box-shadow:inset 0 0 0 1px var(--workspace-line-strong); }
+  .ms-app .sidebar-footer .nav-item.active::before { content:""; position:absolute; width:3px; height:16px; left:-5px; top:12px; border-radius:0 2px 2px 0; background:var(--workspace-accent); }
+  .ms-app .sidebar-footer .nav-item:last-child { margin-top:auto; }
+  .ms-app .server-switcher { flex:0 0 36px; width:100%; margin-top:12px; padding:8px 4px 0; min-height:36px; align-items:center; border:0; border-top:1px solid var(--workspace-line); border-radius:0; gap:8px; }
+  .ms-app .server-switcher strong { font-size:12px; font-weight:450; color:var(--workspace-muted); }
+  .ms-app .server-switcher .dot { margin-top:0; width:5px; height:5px; }
+  .ms-app .server-switcher small { display:none; }
+  .ms-app.mode-terminal .subnav { flex:1; min-height:0; overflow:auto; margin:0; }
+  .ms-app.mode-terminal .tree-section-head { font-size:16px; font-weight:550; color:var(--workspace-text); margin:0 2px 20px; }
+  .ms-app.mode-terminal .tree-section-head .provider-badge { display:none; }
+  .ms-app .tree { gap:16px; }
+  .ms-app .tree-session-row>.tree-item { font-size:14px; min-height:42px; }
+  .ms-app .tree-session-row .tree-item>span:nth-child(2) { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ms-app .tree-session-row .tree-item { grid-template-columns:12px minmax(0,1fr); }
+  .ms-app .tree-session-row .cmd,.ms-app .tree-session-row .tree-create-window { display:none; }
+  .ms-app .tree-session-group.active .tree-session-row>.tree-item { font-size:16px; letter-spacing:-.02em; }
+  .ms-app .tree-window-list { margin-top:4px; padding:2px 0 2px 14px; border-left:1px solid var(--workspace-line); margin-left:7px; gap:4px; }
+  .ms-app .tree-window-row>.tree-item { min-height:34px; padding:7px 9px; border-radius:5px; }
+  .ms-app .tree-window-row>.tree-item.active { background:color-mix(in srgb,var(--workspace-accent) 17%,transparent); color:var(--workspace-text); }
+  .ms-app .tree-window-row>.tree-item.active::before { display:none; }
+  .ms-app.sidebar-collapsed .ms-sidebar .server-context { padding:18px 6px 12px; }
+  .ms-app.sidebar-collapsed .server-switcher { padding:8px 2px 0; min-height:36px; gap:6px; }
+  .ms-app.sidebar-collapsed .server-switcher strong { font-size:12px; }
+  .ms-app.sidebar-collapsed .server-switcher small { display:none; }
+  .ms-app.sidebar-collapsed .tree-session-row>.tree-item { font-size:12px; padding-inline:0; gap:3px; }
+  .ms-app.sidebar-collapsed .tree-session-row .tree-menu-button { flex:0 0 16px; min-width:16px; width:16px; font-size:15px; }
+  .ms-app.sidebar-collapsed .tree-window-row .tree-menu-button { flex:0 0 16px; min-width:16px; width:16px; font-size:15px; }
+  .ms-app.sidebar-collapsed .tree-window-list { margin-left:3px; padding-left:3px; }
+  .ms-app.sidebar-collapsed .tree-window-row { gap:0; padding:0; }
+  .ms-app.sidebar-collapsed .tree-window-row>.tree-item { padding:7px 3px; font-size:12px; }
+  .ms-app:is(.mode-terminal,.mode-status,.mode-settings) .ms-main { grid-template-rows:auto auto minmax(0,1fr); }
+  .workspace-window-strip { grid-column:1; grid-row:1; display:flex; min-width:0; height:42px; overflow-x:auto; overflow-y:hidden; scrollbar-width:none; background:var(--workspace-sidebar); border-bottom:1px solid var(--workspace-line); }
+  .workspace-window-strip::-webkit-scrollbar,.workspace-pane-strip .pane-pills::-webkit-scrollbar { display:none; }
+  .workspace-window-strip:empty { display:none; }
+  .workspace-window { display:flex; align-items:center; gap:9px; flex:0 0 auto; min-width:116px; max-width:220px; padding:0 18px; border:0; border-right:1px solid var(--workspace-line); border-top:2px solid transparent; background:none; color:var(--workspace-muted); font:500 12px/1.4 -apple-system,BlinkMacSystemFont,sans-serif; cursor:pointer; }
+  .workspace-window>span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .workspace-window>.ms-icon { width:14px; height:14px; flex-shrink:0; }
+  .workspace-window:hover { background:var(--workspace-hover); color:var(--workspace-text); }
+  .workspace-window.active { border-top-color:var(--workspace-accent); background:var(--workspace-bg); color:var(--workspace-text); }
+  .workspace-window.active .ms-icon { color:var(--workspace-accent); }
+  .workspace-pane-strip { grid-row:2; height:34px; }
+  .workspace-pane-strip .pane-pill-label { display:block; overflow:hidden; text-overflow:ellipsis; }
+  .workspace-pane-strip .pane-pill-index { color:var(--workspace-muted); font-size:10px; }
+  .workspace-pane-strip .pane-pill { gap:7px; min-width:100px; padding-inline:16px; }
+  .workspace-pane-strip .pane-pills { padding:0; }
+  .ms-app .ms-content { grid-row:3; }
+  .ms-app.mode-terminal .ms-content.terminal-mode { grid-row:3; }
+  .ms-app.mode-terminal .fp-dock { grid-row:1/4; }
+  .ms-app .ms-main { position:relative; }
+  .ms-app .fp-dock-restore { position:absolute; grid-column:auto; grid-row:auto; right:0; top:50%; transform:translateY(-50%); align-self:auto; }
+  .ms-app .terminal-stage .xterm { padding:0; }
+}
+@media (max-width:767px) { .workspace-window-strip { display:none; } }

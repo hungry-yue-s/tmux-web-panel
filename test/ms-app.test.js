@@ -130,11 +130,12 @@ describe('single Window Bar', () => {
   });
 
   /** Renders the real header markup, then runs the real embed hook over it. */
-  function embedFixture({ provider = 'tmux', transport = 'local', width = 1440, mobileSheet = false } = {}) {
+  function embedFixture({ provider = 'tmux', transport = 'local', width = 1440, mobileSheet = false, paneStrip = false, beforeEmbed } = {}) {
     const dom = new JSDOM(`<!DOCTYPE html><html><body>
       <header class="mobile-header"><div class="mobile-tools" id="ms-mobile-tools"></div></header>
       ${mobileSheet ? '<div id="ms-mobile-workspace-tools"></div>' : ''}
       <header class="ms-topbar" id="ms-topbar"><div id="ms-top-actions"></div></header>
+      ${paneStrip ? '<div id="workspace-pane-strip"></div>' : ''}
       <div id="ms-terminal-host"><div class="terminal-view">
         <div class="terminal-header">
           <button class="terminal-back-btn">back</button>
@@ -144,9 +145,10 @@ describe('single Window Bar', () => {
             <button class="terminal-refresh-btn"></button>
             <div class="terminal-mode-toggle"></div>
             <button class="terminal-split-btn"></button>
-            <button class="terminal-label-btn"></button>
+            <button class="terminal-label-btn" aria-label="设置标签"></button>
             <button class="terminal-open-buf-btn"></button>
-            <button class="terminal-popout-btn"></button>
+            <button class="terminal-popout-btn" aria-label="弹出终端"></button>
+            <button class="terminal-fullscreen-btn" aria-label="全屏"></button>
           </div>
         </div>
         <div class="terminal-container"></div>
@@ -160,6 +162,7 @@ describe('single Window Bar', () => {
       workspace: () => ({ provider, transport }),
     };
     win.eval(MS_APP);
+    if (beforeEmbed) beforeEmbed(win);
     win.MsApp.embedTerminalChrome(win.document.querySelector('.terminal-view'));
     return win;
   }
@@ -182,6 +185,49 @@ describe('single Window Bar', () => {
     expect(pills.classList.contains('ms-hoisted-pills')).toBe(true);
     // The live pill node moved, so its bound listener still works.
     expect(pills.querySelector('.pane-pill')).toBeTruthy();
+  });
+
+  it.each([1440, 375])('moves live pills and toolbar listeners into the shared chrome at %spx', width => {
+    const switched = vi.fn(), refreshed = vi.fn(), labelled = vi.fn();
+    let pills, refresh, label;
+    const win = embedFixture({ width, paneStrip: true, beforeEmbed(window) {
+      pills = window.document.querySelector('.terminal-header-pills');
+      refresh = window.document.querySelector('.terminal-refresh-btn');
+      label = window.document.querySelector('.terminal-label-btn');
+      pills.querySelector('.pane-pill').addEventListener('click', switched);
+      refresh.addEventListener('click', refreshed);
+      label.addEventListener('click', labelled);
+    } });
+    const doc = win.document;
+    const strip = doc.getElementById('workspace-pane-strip');
+    const actions = doc.querySelector(width < 768 ? '#ms-mobile-tools' : '#ms-top-actions');
+    if (width >= 768) {
+      expect(strip.firstElementChild).toBe(pills);
+      expect(strip.closest('.ms-topbar')).toBeNull();
+      expect(actions.querySelector('.pane-pill')).toBeNull();
+    } else {
+      expect(strip.children).toHaveLength(0);
+      expect(doc.querySelector('.mobile-header > .mobile-pane-strip')).toBe(pills);
+    }
+    expect(actions.querySelector('.terminal-refresh-btn')).toBe(refresh);
+    pills.querySelector('.pane-pill').click();
+    refresh.click();
+    expect(switched).toHaveBeenCalledOnce();
+    expect(refreshed).toHaveBeenCalledOnce();
+    const more = actions.querySelector('details.workspace-terminal-more');
+    expect(more.querySelector('summary').getAttribute('aria-label')).toBe('更多终端操作');
+    expect(more.querySelector('.terminal-label-btn')).toBe(label);
+    expect(more.querySelector('.terminal-popout-btn')).toBeTruthy();
+    expect(more.querySelector('.terminal-fullscreen-btn')).toBeTruthy();
+    more.open = true;
+    label.click();
+    expect(labelled).toHaveBeenCalledOnce();
+    expect(more.open).toBe(false);
+    more.open = true;
+    more.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(more.open).toBe(false);
+    expect(doc.activeElement).toBe(more.querySelector('summary'));
+    win.close();
   });
 
   it('leaves nothing above the terminal container in the view', () => {
@@ -371,6 +417,7 @@ const STATUS_DOM = `<!DOCTYPE html><html><body>
         <div class="crumb" id="ms-crumb"></div><h1 id="ms-page-title"></h1>
         <div id="ms-top-actions"></div>
       </header>
+      <nav id="workspace-window-strip" aria-label="当前会话窗口"></nav>
       <div class="ms-content" id="ms-view"></div>
     </main>
   </div>
@@ -455,6 +502,31 @@ function fakeAgentHub() {
   };
 }
 
+describe('MsApp session window strip', () => {
+  it('delegates nested window-button clicks to the stable routed server/session/window and active pane', () => {
+    const ctx = loadStatusShell();
+    ctx.Store.setWorkspace('api-linux', {
+      serverId: 'api-linux', provider: 'tmux', transport: 'ssh', actions: {},
+      sessions: [{ id: '$4', name: '接口开发', windows: [
+        { id: '@1', index: 0, name: '编辑器', panes: [{ id: '%5' }] },
+        { id: '@2', index: 1, name: '服务日志', panes: [{ id: '%8' }, { id: '%9', active: true }] },
+      ] }],
+    });
+    ctx.Store.setRoute({ name: 'terminal', params: { serverId: 'api-linux', sessionId: '$4', windowId: '@1', paneId: '%5' } });
+    ctx.win.AppShell.render();
+    ctx.MsApp._bindEvents();
+    const button = ctx.document.querySelectorAll('#workspace-window-strip button')[1];
+    expect(button.dataset.route).toBe(ctx.Router.serialize({ name: 'terminal', params: {
+      serverId: 'api-linux', sessionId: '$4', windowId: '@2', paneId: '%9',
+    } }));
+    button.querySelector('svg path').dispatchEvent(new ctx.win.MouseEvent('click', { bubbles: true }));
+    expect(ctx.Router.current()).toEqual({ name: 'terminal', params: {
+      serverId: 'api-linux', sessionId: '$4', windowId: '@2', paneId: '%9',
+    } });
+    ctx.win.close();
+  });
+});
+
 describe('MsApp mobile workspace action', () => {
   function mobileWorkspace(serverId, provider) {
     const ctx = loadStatusShell();
@@ -534,21 +606,58 @@ describe('MsApp mobile workspace action', () => {
     ['api-linux', 'ssh', 'session', 'close-session', '/sessions/%247', 'Other work'],
     ['local', 'tmux', 'window', 'close-window', '/windows/%409', 'Build logs'],
     ['api-linux', 'ssh', 'window', 'close-window', '/windows/%409', 'Build logs'],
-  ])('closes the chosen %s %s %s through the tap menu', async (serverId, provider, entity, action, path, name) => {
+    ['local', 'tmux', 'session', 'close-session', '/sessions/%247', 'Other work', 1024],
+    ['api-linux', 'ssh', 'session', 'close-session', '/sessions/%247', 'Other work', 1024],
+    ['local', 'tmux', 'window', 'close-window', '/windows/%409', 'Build logs', 1024],
+    ['api-linux', 'ssh', 'window', 'close-window', '/windows/%409', 'Build logs', 1024],
+  ])('closes the chosen %s %s %s through its row menu', async (serverId, provider, entity, action, path, name, width = 375) => {
     const ctx = mobileWorkspace(serverId, provider);
+    if (width >= 768) {
+      Object.defineProperty(ctx.win, 'innerWidth', { value: width, configurable: true });
+      ctx.win.AppShell.closeMobileWorkspaceSheet({ restoreFocus: false });
+    }
+    const surface = width < 768 ? ctx.sheet : ctx.document.querySelector('.ms-sidebar');
     ctx.win.showConfirm = vi.fn(async () => true);
-    const target = ctx.sheet.querySelector('[data-sidebar-entity="' + entity + '"]['
+    const target = surface.querySelector('[data-sidebar-entity="' + entity + '"]['
       + (entity === 'session' ? 'data-session="$7"' : 'data-window="@9"') + ']');
     target.querySelector('.tree-menu-button').click();
     const menu = ctx.document.getElementById('ms-sidebar-context-menu');
     expect(menu.hidden).toBe(false);
-    expect(menu.classList.contains('mobile-entity-menu')).toBe(true);
+    expect(menu.classList.contains('mobile-entity-menu')).toBe(width < 768);
     menu.querySelector('[data-action="' + action + '"]').click();
 
     await vi.waitFor(() => expect(ctx.MsApp.refreshWorkspace).toHaveBeenCalledOnce());
     expect(ctx.win.showConfirm).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining(name), danger: true }));
     expect(ctx.win.Api.request).toHaveBeenCalledWith('DELETE', '/api/servers/' + serverId + path, undefined,
       { headers: { 'X-Workspace-Provider': provider } });
+    expect(menu.hidden).toBe(true);
+    expect(target.querySelector('.tree-menu-button').getAttribute('aria-expanded')).toBe('false');
+    ctx.win.close();
+  });
+
+  it.each([375, 1024].flatMap(width => [
+    ['local', 'tmux', 'session', '/sessions/%247', 'Other work', width],
+    ['api-linux', 'ssh', 'session', '/sessions/%247', 'Other work', width],
+    ['local', 'tmux', 'window', '/windows/%409', 'Build logs', width],
+    ['api-linux', 'ssh', 'window', '/windows/%409', 'Build logs', width],
+  ]))('renames the selected %s %s %s through its row menu', async (serverId, provider, entity, path, name, width) => {
+    const ctx = mobileWorkspace(serverId, provider);
+    if (width >= 768) {
+      Object.defineProperty(ctx.win, 'innerWidth', { value: width, configurable: true });
+      ctx.win.AppShell.closeMobileWorkspaceSheet({ restoreFocus: false });
+    }
+    ctx.win.showPrompt = vi.fn(async () => 'Renamed work');
+    const surface = width < 768 ? ctx.sheet : ctx.document.querySelector('.ms-sidebar');
+    const target = surface.querySelector('[data-sidebar-entity="' + entity + '"]['
+      + (entity === 'session' ? 'data-session="$7"' : 'data-window="@9"') + ']');
+    target.querySelector('.tree-menu-button').click();
+    const menu = ctx.document.getElementById('ms-sidebar-context-menu');
+    expect(menu.hidden).toBe(false);
+    menu.querySelector('[data-action="rename-' + entity + '"]').click();
+    await vi.waitFor(() => expect(ctx.MsApp.refreshWorkspace).toHaveBeenCalledOnce());
+    expect(ctx.win.showPrompt).toHaveBeenCalledWith(expect.objectContaining({ value: name }));
+    expect(ctx.win.Api.request).toHaveBeenCalledWith('PATCH', '/api/servers/' + serverId + path,
+      { name: 'Renamed work' }, { headers: { 'X-Workspace-Provider': provider } });
     expect(menu.hidden).toBe(true);
     expect(target.querySelector('.tree-menu-button').getAttribute('aria-expanded')).toBe('false');
     ctx.win.close();
@@ -804,6 +913,21 @@ describe('MsApp sidebar context menu', () => {
       .toEqual(['rename-window', 'close-window']);
     expect(menu.getAttribute('role')).toBe('menu');
     expect(ctx.document.activeElement.getAttribute('role')).toBe('menuitem');
+  });
+
+  it('offers only operations granted by the current provider', () => {
+    const ctx = loadStatusShell();
+    seedRemoteSidebarWorkspace(ctx.Store);
+    const workspace = ctx.win.AppShell.workspace('api-linux');
+    ctx.Store.setWorkspace('api-linux', { ...workspace, actions: { renameWindow: true } });
+    ctx.MsApp._showSidebarContextMenu(row(ctx, 'window'), {});
+    const menu = ctx.document.getElementById('ms-sidebar-context-menu');
+    expect([...menu.querySelectorAll('[data-action]')].map(node => node.dataset.action)).toEqual(['rename-window']);
+    ctx.Store.setWorkspace('api-linux', { ...workspace, actions: {} });
+    ctx.MsApp._showSidebarContextMenu(row(ctx, 'window'), {});
+    expect(menu.hidden).toBe(true);
+    expect(menu.querySelector('[data-action]')).toBeNull();
+    ctx.win.close();
   });
 
   it('intercepts nested right-clicks, dismisses on Escape, and restores focus', () => {

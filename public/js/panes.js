@@ -39,7 +39,8 @@ function renderPaneLayout(container, panes, activePaneId, onPaneClick) {
   layout.style.aspectRatio = totalWidth + ' / ' + totalHeight;
 
   // 3. For each pane, create an absolute-positioned div
-  panes.forEach(function (p) {
+  panes.forEach(function (p, position) {
+    var paneIndex = p.index == null ? position : p.index;
     var pLeft = p.left != null ? p.left : (p.x || 0);
     var pTop = p.top != null ? p.top : (p.y || 0);
     var leftPct = (pLeft / totalWidth * 100).toFixed(2);
@@ -54,11 +55,11 @@ function renderPaneLayout(container, panes, activePaneId, onPaneClick) {
     box.style.width = widthPct + '%';
     box.style.height = heightPct + '%';
     box.setAttribute('data-pane-id', p.id);
-    box.setAttribute('title', 'Pane ' + p.index + ': ' + (p.command || 'unknown') + ' (' + (p.width || 0) + 'x' + (p.height || 0) + ')');
+    box.setAttribute('title', 'Pane ' + paneIndex + ': ' + (p.command || 'unknown') + ' (' + (p.width || 0) + 'x' + (p.height || 0) + ')');
 
     var label = document.createElement('span');
     label.className = 'pane-box-index';
-    label.textContent = 'P' + p.index;
+    label.textContent = 'P' + paneIndex;
 
     var cmd = document.createElement('span');
     cmd.className = 'pane-box-cmd';
@@ -95,18 +96,19 @@ function renderPanePills(container, panes, activePaneId, onPaneClick) {
   row.className = 'pane-pills';
   row.dataset.count = Math.min(3, panes.length);
 
-  panes.forEach(function (p) {
+  panes.forEach(function (p, position) {
+    var paneIndex = p.index == null ? position : p.index;
     var pill = document.createElement('button');
     pill.className = 'pane-pill' + (p.id === activePaneId ? ' active' : '');
     pill.type = 'button';
     var index = document.createElement('span');
     index.className = 'pane-pill-index';
-    index.textContent = p.index;
+    index.textContent = paneIndex;
     var label = document.createElement('span');
     label.className = 'pane-pill-label';
     label.textContent = p.label || p.command || '窗格';
     pill.append(index, label);
-    pill.title = '窗格 ' + p.index + ' · ' + label.textContent;
+    pill.title = '窗格 ' + paneIndex + ' · ' + label.textContent;
     pill.setAttribute('aria-label', pill.title);
     pill.setAttribute('data-pane-id', p.id);
 
@@ -259,7 +261,7 @@ function _promptSetPaneLabel(pane) {
           document.querySelectorAll('.pane-pill').forEach(function (pill) {
             if (pill.dataset.paneId !== String(pane.id)) return;
             pill.querySelector('.pane-pill-label').textContent = trimmed || pane.command || '窗格';
-            pill.title = '窗格 ' + pane.index + ' · ' + (trimmed || pane.command || '窗格');
+            pill.title = '窗格 ' + pill.querySelector('.pane-pill-index').textContent + ' · ' + (trimmed || pane.command || '窗格');
             pill.setAttribute('aria-label', pill.title);
           });
         });
