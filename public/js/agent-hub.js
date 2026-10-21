@@ -93,7 +93,7 @@ var AgentHub = (function () {
     var elapsed = timeProgress(quotaWindow);
     var reset = quotaWindow.resetsAt ? new Date(Number(quotaWindow.resetsAt) * 1000) : null;
     var resetText = reset && !Number.isNaN(reset.getTime())
-      ? '重置 ' + reset.toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      ? (quotaWindow.expiresAt ? '到期 ' : '重置 ') + reset.toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
       : '重置时间未知';
     if (elapsed !== null) resetText += ' · 时间 ' + Math.round(elapsed) + '%';
     var used = quotaWindow.usedCredits == null ? quotaWindow.used : quotaWindow.usedCredits;
@@ -114,6 +114,7 @@ var AgentHub = (function () {
   }
 
   function profileTypeLabel(profile) {
+    if (profile.enterprise) return '集团 Credits';
     return profile.kind === 'subscription' ? '官方订阅' : 'API 服务';
   }
 
@@ -129,6 +130,28 @@ var AgentHub = (function () {
     var providers = (hub.ccSwitch && hub.ccSwitch.providers) || [];
     var accounts = (hub.codexSwitcher && hub.codexSwitcher.accounts) || [];
     var qoder = hub.qoder || {};
+    var enterprise = hub.enterprise || {};
+    var tokenSwitch = enterprise.tokenSwitch || {};
+    var enterprisePool = (enterprise.pools || []).find(function (pool) { return pool.id === 'enterprise'; });
+    var qoderPool = (enterprise.pools || []).find(function (pool) { return pool.id === 'qoder-ide'; });
+    var groupModels = (tokenSwitch.models || []).filter(function (model) { return model.app === 'codex'; });
+    var groupIds = groupModels.map(function (model) { return model.id; });
+    function managedProfiles(agentId) {
+      return groupModels.map(function (model) {
+        var catalog = model.meta.managedCatalog;
+        var active = providers.find(function (provider) {
+          return provider.agent === agentId && provider.active && provider.embeddedEnterprise && provider.enterpriseModelId === model.id;
+        });
+        return {
+          id: model.id, name: model.name, kind: 'subscription', enterprise: true, current: Boolean(active),
+          switchable: tokenSwitch.canSwitchInPanel === true, switchAction: 'activate-managed', agentId: agentId,
+          detail: (agentId === 'claude' ? '集团资源池 · 兼容路由' : '集团资源池') + (catalog.multiplier == null ? '' : ' · ' + catalog.multiplier + '×'),
+          capabilityNote: catalog.description,
+          message: tokenSwitch.loggedIn ? (tokenSwitch.canSwitchInPanel ? null : tokenSwitch.error) : '集团登录已过期，请刷新登录态',
+          quota: enterprisePool && enterprisePool.usage ? [{ label: '集团 Credits', value: enterprisePool.usage }] : [],
+        };
+      });
+    }
     var claudeProviders = providers.filter(function (provider) { return provider.agent === 'claude'; });
     var codexProviders = providers.filter(function (provider) { return provider.agent === 'codex'; });
     var activeClaudeProvider = claudeProviders.find(function (provider) { return provider.active; });
@@ -148,17 +171,21 @@ var AgentHub = (function () {
         { label: '5 小时', value: claudeWindow(claude.utilization && claude.utilization.five_hour, 300) },
         { label: '7 天', value: claudeWindow(claude.utilization && claude.utilization.seven_day, 10080) },
       ],
-    }] : []).concat(claudeProviders.map(function (provider) {
+    }] : []).concat(claudeProviders.filter(function (provider) {
+      return !(provider.embeddedEnterprise && groupIds.includes(provider.enterpriseModelId)) && !(provider.enterpriseRelay && !provider.active);
+    }).map(function (provider) {
       var official = provider.category === 'official';
       var zhipuSubscription = provider.category === 'cn_official';
       return {
-        id: provider.id, name: provider.name, detail: official ? 'Anthropic 官方订阅' : (zhipuSubscription ? '智谱 Coding Plan' : (provider.category || '自定义接口')), kind: official || zhipuSubscription ? 'subscription' : 'api',
-        current: provider.active, switchable: true, switchAction: 'activate-provider', agentId: 'claude', provider: provider,
-        message: official ? claude.quotaUnavailable : (provider.usage && (provider.usage.error || provider.usage.unavailable)),
+        id: provider.id, name: provider.name, detail: provider.enterpriseRelay ? 'CC Switch → Token Switch' : (official ? 'Anthropic 官方订阅' : (zhipuSubscription ? '智谱 Coding Plan' : (provider.category || '自定义接口'))), kind: official || zhipuSubscription || provider.enterpriseRelay ? 'subscription' : 'api',
+        enterprise: provider.enterpriseRelay,
+        current: provider.active, switchable: !provider.requiresNativeProxy, switchAction: 'activate-provider', agentId: 'claude', provider: provider,
+        externalApp: provider.requiresNativeProxy ? 'ccswitch' : null, externalLabel: '在 CC Switch 启用',
+        message: provider.enterpriseRelay ? '在 CC Switch 启用 Claude 本地路由，并在 Token Switch 启用集团模型；额度归属以集团账单为准。' : (official ? claude.quotaUnavailable : (provider.usage && (provider.usage.error || provider.usage.unavailable))),
         quota: official ? [
           { label: '5 小时', value: claudeWindow(claude.utilization && claude.utilization.five_hour, 300) },
           { label: '7 天', value: claudeWindow(claude.utilization && claude.utilization.seven_day, 10080) },
-        ] : quotaItems(provider.usage, ['短周期', '长周期']),
+        ] : (provider.enterpriseRelay && enterprisePool && enterprisePool.usage ? [{ label: '集团 Credits', value: enterprisePool.usage }] : quotaItems(provider.usage, ['短周期', '长周期'])),
       };
     }));
 
@@ -177,7 +204,7 @@ var AgentHub = (function () {
         quota: quotaItems(usage, ['5 小时', '7 天']),
       };
     }).concat(codexProviders.filter(function (provider) {
-      return !(accounts.length && provider.category === 'official');
+      return !(accounts.length && provider.category === 'official') && !(provider.embeddedEnterprise && groupIds.includes(provider.enterpriseModelId));
     }).map(function (provider) {
       var zhipuSubscription = provider.category === 'cn_official';
       return {
@@ -190,6 +217,9 @@ var AgentHub = (function () {
         quota: quotaItems(provider.usage, ['短周期', '长周期']),
       };
     }));
+
+    codexProfiles = codexProfiles.concat(managedProfiles('codex'));
+    claudeProfiles = claudeProfiles.concat(managedProfiles('claude'));
 
     return [
       {
@@ -214,9 +244,11 @@ var AgentHub = (function () {
       {
         id: 'qoder', name: 'Qoder', mark: 'Q', installed: Boolean(qoder.installed),
         profiles: qoder.installed ? [{
-          id: 'qoder-official', name: 'Qoder 当前登录', detail: '官方账号', kind: 'subscription', current: true, switchable: false,
+          id: 'qoder-official', name: 'Qoder 当前登录', detail: enterprise.qoder && enterprise.qoder.userType === 'teams' ? '集团账号' : '官方账号', kind: 'subscription', current: true, switchable: false,
           message: qoder.usage && (qoder.usage.error || qoder.usage.unavailable),
-          configureAction: 'configure-qoder',
+          configureAction: qoderPool && qoderPool.usage ? null : 'configure-qoder',
+          externalApp: enterprise.available ? 'alilang' : null, externalLabel: '在阿里郎查看',
+          capabilityNote: enterprise.qoder && enterprise.qoder.reason,
           quota: qoder.usage && qoder.usage.usedPercent != null ? [{ label: 'Credits', value: qoder.usage }] : [],
         }] : [],
         sessions: qoder.recentSessions || [],
@@ -273,6 +305,22 @@ var AgentHub = (function () {
       + '<div class="ah-current-next"><small>生效范围</small><strong>新会话</strong><span>运行中的会话保持原身份</span></div></div>';
   }
 
+  function renderEnterprisePools(agent) {
+    var enterprise = state.hub && state.hub.enterprise;
+    if (!enterprise || !enterprise.available) return '';
+    return (enterprise.pools || []).filter(function (pool) {
+      return !(agent.id === 'qoder' && pool.id === 'qoder-ide' && pool.usage);
+    }).map(function (pool) {
+      var needsAuthorization = !pool.usage && pool.status === 'needs-authorization';
+      var statusLabel = pool.usage ? '当前登录账号' : (needsAuthorization ? '等待系统授权' : '查询未接通');
+      return '<article class="ah-usage-card ah-enterprise-pool"><div class="ah-usage-title"><strong>' + esc(pool.name)
+        + '</strong><span>' + statusLabel + '</span></div>'
+        + (pool.usage ? quotaBar('月 Credits', pool.usage) : '<p class="ah-enterprise-status">' + esc(pool.reason || '暂未获得额度数据') + '</p>')
+        + (needsAuthorization ? '<p class="ah-enterprise-help">若 macOS 弹出证书或私钥访问提示，请选择“允许”后重试。</p>' : '')
+        + '<button class="ms-btn ghost compact" data-ah-action="refresh-enterprise-quota">重新读取额度</button></article>';
+    }).join('');
+  }
+
   function renderProfileQuota(profile) {
     var notice = profile.message ? '<div class="ah-account-message">' + esc(profile.message) + '</div>' : '';
     var bars = (profile.quota || []).map(function (item) { return quotaBar(item.label, item.value); }).join('');
@@ -296,8 +344,11 @@ var AgentHub = (function () {
 
   function renderProfiles(agent) {
     if (!agent.profiles.length) return '<div class="ah-empty">未发现可用运行身份。</div>';
-    return '<div class="ah-profile-grid">' + agent.profiles.map(function (profile) {
+    function card(profile) {
+      var managed = profile.switchAction === 'activate-managed';
       var controls = [];
+      if (profile.externalApp) controls.push('<button class="ms-btn ghost compact" data-ah-action="open-enterprise-app" data-app="'
+        + esc(profile.externalApp) + '">' + esc(profile.externalLabel || '打开应用') + '</button>');
       if (profile.configureAction) {
         controls.push('<span class="ms-badge green">当前</span><button class="ms-btn ghost compact" data-ah-action="configure-qoder">配置额度</button>');
       } else if (profile.current) {
@@ -320,19 +371,29 @@ var AgentHub = (function () {
         + (state.updatingAutoProfileKey === warmupKey ? ' disabled' : '') + '>'
         + (state.updatingAutoProfileKey === warmupKey ? '保存中…' : ('自动：' + (profile.autoWarmupEnabled ? '开' : '关'))) + '</button>');
       var control = '<div class="ah-card-controls">' + controls.join('') + '</div>';
-      return '<article class="ah-profile-card' + (profile.current ? ' active' : '') + '"><div class="ah-account-top"><div>'
+      return '<article class="ah-profile-card' + (managed ? ' ah-managed-profile' : '') + (profile.current ? ' active' : '') + '"><div class="ah-account-top"><div>'
         + '<div class="ah-profile-type">' + esc(profileTypeLabel(profile)) + '</div><div class="ah-account-name">' + esc(profile.name) + '</div>'
         + '<div class="ah-account-meta">' + esc(profile.detail || '') + (profile.secondary ? ' · ' + esc(profile.secondary) : '') + '</div></div>' + control + '</div>'
-        + renderProfileQuota(profile)
-        + '<div class="ah-account-foot"><span>' + (profile.current ? '新会话将使用此身份' : (profile.switchable ? '切换不影响运行中的会话' : '当前仅查看，暂不支持面板内切换')) + '</span>'
+        + (managed ? '' : renderProfileQuota(profile))
+        + (profile.capabilityNote ? '<p class="ah-capability-note">' + esc(profile.capabilityNote) + '</p>' : '')
+        + (managed ? '' : '<div class="ah-account-foot"><span>' + (profile.current ? '新会话将使用此身份' : (profile.switchable ? '切换不影响运行中的会话' : '当前仅查看，暂不支持面板内切换')) + '</span>'
         + (profile.lastWarmupAt ? '<span>最近' + (profile.lastWarmupMode === 'automatic' ? '自动' : '') + '暖号 ' + esc(relative(profile.lastWarmupAt)) + '</span>'
           : (profile.expiresAt ? '<span>订阅至 ' + esc(profile.expiresAt.slice(0, 10)) + '</span>' : (profile.lastUsedAt ? '<span>最近使用 ' + esc(relative(profile.lastUsedAt)) + '</span>' : '')))
-        + '</div></article>';
-    }).join('') + '</div>';
+        + '</div>') + '</article>';
+    }
+    var managed = agent.profiles.filter(function (profile) { return profile.switchAction === 'activate-managed'; });
+    var regular = agent.profiles.filter(function (profile) { return profile.switchAction !== 'activate-managed'; });
+    var managedMessage = managed.find(function (profile) { return profile.message; });
+    return '<div class="ah-profile-grid">' + regular.map(card).join('')
+      + (managed.length ? '<div class="ah-managed-models"><p class="ah-managed-note">'
+        + esc(managedMessage ? managedMessage.message : '集团模型共用月 Credits，额度统一见下方“额度与消耗”。切换仅对新会话生效。')
+        + '</p>' + managed.map(card).join('') + '</div>' : '') + '</div>';
   }
 
   function renderUsage(agent) {
     var profile = currentProfile(agent);
+    var sharedQuota = profile && profile.enterprise && state.hub && state.hub.enterprise
+      && state.hub.enterprise.available && (state.hub.enterprise.pools || []).some(function (pool) { return pool.id === 'enterprise'; });
     var quota = profile ? renderProfileQuota(profile) : '<div class="ah-account-message">当前运行身份未识别</div>';
     var models = Object.entries(agent.modelUsage || {}).map(function (entry) {
       var usage = entry[1];
@@ -349,10 +410,10 @@ var AgentHub = (function () {
         return '<tr><th scope="row">' + esc(model.name) + '</th><td>' + fmt(model.input) + '</td><td>' + fmt(model.output)
           + '</td><td>' + fmt(model.cache) + '</td><td>' + fmt(model.total) + '</td></tr>';
       }).join('') + '</tbody></table></div>' : '<div class="ah-account-message">本地日志尚未记录 Token 明细</div>';
-    return '<div class="ah-usage-grid"><article class="ah-usage-card"><div class="ah-usage-title"><strong>额度</strong><span>归属当前运行身份</span></div>' + quota + '</article>'
+    return '<div class="ah-usage-grid">' + (sharedQuota ? '' : '<article class="ah-usage-card"><div class="ah-usage-title"><strong>' + (agent.id === 'qoder' && profile && !profile.configureAction ? 'Qoder 月额度' : '额度') + '</strong><span>归属当前运行身份</span></div>' + quota + '</article>')
       + '<article class="ah-usage-card"><div class="ah-usage-title"><strong>本地消耗</strong><span>' + esc(agent.usageScope || '由历史会话汇总') + '</span></div><div class="ah-consumption">'
       + agent.consumption.map(function (item) { return '<div><strong>' + esc(item.value) + '</strong><span>' + esc(item.label) + '</span></div>'; }).join('')
-      + '</div></article></div>' + details;
+      + '</div></article>' + renderEnterprisePools(agent) + '</div>' + details;
   }
 
   function renderSessions(agent) {
@@ -457,6 +518,27 @@ var AgentHub = (function () {
       load();
       return;
     }
+    if (action === 'open-enterprise-app') {
+      button.disabled = true;
+      window.Api.post('/api/agent-hub/enterprise/apps/' + encodeURIComponent(button.dataset.app) + '/open')
+        .then(function () { window.AppShell.toast('已打开应用，请在应用内查看额度或切换模型'); })
+        .catch(function (error) { window.AppShell.toast(error.message || '无法打开应用'); })
+        .finally(function () { button.disabled = false; });
+      return;
+    }
+    if (action === 'refresh-enterprise-quota') {
+      button.disabled = true;
+      var refreshLabel = button.textContent;
+      button.textContent = '正在读取…';
+      window.Api.post('/api/agent-hub/enterprise/quota/refresh').then(function (result) {
+        var alilang = result && result.alilang;
+        if (alilang && alilang.status !== 'available' && alilang.reason) window.AppShell.toast(alilang.reason);
+        return load();
+      })
+        .catch(function (error) { window.AppShell.toast(error.message || '额度读取失败'); })
+        .finally(function () { button.disabled = false; button.textContent = refreshLabel; });
+      return;
+    }
     if (action === 'configure-qoder') {
       var prompt = window.showPrompt ? window.showPrompt({
         title: '配置 Qoder 网页会话 Cookie',
@@ -540,7 +622,7 @@ var AgentHub = (function () {
       confirmAuto.then(function (yes) { if (yes) return saveAuto(); });
       return;
     }
-    if (action === 'activate-account' || action === 'activate-provider') {
+    if (action === 'activate-account' || action === 'activate-provider' || action === 'activate-managed') {
       var isAccount = action === 'activate-account';
       var agentId = isAccount ? 'codex' : (button.dataset.agentId || 'codex');
       var agentName = agentId === 'claude' ? 'Claude' : 'Codex';
@@ -553,7 +635,9 @@ var AgentHub = (function () {
       proceed.then(function (yes) {
         if (!yes) return;
         button.disabled = true;
-        var endpoint = isAccount
+        var endpoint = action === 'activate-managed'
+          ? '/api/agent-hub/enterprise/models/' + encodeURIComponent(button.dataset.providerId) + '/activate'
+          : isAccount
           ? '/api/agent-hub/codex-switcher/' + encodeURIComponent(button.dataset.accountId) + '/activate'
           : '/api/agent-hub/providers/' + encodeURIComponent(button.dataset.providerId) + '/activate';
         return window.Api.post(endpoint, isAccount ? undefined : { agent: agentId })

@@ -468,6 +468,7 @@ function shutdown(signal) {
 
   // Stop automatic Codex warm-up checks.
   agentHubService.stopAutoWarmup();
+  void agentHubService.stopEnterpriseRuntime();
 
   // Destroy all terminal PTY connections
   terminalManager.destroyAll();
@@ -512,6 +513,7 @@ statusMonitor.start(config.pollInterval);
 terminalManager.startReaper();
 notificationStore.startReaper();
 agentHubService.startAutoWarmup();
+agentHubService.startEnterpriseRuntime().catch(() => console.error('集团模型中继恢复失败，请在 Agent 控制台重新启用'));
 // Server liveness and capability detection, with its own per-server backoff.
 healthService.start(5000);
 // Reclaim SSH panes whose detached TTL has elapsed.

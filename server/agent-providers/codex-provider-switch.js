@@ -65,6 +65,18 @@ function object(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
 }
 
+// CC Switch stores model catalogs in its own camelCase shape (`model`,
+// `displayName`, `reasoningLevels`). Codex expects a different snake_case
+// schema (`slug`, `supported_reasoning_levels` as `{ effort, description }`,
+// plus many more required fields) and refuses to start when the file it points
+// at does not match. Only forward a catalog that is already Codex-native;
+// otherwise the caller drops the reference so Codex falls back to its built-in
+// metadata for the model instead of failing to load its configuration.
+function codexNativeCatalog(value) {
+  if (!object(value) || !Array.isArray(value.models)) return false;
+  return value.models.every((model) => object(model) && typeof model.slug === 'string' && model.slug.length > 0);
+}
+
 function deepMerge(target, source) {
   const result = object(target) ? { ...target } : {};
   for (const [key, value] of Object.entries(object(source) ? source : {})) {
@@ -93,6 +105,12 @@ function providerConfig(row, commonSnippet, liveText) {
     throw new AppError(ErrorCode.VALIDATION_ERROR, `供应商配置 TOML 无效：${error.message}`);
   }
 
+  if (meta.tmuxPanelEnterprise === 'tmux-panel-token-switch-v1') {
+    try { config = deepMerge(parse(liveText || ''), config); } catch {
+      throw new AppError(ErrorCode.VALIDATION_ERROR, '现有 Codex 配置无效，无法保留运行设置');
+    }
+  }
+
   if (commonSnippet && String(commonSnippet).trim()) {
     let common;
     try { common = parse(String(commonSnippet)); } catch { common = null; }
@@ -113,7 +131,7 @@ function providerConfig(row, commonSnippet, liveText) {
 
   const ownedCatalog = typeof config.model_catalog_json === 'string'
     && basename(config.model_catalog_json) === 'cc-switch-model-catalog.json';
-  const catalog = ownedCatalog && object(settings.modelCatalog) ? settings.modelCatalog : null;
+  const catalog = ownedCatalog && codexNativeCatalog(settings.modelCatalog) ? settings.modelCatalog : null;
   if (ownedCatalog && !catalog) delete config.model_catalog_json;
 
   if (row.category !== 'official') {

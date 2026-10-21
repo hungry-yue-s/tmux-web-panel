@@ -11,6 +11,7 @@ import { parse as parseToml } from 'smol-toml';
 import { AppError, ErrorCode, handle } from '../servers/errors.js';
 import { createClaudeProviderSwitcher } from '../agent-providers/claude-provider-switch.js';
 import { createCodexProviderSwitcher } from '../agent-providers/codex-provider-switch.js';
+import { createEnterpriseAiService } from '../agent-providers/enterprise-ai.js';
 import { requireSameOrigin } from './servers.js';
 
 const execFileAsync = promisify(execFile);
@@ -417,28 +418,42 @@ function zhipuRuntime(settingsConfig) {
   };
 }
 
+function parseProviderMeta(value) {
+  try {
+    const parsed = JSON.parse(value || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch { return {}; }
+}
+
 async function ccSwitchProviders(databasePath, runSQLite, usageForProvider, strict = false, agents = ['claude', 'codex']) {
   const selected = agents.filter((agent) => ['claude', 'codex'].includes(agent));
   if (!selected.length) return [];
   const agentClause = selected.map((agent) => `'${agent}'`).join(',');
   const query = `select id, app_type, name, category, is_current, in_failover_queue,
-    provider_type, limit_daily_usd, limit_monthly_usd, settings_config
+    provider_type, limit_daily_usd, limit_monthly_usd, settings_config, meta
     from providers where app_type in (${agentClause}) order by app_type, sort_index`;
   try {
     const stdout = await runSQLite(databasePath, query);
     const rows = JSON.parse(stdout || '[]');
-    return Promise.all(rows.map(async (row) => ({
-      id: String(row.id),
-      agent: String(row.app_type),
-      name: String(row.name),
-      category: row.category ? String(row.category) : null,
-      active: Boolean(row.is_current),
-      failover: Boolean(row.in_failover_queue),
-      providerType: row.provider_type ? String(row.provider_type) : null,
-      dailyLimitUsd: row.limit_daily_usd === null ? null : Number(row.limit_daily_usd),
-      monthlyLimitUsd: row.limit_monthly_usd === null ? null : Number(row.limit_monthly_usd),
-      usage: usageForProvider ? await usageForProvider(row) : null,
-    })));
+    return Promise.all(rows.map(async (row) => {
+      const meta = parseProviderMeta(row.meta);
+      return {
+        id: String(row.id),
+        agent: String(row.app_type),
+        name: String(row.name),
+        category: row.category ? String(row.category) : null,
+        active: Boolean(row.is_current),
+        failover: Boolean(row.in_failover_queue),
+        providerType: row.provider_type ? String(row.provider_type) : null,
+        dailyLimitUsd: row.limit_daily_usd === null ? null : Number(row.limit_daily_usd),
+        monthlyLimitUsd: row.limit_monthly_usd === null ? null : Number(row.limit_monthly_usd),
+        requiresNativeProxy: Boolean(meta.apiFormat && meta.apiFormat !== 'anthropic'),
+        enterpriseRelay: meta.tmuxPanelRelay === 'token-switch-claude-relay-v1',
+        embeddedEnterprise: meta.tmuxPanelEnterprise === 'tmux-panel-token-switch-v1',
+        enterpriseModelId: meta.tmuxPanelEnterprise === 'tmux-panel-token-switch-v1' && typeof meta.enterpriseModelId === 'string' ? meta.enterpriseModelId : null,
+        usage: usageForProvider ? await usageForProvider(row) : null,
+      };
+    }));
   } catch (error) {
     if (strict) throw error;
     return [];
@@ -457,6 +472,7 @@ export function createAgentHubService(options = {}) {
   const warmupHistoryPath = options.warmupHistoryPath || join(home, '.config', 'tmux-web-panel', 'agent-warmups.json');
   const accountJournalPath = options.accountJournalPath || join(home, '.config', 'tmux-web-panel', 'codex-account-switch.json');
   const fetchImpl = options.fetchImpl || globalThis.fetch;
+  const enterpriseService = options.enterpriseService || createEnterpriseAiService({ home });
   const runSQLite = options.runSQLite || (async (path, sql) => {
     const result = await execFileAsync('sqlite3', ['-json', path, sql], { timeout: 5000 });
     return result.stdout;
@@ -676,13 +692,14 @@ export function createAgentHubService(options = {}) {
     const store = await readJSON(accountsPath, { accounts: [], active_account_id: null, masked_account_ids: [] });
     const accounts = includeCodex && Array.isArray(store.accounts) ? store.accounts : [];
     const providerAgents = [includeClaude && 'claude', includeCodex && 'codex'].filter(Boolean);
-    const [usages, providers, qoderTasks, qoderHistory, qoderUsage, warmups] = await Promise.all([
+    const [usages, providers, qoderTasks, qoderHistory, qoderUsage, warmups, enterprise] = await Promise.all([
       includeCodex ? usageFor(accounts) : new Map(),
       ccSwitchProviders(ccSwitchDatabase, runSQLite, cachedProviderUsage, false, providerAgents),
       includeCodex ? qoderActivity(qoderTasksPath) : { installed: false, taskCount: 0, lastActivityAt: null },
       includeCodex ? qoderSessions(qoderProjectsPath) : { installed: false, recentSessions: [], totalSessions: 0, totalMessages: 0, totalTokens: null, lastActivityAt: null },
       includeCodex ? fetchQoderUsage() : null,
       includeCodex ? readWarmupHistory() : { accounts: {} },
+      enterpriseService.status({ claude: includeClaude, codex: includeCodex }),
     ]);
     const qoder = {
       installed: qoderTasks.installed || qoderHistory.installed,
@@ -736,7 +753,8 @@ export function createAgentHubService(options = {}) {
         })),
       },
       ccSwitch: { available: publicProviders.length > 0, providers: publicProviders },
-      qoder: { ...qoder, usage: qoderUsage },
+      qoder: { ...qoder, usage: enterprise?.pools?.find((pool) => pool.id === 'qoder-ide')?.usage || qoderUsage },
+      enterprise,
       profileEvents: events,
     };
   }
@@ -1098,7 +1116,7 @@ export function createAgentHubService(options = {}) {
       await recordProfile(agent, {
         id: target.id,
         name: target.name,
-        kind: target.category === 'official' || (agent === 'codex' && target.category === 'cn_official') ? 'subscription' : 'api',
+        kind: target.embeddedEnterprise || target.category === 'official' || (agent === 'codex' && target.category === 'cn_official') ? 'subscription' : 'api',
       });
       return { providerId, agent, active: true };
     });
@@ -1109,6 +1127,16 @@ export function createAgentHubService(options = {}) {
   return {
     status, activateCodex, warmupCodex, configureAutoWarmup, warmupProvider, configureProviderAutoWarmup, runAutoWarmups,
     startAutoWarmup, stopAutoWarmup, activateProvider, configureQoderSession,
+    openEnterpriseApp: enterpriseService.openApp,
+    previewClaudeRelay: enterpriseService.previewClaudeRelay,
+    prepareClaudeRelay: enterpriseService.prepareClaudeRelay,
+    activateManagedModel: async (agent, modelId) => {
+      const prepared = await enterpriseService.prepareManaged(agent, modelId);
+      return activateProvider(prepared.providerId, agent);
+    },
+    retryEnterpriseQuota: enterpriseService.retryQuota,
+    startEnterpriseRuntime: enterpriseService.startRuntime,
+    stopEnterpriseRuntime: enterpriseService.stopRuntime,
   };
 }
 
@@ -1130,5 +1158,10 @@ export function createAgentHubRouter(service = createAgentHubService()) {
     req.params.providerId, req.body && req.body.enabled,
   )));
   router.post('/qoder/session', handle((req) => service.configureQoderSession(req.body)));
+  router.post('/enterprise/apps/:app/open', handle((req) => service.openEnterpriseApp(req.params.app)));
+  router.post('/enterprise/claude-relay/preview', handle(() => service.previewClaudeRelay()));
+  router.post('/enterprise/claude-relay/prepare', handle(() => service.prepareClaudeRelay()));
+  router.post('/enterprise/models/:modelId/activate', handle((req) => service.activateManagedModel(req.body?.agent, req.params.modelId)));
+  router.post('/enterprise/quota/refresh', handle(() => service.retryEnterpriseQuota()));
   return router;
 }

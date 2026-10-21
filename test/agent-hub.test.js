@@ -355,4 +355,110 @@ describe('AgentHub', () => {
     expect(win.document.querySelector('.ah-source-card.claude').textContent).not.toContain('已用 0%');
     hub.stop();
   });
+
+  it('merges both credit pools and managed models into the existing profiles and usage area', async () => {
+    const usage = { usedPercent: 100, usedCredits: 20000, totalCredits: 20000, remainingCredits: 0 };
+    const { win, hub } = loadHub({ hub: {
+      codexSwitcher: { accounts: [] }, ccSwitch: { providers: [] },
+      qoder: { installed: true, usage },
+      enterprise: { available: true, qoder: { reason: '当前账号未开通自定义模型' },
+        tokenSwitch: { installed: true, loggedIn: true, canSwitchInPanel: true, models: [{ id: 'auto', app: 'codex', name: 'Auto',
+          meta: { managedCatalog: { multiplier: 1, description: '<集团模型>' } } }] },
+        pools: [{ id: 'qoder-ide', name: 'Qoder 专属月额度', usage },
+          { id: 'enterprise', name: '集团 AI 月额度', reason: '阿里郎额度查询尚未接通' }],
+      },
+    } });
+    hub.start();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    const profile = [...win.document.querySelectorAll('.ah-profile-card')].find((card) => card.textContent.includes('Auto'));
+    expect(profile.textContent).toContain('集团 Credits');
+    expect(profile.textContent).toContain('<集团模型>');
+    expect(profile.querySelector('[data-ah-action="activate-provider"]')).toBeNull();
+    expect(profile.querySelector('[data-ah-action="activate-managed"]')).toBeTruthy();
+    expect(profile.querySelector('[data-app="tokenswitch"]')).toBeNull();
+    expect(win.document.querySelectorAll('.ah-usage-grid .ah-enterprise-pool')).toHaveLength(2);
+    const unknown = [...win.document.querySelectorAll('.ah-enterprise-pool')].find((card) => card.textContent.includes('集团 AI'));
+    expect(unknown.textContent).toContain('查询未接通');
+    expect(unknown.querySelector('.ah-quota-used')).toBeNull();
+    win.document.querySelector('[data-agent-id="qoder"]').click();
+    expect(win.document.querySelectorAll('.ah-usage-grid .ah-enterprise-pool')).toHaveLength(1);
+    expect(win.document.querySelector('.ah-usage-grid').textContent).toContain('Qoder 月额度');
+    expect(win.document.querySelector('[data-ah-action="configure-qoder"]')).toBeNull();
+    expect(win.document.querySelector('.ah-profile-card').textContent).toContain('当前账号未开通自定义模型');
+    hub.stop();
+  });
+
+  it('merges the active embedded Claude provider into its managed model card', async () => {
+    const { win, hub } = loadHub({ hub: {
+      ccSwitch: { providers: [{ id: 'relay', agent: 'claude', name: '集团中继', active: true,
+        embeddedEnterprise: true, enterpriseModelId: 'auto', requiresNativeProxy: false }] },
+      enterprise: { available: true, tokenSwitch: { installed: true, loggedIn: true, canSwitchInPanel: true,
+        models: [{ id: 'auto', app: 'codex', name: 'Auto', meta: { managedCatalog: {} } }] }, pools: [] },
+    } });
+    hub.start();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    win.document.querySelector('[data-agent-id="claude"]').click();
+    expect(win.document.querySelectorAll('.ah-profile-card')).toHaveLength(1);
+    expect(win.document.querySelector('.ah-profile-card').textContent).toContain('集团 Credits');
+    expect(win.document.querySelector('.ah-profile-card').classList.contains('active')).toBe(true);
+    expect(win.document.querySelector('[data-app="ccswitch"]')).toBeNull();
+    expect(win.document.querySelector('[data-ah-action="activate-provider"]')).toBeNull();
+    expect(win.document.querySelector('[data-ah-action="preview-claude-relay"]')).toBeNull();
+    hub.stop();
+  });
+
+  it('shows a shared group quota once and gives actionable authorization feedback on retry', async () => {
+    const reason = '额度读取超时，请检查系统钥匙串授权或网络后手动重试';
+    const { win, hub } = loadHub({ hub: {
+      ccSwitch: { providers: [{ id: 'group', agent: 'codex', active: true,
+        embeddedEnterprise: true, enterpriseModelId: 'auto' }] },
+      enterprise: { available: true,
+        tokenSwitch: { installed: true, loggedIn: true, canSwitchInPanel: true,
+          models: ['auto', 'basic'].map((id) => ({ id, app: 'codex', name: id, meta: { managedCatalog: {} } })) },
+        pools: [{ id: 'enterprise', name: '集团 AI 月额度', status: 'needs-authorization', reason }],
+      },
+    } });
+    let finish;
+    win.Api.post.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    hub.start();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    const profiles = win.document.querySelector('.ah-profile-grid');
+    expect(profiles.querySelectorAll('[data-ah-action="activate-managed"]')).toHaveLength(1);
+    expect(profiles.textContent).toContain('集团模型共用月 Credits');
+    expect(profiles.textContent).not.toContain('暂未读取到额度');
+    expect(win.document.querySelectorAll('.ah-enterprise-pool')).toHaveLength(1);
+    expect(win.document.getElementById('agent-hub').textContent.split(reason)).toHaveLength(2);
+    const retry = win.document.querySelector('[data-ah-action="refresh-enterprise-quota"]');
+    expect(retry.closest('article').textContent).toContain('等待系统授权');
+    expect(retry.closest('article').textContent).toContain('证书或私钥访问提示');
+    retry.click();
+    expect(retry.disabled).toBe(true);
+    expect(retry.textContent).toBe('正在读取…');
+    finish({ alilang: { status: 'needs-authorization', reason } });
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    expect(win.Api.post).toHaveBeenCalledWith('/api/agent-hub/enterprise/quota/refresh');
+    expect(win.AppShell.toast).toHaveBeenCalledWith(reason);
+    expect(win.document.querySelector('[data-ah-action="refresh-enterprise-quota"]').disabled).toBe(false);
+    hub.stop();
+  });
+
+  it('switches a managed Claude model directly through the existing confirmation flow', async () => {
+    const { win, hub } = loadHub({ hub: {
+      enterprise: { available: true, tokenSwitch: { installed: true, loggedIn: true, canSwitchInPanel: true,
+        models: [{ id: 'auto', app: 'codex', name: 'Auto', meta: { managedCatalog: {} } }] }, pools: [] },
+    } });
+    win.showConfirm = vi.fn().mockResolvedValue(false);
+    hub.start();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    win.document.querySelector('[data-agent-id="claude"]').click();
+    win.document.querySelector('[data-ah-action="activate-managed"]').click();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    expect(win.Api.post).not.toHaveBeenCalled();
+    win.showConfirm.mockResolvedValue(true);
+    win.document.querySelector('[data-ah-action="activate-managed"]').click();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    expect(win.Api.post).toHaveBeenCalledWith('/api/agent-hub/enterprise/models/auto/activate', { agent: 'claude' });
+    expect(win.Api.post).toHaveBeenCalledTimes(1);
+    hub.stop();
+  });
 });

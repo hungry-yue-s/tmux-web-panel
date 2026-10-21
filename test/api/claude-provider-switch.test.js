@@ -24,6 +24,16 @@ afterEach(async () => {
 });
 
 describe('embedded Claude provider switcher', () => {
+  it('leaves protocol-converted providers to the native CC Switch proxy', async () => {
+    const home = await fixture();
+    const original = await readFile(join(home, '.claude', 'settings.json'), 'utf8');
+    const runSQLite = async () => JSON.stringify([{
+      id: 'relay', settings_config: '{}', meta: '{"apiFormat":"openai_responses","isFullUrl":true}',
+    }]);
+    const switcher = createClaudeProviderSwitcher({ home, runSQLite });
+    await expect(switcher('relay')).rejects.toMatchObject({ code: 'UNSUPPORTED' });
+    expect(await readFile(join(home, '.claude', 'settings.json'), 'utf8')).toBe(original);
+  });
   it('backfills the current provider and replaces only provider-owned environment variables', async () => {
     const home = await fixture();
     const sql = [];

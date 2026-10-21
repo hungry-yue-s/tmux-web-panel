@@ -8228,7 +8228,7 @@ button.list-row:hover {
 .ah-current-next { min-width: 170px; padding-left: 20px; border-left: 1px solid var(--border-subtle); }
 .ah-binding-note { display: flex; flex-wrap: wrap; gap: 8px 22px; padding: 10px 14px; border: 1px solid var(--border-subtle); border-radius: 10px; color: var(--text-muted); background: color-mix(in srgb, var(--bg-card) 75%, transparent); font-size: 10px; }
 .ah-binding-note strong { color: var(--text-primary); }
-.ah-profile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ah-profile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 10px; }
 .ah-profile-card { min-width: 0; padding: 15px; }
 .ah-profile-card.active { border-color: color-mix(in srgb, var(--accent-green) 50%, var(--border-subtle)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-green) 12%, transparent), 0 12px 30px rgba(0, 0, 0, .08); }
 .ah-account-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
@@ -8257,6 +8257,15 @@ button.list-row:hover {
 .ah-model-usage th, .ah-model-usage td { padding: 10px; border-bottom: 1px solid var(--border-subtle); text-align: right; white-space: nowrap; }
 .ah-model-usage th:first-child { text-align: left; }
 .ah-model-usage td { font-family: var(--ms-mono); }
+.ah-enterprise-status { min-height: 2.8em; margin: 0 0 12px; color: var(--text-muted); font-size: 11px; line-height: 1.6; }
+.ah-enterprise-help { margin: 0 0 12px; color: var(--text-secondary); font-size: 10px; line-height: 1.6; }
+.ah-managed-models { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 8px; }
+.ah-managed-note { grid-column: 1 / -1; margin: 2px 0; color: var(--text-muted); font-size: 10px; line-height: 1.6; }
+.ah-managed-profile { padding: 12px; }
+.ah-managed-profile .ah-account-top { margin-bottom: 0; }
+.ah-managed-profile .ah-account-name { white-space: normal; overflow-wrap: anywhere; }
+.ah-managed-profile .ah-capability-note { margin: 8px 0 0; }
+.ah-capability-note { color: var(--text-muted); font-size: 10px; line-height: 1.6; }
 .ms-btn.compact { min-height: 27px; padding: 4px 9px; font-size: 10px; }
 .ah-link-button { border: 0; color: var(--accent-blue); background: transparent; cursor: pointer; font: inherit; font-size: 11px; }
 .ah-provider-list { overflow: hidden; }
@@ -8305,6 +8314,7 @@ button.list-row:hover {
   .ah-actions .ms-btn { flex: 1; }
   .ah-source-grid,
   .ah-profile-grid,
+  .ah-managed-models,
   .ah-usage-grid { grid-template-columns: 1fr; }
   .ah-source-card.qoder { grid-column: auto; }
   .ah-current-profile { grid-template-columns: 1fr; gap: 12px; }

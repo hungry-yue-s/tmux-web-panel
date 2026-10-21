@@ -54,7 +54,8 @@ async function fixture() {
       access_token: 'rotated-access-a', refresh_token: 'rotated-refresh-a',
     },
   }));
-  return { root, accountsPath, codexAuthPath, qoderTasksPath, qoderProjectsPath, qoderSessionPath, profileEventsPath, warmupHistoryPath };
+  return { root, home: root, accountsPath, codexAuthPath, qoderTasksPath, qoderProjectsPath, qoderSessionPath, profileEventsPath, warmupHistoryPath,
+    enterpriseService: { status: async () => null, openApp: async () => ({ opened: true }) } };
 }
 
 function zhipuProvider(settings = {}) {

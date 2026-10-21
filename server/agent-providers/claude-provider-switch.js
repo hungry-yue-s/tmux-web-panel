@@ -108,9 +108,13 @@ export function createClaudeProviderSwitcher(options = {}) {
     await recover();
     if (!ID_RE.test(providerId || '')) throw new AppError(ErrorCode.VALIDATION_ERROR, '无效的供应商 ID');
     const rows = parseJSON(await runSQLite(databasePath,
-      "select id, name, category, settings_config, is_current from providers where app_type='claude' order by sort_index"), []);
+      "select id, name, category, settings_config, meta, is_current from providers where app_type='claude' order by sort_index"), []);
     const target = rows.find((row) => row.id === providerId);
     if (!target) throw new AppError(ErrorCode.VALIDATION_ERROR, 'Claude 供应商不存在', { status: 404 });
+    const format = parseJSON(target.meta)?.apiFormat;
+    if (format && format !== 'anthropic') {
+      throw new AppError(ErrorCode.UNSUPPORTED, '该供应商需要 CC Switch 本地协议转换，请在 CC Switch 中启用路由并切换');
+    }
     if (target.is_current) return { providerId, active: true, unchanged: true };
 
     const takeover = parseJSON(await runSQLite(databasePath,
