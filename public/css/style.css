@@ -8438,3 +8438,75 @@ button.list-row:hover {
   justify-content: space-between;
   color: var(--text-secondary);
 }
+
+/* The Swift window shares one header with the web workspace. Reserve the
+   system traffic lights; keep browser and older native layouts unchanged. */
+html.tmux-native-titlebar .brand {
+  height: 44px;
+  min-height: 44px;
+  padding: 0 12px 0 80px;
+}
+
+html.tmux-native-titlebar .brand-mark,
+html.tmux-native-titlebar .brand-meta,
+html.tmux-native-titlebar .sidebar-collapsed .brand-copy {
+  display: none;
+}
+
+html.tmux-native-titlebar .brand-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+html.tmux-native-titlebar .ms-app.sidebar-collapsed .brand {
+  justify-content: flex-end;
+  padding: 0 12px 0 80px;
+}
+
+html.tmux-native-titlebar .ms-topbar {
+  min-height: 56px;
+  padding-inline: 20px;
+}
+
+html.tmux-native-titlebar .ms-topbar.terminal-layout {
+  min-height: 44px;
+  margin: 0;
+  padding: 8px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+html.tmux-native-titlebar .ms-topbar.terminal-layout .crumbs {
+  text-align: left;
+}
+
+html.tmux-native-titlebar .ms-topbar.terminal-layout .page-title {
+  font-weight: 600;
+  text-shadow: none;
+}
+
+html.tmux-native-titlebar .ms-topbar.terminal-layout .top-actions,
+html.tmux-native-titlebar .ms-topbar .terminal-header-actions {
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+html.tmux-native-titlebar .ms-topbar.terminal-layout .terminal-tool-button,
+html.tmux-native-titlebar .ms-topbar .terminal-tool-btn {
+  flex: 0 0 28px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+}
+
+html.tmux-native-titlebar .mobile-header {
+  min-height: 56px;
+  padding-left: 88px;
+}

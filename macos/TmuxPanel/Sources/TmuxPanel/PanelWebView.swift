@@ -16,7 +16,7 @@ struct PanelWebView: NSViewRepresentable {
         let transparencyCapability = PanelWKWebView.supportsBackgroundTransparency
             ? "; window.__tmuxPanelTransparency = true" : ""
         configuration.userContentController.addUserScript(WKUserScript(
-            source: "document.documentElement.classList.add('tmux-native-shell')" + transparencyCapability,
+            source: "document.documentElement.classList.add('tmux-native-shell'); document.documentElement.classList.add('tmux-native-titlebar')" + transparencyCapability,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         ))
@@ -50,7 +50,7 @@ struct PanelWebView: NSViewRepresentable {
         context.coordinator.attachPrimary(webView)
         model.attach(webView: webView)
         context.coordinator.load(model.endpoint.url, in: webView)
-        return webView.makeGlassContainer()
+        return webView.makeGlassContainer(integratedTitlebar: true)
     }
 
     func updateNSView(_ view: NSVisualEffectView, context: Context) {}
@@ -437,6 +437,8 @@ struct PanelWebView: NSViewRepresentable {
 
 @MainActor
 final class PanelWKWebView: WKWebView {
+    private var integratedTitlebar = false
+
     func setGlassIntensity(_ percent: Double) {
         guard let background = superview as? NSVisualEffectView else { return }
         // maskImage affects only the material, leaving WebKit and text opaque.
@@ -448,7 +450,8 @@ final class PanelWKWebView: WKWebView {
         background.maskImage = percent >= 100 ? nil : mask
     }
 
-    func makeGlassContainer() -> NSVisualEffectView {
+    func makeGlassContainer(integratedTitlebar: Bool = false) -> NSVisualEffectView {
+        self.integratedTitlebar = integratedTitlebar
         let background = NSVisualEffectView(frame: frame)
         background.material = .underWindowBackground
         background.blendingMode = .behindWindow
@@ -456,6 +459,19 @@ final class PanelWKWebView: WKWebView {
         frame = background.bounds
         autoresizingMask = [.width, .height]
         background.addSubview(self)
+        if integratedTitlebar {
+            // Keep a native drag target above the web toolbar, without
+            // intercepting its buttons or the system window controls.
+            let dragArea = PanelTitlebarDragView()
+            dragArea.translatesAutoresizingMaskIntoConstraints = false
+            background.addSubview(dragArea)
+            NSLayoutConstraint.activate([
+                dragArea.topAnchor.constraint(equalTo: background.topAnchor),
+                dragArea.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 80),
+                dragArea.trailingAnchor.constraint(equalTo: background.trailingAnchor),
+                dragArea.heightAnchor.constraint(equalToConstant: 8),
+            ])
+        }
         return background
     }
 
@@ -490,6 +506,11 @@ final class PanelWKWebView: WKWebView {
         guard let newWindow else { return }
         newWindow.isOpaque = false
         newWindow.backgroundColor = .clear
+        if integratedTitlebar {
+            newWindow.titlebarAppearsTransparent = true
+            newWindow.titleVisibility = .hidden
+            newWindow.isMovableByWindowBackground = true
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(didEnterFullscreen),
@@ -519,5 +540,12 @@ final class PanelWKWebView: WKWebView {
     private func publishFullscreenState(_ active: Bool) {
         let script = "document.dispatchEvent(new CustomEvent('tmux-panel-native-fullscreen', {detail:{active:\(active)}}))"
         evaluateJavaScript(script)
+    }
+}
+
+@MainActor
+final class PanelTitlebarDragView: NSView {
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
     }
 }

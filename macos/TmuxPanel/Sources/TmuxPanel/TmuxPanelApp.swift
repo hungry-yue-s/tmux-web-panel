@@ -12,6 +12,7 @@ struct TmuxPanelApp: App {
                 .environmentObject(model)
         }
         .defaultSize(width: 1280, height: 820)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             PanelCommands(model: model)
         }
@@ -32,6 +33,7 @@ struct PanelRootView: View {
     var body: some View {
         ZStack {
             PanelWebView(model: model)
+                .ignoresSafeArea()
             if case let .failed(message) = model.webState {
                 ConnectionFailureView(message: message)
                     .environmentObject(model)
