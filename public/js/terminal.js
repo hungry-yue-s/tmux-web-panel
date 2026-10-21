@@ -308,6 +308,12 @@ var terminalState = {
   mountContainer: null,
 };
 
+function _updateTerminalTheme() {
+  if (terminalState.term) terminalState.term.options.theme = Theme.getTerminalTheme();
+}
+document.addEventListener('tmux-theme-change', _updateTerminalTheme);
+document.addEventListener('tmux-transparency-change', _updateTerminalTheme);
+
 /**
  * The element the terminal is mounted in. Falls back to the legacy #content so
  * the old shell keeps working.
@@ -647,6 +653,7 @@ function _calcTerminalFontSize(paneCols, paneRows, containerEl) {
 function createTerminalInstance(paneCols, paneRows, nozoom) {
   var term = new Terminal({
     theme: Theme.getTerminalTheme(),
+    allowTransparency: !!(Theme.supportsTransparency && Theme.supportsTransparency()),
     fontFamily: 'monospace',
     fontSize: _calcTerminalFontSize(paneCols, paneRows),
     cursorBlink: true,

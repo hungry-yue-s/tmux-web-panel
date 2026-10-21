@@ -4867,6 +4867,43 @@ html.tmux-native-shell body {
   text-rendering: auto;
 }
 
+/* A single translucent backing surface avoids multiplying alpha through the
+   shell and terminal. Theme tokens stay opaque for menus, previews and cards. */
+html[data-native-transparency] {
+  background: transparent;
+}
+
+html[data-native-transparency] body {
+  background: var(--native-window-background);
+}
+
+html[data-native-transparency] .ms-sidebar,
+html[data-native-transparency] .ms-topbar,
+html[data-native-transparency] #sidebar,
+html[data-native-transparency] #topbar,
+html[data-native-transparency] .terminal-container,
+html[data-native-transparency] .terminal-container .xterm-viewport {
+  background: transparent !important;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.native-transparency-settings input[type="range"] {
+  width: 100%;
+  min-height: 32px;
+  accent-color: var(--accent-blue);
+}
+
+.native-transparency-settings input[type="range"]:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 3px;
+}
+
+.native-transparency-settings output {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
 button,
 input,
 select,

@@ -5,6 +5,79 @@
 var Theme = (function () {
   var STORAGE_KEY = 'tmux_theme';
   var DEFAULT_THEME = 'tokyo-night';
+  var TRANSPARENCY_KEY = 'tmux_native_transparency';
+  var transparency = readTransparency();
+  var GLASS_KEY = 'tmux_native_glass_intensity';
+  var glassIntensity = readGlassIntensity();
+
+  function supportsGlassIntensity() {
+    var handlers = window.webkit && window.webkit.messageHandlers;
+    return supportsTransparency() && !!(handlers && handlers.tmuxPanelAppearance
+      && typeof handlers.tmuxPanelAppearance.postMessage === 'function');
+  }
+
+  function clampGlassIntensity(value) {
+    var number = Number(value);
+    return isFinite(number) ? Math.max(0, Math.min(100, Math.round(number))) : 100;
+  }
+
+  function readGlassIntensity() {
+    try {
+      var saved = localStorage.getItem(GLASS_KEY);
+      return saved === null ? 100 : clampGlassIntensity(saved);
+    } catch (_e) { return 100; }
+  }
+
+  function getGlassIntensity() { return glassIntensity; }
+
+  function applyGlassIntensity() {
+    if (!supportsGlassIntensity()) return;
+    try { window.webkit.messageHandlers.tmuxPanelAppearance.postMessage({ glassIntensity: glassIntensity }); }
+    catch (_e) {}
+  }
+
+  function setGlassIntensity(value) {
+    if (!supportsGlassIntensity()) return;
+    glassIntensity = clampGlassIntensity(value);
+    try { localStorage.setItem(GLASS_KEY, String(glassIntensity)); } catch (_e) {}
+    applyGlassIntensity();
+    document.dispatchEvent(new CustomEvent('tmux-glass-change'));
+  }
+
+  function supportsTransparency() {
+    return window.__tmuxPanelTransparency === true;
+  }
+
+  function clampTransparency(value) {
+    var number = Number(value);
+    return isFinite(number) ? Math.max(0, Math.min(50, Math.round(number))) : 0;
+  }
+
+  function readTransparency() {
+    try { return clampTransparency(localStorage.getItem(TRANSPARENCY_KEY)); }
+    catch (_e) { return 0; }
+  }
+
+  function getTransparency() {
+    return supportsTransparency() ? transparency : 0;
+  }
+
+  function applyTransparency(themeId) {
+    var root = document.documentElement;
+    var amount = getTransparency();
+    root.toggleAttribute('data-native-transparency', amount > 0);
+    var hex = themes[themeId].ui['--bg-primary'];
+    var rgb = [1, 3, 5].map(function (offset) { return parseInt(hex.slice(offset, offset + 2), 16); });
+    root.style.setProperty('--native-window-background', 'rgba(' + rgb.join(', ') + ', ' + (1 - amount / 100) + ')');
+  }
+
+  function setTransparency(value) {
+    if (!supportsTransparency()) return;
+    transparency = clampTransparency(value);
+    try { localStorage.setItem(TRANSPARENCY_KEY, String(transparency)); } catch (_e) {}
+    applyTransparency(getCurrent());
+    document.dispatchEvent(new CustomEvent('tmux-transparency-change'));
+  }
 
   var themes = {
     'tokyo-night': {
@@ -488,6 +561,7 @@ var Theme = (function () {
 
     // Set data attribute for potential CSS selectors
     root.setAttribute('data-theme', themeId);
+    applyTransparency(themeId);
 
     // Persist
     try { localStorage.setItem(STORAGE_KEY, themeId); } catch (_e) {}
@@ -510,6 +584,9 @@ var Theme = (function () {
     for (var key in t) {
       if (t.hasOwnProperty(key)) copy[key] = t[key];
     }
+    // Only the page background carries alpha. Painting it again in xterm
+    // would stack the two backgrounds and make the terminal nearly opaque.
+    if (getTransparency() > 0) copy.background = 'rgba(0, 0, 0, 0)';
     return copy;
   }
 
@@ -534,6 +611,23 @@ var Theme = (function () {
 
   // Apply saved theme immediately on load
   apply(getCurrent());
+  applyGlassIntensity();
+
+  // Native pop-out terminals share this origin's preferences.
+  window.addEventListener('storage', function (event) {
+    if (!supportsTransparency()) return;
+    if (event.key === GLASS_KEY || event.key === null) {
+      glassIntensity = readGlassIntensity();
+      applyGlassIntensity();
+      document.dispatchEvent(new CustomEvent('tmux-glass-change'));
+    }
+    if (event.key === TRANSPARENCY_KEY || event.key === null) {
+      transparency = readTransparency();
+      applyTransparency(getCurrent());
+      document.dispatchEvent(new CustomEvent('tmux-transparency-change'));
+    }
+    if (event.key === STORAGE_KEY || event.key === null) apply(getCurrent());
+  });
 
   return {
     getCurrent: getCurrent,
@@ -541,5 +635,11 @@ var Theme = (function () {
     getTerminalTheme: getTerminalTheme,
     getThemeList: getThemeList,
     getName: getName,
+    supportsTransparency: supportsTransparency,
+    getTransparency: getTransparency,
+    setTransparency: setTransparency,
+    supportsGlassIntensity: supportsGlassIntensity,
+    getGlassIntensity: getGlassIntensity,
+    setGlassIntensity: setGlassIntensity,
   };
 })();

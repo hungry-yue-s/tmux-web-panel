@@ -11,10 +11,12 @@ struct PanelWebView: NSViewRepresentable {
         Coordinator(model: model, endpoint: model.endpoint)
     }
 
-    func makeNSView(context: Context) -> WKWebView {
+    func makeNSView(context: Context) -> NSVisualEffectView {
         let configuration = WKWebViewConfiguration()
+        let transparencyCapability = PanelWKWebView.supportsBackgroundTransparency
+            ? "; window.__tmuxPanelTransparency = true" : ""
         configuration.userContentController.addUserScript(WKUserScript(
-            source: "document.documentElement.classList.add('tmux-native-shell')",
+            source: "document.documentElement.classList.add('tmux-native-shell')" + transparencyCapability,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         ))
@@ -34,6 +36,10 @@ struct PanelWebView: NSViewRepresentable {
             context.coordinator,
             name: Coordinator.openWindowHandlerName
         )
+        configuration.userContentController.add(
+            context.coordinator,
+            name: Coordinator.appearanceHandlerName
+        )
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
         configuration.websiteDataStore = .default()
 
@@ -44,12 +50,13 @@ struct PanelWebView: NSViewRepresentable {
         context.coordinator.attachPrimary(webView)
         model.attach(webView: webView)
         context.coordinator.load(model.endpoint.url, in: webView)
-        return webView
+        return webView.makeGlassContainer()
     }
 
-    func updateNSView(_ webView: WKWebView, context: Context) {}
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 
-    static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
+    static func dismantleNSView(_ view: NSVisualEffectView, coordinator: Coordinator) {
+        guard let webView = view.subviews.compactMap({ $0 as? WKWebView }).first else { return }
         webView.configuration.userContentController.removeScriptMessageHandler(
             forName: Coordinator.notificationHandlerName
         )
@@ -62,6 +69,9 @@ struct PanelWebView: NSViewRepresentable {
         webView.configuration.userContentController.removeScriptMessageHandler(
             forName: Coordinator.openWindowHandlerName
         )
+        webView.configuration.userContentController.removeScriptMessageHandler(
+            forName: Coordinator.appearanceHandlerName
+        )
     }
 
     @MainActor
@@ -71,6 +81,7 @@ struct PanelWebView: NSViewRepresentable {
         static let actionHandlerName = "tmuxPanelAction"
         static let clipboardHandlerName = "tmuxPanelClipboard"
         static let openWindowHandlerName = "tmuxPanelOpenWindow"
+        static let appearanceHandlerName = "tmuxPanelAppearance"
         static let maximumClipboardBytes = 1_048_576
         static let maximumClipboardImageBytes = 16_777_216
         static let maximumWindowHTMLBytes = 67_108_864
@@ -79,6 +90,7 @@ struct PanelWebView: NSViewRepresentable {
         private weak var primaryWebView: WKWebView?
         private let endpoint: PanelEndpoint
         private var childWindows: [ObjectIdentifier: NSWindowController] = [:]
+        private var glassIntensity = 100.0
         private var downloadDestinations: [ObjectIdentifier: (temporary: URL, final: URL)] = [:]
 
         init(model: AppModel, endpoint: PanelEndpoint) {
@@ -140,6 +152,18 @@ struct PanelWebView: NSViewRepresentable {
                let body = message.body as? [String: Any],
                body["action"] as? String == "toggleFullscreen" {
                 model?.toggleFullScreen()
+                return
+            }
+            if message.name == Self.appearanceHandlerName,
+               let body = message.body as? [String: Any],
+               let value = body["glassIntensity"] as? Double,
+               value.isFinite {
+                glassIntensity = max(0, min(100, value))
+                (primaryWebView as? PanelWKWebView)?.setGlassIntensity(glassIntensity)
+                for controller in childWindows.values {
+                    let child = controller.window?.contentView?.subviews.compactMap({ $0 as? PanelWKWebView }).first
+                    child?.setGlassIntensity(glassIntensity)
+                }
                 return
             }
             if message.name == Self.clipboardHandlerName,
@@ -225,7 +249,7 @@ struct PanelWebView: NSViewRepresentable {
 
         func windowWillClose(_ notification: Notification) {
             guard let window = notification.object as? NSWindow,
-                  let webView = window.contentView as? WKWebView else { return }
+                  let webView = window.contentView?.subviews.compactMap({ $0 as? WKWebView }).first else { return }
             childWindows.removeValue(forKey: ObjectIdentifier(webView))
         }
 
@@ -356,7 +380,8 @@ struct PanelWebView: NSViewRepresentable {
                 defer: false
             )
             window.title = title
-            window.contentView = child
+            window.contentView = child.makeGlassContainer()
+            child.setGlassIntensity(glassIntensity)
             window.delegate = self
             window.center()
             let controller = NSWindowController(window: window)
@@ -412,11 +437,59 @@ struct PanelWebView: NSViewRepresentable {
 
 @MainActor
 final class PanelWKWebView: WKWebView {
+    func setGlassIntensity(_ percent: Double) {
+        guard let background = superview as? NSVisualEffectView else { return }
+        // maskImage affects only the material, leaving WebKit and text opaque.
+        let mask = NSImage(size: NSSize(width: 1, height: 1))
+        mask.lockFocus()
+        NSColor(white: 1, alpha: max(0, min(100, percent)) / 100).setFill()
+        NSRect(x: 0, y: 0, width: 1, height: 1).fill()
+        mask.unlockFocus()
+        background.maskImage = percent >= 100 ? nil : mask
+    }
+
+    func makeGlassContainer() -> NSVisualEffectView {
+        let background = NSVisualEffectView(frame: frame)
+        background.material = .underWindowBackground
+        background.blendingMode = .behindWindow
+        background.state = .active
+        frame = background.bounds
+        autoresizingMask = [.width, .height]
+        background.addSubview(self)
+        return background
+    }
+
+    static var supportsBackgroundTransparency: Bool {
+        instancesRespond(to: NSSelectorFromString("_setDrawsBackground:"))
+    }
+
+    override init(frame: NSRect, configuration: WKWebViewConfiguration) {
+        super.init(frame: frame, configuration: configuration)
+        configureTransparentBackground()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureTransparentBackground()
+    }
+
+    private func configureTransparentBackground() {
+        underPageBackgroundColor = .clear
+        // On macOS the public under-page color does not disable WebKit's page
+        // backing. This guarded WebKit SPI is also used for child windows;
+        // advertise the capability only while the setter is available.
+        if responds(to: NSSelectorFromString("_setDrawsBackground:")) {
+            setValue(false, forKey: "drawsBackground")
+        }
+    }
+
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         NotificationCenter.default.removeObserver(self, name: NSWindow.didEnterFullScreenNotification, object: nil)
         NotificationCenter.default.removeObserver(self, name: NSWindow.didExitFullScreenNotification, object: nil)
         super.viewWillMove(toWindow: newWindow)
         guard let newWindow else { return }
+        newWindow.isOpaque = false
+        newWindow.backgroundColor = .clear
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(didEnterFullscreen),

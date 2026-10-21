@@ -9,7 +9,7 @@
   <link rel="preload" href="/fonts/TmuxPanelMono-Bold.woff2?v=1" as="font" type="font/woff2" crossorigin>
   <script src="/vendor/xterm/xterm.js?v=6.0.0"></script>
   <script src="/vendor/xterm/addon-fit.js?v=0.11.0"></script>
-  <script src="/js/theme.js"></script>
+  <script src="/js/theme.js?v=6"></script>
   <script src="/js/link-detect.js"></script>
   <script src="/js/file-preview.js?v=41"></script>
   <style>
@@ -36,6 +36,9 @@
     }
     html, body { margin: 0; padding: 0; background: var(--bg-primary, #1a1b26); height: 100%; overflow: hidden; }
     #terminal { width: 100%; height: 100%; }
+    html[data-native-transparency] { background: transparent; }
+    html[data-native-transparency] body { background: var(--native-window-background); }
+    html[data-native-transparency] .xterm-viewport { background: transparent !important; }
   </style>
 </head>
 <body>
@@ -57,10 +60,15 @@
 
       var term = new Terminal({
         theme: Theme.getTerminalTheme(),
+        allowTransparency: Theme.supportsTransparency(),
         fontFamily: 'monospace',
         fontSize: 14,
         cursorBlink: true,
       });
+
+      function updateTheme() { term.options.theme = Theme.getTerminalTheme(); }
+      document.addEventListener('tmux-theme-change', updateTheme);
+      document.addEventListener('tmux-transparency-change', updateTheme);
 
       var fitAddon = new FitAddon.FitAddon();
 

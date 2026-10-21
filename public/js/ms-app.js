@@ -597,6 +597,23 @@
 
     /** Single delegated listener for the whole shell. */
     _bindEvents() {
+      global.document.addEventListener('input', (event) => {
+        if (!global.Theme) return;
+        if (event.target.id === 'native-transparency') global.Theme.setTransparency(event.target.value);
+        if (event.target.id === 'native-glass-intensity') global.Theme.setGlassIntensity(event.target.value);
+      });
+      global.document.addEventListener('tmux-glass-change', () => {
+        const slider = global.document.getElementById('native-glass-intensity');
+        const output = global.document.getElementById('native-glass-intensity-value');
+        if (slider) slider.value = global.Theme.getGlassIntensity();
+        if (output) output.textContent = global.Theme.getGlassIntensity() + '%';
+      });
+      global.document.addEventListener('tmux-transparency-change', () => {
+        const slider = global.document.getElementById('native-transparency');
+        const output = global.document.getElementById('native-transparency-value');
+        if (slider) slider.value = global.Theme.getTransparency();
+        if (output) output.textContent = global.Theme.getTransparency() + '%';
+      });
       global.document.addEventListener('click', (event) => {
         const actionTarget = event.target.closest('[data-action]');
         if (!actionTarget || actionTarget.dataset.action !== 'workspace-entity-menu') {

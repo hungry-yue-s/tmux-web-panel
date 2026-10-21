@@ -270,7 +270,27 @@
         + '<div class="section"><div class="section-head"><h3>主题</h3>'
         + '<span>当前：' + esc(global.Theme ? global.Theme.getName() : '—') + '</span></div>'
         + this._themeGrid() + '</div>'
+        + this._transparencySettings()
         + this._monitorPageSettings();
+    },
+
+    _transparencySettings: function () {
+      if (!global.Theme || !global.Theme.supportsTransparency || !global.Theme.supportsTransparency()) return '';
+      var amount = global.Theme.getTransparency();
+      return '<div class="section native-transparency-settings"><div class="section-head">'
+        + '<h3><label for="native-transparency">背景透明度</label></h3>'
+        + '<output id="native-transparency-value" for="native-transparency">' + amount + '%</output></div>'
+        + '<input id="native-transparency" type="range" min="0" max="50" step="1" value="' + amount + '"'
+        + ' aria-describedby="native-transparency-help">'
+        + '<p id="native-transparency-help" class="muted">0% 为不透明；调高可透出桌面毛玻璃效果，文字保持清晰。仅在 macOS 客户端生效。</p></div>'
+        + (global.Theme.supportsGlassIntensity && global.Theme.supportsGlassIntensity()
+          ? '<div class="section native-transparency-settings"><div class="section-head">'
+            + '<h3><label for="native-glass-intensity">毛玻璃强度</label></h3>'
+            + '<output id="native-glass-intensity-value" for="native-glass-intensity">' + global.Theme.getGlassIntensity() + '%</output></div>'
+            + '<input id="native-glass-intensity" type="range" min="0" max="100" step="1" value="' + global.Theme.getGlassIntensity() + '"'
+            + ' aria-describedby="native-glass-intensity-help">'
+            + '<p id="native-glass-intensity-help" class="muted">0% 关闭毛玻璃，100% 为最强效果；背景透明度大于 0% 时可见。</p></div>'
+          : '');
     },
 
     _monitorPageSettings: function () {
