@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "workspace-global": {
+      "targetKind": "existing-ui",
+      "projectId": "cfb69173-31d5-4b34-9235-22fa8eeb3a05",
+      "baselineDraftId": "b0ab4875-7894-4135-a01a-e7386eb8f10e",
+      "activeDraftId": "b0ab4875-7894-4135-a01a-e7386eb8f10e",
+      "designSystemPath": ".superdesign/design-system.md",
+      "referenceIds": [
+        "a1edd82d-5cb9-44e2-9c7c-6d1500dde330"
+      ],
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        ".superdesign/context/current-terminal.html",
+        "public/css/style.css:36:56",
+        "public/js/servers.js"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "3da954919c0ec127b853dc3d09bf5c9934a7fd17f844fc820b926912f8e888f8",
+        ".superdesign/context/current-terminal.html": "3478f2b47f0d61d0347d664d4a399b1bede6bcfd9ab0ededd3a68e6373e7fde1",
+        "public/css/style.css": "d62f062ec8fc5fb4c6715b068c22f754feee35e8d031813009b17b876a722fba",
+        "public/js/servers.js": "322daa3f79efd8751ff6dcd6e3bf5f71c0f0637f162f29c74aa922779e018063"
+      },
+      "components": [
+        {
+          "name": "WorkspaceNavigation",
+          "id": "de906b17-ca51-407f-94df-74b4e15e8c77",
+          "sourcePath": "public/index.html"
+        }
+      ],
+      "drafts": {
+        "b0ab4875-7894-4135-a01a-e7386eb8f10e": {
+          "title": "Tmux Panel Redesign - Quiet Native Workspace",
+          "visualDirection": "quiet native workspace with interactive terminal/status/settings; demo only, production implementation pending design approval",
+          "currentVersion": 3
+        }
+      },
+      "updatedAt": "2026-10-21T07:53:40.977098+00:00"
+    }
+  }
+}
