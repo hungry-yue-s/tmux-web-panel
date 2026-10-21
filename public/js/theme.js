@@ -5,6 +5,16 @@
 var Theme = (function () {
   var STORAGE_KEY = 'tmux_theme';
   var DEFAULT_THEME = 'tokyo-night';
+  // Retired choices migrate once on load; they no longer appear in the picker.
+  var THEME_ALIASES = {
+    'tokyo-night-storm': 'tokyo-night',
+    'catppuccin-mocha': 'prism',
+    'catppuccin-mocha-pastel': 'prism',
+    'rose-pine-moon': 'prism',
+    'dracula': 'prism',
+    'one-dark': 'graphite',
+    'solarized-dark': 'deep-current',
+  };
   var TRANSPARENCY_KEY = 'tmux_native_transparency';
   var transparency = readTransparency();
   var GLASS_KEY = 'tmux_native_glass_intensity';
@@ -80,8 +90,44 @@ var Theme = (function () {
   }
 
   var themes = {
+    'prism': {
+      name: 'Prism · 棱镜', description: '烟紫底色 · 银灰文字 · 柔紫强调',
+      ui: {
+        '--bg-primary': '#191923', '--bg-deep': '#22212e', '--bg-card': '#292736',
+        '--bg-hover': '#363345', '--border': '#655e7b', '--border-subtle': '#403a51',
+        '--text-primary': '#e8e5f2', '--text-secondary': '#aca8be', '--text-muted': '#aca8be',
+        '--accent-blue': '#a6a5f8', '--accent-green': '#a7c7ad', '--accent-red': '#ef9ba9',
+        '--accent-yellow': '#e7c78e', '--accent-purple': '#c4a4e8',
+      },
+      workspace: { '--workspace-accent': '#b9a6ee' },
+      terminal: {
+        background: '#191923', foreground: '#e8e5f2', cursor: '#c8b8f4', cursorAccent: '#191923',
+        selectionBackground: '#464058', black: '#22212e', red: '#ef9ba9', green: '#a7c7ad',
+        yellow: '#e7c78e', blue: '#a6a5f8', magenta: '#c4a4e8', cyan: '#92cbd3', white: '#d4d0e2',
+        brightBlack: '#8d879f', brightRed: '#ffb3bd', brightGreen: '#bcdec2', brightYellow: '#f3dba8',
+        brightBlue: '#c0baff', brightMagenta: '#dfbafa', brightCyan: '#abe3e9', brightWhite: '#f8f4ff',
+      },
+    },
+    'graphite': {
+      name: 'Graphite · 石墨', description: '中性炭黑 · 暖银强调 · 低饱和语法色',
+      ui: {
+        '--bg-primary': '#141414', '--bg-deep': '#1c1c1c', '--bg-card': '#252525',
+        '--bg-hover': '#303030', '--border': '#62625e', '--border-subtle': '#393937',
+        '--text-primary': '#e9e9e6', '--text-secondary': '#b0b0aa', '--text-muted': '#b0b0aa',
+        '--accent-blue': '#a8bdd5', '--accent-green': '#a9c7a4', '--accent-red': '#e8a0a0',
+        '--accent-yellow': '#dbc58d', '--accent-purple': '#c5adcf',
+      },
+      workspace: { '--workspace-accent': '#c9c7bf' },
+      terminal: {
+        background: '#141414', foreground: '#e9e9e6', cursor: '#eee9d9', cursorAccent: '#141414',
+        selectionBackground: '#42423e', black: '#1c1c1c', red: '#e8a0a0', green: '#a9c7a4',
+        yellow: '#dbc58d', blue: '#a8bdd5', magenta: '#c5adcf', cyan: '#9dc9c7', white: '#d2d2cc',
+        brightBlack: '#8e8e88', brightRed: '#f4b5b5', brightGreen: '#bedbb8', brightYellow: '#eed9a6',
+        brightBlue: '#bed1e8', brightMagenta: '#dcc3e5', brightCyan: '#b6dfdc', brightWhite: '#f5f5ef',
+      },
+    },
     'deep-current': {
-      name: 'Deep Current',
+      name: 'Deep Current', description: '深海青底 · 暖铜强调',
       ui: {
         '--bg-primary': '#101b1e', '--bg-deep': '#173b40', '--bg-card': '#223236',
         '--bg-hover': '#2b4549', '--border': '#526b6a', '--border-subtle': '#344f51',
@@ -98,8 +144,26 @@ var Theme = (function () {
         brightBlue: '#7aa2f7', brightMagenta: '#bb9af7', brightCyan: '#7dcfff', brightWhite: '#e5efeb',
       },
     },
+    'forest-ink': {
+      name: 'Forest Ink · 森林', description: '深林绿底 · 苔黄强调 · 草木色阶',
+      ui: {
+        '--bg-primary': '#121d17', '--bg-deep': '#1a2920', '--bg-card': '#24332a',
+        '--bg-hover': '#304237', '--border': '#617c65', '--border-subtle': '#354a3b',
+        '--text-primary': '#e2ebde', '--text-secondary': '#afc3ac', '--text-muted': '#afc3ac',
+        '--accent-blue': '#a1b9ca', '--accent-green': '#baca84', '--accent-red': '#e49c8b',
+        '--accent-yellow': '#ddc48e', '--accent-purple': '#c2acd0',
+      },
+      workspace: { '--workspace-accent': '#baca84' },
+      terminal: {
+        background: '#121d17', foreground: '#e2ebde', cursor: '#baca84', cursorAccent: '#121d17',
+        selectionBackground: '#3b503e', black: '#1a2920', red: '#e49c8b', green: '#baca84',
+        yellow: '#ddc48e', blue: '#a1b9ca', magenta: '#c2acd0', cyan: '#91c9b7', white: '#cedbc9',
+        brightBlack: '#879b85', brightRed: '#f4b4a3', brightGreen: '#d0dfa0', brightYellow: '#efdaa7',
+        brightBlue: '#bbd0df', brightMagenta: '#d9c3e6', brightCyan: '#a8dfcc', brightWhite: '#f0f5e9',
+      },
+    },
     'tokyo-night': {
-      name: 'Tokyo Night',
+      name: 'Tokyo Night', description: '午夜蓝底 · 清亮蓝紫',
       ui: {
         '--bg-primary': '#1a1b26',
         '--bg-deep': '#16161e',
@@ -140,92 +204,8 @@ var Theme = (function () {
         brightWhite: '#c0caf5',
       },
     },
-    'catppuccin-mocha': {
-      name: 'Catppuccin Mocha',
-      ui: {
-        '--bg-primary': '#1e1e2e',
-        '--bg-deep': '#181825',
-        '--bg-card': '#313244',
-        '--bg-hover': '#45475a',
-        '--border': '#585b70',
-        '--border-subtle': '#45475a',
-        '--text-primary': '#cdd6f4',
-        '--text-secondary': '#bac2de',
-        '--text-muted': '#6c7086',
-        '--accent-blue': '#89b4fa',
-        '--accent-green': '#a6e3a1',
-        '--accent-red': '#f38ba8',
-        '--accent-yellow': '#f9e2af',
-        '--accent-purple': '#cba6f7',
-      },
-      terminal: {
-        background: '#1e1e2e',
-        foreground: '#cdd6f4',
-        cursor: '#f5e0dc',
-        cursorAccent: '#1e1e2e',
-        selectionBackground: '#45475a',
-        black: '#45475a',
-        red: '#f38ba8',
-        green: '#a6e3a1',
-        yellow: '#f9e2af',
-        blue: '#89b4fa',
-        magenta: '#cba6f7',
-        cyan: '#94e2d5',
-        white: '#bac2de',
-        brightBlack: '#585b70',
-        brightRed: '#f38ba8',
-        brightGreen: '#a6e3a1',
-        brightYellow: '#f9e2af',
-        brightBlue: '#89b4fa',
-        brightMagenta: '#cba6f7',
-        brightCyan: '#94e2d5',
-        brightWhite: '#a6adc8',
-      },
-    },
-    'dracula': {
-      name: 'Dracula',
-      ui: {
-        '--bg-primary': '#282a36',
-        '--bg-deep': '#21222c',
-        '--bg-card': '#44475a',
-        '--bg-hover': '#4e5173',
-        '--border': '#6272a4',
-        '--border-subtle': '#44475a',
-        '--text-primary': '#f8f8f2',
-        '--text-secondary': '#e2e2dc',
-        '--text-muted': '#6272a4',
-        '--accent-blue': '#8be9fd',
-        '--accent-green': '#50fa7b',
-        '--accent-red': '#ff5555',
-        '--accent-yellow': '#f1fa8c',
-        '--accent-purple': '#bd93f9',
-      },
-      terminal: {
-        background: '#282a36',
-        foreground: '#f8f8f2',
-        cursor: '#f8f8f2',
-        cursorAccent: '#282a36',
-        selectionBackground: '#44475a',
-        black: '#21222c',
-        red: '#ff5555',
-        green: '#50fa7b',
-        yellow: '#f1fa8c',
-        blue: '#bd93f9',
-        magenta: '#ff79c6',
-        cyan: '#8be9fd',
-        white: '#f8f8f2',
-        brightBlack: '#6272a4',
-        brightRed: '#ff6e6e',
-        brightGreen: '#69ff94',
-        brightYellow: '#ffffa5',
-        brightBlue: '#d6acff',
-        brightMagenta: '#ff92df',
-        brightCyan: '#a4ffff',
-        brightWhite: '#ffffff',
-      },
-    },
     'nord': {
-      name: 'Nord',
+      name: 'Nord', description: '北欧蓝灰 · 冷调低饱和',
       ui: {
         '--bg-primary': '#2e3440',
         '--bg-deep': '#272c36',
@@ -266,50 +246,68 @@ var Theme = (function () {
         brightWhite: '#eceff4',
       },
     },
-    'solarized-dark': {
-      name: 'Solarized Dark',
+    'gruvbox-dark': {
+      name: 'Gruvbox Dark', description: '暖炭灰底 · 复古琥珀',
       ui: {
-        '--bg-primary': '#002b36',
-        '--bg-deep': '#00252e',
-        '--bg-card': '#073642',
-        '--bg-hover': '#0a4050',
-        '--border': '#586e75',
-        '--border-subtle': '#073642',
-        '--text-primary': '#93a1a1',
-        '--text-secondary': '#839496',
-        '--text-muted': '#586e75',
-        '--accent-blue': '#268bd2',
-        '--accent-green': '#859900',
-        '--accent-red': '#dc322f',
-        '--accent-yellow': '#b58900',
-        '--accent-purple': '#6c71c4',
+        '--bg-primary': '#282828',
+        '--bg-deep': '#1d2021',
+        '--bg-card': '#3c3836',
+        '--bg-hover': '#504945',
+        '--border': '#665c54',
+        '--border-subtle': '#3c3836',
+        '--text-primary': '#ebdbb2',
+        '--text-secondary': '#d5c4a1',
+        '--text-muted': '#928374',
+        '--accent-blue': '#83a598',
+        '--accent-green': '#b8bb26',
+        '--accent-red': '#fb4934',
+        '--accent-yellow': '#fabd2f',
+        '--accent-purple': '#d3869b',
       },
       terminal: {
-        background: '#002b36',
-        foreground: '#839496',
-        cursor: '#93a1a1',
-        cursorAccent: '#002b36',
-        selectionBackground: '#073642',
-        black: '#073642',
-        red: '#dc322f',
-        green: '#859900',
-        yellow: '#b58900',
-        blue: '#268bd2',
-        magenta: '#d33682',
-        cyan: '#2aa198',
-        white: '#eee8d5',
-        brightBlack: '#586e75',
-        brightRed: '#cb4b16',
-        brightGreen: '#586e75',
-        brightYellow: '#657b83',
-        brightBlue: '#839496',
-        brightMagenta: '#6c71c4',
-        brightCyan: '#93a1a1',
-        brightWhite: '#fdf6e3',
+        background: '#282828',
+        foreground: '#ebdbb2',
+        cursor: '#ebdbb2',
+        cursorAccent: '#282828',
+        selectionBackground: '#504945',
+        black: '#282828',
+        red: '#cc241d',
+        green: '#98971a',
+        yellow: '#d79921',
+        blue: '#458588',
+        magenta: '#b16286',
+        cyan: '#689d6a',
+        white: '#a89984',
+        brightBlack: '#928374',
+        brightRed: '#fb4934',
+        brightGreen: '#b8bb26',
+        brightYellow: '#fabd2f',
+        brightBlue: '#83a598',
+        brightMagenta: '#d3869b',
+        brightCyan: '#8ec07c',
+        brightWhite: '#ebdbb2',
+      },
+    },
+    'oyster': {
+      name: 'Oyster · 牡蛎白', description: '暖灰白底 · 陶土红强调 · 深墨文字',
+      ui: {
+        '--bg-primary': '#f4f1eb', '--bg-deep': '#e9e3d9', '--bg-card': '#fcfaf6',
+        '--bg-hover': '#dfd7cb', '--border': '#9a8c7c', '--border-subtle': '#d4cbbc',
+        '--text-primary': '#282522', '--text-secondary': '#63594e', '--text-muted': '#63594e',
+        '--accent-blue': '#315e88', '--accent-green': '#3d603d', '--accent-red': '#a33735',
+        '--accent-yellow': '#725014', '--accent-purple': '#795184',
+      },
+      workspace: { '--workspace-accent': '#a74a34' },
+      terminal: {
+        background: '#f4f1eb', foreground: '#282522', cursor: '#a74a34', cursorAccent: '#f4f1eb',
+        selectionBackground: '#d6c5ae', black: '#302b26', red: '#a33735', green: '#3d603d',
+        yellow: '#725014', blue: '#315e88', magenta: '#795184', cyan: '#27676b', white: '#6d6257',
+        brightBlack: '#75695c', brightRed: '#b13b36', brightGreen: '#456d3f', brightYellow: '#806020',
+        brightBlue: '#3c6594', brightMagenta: '#85588c', brightCyan: '#34747a', brightWhite: '#5b5148',
       },
     },
     'solarized-light': {
-      name: 'Solarized Light',
+      name: 'Solarized Light', description: '浅米黄底 · 经典日光配色',
       ui: {
         '--bg-primary': '#fdf6e3',
         '--bg-deep': '#eee8d5',
@@ -351,7 +349,7 @@ var Theme = (function () {
       },
     },
     'github-light': {
-      name: 'GitHub Light',
+      name: 'GitHub Light', description: '纯白底 · 清晰蓝色强调',
       ui: {
         '--bg-primary': '#ffffff',
         '--bg-deep': '#f6f8fa',
@@ -392,173 +390,12 @@ var Theme = (function () {
         brightWhite: '#8c959f',
       },
     },
-    'gruvbox-dark': {
-      name: 'Gruvbox Dark',
-      ui: {
-        '--bg-primary': '#282828',
-        '--bg-deep': '#1d2021',
-        '--bg-card': '#3c3836',
-        '--bg-hover': '#504945',
-        '--border': '#665c54',
-        '--border-subtle': '#3c3836',
-        '--text-primary': '#ebdbb2',
-        '--text-secondary': '#d5c4a1',
-        '--text-muted': '#928374',
-        '--accent-blue': '#83a598',
-        '--accent-green': '#b8bb26',
-        '--accent-red': '#fb4934',
-        '--accent-yellow': '#fabd2f',
-        '--accent-purple': '#d3869b',
-      },
-      terminal: {
-        background: '#282828',
-        foreground: '#ebdbb2',
-        cursor: '#ebdbb2',
-        cursorAccent: '#282828',
-        selectionBackground: '#504945',
-        black: '#282828',
-        red: '#cc241d',
-        green: '#98971a',
-        yellow: '#d79921',
-        blue: '#458588',
-        magenta: '#b16286',
-        cyan: '#689d6a',
-        white: '#a89984',
-        brightBlack: '#928374',
-        brightRed: '#fb4934',
-        brightGreen: '#b8bb26',
-        brightYellow: '#fabd2f',
-        brightBlue: '#83a598',
-        brightMagenta: '#d3869b',
-        brightCyan: '#8ec07c',
-        brightWhite: '#ebdbb2',
-      },
-    },
-    'one-dark': {
-      name: 'One Dark',
-      ui: {
-        '--bg-primary': '#282c34',
-        '--bg-deep': '#21252b',
-        '--bg-card': '#2c313a',
-        '--bg-hover': '#383e4a',
-        '--border': '#4b5263',
-        '--border-subtle': '#3a3f4b',
-        '--text-primary': '#abb2bf',
-        '--text-secondary': '#9da5b4',
-        '--text-muted': '#636d83',
-        '--accent-blue': '#61afef',
-        '--accent-green': '#98c379',
-        '--accent-red': '#e06c75',
-        '--accent-yellow': '#e5c07b',
-        '--accent-purple': '#c678dd',
-      },
-      terminal: {
-        background: '#282c34',
-        foreground: '#abb2bf',
-        cursor: '#528bff',
-        cursorAccent: '#282c34',
-        selectionBackground: '#3e4451',
-        black: '#282c34',
-        red: '#e06c75',
-        green: '#98c379',
-        yellow: '#e5c07b',
-        blue: '#61afef',
-        magenta: '#c678dd',
-        cyan: '#56b6c2',
-        white: '#abb2bf',
-        brightBlack: '#5c6370',
-        brightRed: '#e06c75',
-        brightGreen: '#98c379',
-        brightYellow: '#e5c07b',
-        brightBlue: '#61afef',
-        brightMagenta: '#c678dd',
-        brightCyan: '#56b6c2',
-        brightWhite: '#ffffff',
-      },
-    },
-    'catppuccin-mocha-pastel': {
-      name: 'Catppuccin Mocha Pastel',
-      ui: {
-        '--bg-primary': '#1e1e2e',
-        '--bg-deep': '#181825',
-        '--bg-card': '#313244',
-        '--bg-hover': '#45475a',
-        '--border': '#585b70',
-        '--border-subtle': '#45475a',
-        '--text-primary': '#cdd6f4',
-        '--text-secondary': '#bac2de',
-        '--text-muted': '#7f849c',
-        '--accent-blue': '#89b4fa',
-        '--accent-green': '#a6e3a1',
-        '--accent-red': '#f38ba8',
-        '--accent-yellow': '#f9e2af',
-        '--accent-purple': '#cba6f7',
-      },
-      terminal: {
-        background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#f5e0dc', cursorAccent: '#1e1e2e',
-        selectionBackground: '#585b70', black: '#45475a', red: '#f38ba8', green: '#a6e3a1',
-        yellow: '#f9e2af', blue: '#89b4fa', magenta: '#f5c2e7', cyan: '#94e2d5', white: '#bac2de',
-        brightBlack: '#585b70', brightRed: '#f38ba8', brightGreen: '#a6e3a1', brightYellow: '#f9e2af',
-        brightBlue: '#89b4fa', brightMagenta: '#f5c2e7', brightCyan: '#94e2d5', brightWhite: '#a6adc8',
-      },
-    },
-    'rose-pine-moon': {
-      name: 'Rosé Pine Moon',
-      ui: {
-        '--bg-primary': '#232136',
-        '--bg-deep': '#191724',
-        '--bg-card': '#2a273f',
-        '--bg-hover': '#393552',
-        '--border': '#56526e',
-        '--border-subtle': '#44415a',
-        '--text-primary': '#e0def4',
-        '--text-secondary': '#908caa',
-        '--text-muted': '#6e6a86',
-        '--accent-blue': '#3e8fb0',
-        '--accent-green': '#9ccfd8',
-        '--accent-red': '#eb6f92',
-        '--accent-yellow': '#f6c177',
-        '--accent-purple': '#c4a7e7',
-      },
-      terminal: {
-        background: '#232136', foreground: '#e0def4', cursor: '#c4a7e7', cursorAccent: '#232136',
-        selectionBackground: '#44415a', black: '#393552', red: '#eb6f92', green: '#3e8fb0',
-        yellow: '#f6c177', blue: '#9ccfd8', magenta: '#c4a7e7', cyan: '#ea9a97', white: '#e0def4',
-        brightBlack: '#6e6a86', brightRed: '#eb6f92', brightGreen: '#3e8fb0', brightYellow: '#f6c177',
-        brightBlue: '#9ccfd8', brightMagenta: '#c4a7e7', brightCyan: '#ea9a97', brightWhite: '#ffffff',
-      },
-    },
-    'tokyo-night-storm': {
-      name: 'Tokyo Night Storm',
-      ui: {
-        '--bg-primary': '#24283b',
-        '--bg-deep': '#1f2335',
-        '--bg-card': '#292e42',
-        '--bg-hover': '#3b4261',
-        '--border': '#545c7e',
-        '--border-subtle': '#414868',
-        '--text-primary': '#c0caf5',
-        '--text-secondary': '#a9b1d6',
-        '--text-muted': '#565f89',
-        '--accent-blue': '#7aa2f7',
-        '--accent-green': '#73daca',
-        '--accent-red': '#f7768e',
-        '--accent-yellow': '#e0af68',
-        '--accent-purple': '#bb9af7',
-      },
-      terminal: {
-        background: '#24283b', foreground: '#c0caf5', cursor: '#c0caf5', cursorAccent: '#24283b',
-        selectionBackground: '#3d59a1', black: '#414868', red: '#f7768e', green: '#73daca',
-        yellow: '#e0af68', blue: '#7aa2f7', magenta: '#bb9af7', cyan: '#7dcfff', white: '#c0caf5',
-        brightBlack: '#414868', brightRed: '#f7768e', brightGreen: '#73daca', brightYellow: '#e0af68',
-        brightBlue: '#7aa2f7', brightMagenta: '#bb9af7', brightCyan: '#7dcfff', brightWhite: '#c0caf5',
-      },
-    },
+
   };
 
-  // Workbench contrast corrections leave the terminal ANSI palette unchanged.
-  // The 8% backdrop samples below provide headroom for tinted surfaces; native
-  // window alpha is controlled separately and can reveal arbitrary desktop colors.
+  // Correct foreground colors against their actual opaque surfaces. The 8%
+  // backdrop samples add headroom for UI tints; arbitrary native transparency
+  // can still reveal desktop colors outside these bounds.
   function rgb(hex) {
     return [1, 3, 5].map(function (offset) { return parseInt(hex.slice(offset, offset + 2), 16); });
   }
@@ -615,19 +452,38 @@ var Theme = (function () {
       workspace[key] = readable(workspace[key], backdrops, light, 4.6);
     });
     workspace['--workspace-line-strong'] = readable(workspace['--workspace-line-strong'], backdrops, light, 3.1);
+    ['--accent-blue', '--accent-green', '--accent-red', '--accent-yellow', '--accent-purple'].forEach(function (key) {
+      ui[key] = readable(ui[key], backdrops, light, 4.6);
+    });
+    ui['--text-primary'] = workspace['--workspace-text'];
+    ui['--text-secondary'] = ui['--text-muted'] = workspace['--workspace-muted'];
+    ui['--border'] = workspace['--workspace-line-strong'];
     Object.assign(ui, workspace);
+
+    var terminal = theme.terminal;
+    ['foreground', 'cursor']
+      .forEach(function (key) {
+        terminal[key] = readable(terminal[key], [rgb(terminal.background)], light, 4.6);
+      });
+    // Preserve ANSI slots: TUI programs use them for backgrounds and reverse video
+    // too. xterm corrects contrast per cell. Selection needs its own text color.
+    terminal.selectionForeground = readable(terminal.foreground, [rgb(terminal.selectionBackground)], light, 4.6);
   });
+
+  function resolveThemeId(themeId) {
+    var id = Object.prototype.hasOwnProperty.call(THEME_ALIASES, themeId) ? THEME_ALIASES[themeId] : themeId;
+    return Object.prototype.hasOwnProperty.call(themes, id) ? id : DEFAULT_THEME;
+  }
 
   function getCurrent() {
     try {
-      var saved = localStorage.getItem(STORAGE_KEY);
-      if (saved && themes[saved]) return saved;
+      return resolveThemeId(localStorage.getItem(STORAGE_KEY));
     } catch (_e) {}
     return DEFAULT_THEME;
   }
 
   function apply(themeId) {
-    if (!themes[themeId]) themeId = DEFAULT_THEME;
+    themeId = resolveThemeId(themeId);
     var t = themes[themeId];
 
     // Apply CSS variables to :root
@@ -657,8 +513,7 @@ var Theme = (function () {
   }
 
   function getTerminalTheme(themeId) {
-    var id = themeId || getCurrent();
-    if (!themes[id]) id = DEFAULT_THEME;
+    var id = resolveThemeId(themeId || getCurrent());
     // Return a copy
     var t = themes[id].terminal;
     var copy = {};
@@ -678,7 +533,10 @@ var Theme = (function () {
         list.push({
           id: id,
           name: themes[id].name,
+          description: themes[id].description,
+          colorScheme: themes[id].colorScheme,
           colors: themes[id].ui,
+          terminal: Object.assign({}, themes[id].terminal),
         });
       }
     }
@@ -686,8 +544,7 @@ var Theme = (function () {
   }
 
   function getName(themeId) {
-    var id = themeId || getCurrent();
-    return themes[id] ? themes[id].name : 'Unknown';
+    return themes[resolveThemeId(themeId || getCurrent())].name;
   }
 
   // Apply saved theme immediately on load

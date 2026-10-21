@@ -227,6 +227,9 @@ html.tmux-native-titlebar body { --workspace-chrome-height:44px; }
 .ms-app .theme-card-bar { height:16px; }
 .ms-app .theme-card-body { min-height:38px; padding:8px; }
 .ms-app .theme-card-name { display:block; text-align:left; font-size:12px; font-weight:500; }
+.ms-app .theme-card-description { display:block; text-align:left; margin-top:4px; font-size:11px; line-height:1.5; }
+.ms-app .theme-card-swatches { display:flex; gap:4px; margin-top:8px; }
+.ms-app .theme-card-swatches i { flex:1; height:4px; border-radius:1px; }
 .ms-app .settings-nav-item { border-radius:6px; padding:10px; font-size:13px; background:none; }
 .ms-app .settings-nav-item.selected { color:var(--workspace-text); background:var(--workspace-hover); box-shadow:inset 2px 0 0 var(--workspace-accent); }
 .ms-app .native-transparency-settings { border-top:1px solid var(--workspace-line); padding-top:22px; margin-top:28px; }

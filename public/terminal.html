@@ -9,7 +9,7 @@
   <link rel="preload" href="/fonts/TmuxPanelMono-Bold.woff2?v=1" as="font" type="font/woff2" crossorigin>
   <script src="/vendor/xterm/xterm.js?v=6.0.0"></script>
   <script src="/vendor/xterm/addon-fit.js?v=0.11.0"></script>
-  <script src="/js/theme.js?v=6"></script>
+  <script src="/js/theme.js?v=7"></script>
   <script src="/js/link-detect.js"></script>
   <script src="/js/file-preview.js?v=41"></script>
   <style>
@@ -60,6 +60,8 @@
 
       var term = new Terminal({
         theme: Theme.getTerminalTheme(),
+        // Resolve contrast against each cell background, including TUI colors.
+        minimumContrastRatio: 4.5,
         allowTransparency: Theme.supportsTransparency(),
         fontFamily: 'monospace',
         fontSize: 14,

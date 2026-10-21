@@ -1590,23 +1590,23 @@ body {
 .modal-btn-primary {
   background: var(--accent-blue);
   border-color: var(--accent-blue);
-  color: #1a1b26;
+  color: var(--bg-primary);
   font-weight: 600;
 }
 
 .modal-btn-primary:hover {
-  opacity: 0.85;
+  opacity: 1;
 }
 
 .modal-btn-danger {
   background: var(--accent-red);
   border-color: var(--accent-red);
-  color: #1a1b26;
+  color: var(--bg-primary);
   font-weight: 600;
 }
 
 .modal-btn-danger:hover {
-  opacity: 0.85;
+  opacity: 1;
 }
 
 .modal-message {
@@ -3631,7 +3631,7 @@ body.fp-side-resizing { cursor: col-resize; user-select: none; }
   border: 1px solid var(--border-subtle); background: var(--bg-primary);
   color: var(--text-primary); cursor: pointer; transition: background 0.15s;
 }
-.fp-chooser-btn:hover { background: var(--accent-blue); color: #fff; }
+.fp-chooser-btn:hover { background: var(--accent-blue); color: var(--bg-primary); }
 .fp-modal {
   background: var(--bg-primary); border-radius: 10px;
   width: 80vw; height: 70vh; display: flex; flex-direction: column;
@@ -3790,7 +3790,7 @@ body.fp-side-resizing { cursor: col-resize; user-select: none; }
   font-size: 0.9rem; gap: 12px; padding: 20px; text-align: center;
 }
 .fp-error-download {
-  background: var(--accent-blue); color: #fff; border: none;
+  background: var(--accent-blue); color: var(--bg-primary); border: none;
   padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.85rem;
 }
 
@@ -3997,7 +3997,7 @@ body.fp-side-resizing { cursor: col-resize; user-select: none; }
 }
 .fp-share-btn:hover { border-color: var(--accent-blue); }
 .fp-share-btn:disabled { opacity: 0.5; cursor: default; }
-.fp-share-primary { background: var(--accent-blue); border-color: var(--accent-blue); color: #fff; }
+.fp-share-primary { background: var(--accent-blue); border-color: var(--accent-blue); color: var(--bg-primary); }
 .fp-share-result {
   margin-top: 14px; padding: 12px; border: 1px solid var(--border-subtle);
   border-radius: 8px; background: var(--bg-primary);
@@ -4536,9 +4536,9 @@ body.fp-side-resizing { cursor: col-resize; user-select: none; }
 
 .cu-sub-hero { background: var(--bg-deep); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 14px; }
 .cu-sub-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
-.cu-plan-badge { background: var(--accent-purple); color: #1a1b26; font-size: 0.65rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+.cu-plan-badge { background: var(--accent-purple); color: var(--bg-primary); font-size: 0.65rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
 .cu-plan-tier { font-size: 0.68rem; color: var(--text-muted); }
-.cu-extra-badge { font-size: 0.6rem; color: var(--accent-green); background: #1a3a2a; border: 1px solid #264d35; padding: 2px 6px; border-radius: 3px; }
+.cu-extra-badge { font-size: 0.6rem; color: var(--accent-green); background: var(--bg-deep); border: 1px solid var(--border); padding: 2px 6px; border-radius: 3px; }
 .cu-extra-text { font-size: 0.68rem; color: var(--text-muted); }
 .cu-meters { display: flex; flex-direction: column; gap: 8px; }
 .cu-meter { display: flex; align-items: center; gap: 8px; }

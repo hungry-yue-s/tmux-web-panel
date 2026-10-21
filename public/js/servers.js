@@ -356,6 +356,7 @@
         var bgCard = colors['--workspace-sidebar'] || colors['--bg-card'];
         var text = colors['--workspace-text'] || colors['--text-primary'];
         var accent = colors['--workspace-accent'] || colors['--accent-blue'];
+        var terminal = theme.terminal || {};
         return '<button class="theme-card' + (isActive ? ' active' : '') + '"'
           + ' data-action="set-theme" data-theme="' + esc(theme.id) + '"'
           + (isActive ? ' aria-current="true"' : '')
@@ -369,8 +370,14 @@
           + '<span class="theme-card-line" style="background:' + esc(text) + ';opacity:.6;width:70%"></span>'
           + '<span class="theme-card-line" style="background:' + esc(accent) + ';opacity:.7;width:50%"></span>'
           + '<span class="theme-card-line" style="background:' + esc(colors['--accent-purple'])
-          + ';opacity:.5;width:60%"></span></span></span>'
+          + ';opacity:.5;width:60%"></span>'
+          + '<span class="theme-card-swatches" aria-hidden="true">'
+          + ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan'].map(function (color) {
+            return '<i style="background:' + esc(terminal[color] || accent) + '"></i>';
+          }).join('') + '</span></span></span>'
           + '<span class="theme-card-name" style="color:' + esc(text) + '">' + esc(theme.name) + '</span>'
+          + (theme.description ? '<span class="theme-card-description" style="color:'
+            + esc(colors['--workspace-muted'] || text) + '">' + esc(theme.description) + '</span>' : '')
           + '</button>';
       }).join('') + '</div>';
     },

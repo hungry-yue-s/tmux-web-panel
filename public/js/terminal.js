@@ -633,6 +633,8 @@ function _calcTerminalFontSize(paneCols, paneRows, containerEl) {
 function createTerminalInstance(paneCols, paneRows, nozoom) {
   var term = new Terminal({
     theme: Theme.getTerminalTheme(),
+    // Resolve contrast against each cell background, including TUI colors.
+    minimumContrastRatio: 4.5,
     allowTransparency: !!(Theme.supportsTransparency && Theme.supportsTransparency()),
     fontFamily: 'monospace',
     fontSize: _calcTerminalFontSize(paneCols, paneRows),

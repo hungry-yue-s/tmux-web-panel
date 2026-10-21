@@ -4,6 +4,8 @@
 
 ## 当前真实应用：单层工作台
 
+最新配色整理及旧主题修正见 [配色方案](design/theme-palettes.md)。
+
 当前分支 `design/workspace-v2`，隔离入口为 [工作台](http://127.0.0.1:17681/)。本轮重构直接作用于真实 AppShell、MsApp、xterm 和文件预览；独立 Swift Review 也已刷新。下文的原型与早期审查保留为历史，画布 v9 不代表这一轮的真实代码。
 
 设计参考来自 [Linear 2026 界面调整](https://linear.app/now/behind-the-latest-design-refresh)、[Figma UI3 复盘](https://www.figma.com/blog/our-approach-to-designing-ui3/)、[Vercel Geist](https://vercel.com/geist/introduction) 和 [Supabase Design System](https://supabase.com/design-system)。借鉴内容优先、稳定导航和动作层级；本项目以深海表面、暖铜选中态及连续工作面建立自己的视觉。

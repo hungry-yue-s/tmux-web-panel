@@ -51,29 +51,49 @@ afterEach(() => {
 });
 
 describe('extended terminal themes', () => {
-  it('registers all three additional opaque palettes', () => {
+  it('registers four distinct new palettes and their preview metadata', () => {
     const Theme = loadTheme();
-    const addedThemes = Theme.getThemeList().slice(-3);
-
-    expect(addedThemes.map((theme) => theme.id)).toEqual([
-      'catppuccin-mocha-pastel',
-      'rose-pine-moon',
-      'tokyo-night-storm',
-    ]);
-    expect(addedThemes.map((theme) => theme.name)).toEqual([
-      'Catppuccin Mocha Pastel',
-      'Rosé Pine Moon',
-      'Tokyo Night Storm',
-    ]);
+    for (const id of ['prism', 'graphite', 'forest-ink', 'oyster']) {
+      const theme = Theme.getThemeList().find((entry) => entry.id === id);
+      expect(theme.description).toBeTruthy();
+      expect(theme.terminal.background).toBe(theme.colors['--workspace-bg']);
+      expect(theme.colorScheme).toBe(id === 'oyster' ? 'light' : 'dark');
+    }
   });
 
-  it('applies an opaque palette to both UI and terminal', () => {
-    const Theme = loadTheme('rose-pine-moon');
+  it('applies a new palette to both UI and terminal', () => {
+    const Theme = loadTheme('prism');
+    expect(Theme.getCurrent()).toBe('prism');
+    expect(Theme.getTerminalTheme().background).toBe('#191923');
+    expect(dom.window.document.documentElement.getAttribute('data-theme')).toBe('prism');
+    expect(dom.window.document.documentElement.style.getPropertyValue('--bg-primary')).toBe('#191923');
+  });
 
-    expect(Theme.getCurrent()).toBe('rose-pine-moon');
-    expect(Theme.getTerminalTheme().background).toBe('#232136');
-    expect(dom.window.document.documentElement.getAttribute('data-theme')).toBe('rose-pine-moon');
-    expect(dom.window.document.documentElement.style.getPropertyValue('--bg-primary')).toBe('#232136');
+  it.each([
+    ['tokyo-night-storm', 'tokyo-night'], ['catppuccin-mocha', 'prism'],
+    ['catppuccin-mocha-pastel', 'prism'], ['rose-pine-moon', 'prism'],
+    ['dracula', 'prism'], ['one-dark', 'graphite'], ['solarized-dark', 'deep-current'],
+  ])('migrates retired %s to %s for saved and explicit choices', (oldId, newId) => {
+    const Theme = loadTheme(oldId, { native: true, transparency: '25', glass: '65', appearance: true });
+    expect(Theme.getCurrent()).toBe(newId);
+    expect(dom.window.localStorage.getItem('tmux_theme')).toBe(newId);
+    expect(Theme.getThemeList().some((theme) => theme.id === oldId)).toBe(false);
+    expect(Theme.getTerminalTheme(oldId)).toEqual(Theme.getTerminalTheme(newId));
+    expect(Theme.getName(oldId)).toBe(Theme.getName(newId));
+    expect([Theme.getTransparency(), Theme.getGlassIntensity()]).toEqual([25, 65]);
+    Theme.apply('github-light');
+    storageChange('tmux_theme', oldId);
+    expect(Theme.getCurrent()).toBe(newId);
+    expect(dom.window.document.documentElement.getAttribute('data-theme')).toBe(newId);
+    expect(dom.window.localStorage.getItem('tmux_theme')).toBe(newId);
+  });
+
+  it.each(['unknown-theme', '__proto__', 'toString'])('safely falls back for invalid saved theme %s', (id) => {
+    const Theme = loadTheme(id);
+    expect(Theme.getCurrent()).toBe('tokyo-night');
+    Theme.apply(id);
+    expect(Theme.getCurrent()).toBe('tokyo-night');
+    expect(Theme.getTerminalTheme(id)).toEqual(Theme.getTerminalTheme('tokyo-night'));
   });
 
   it('announces theme changes so rendered previews can rebuild embedded colors', () => {
@@ -88,7 +108,9 @@ describe('extended terminal themes', () => {
   });
 
   it('bumps browser caches for the theme-aware Mermaid scripts', () => {
-    expect(indexSource).toContain('/js/theme.js?v=6');
+    expect(indexSource).toContain('/js/theme.js?v=7');
+    expect(indexSource).toContain('/js/terminal.js?v=22');
+    expect(indexSource).toContain('/css/style.css?v=51');
     expect(indexSource).toContain('/js/file-preview.js?v=44');
   });
 });
@@ -109,15 +131,13 @@ function contrastRatio(foreground, background) {
 const channels = (color) => [1, 3, 5].map((offset) => parseInt(color.slice(offset, offset + 2), 16));
 
 describe('workbench semantic palettes', () => {
-  it('keeps all saved themes and adds Deep Current without changing the default', () => {
+  it('curates ten choices while retaining the existing default', () => {
     const Theme = loadTheme();
     expect(Theme.getCurrent()).toBe('tokyo-night');
-    expect(Theme.getThemeList().map(({ id }) => id)).toEqual(expect.arrayContaining([
-      'deep-current', 'tokyo-night', 'catppuccin-mocha', 'dracula', 'nord', 'solarized-dark',
-      'solarized-light', 'github-light', 'gruvbox-dark', 'one-dark',
-      'catppuccin-mocha-pastel', 'rose-pine-moon', 'tokyo-night-storm',
-    ]));
-    expect(Theme.getThemeList()).toHaveLength(13);
+    expect(Theme.getThemeList().map(({ id }) => id)).toEqual([
+      'prism', 'graphite', 'deep-current', 'forest-ink', 'tokyo-night', 'nord',
+      'gruvbox-dark', 'oyster', 'solarized-light', 'github-light',
+    ]);
   });
 
   it('provides readable text and accent across opaque surfaces and lightly tinted backdrops', () => {
@@ -126,7 +146,7 @@ describe('workbench semantic palettes', () => {
       Theme.apply(id);
       const root = dom.window.document.documentElement;
       const alpha = 0.92;
-      const scheme = ['github-light', 'solarized-light'].includes(id) ? 'light' : 'dark';
+      const scheme = ['github-light', 'solarized-light', 'oyster'].includes(id) ? 'light' : 'dark';
       expect(root.style.colorScheme, id).toBe(scheme);
       for (const surface of ['bg', 'sidebar', 'panel', 'hover']) {
         const hex = colors['--workspace-' + surface];
@@ -148,29 +168,85 @@ describe('workbench semantic palettes', () => {
     }
   });
 
-  it('keeps terminal ANSI semantic colors independent from workbench contrast corrections', () => {
+  it('preserves classic ANSI slots used by TUI backgrounds and reverse video', () => {
     const Theme = loadTheme();
-    for (const [id, foreground, blue, red] of [
-      ['tokyo-night', '#c0caf5', '#7aa2f7', '#f7768e'],
-      ['catppuccin-mocha', '#cdd6f4', '#89b4fa', '#f38ba8'],
-      ['dracula', '#f8f8f2', '#bd93f9', '#ff5555'],
-      ['nord', '#d8dee9', '#81a1c1', '#bf616a'],
-      ['solarized-dark', '#839496', '#268bd2', '#dc322f'],
-      ['solarized-light', '#657b83', '#268bd2', '#dc322f'],
-      ['github-light', '#1f2328', '#0969da', '#cf222e'],
-      ['gruvbox-dark', '#ebdbb2', '#458588', '#cc241d'],
-      ['one-dark', '#abb2bf', '#61afef', '#e06c75'],
-      ['catppuccin-mocha-pastel', '#cdd6f4', '#89b4fa', '#f38ba8'],
-      ['rose-pine-moon', '#e0def4', '#9ccfd8', '#eb6f92'],
-      ['tokyo-night-storm', '#c0caf5', '#7aa2f7', '#f7768e'],
+    for (const [id, unchanged] of [
+      ['tokyo-night', { foreground: '#c0caf5', blue: '#7aa2f7', red: '#f7768e' }],
+      ['nord', { foreground: '#d8dee9', blue: '#81a1c1', green: '#a3be8c' }],
+      ['github-light', { foreground: '#1f2328', blue: '#0969da', red: '#cf222e' }],
+      ['gruvbox-dark', { foreground: '#ebdbb2', green: '#98971a', yellow: '#d79921' }],
     ]) {
-      expect(Theme.getTerminalTheme(id), id).toMatchObject({ foreground, blue, red });
+      expect(Theme.getTerminalTheme(id), id).toMatchObject(unchanged);
     }
+    expect(Theme.getTerminalTheme('tokyo-night').brightBlack).toBe('#414868');
+    expect(Theme.getTerminalTheme('nord').red).toBe('#bf616a');
+    expect(Theme.getTerminalTheme('gruvbox-dark').blue).toBe('#458588');
+    expect(Theme.getTerminalTheme('solarized-light').brightWhite).toBe('#fdf6e3');
     const palette = Theme.getTerminalTheme('deep-current');
     expect(palette.blue).toBe('#7aa2f7');
     expect(palette.cursor).toBe('#edbd8b');
     palette.blue = '#000000';
     expect(Theme.getTerminalTheme('deep-current').blue).toBe('#7aa2f7');
+  });
+
+  it('corrects default text and selection contrast while keeping new ANSI palettes readable', () => {
+    const Theme = loadTheme();
+    const ansi = ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
+      'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite'];
+    for (const { id } of Theme.getThemeList()) {
+      const palette = Theme.getTerminalTheme(id);
+      for (const key of ['foreground', 'cursor', ...(['prism', 'graphite', 'forest-ink', 'oyster'].includes(id) ? ansi : [])]) {
+        expect(palette[key], id + '/' + key).toMatch(/^#[0-9a-f]{6}$/i);
+        expect(contrastRatio(channels(palette[key]), channels(palette.background)), id + '/' + key)
+          .toBeGreaterThanOrEqual(4.5);
+      }
+      expect(contrastRatio(channels(palette.selectionForeground), channels(palette.selectionBackground)), id + '/selection')
+        .toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('keeps semantic action text readable in all palettes', () => {
+    const Theme = loadTheme();
+    for (const { id, colors } of Theme.getThemeList()) {
+      for (const color of ['--accent-blue', '--accent-green', '--accent-red', '--accent-yellow', '--accent-purple']) {
+        expect(contrastRatio(channels(colors[color]), channels(colors['--bg-primary'])), id + '/' + color)
+          .toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it('keeps bright text legible on classic ANSI gray backgrounds', () => {
+    const Theme = loadTheme();
+    for (const id of ['tokyo-night', 'nord', 'solarized-light']) {
+      const palette = Theme.getTerminalTheme(id);
+      expect(contrastRatio(channels(palette.brightWhite), channels(palette.brightBlack)), id + '/SGR 97;100')
+        .toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it.each([false, true])('enables per-cell contrast in terminal mode nozoom=%s', (nozoom) => {
+    loadTheme();
+    dom.window.state = { currentPane: '%test', currentServer: 'local' };
+    dom.window.eval(terminalSource);
+    dom.window.Terminal = function (options) { this.options = options; };
+    const term = dom.window.createTerminalInstance(120, 40, nozoom);
+    expect(term.options.minimumContrastRatio).toBe(4.5);
+    expect(term.options.theme.brightBlack).toBe('#414868');
+    expect(term.options.macOptionClickForcesSelection).toBe(!nozoom);
+  });
+
+  it('keeps picker previews opaque and isolated from native transparency and caller mutations', () => {
+    const Theme = loadTheme('prism', { native: true, transparency: '40' });
+    const preview = Theme.getThemeList().find(({ id }) => id === 'prism');
+    expect(Theme.getTerminalTheme().background).toBe('rgba(0, 0, 0, 0)');
+    expect(preview.terminal.background).toBe('#191923');
+    preview.terminal.blue = '#000000';
+    expect(Theme.getTerminalTheme().blue).toBe('#a6a5f8');
+    renderSettings();
+    const card = dom.window.document.querySelector('.theme-card[data-theme="prism"]');
+    expect(card.querySelector('.theme-card-description').textContent).toContain('烟紫');
+    expect(card.querySelectorAll('.theme-card-swatches i')).toHaveLength(6);
+    expect(card.querySelectorAll('.theme-card-swatches i')[3].style.background).toBe('rgb(166, 165, 248)');
   });
 });
 
@@ -229,7 +305,7 @@ describe('native glass intensity', () => {
 
 describe('native window transparency', () => {
   it.each([false, true])('keeps unsupported clients opaque with saved preferences (legacy native: %s)', (legacyNative) => {
-    const Theme = loadTheme('rose-pine-moon', { transparency: '35', legacyNative });
+    const Theme = loadTheme('prism', { transparency: '35', legacyNative });
     const root = dom.window.document.documentElement;
     renderSettings();
 
@@ -239,7 +315,7 @@ describe('native window transparency', () => {
 
     expect(Theme.supportsTransparency()).toBe(false);
     expect(Theme.getTransparency()).toBe(0);
-    expect(Theme.getTerminalTheme().background).toBe('#232136');
+    expect(Theme.getTerminalTheme().background).toBe('#191923');
     expect(root.hasAttribute('data-native-transparency')).toBe(false);
     expect(dom.window.document.getElementById('native-transparency')).toBeNull();
     expect(dom.window.localStorage.getItem('tmux_native_transparency')).toBe('40');
@@ -262,11 +338,11 @@ describe('native window transparency', () => {
   });
 
   it('restores transparency and keeps palette colors intact across theme changes', () => {
-    const Theme = loadTheme('rose-pine-moon', { native: true, transparency: '25' });
+    const Theme = loadTheme('prism', { native: true, transparency: '25' });
     const root = dom.window.document.documentElement;
 
     expect(Theme.getTransparency()).toBe(25);
-    expect(root.style.getPropertyValue('--native-window-background')).toBe('rgba(35, 33, 54, 0.75)');
+    expect(root.style.getPropertyValue('--native-window-background')).toBe('rgba(25, 25, 35, 0.75)');
     expect(Theme.getTerminalTheme().background).toBe('rgba(0, 0, 0, 0)');
 
     Theme.apply('github-light');
@@ -289,18 +365,18 @@ describe('native window transparency', () => {
     Theme.setTransparency(30);
     expect(term.options.theme.background).toBe('rgba(0, 0, 0, 0)');
 
-    storageChange('tmux_theme', 'rose-pine-moon');
-    expect(dom.window.document.documentElement.getAttribute('data-theme')).toBe('rose-pine-moon');
-    expect(term.options.theme.foreground).toBe('#e0def4');
+    storageChange('tmux_theme', 'prism');
+    expect(dom.window.document.documentElement.getAttribute('data-theme')).toBe('prism');
+    expect(term.options.theme.foreground).toBe('#e8e5f2');
     expect(term.options.theme.background).toBe('rgba(0, 0, 0, 0)');
 
     storageChange('tmux_native_transparency', '15');
     expect(Theme.getTransparency()).toBe(15);
     expect(dom.window.document.documentElement.style.getPropertyValue('--native-window-background'))
-      .toBe('rgba(35, 33, 54, 0.85)');
+      .toBe('rgba(25, 25, 35, 0.85)');
 
     storageChange('tmux_native_transparency', null);
-    expect(term.options.theme.background).toBe('#232136');
+    expect(term.options.theme.background).toBe('#191923');
 
     storageChange(null, null);
     expect(Theme.getTransparency()).toBe(0);
