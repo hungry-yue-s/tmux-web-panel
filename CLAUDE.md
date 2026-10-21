@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+通用 Agent 工作流程（含任务完成后自动提交与推送）见 [AGENTS.md](AGENTS.md)，执行本文件时同样遵守。
+
 ## 服务管理
 
 **严禁使用 systemd 以外的方式启停服务。**
