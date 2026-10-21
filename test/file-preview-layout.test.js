@@ -105,6 +105,10 @@ function createLivePreview({ visible = false } = {}) {
         json: () => Promise.resolve({ success: true, data: { content, language: null } }),
       });
     }
+    if (text.startsWith('/api/share')) {
+      return Promise.resolve({ ok:true, status:200, json:() => Promise.resolve({ success:true,
+        data:text.includes('/lan-host') ? { host:'panel.test' } : { shares:[] } }) });
+    }
     throw new Error('Unexpected fetch: ' + text);
   });
 
@@ -113,6 +117,7 @@ function createLivePreview({ visible = false } = {}) {
   return {
     dom,
     preview: dom.window.FilePreview,
+    fetch,
     setFile(next, nextMtime) { content = next; mtimeMs = nextMtime; },
     failNextContent() { contentFailures++; },
     setInfoError(message, status = 403) { infoError = { message, status }; },
@@ -199,6 +204,21 @@ async function flush() {
 
 function dockCurrent(dom) {
   dom.window.document.querySelector('[aria-label="在右侧分栏打开"]').click();
+}
+
+function openMore(dom) {
+  const doc = dom.window.document;
+  const trigger = doc.querySelector('.fp-overlay:not(.fp-dock) .fp-btn-more') || doc.querySelector('.fp-dock .fp-btn-more');
+  trigger.click();
+  return trigger;
+}
+
+function runPreviewAction(dom, label) {
+  openMore(dom);
+  const item = dom.window.document.querySelector('.fp-menu [aria-label="' + label + '"]');
+  expect(item).not.toBeNull();
+  item.click();
+  return item;
 }
 
 describe('file preview dock tabs', () => {
@@ -639,87 +659,150 @@ describe('file preview dock tabs', () => {
     expect(styles).toMatch(/\.ms-app\.mode-terminal \.fp-dock\s*\{[\s\S]*?grid-column:\s*2;[\s\S]*?grid-row:\s*1 \/ 3/);
   });
 
-  it('uses consistent SVG controls with accessible toggle states', async () => {
+  it('keeps only four toolbar controls and exposes low-frequency operations as named menu actions', async () => {
     const { dom, preview } = createPreview();
-    preview.openFile('/tmp/one.md', '%1'); await flush();
-
-    const overlay = dom.window.document.querySelector('.fp-overlay');
-    ['Back to parent directory', 'Refresh preview', '在右侧分栏打开', 'Maximize', 'Open in new tab',
-      '复制全文', '生成内网分享链接', '下载', 'Close'].forEach((label) => {
+    await preview.openFile('/tmp/one.md', '%1');
+    const doc = dom.window.document;
+    const overlay = doc.querySelector('.fp-overlay');
+    expect(Array.from(overlay.querySelectorAll('.fp-actions > button')).map((b) => b.getAttribute('aria-label')))
+      .toEqual(['刷新预览', '在右侧分栏打开', '更多文件操作', '关闭预览']);
+    ['返回上级目录', '刷新预览', '在右侧分栏打开', '更多文件操作', '关闭预览'].forEach((label) => {
       const button = overlay.querySelector(`[aria-label="${label}"]`);
-      expect(button).not.toBeNull();
       expect(button.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
-      expect(button.title).not.toBe('');
-      expect(button.type).toBe('button');
+      expect(button.title).not.toBe(''); expect(button.type).toBe('button');
     });
-
-    ['复制全文', '下载'].forEach((label) => {
-      const trigger = overlay.querySelector(`[aria-label="${label}"]`);
-      expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
-      expect(trigger.getAttribute('aria-expanded')).toBe('false');
-    });
-    expect(overlay.querySelector('[aria-label="导出渲染后的 HTML"]')).toBeNull();
-
-    const maximize = overlay.querySelector('[aria-label="Maximize"]');
-    maximize.click();
-    expect(maximize.classList.contains('is-active')).toBe(true);
-    expect(maximize.getAttribute('aria-pressed')).toBe('true');
-    expect(maximize.querySelector('svg')).not.toBeNull();
-    maximize.click();
-    expect(maximize.classList.contains('is-active')).toBe(false);
-
+    const trigger = doc.querySelector('.fp-btn-more');
+    expect(trigger.textContent).toBe('更多');
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    // This fixture is a directory: content-only commands must not be offered.
+    openMore(dom);
+    expect(Array.from(doc.querySelectorAll('.fp-menu-label')).map((e) => e.textContent)).toEqual(['最大化预览']);
+    doc.querySelector('.fp-menu [aria-label="最大化预览"]').click();
+    expect(overlay.querySelector('.fp-modal').classList.contains('fp-maximized')).toBe(true);
+    expect(doc.activeElement).toBe(trigger);
+    runPreviewAction(dom, '恢复预览');
+    expect(overlay.querySelector('.fp-modal').classList.contains('fp-maximized')).toBe(false);
     dockCurrent(dom);
-    const placement = dom.window.document.querySelector('[aria-label="隐藏右侧预览"]');
-    expect(placement.classList.contains('is-active')).toBe(true);
+    const placement = doc.querySelector('[aria-label="隐藏右侧预览"]');
     expect(placement.getAttribute('aria-pressed')).toBe('true');
+    expect(doc.querySelector('.fp-dock .fp-title').textContent).toBe('/tmp/one.md');
+    expect(doc.querySelector('.fp-dock-tab').textContent).toBe('one.md');
+    preview.closeDocked(); dom.window.close();
   });
 
-  it('groups every download action behind one menu button', async () => {
-    const { dom, preview } = createPreview();
-    preview.openFile('/tmp/one.md', '%1');
-    await flush();
+  it('keeps the full current directory title and shows only the parent path for docked files', async () => {
+    const directory = createPreview();
+    await directory.preview.openFile('/root/child', '%1'); dockCurrent(directory.dom);
+    expect(directory.dom.window.document.querySelector('.fp-title').textContent).toBe('/root/child');
+    directory.preview.closeDocked(); directory.dom.window.close();
+    const file = createLivePreview();
+    await file.preview.openFile('/tmp/live.csv', '%1');
+    expect(file.dom.window.document.querySelector('.fp-title').textContent).toBe('/tmp/live.csv');
+    dockCurrent(file.dom);
+    expect(file.dom.window.document.querySelector('.fp-title').textContent).toBe('/tmp');
+    expect(file.dom.window.document.querySelector('.fp-title').title).toBe('/tmp/live.csv');
+    file.preview.closeDocked(); file.dom.window.close();
+  });
 
+  it('owns share-dialog focus and Escape without closing the file or generating a share', async () => {
+    const live = createLivePreview();
+    const { dom, preview, fetch } = live;
     const doc = dom.window.document;
-    const trigger = doc.querySelector('[aria-label="下载"]');
-    expect(doc.querySelector('.fp-menu')).toBeNull();
+    await preview.openFile('/tmp/live.csv', '%1');
+    preview._test.setLanHost('panel.test');
+    fetch.mockResolvedValueOnce({ ok:true, status:200, json:() => Promise.resolve({ success:true,
+      data:{ shares:[{ id:'existing-demo', filename:'演示.csv', expiresAt:Date.now() + 1000 }] } }) });
+    runPreviewAction(dom, '生成内网分享链接'); await flush();
+    const share = doc.querySelector('.fp-share-box');
+    expect(share.getAttribute('role')).toBe('dialog');
+    expect(share.getAttribute('aria-modal')).toBe('true');
+    expect(doc.activeElement).toBe(share.querySelector('#fpShareCancel'));
+    const copy = share.querySelector('[data-act="copy"]');
+    doc.execCommand = vi.fn(() => {
+      expect(doc.activeElement.tagName).toBe('TEXTAREA');
+      expect(share.contains(doc.activeElement)).toBe(true);
+      return true;
+    });
+    copy.focus(); copy.click();
+    expect(doc.execCommand).toHaveBeenCalledWith('copy');
+    expect(doc.activeElement).toBe(copy);
+    const first = share.querySelector('#fpShareTtl'), last = share.querySelector('[data-act="revoke"]');
+    last.focus(); last.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key:'Tab', bubbles:true, cancelable:true }));
+    expect(doc.activeElement).toBe(first);
+    first.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key:'Tab', shiftKey:true, bubbles:true, cancelable:true }));
+    expect(doc.activeElement).toBe(last);
+    doc.querySelector('.fp-btn-close').focus();
+    expect(doc.activeElement).toBe(share.querySelector('#fpShareCancel'));
+    doc.activeElement.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key:'Escape', bubbles:true, cancelable:true }));
+    expect(doc.querySelector('.fp-share-overlay')).toBeNull();
+    expect(doc.querySelector('.fp-modal')).not.toBeNull();
+    expect(doc.activeElement).toBe(doc.querySelector('.fp-btn-more'));
+    preview.close();
+    const outside = doc.createElement('button'); doc.body.appendChild(outside); outside.focus();
+    expect(doc.activeElement).toBe(outside); // No stale share focus listener.
+    expect(fetch.mock.calls.every(([, options]) => !options || !options.method || options.method === 'GET')).toBe(true);
+    dom.window.close();
+  });
 
-    trigger.click();
+  it('yields share-dialog focus to the palette and disposes it on navigation while retaining dock state', async () => {
+    const live = createLivePreview();
+    const { dom, preview, fetch } = live;
+    const doc = dom.window.document;
+    const { palette } = installPalette(dom);
+    await preview.openFile('/tmp/live.csv', '%1'); dockCurrent(dom);
+    const dock = doc.querySelector('.fp-dock');
+    runPreviewAction(dom, '生成内网分享链接'); await flush();
+    const cancel = doc.querySelector('#fpShareCancel');
+    palette.open(cancel);
+    expect(doc.activeElement).toBe(doc.querySelector('.cmd-palette-input'));
+    doc.activeElement.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key:'Escape', bubbles:true, cancelable:true }));
+    expect(doc.querySelector('.fp-share-overlay')).not.toBeNull();
+    expect(doc.activeElement).toBe(cancel);
+    palette.open(cancel);
+    const input = doc.querySelector('.cmd-palette-input');
+    input.value='设置'; input.dispatchEvent(new dom.window.Event('input', { bubbles:true }));
+    input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key:'Enter', bubbles:true, cancelable:true }));
+    expect(doc.querySelector('.fp-share-overlay')).toBeNull();
+    expect(doc.querySelector('.fp-dock')).toBe(dock);
+    runPreviewAction(dom, '生成内网分享链接'); await flush();
+    preview.closeDocked();
+    expect(doc.querySelector('.fp-share-overlay')).toBeNull();
+    expect(doc.querySelector('.fp-dock')).toBeNull();
+    expect(fetch.mock.calls.every(([, options]) => !options || !options.method || options.method === 'GET')).toBe(true);
+    dom.window.close();
+  });
+
+  it('uses one keyboard-accessible more menu for file operations without nested menu anchors', async () => {
+    const { dom, preview } = createLivePreview();
+    await preview.openFile('/tmp/live.csv', '%1');
+    const doc = dom.window.document;
+    const trigger = openMore(dom);
     const menu = doc.querySelector('.fp-menu');
-    expect(menu).not.toBeNull();
-    // Appended to body: .fp-modal clips overflow and would cut the menu off.
     expect(menu.parentElement).toBe(doc.body);
-    expect(menu.getAttribute('role')).toBe('menu');
+    expect(menu.getAttribute('aria-label')).toBe('更多文件操作');
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
-    expect(trigger.classList.contains('is-active')).toBe(true);
     expect(Array.from(menu.querySelectorAll('.fp-menu-label')).map((el) => el.textContent))
-      .toEqual(['下载 Raw 文件', '导出渲染后的 HTML']);
-
-    // Escape closes the menu but keeps the preview open.
-    doc.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      .toEqual(['最大化预览', '在新标签页打开', '带格式复制', '不带格式复制', '生成内网分享链接', '下载原文件', '导出渲染后的 HTML']);
+    const press = (key) => doc.activeElement.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key, bubbles:true, cancelable:true }));
+    expect(doc.activeElement.getAttribute('aria-label')).toBe('最大化预览');
+    press('ArrowDown'); expect(doc.activeElement.getAttribute('aria-label')).toBe('在新标签页打开');
+    press('End'); expect(doc.activeElement.getAttribute('aria-label')).toBe('导出渲染后的 HTML');
+    press('Home'); expect(doc.activeElement.getAttribute('aria-label')).toBe('最大化预览');
+    press('Escape');
     expect(doc.querySelector('.fp-menu')).toBeNull();
     expect(doc.querySelector('.fp-overlay')).not.toBeNull();
+    expect(doc.activeElement).toBe(trigger);
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
-    expect(trigger.classList.contains('is-active')).toBe(false);
-
-    // Reopening the same trigger toggles; opening the other one replaces it.
-    trigger.click();
-    expect(doc.querySelector('.fp-menu')).not.toBeNull();
-    trigger.click();
+    openMore(dom);
+    // Clicking the visible text, rather than the button box, still toggles once.
+    trigger.querySelector('span').dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles:true }));
+    trigger.querySelector('span').click();
     expect(doc.querySelector('.fp-menu')).toBeNull();
-
-    trigger.click();
-    doc.querySelector('[aria-label="复制全文"]').click();
-    const menus = doc.querySelectorAll('.fp-menu');
-    expect(menus).toHaveLength(1);
-    expect(Array.from(menus[0].querySelectorAll('.fp-menu-label')).map((el) => el.textContent))
-      .toEqual(['带格式复制', '不带格式复制']);
-
-    // Directory previews have no file content, so both triggers stay hidden.
-    ['下载', '复制全文'].forEach((label) => {
-      expect(doc.querySelector(`[aria-label="${label}"]`).classList.contains('fp-btn-file-only')).toBe(true);
-    });
-    expect(styles).toMatch(/\.fp-overlay\.fp-mode-dir \.fp-btn-file-only\s*\{\s*display:\s*none;/);
-    expect(styles).toMatch(/\.fp-menu\s*\{[^}]*position:\s*fixed;[^}]*z-index:\s*10002/);
+    openMore(dom); press('Tab');
+    expect(doc.querySelector('.fp-menu')).toBeNull(); expect(doc.activeElement).toBe(trigger);
+    expect(doc.querySelectorAll('.fp-btn-copy,.fp-btn-download')).toHaveLength(0);
+    preview.close(); dom.window.close();
   });
 
   it('copies the full preview text with or without formatting', async () => {
@@ -735,12 +818,12 @@ describe('file preview dock tabs', () => {
       value: { writeText, write }, configurable: true,
     });
 
-    doc.querySelector('[aria-label="复制全文"]').click();
+    openMore(live.dom);
     const items = doc.querySelectorAll('.fp-menu .fp-menu-item');
-    expect(items).toHaveLength(2);
+    expect(items).toHaveLength(7);
 
     // No ClipboardItem in this environment: degrade to plain text, never fail.
-    items[0].click();
+    doc.querySelector('.fp-menu [aria-label="带格式复制"]').click();
     await flush();
     expect(write).not.toHaveBeenCalled();
     expect(writeText).toHaveBeenCalledWith('name,value\nbefore,1');
@@ -749,8 +832,7 @@ describe('file preview dock tabs', () => {
     win.ClipboardItem = class ClipboardItem {
       constructor(flavours) { this.flavours = flavours; }
     };
-    doc.querySelector('[aria-label="复制全文"]').click();
-    doc.querySelectorAll('.fp-menu .fp-menu-item')[0].click();
+    runPreviewAction(live.dom, '带格式复制');
     await flush();
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(write).toHaveBeenCalledTimes(1);
@@ -758,6 +840,11 @@ describe('file preview dock tabs', () => {
     expect(Object.keys(flavours).sort()).toEqual(['text/html', 'text/plain']);
     expect(await flavours['text/html'].text()).toContain('<table class="fp-xlsx-table"');
     expect(await flavours['text/plain'].text()).toBe('name,value\nbefore,1');
+    runPreviewAction(live.dom, '不带格式复制');
+    await flush();
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(writeText).toHaveBeenLastCalledWith('name,value\nbefore,1');
+    expect(write).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the dock open while a second file opens in a modal, then adds a tab', async () => {
@@ -1129,7 +1216,7 @@ describe('file preview dock tabs', () => {
     const doc = dom.window.document;
     const { palette } = installPalette(dom);
     await preview.openFile('/tmp/one.md', '%1');
-    doc.querySelector('.fp-btn-download').click();
+    openMore(dom);
     const menu = doc.querySelector('.fp-menu');
     palette.open(doc.activeElement);
     doc.querySelector('.cmd-palette-input').dispatchEvent(new dom.window.KeyboardEvent('keydown', {
@@ -1329,12 +1416,10 @@ describe('file preview dock tabs', () => {
     dock.style.width = '500px';
     dock.style.flexBasis = '500px';
 
-    dock.querySelector('[aria-label="Maximize"]').click();
+    runPreviewAction(dom, '最大化预览');
     expect(dock.classList.contains('fp-side-maximized')).toBe(true);
     expect(dom.window.getComputedStyle(dock).width).toBe('auto');
-    expect(dock.querySelector('[aria-label="Restore"]')).not.toBeNull();
-
-    dock.querySelector('[aria-label="Restore"]').click();
+    runPreviewAction(dom, '恢复预览');
     expect(dock.classList.contains('fp-side-maximized')).toBe(false);
     expect(dom.window.getComputedStyle(dock).width).toBe('500px');
   });
@@ -1347,14 +1432,14 @@ describe('file preview dock tabs', () => {
     const doc = live.dom.window.document;
     dockCurrent(live.dom);
     const dock = doc.querySelector('.fp-dock');
-    dock.querySelector('[aria-label="Maximize"]').click();
+    runPreviewAction(live.dom, '最大化预览');
     const body = dock.querySelector('.fp-body');
     const scroll = body.querySelector('.fp-xlsx-wrap');
     scroll.scrollTop = 73;
     scroll.scrollLeft = 19;
 
     live.setFile('name,value\nafter,2', 2000);
-    dock.querySelector('[aria-label="Refresh preview"]').click();
+    dock.querySelector('[aria-label="刷新预览"]').click();
     await flush();
 
     expect(dock.querySelector('.fp-xlsx-table').textContent).toContain('after');
@@ -1364,7 +1449,7 @@ describe('file preview dock tabs', () => {
     expect(refreshedScroll.scrollLeft).toBe(19);
     expect(dock.querySelector('.fp-modal').classList.contains('fp-maximized')).toBe(true);
     expect(dock.querySelectorAll('.fp-dock-tab-item.active')).toHaveLength(1);
-    expect(dock.querySelector('[aria-label="Refresh preview"]').getAttribute('aria-busy')).toBe('false');
+    expect(dock.querySelector('[aria-label="刷新预览"]').getAttribute('aria-busy')).toBe('false');
   });
 
   it('checks only the visible preview, skips unchanged content, and pauses when hidden', async () => {

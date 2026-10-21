@@ -35,6 +35,22 @@
       + '<strong>' + esc(label) + '</strong><small>' + esc(value) + '</small></div>';
   }
 
+  function capabilityStatus(capability, health, isTmux) {
+    if (health.state === 'disabled') return { text: '已停用', ok: false };
+    if (health.state === 'checking') return { text: '检测中', ok: false };
+    if (!health.checkedAt || health.state === 'unknown') return { text: '未检测', ok: false };
+    if (health.state !== 'online' && health.state !== 'degraded') return { text: '未取得结果', ok: false };
+    if (capability && capability.available === true) {
+      return { text: '可用' + (isTmux && capability.version ? ' · ' + capability.version : ''), ok: true };
+    }
+    if (!capability || capability.available !== false) return { text: '未取得结果', ok: false };
+    var reason = capability && capability.reason;
+    var reasons = { command_not_found: '未安装', unsupported_platform: '该平台不支持',
+      version_unparseable: '版本无法识别', command_failed: '检测失败' };
+    if (reason) return { text: reasons[reason] || '不可用', ok: false };
+    return { text: '不可用', ok: false };
+  }
+
   /** Percent for display: unknown stays an em dash rather than becoming 0. */
   function pct(value) {
     return value === null || value === undefined || !Number.isFinite(Number(value))
@@ -76,7 +92,7 @@
       shell().setHeader(
         '服务器 / ' + server.name,
         ({ performance: '性能', agents: 'Agent 控制台', claude: 'Agent 控制台', codex: 'Agent 控制台', connection: '连接' })[section] || '性能',
-        actionButton('立即检测', 'probe', false, 'refresh') + openWorkspace,
+        '',
       );
 
       var base = this._hero(server, health, openWorkspace) + this._tabs(server, section);
@@ -163,7 +179,6 @@
             ? '<p class="muted">最后一次成功样本：CPU ' + esc(pct(metrics.last.cpuPercent))
               + ' · ' + esc(relativeTime(metrics.last.sampledAt)) + '</p>'
             : '')
-          + (unsupported ? '' : actionButton('立即检测', 'probe', true, 'refresh'))
           + '</div>';
       }
 
@@ -202,21 +217,45 @@
         + '<path class="chart-line" d="' + path + '"/></svg>';
     },
 
+    _localConnection: function (health) {
+      var facts = health.facts || {}, capabilities = health.capabilities || {};
+      var platforms = { darwin: 'macOS', linux: 'Linux', windows: 'Windows' };
+      var tmux = capabilityStatus(capabilities.tmux, health, true);
+      var metrics = capabilityStatus(capabilities.metrics, health, false);
+      return '<div class="grid two-col connection-local"><section>'
+        + '<div class="section-head"><h3>本机信息</h3></div><div class="ms-card detail-list">'
+        + detail('连接方式', '本机进程')
+        + detail('平台', platforms[facts.platform] || facts.platform || '未检测')
+        + detail('架构', facts.arch || '未检测')
+        + detail('主机名', facts.hostname || '未检测')
+        + '</div><p class="muted">直接读取本机运行状态。</p></section><section>'
+        + '<div class="section-head"><h3>最近检测结果</h3><span>' + esc(relativeTime(health.checkedAt)) + '</span></div>'
+        + '<div class="ms-card timeline">'
+        + timeline('tmux', tmux.text, tmux.ok)
+        + timeline('指标采集能力', metrics.text, metrics.ok)
+        + '</div></section></div>';
+    },
+
     _connection: function (server, health, workspace) {
+      if (server.kind === 'local') return this._localConnection(health);
       var address = server.address || {};
       var ssh = server.ssh || {};
       var capabilities = health.capabilities || {};
-      var offline = health.state === 'offline';
-      var authFailed = health.state === 'auth_required';
       var keyProblem = health.state === 'host_key_error';
+      var verified = Boolean(health.checkedAt && (health.state === 'online' || health.state === 'degraded')
+        && capabilities.ssh && capabilities.ssh.available === true);
+      var connection = verified ? '已验证' : ({ offline: '连接失败', auth_required: '身份认证失败',
+        host_key_error: '主机指纹需要确认', checking: '检测中', disabled: '已停用' })[health.state] || '未检测';
+      var tmux = capabilityStatus(capabilities.tmux, health, true);
+      var metrics = capabilityStatus(capabilities.metrics, health, false);
 
-      return '<div class="grid two-col"><section>'
-        + '<div class="section-head"><h3>连接信息</h3><span>敏感信息只保存引用</span></div>'
+      return '<div class="grid two-col connection-remote"><section>'
+        + '<div class="section-head"><h3>连接配置</h3></div>'
         + '<div class="ms-card detail-list">'
         + detail('Host', address.host || ssh.configHost || '—')
-        + detail('SSH Port', address.port || (ssh.configHost ? '来自 ssh config' : 22))
+        + detail('SSH Port', address.port || (ssh.configHost ? '来自 ssh config' : '未配置'))
         + detail('Username', address.user || (ssh.configHost ? '来自 ssh config' : '—'))
-        + detail('认证方式', ssh.usesIdentityFile ? '指定私钥文件（仅保存路径引用）' : 'SSH Agent / ssh config')
+        + detail('认证配置', ssh.usesIdentityFile ? '指定私钥文件' : 'SSH Agent / ssh config')
         + detail('最近成功', relativeTime(health.lastOnlineAt))
         + '</div>'
         + (keyProblem
@@ -234,23 +273,13 @@
             + actionButton('立即切换到 tmux', 'adopt-provider', false, '') + '</div></div>'
           : '')
         + (server.immutable ? '' : '<div class="section">'
-          + actionButton('编辑连接', 'edit-server', false, '')
-          + ' ' + actionButton('删除服务器', 'delete-server', false, '') + '</div>')
+          + actionButton('删除服务器', 'delete-server', false, '') + '</div>')
         + '</section><section>'
         + '<div class="section-head"><h3>最近一次检测</h3><span>' + esc(relativeTime(health.checkedAt)) + '</span></div>'
         + '<div class="ms-card timeline">'
-        + timeline('TCP 连接', offline ? '失败' : shell()._latencyOf(health), !offline)
-        + timeline('SSH 握手', offline ? '未执行' : keyProblem ? '指纹不匹配' : '成功', !offline && !keyProblem)
-        + timeline('身份认证', authFailed ? '失败' : offline || keyProblem ? '未执行' : '成功',
-          !authFailed && !offline && !keyProblem)
-        + timeline('性能指标',
-          capabilities.metrics && capabilities.metrics.available ? '可用' : '不可用',
-          Boolean(capabilities.metrics && capabilities.metrics.available))
-        + timeline('tmux',
-          capabilities.tmux && capabilities.tmux.available
-            ? '已发现' + (capabilities.tmux.version ? ' ' + capabilities.tmux.version : '')
-            : (capabilities.tmux && capabilities.tmux.reason === 'command_not_found' ? '未安装' : '不可用'),
-          Boolean(capabilities.tmux && capabilities.tmux.available))
+        + timeline('SSH 连接', connection, verified)
+        + timeline('指标采集能力', metrics.text, metrics.ok)
+        + timeline('tmux', tmux.text, tmux.ok)
         + '</div>'
         + '<p class="muted" style="margin-top:10px">面板不会在远端安装、升级或启动 tmux。</p>'
         + '</section></div>';
@@ -323,10 +352,10 @@
       return '<div class="theme-grid">' + global.Theme.getThemeList().map(function (theme) {
         var colors = theme.colors || {};
         var isActive = theme.id === current;
-        var bg = colors['--bg-primary'];
-        var bgCard = colors['--bg-card'];
-        var text = colors['--text-primary'];
-        var accent = colors['--accent-blue'];
+        var bg = colors['--workspace-bg'] || colors['--bg-primary'];
+        var bgCard = colors['--workspace-sidebar'] || colors['--bg-card'];
+        var text = colors['--workspace-text'] || colors['--text-primary'];
+        var accent = colors['--workspace-accent'] || colors['--accent-blue'];
         return '<button class="theme-card' + (isActive ? ' active' : '') + '"'
           + ' data-action="set-theme" data-theme="' + esc(theme.id) + '"'
           + (isActive ? ' aria-current="true"' : '')

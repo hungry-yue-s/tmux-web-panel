@@ -22,6 +22,7 @@ var FilePreview = (function () {
   var _currentOpenPath = null;
   var _refreshButton = null;
   var _actionMenu = null;
+  var _shareDialogClose = null;
   var _autoRefreshTimer = null;
   var _refreshPromise = null;
   var _previewGeneration = 0;
@@ -307,7 +308,7 @@ var FilePreview = (function () {
     _setSvgIcon(_maximizeButton, _maximized
       ? '<path d="M8 3v5H3"/><path d="M16 3v5h5"/><path d="M8 21v-5H3"/><path d="M16 21v-5h5"/>'
       : '<path d="M8 3H3v5"/><path d="M16 3h5v5"/><path d="M8 21H3v-5"/><path d="M16 21h5v-5"/>');
-    _maximizeButton.setAttribute('aria-label', _maximized ? 'Restore' : 'Maximize');
+    _maximizeButton.setAttribute('aria-label', _maximized ? '恢复预览' : '最大化预览');
     _maximizeButton.setAttribute('aria-pressed', _maximized ? 'true' : 'false');
     _maximizeButton.classList.toggle('is-active', _maximized);
     _maximizeButton.title = _maximized ? '\u6062\u590D\u9884\u89C8' : '\u6700\u5927\u5316\u9884\u89C8';
@@ -396,7 +397,7 @@ var FilePreview = (function () {
     if (!_overlay) return;
     var titleEl = _overlay.querySelector('.fp-title');
     if (!titleEl) return;
-    titleEl.textContent = path;
+    titleEl.textContent = _placement === 'side' && !(_currentFile && _currentFile.isDirectory) ? (path.replace(/\/[^/]+\/?$/, '') || '/') : path;
     titleEl.title = path;
   }
 
@@ -600,6 +601,7 @@ var FilePreview = (function () {
 
   function _hideDock(persistHidden) {
     if (!_dockOverlay) return;
+    if (_shareDialogClose) _shareDialogClose(false);
     _pauseVideos(_dockOverlay);
     if (document.__fpActiveMermaidDialogClose) document.__fpActiveMermaidDialogClose();
     _previewGeneration++;
@@ -663,6 +665,7 @@ var FilePreview = (function () {
     _dockOverlay.classList.toggle('fp-side-maximized', _maximized);
     _syncPlacementButton();
     _syncMaximizeButton();
+    _setPreviewTitle(tab.path);
     _renderDockTabs();
     _syncAutoRefresh();
     _persistDockState();
@@ -708,6 +711,7 @@ var FilePreview = (function () {
   }
 
   function _destroyDock(preservePersisted) {
+    if (_shareDialogClose) _shareDialogClose(false);
     _previewGeneration++;
     _previewReady = false;
     _closeActionMenu();
@@ -917,6 +921,7 @@ var FilePreview = (function () {
   // --- Modal ---
 
   function _createModal(title) {
+    if (_shareDialogClose) _shareDialogClose();
     var opener = document.activeElement;
     if (!_overlay || _placement === 'side' || !_overlay.contains(opener)) _modalReturnFocus = opener;
     _closeActionMenu();
@@ -956,7 +961,7 @@ var FilePreview = (function () {
     var actions = document.createElement('div');
     actions.className = 'fp-actions';
 
-    var btnBack = _btn('', 'Back to parent directory', function () {
+    var btnBack = _btn('', '返回上级目录', function () {
       if (_dirContext) {
         var parent = _dirContext;
         _dirContext = null;
@@ -966,7 +971,7 @@ var FilePreview = (function () {
     btnBack.className += ' fp-btn-back';
     _setSvgIcon(btnBack, '<path d="m15 18-6-6 6-6"/><path d="M9 12h10"/>');
 
-    var btnMaximize = _btn('', 'Maximize', function () {
+    var btnMaximize = _btn('', '最大化预览', function () {
       _maximized = !_maximized;
       modal.classList.toggle('fp-maximized', _maximized);
       _overlay.classList.toggle('fp-side-maximized', _maximized && _placement === 'side');
@@ -979,7 +984,7 @@ var FilePreview = (function () {
       else _dockCurrentPreview();
     });
     btnPlacement.className += ' fp-btn-placement';
-    var btnRefresh = _btn('', 'Refresh preview', function () { _refreshCurrent(true); });
+    var btnRefresh = _btn('', '刷新预览', function () { _refreshCurrent(true); });
     _setSvgIcon(btnRefresh,
       '<path d="M20 6v5h-5"/><path d="M4 18v-5h5"/>'
       + '<path d="M6.1 9a7 7 0 0 1 11.5-2.6L20 9"/>'
@@ -988,7 +993,7 @@ var FilePreview = (function () {
     btnRefresh.title = '刷新预览（每 1.5 秒自动检查）';
     _refreshButton = btnRefresh;
     _placementButton = btnPlacement;
-    var btnNewTab = _btn('', 'Open in new tab', function () { _openNewTab(); });
+    var btnNewTab = _btn('', '在新标签页打开', function () { _openNewTab(); });
     _setSvgIcon(btnNewTab,
       '<path d="M15 3h6v6"/><path d="m10 14 11-11"/>'
       + '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>');
@@ -998,10 +1003,7 @@ var FilePreview = (function () {
       '<path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"/>'
       + '<path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.14-1.14"/>');
     btnShare.className += ' fp-btn-file-only';
-    var btnCopy = _menuBtn('复制全文',
-      '<rect x="9" y="9" width="12" height="12" rx="2"/>'
-      + '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
-      [
+    var copyItems = [
         { label: '带格式复制', hint: '渲染后的富文本，保留标题、表格与图片',
           icon: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
             + '<path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/>',
@@ -1011,12 +1013,9 @@ var FilePreview = (function () {
             + '<path d="M20 17v2a1 1 0 0 1-1 1h-2"/><path d="M7 20H5a1 1 0 0 1-1-1v-2"/>'
             + '<path d="M8 12h8"/>',
           run: _copyPlainText },
-      ]);
-    btnCopy.className += ' fp-btn-file-only fp-btn-copy';
-    var btnDownload = _menuBtn('下载',
-      '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
-      [
-        { label: '下载 Raw 文件', hint: '服务器上的原始文件',
+    ];
+    var downloadItems = [
+        { label: '下载原文件', hint: '服务器上的原始文件',
           icon: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
             + '<path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
           run: _download },
@@ -1024,19 +1023,34 @@ var FilePreview = (function () {
           icon: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
             + '<path d="M14 2v6h6"/><path d="M12 11v7"/><path d="m9 15 3 3 3-3"/>',
           run: _exportHtml },
-      ]);
-    btnDownload.className += ' fp-btn-file-only fp-btn-download';
-    var btnClose = _btn('', 'Close', close);
+    ];
+    // Low-frequency commands keep their original listeners/state, but share
+    // one visible menu. Flatten copy/download choices so no detached submenu
+    // anchor can lose its position or keyboard focus.
+    function buttonAction(button) {
+      return { label: button.getAttribute('aria-label'),
+        icon: button.querySelector('svg').innerHTML,
+        run: function () { button.click(); } };
+    }
+    var btnMore = _menuBtn('更多文件操作', '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>', function () {
+      var items = [buttonAction(btnMaximize)];
+      if (_currentFile && !_currentFile.isDirectory) {
+        items.push(buttonAction(btnNewTab));
+        items = items.concat(copyItems, [buttonAction(btnShare)], downloadItems);
+      }
+      return items;
+    });
+    btnMore.className += ' fp-btn-more';
+    var moreLabel = document.createElement('span');
+    moreLabel.textContent = '更多';
+    btnMore.appendChild(moreLabel);
+    var btnClose = _btn('', '关闭预览', close);
     _setSvgIcon(btnClose, '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
     btnClose.className += ' fp-btn-close';
 
     actions.appendChild(btnRefresh);
     actions.appendChild(btnPlacement);
-    actions.appendChild(btnMaximize);
-    actions.appendChild(btnNewTab);
-    actions.appendChild(btnCopy);
-    actions.appendChild(btnShare);
-    actions.appendChild(btnDownload);
+    actions.appendChild(btnMore);
     actions.appendChild(btnClose);
     header.appendChild(btnBack);
     header.appendChild(titleEl);
@@ -1086,7 +1100,7 @@ var FilePreview = (function () {
   // Toolbar button that toggles an action menu. The ARIA menu-button contract
   // is declared up front so aria-expanded is meaningful before the first open.
   function _menuBtn(label, iconPaths, items) {
-    var b = _btn('', label, function () { _openActionMenu(b, items); });
+    var b = _btn('', label, function () { _openActionMenu(b, typeof items === 'function' ? items() : items); });
     _setSvgIcon(b, iconPaths);
     b.setAttribute('aria-haspopup', 'menu');
     b.setAttribute('aria-expanded', 'false');
@@ -1124,12 +1138,14 @@ var FilePreview = (function () {
     var el = document.createElement('div');
     el.className = 'fp-menu';
     el.setAttribute('role', 'menu');
+    el.setAttribute('aria-label', anchor.getAttribute('aria-label') || '文件操作');
 
     items.forEach(function (item) {
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'fp-menu-item';
       btn.setAttribute('role', 'menuitem');
+      btn.setAttribute('aria-label', item.label);
       if (item.icon) {
         var icon = document.createElement('span');
         icon.className = 'fp-menu-icon';
@@ -1154,7 +1170,7 @@ var FilePreview = (function () {
       if (item.disabled) {
         btn.disabled = true;
       } else {
-        btn.addEventListener('click', function () { _closeActionMenu(); item.run(); });
+        btn.addEventListener('click', function () { _closeActionMenu(); anchor.focus(); item.run(); });
       }
       el.appendChild(btn);
     });
@@ -1171,14 +1187,22 @@ var FilePreview = (function () {
     // The anchor is excluded so its own click handler performs the toggle
     // instead of the outside-mousedown closing it first.
     var onOutside = function (e) {
-      if (!el.contains(e.target) && e.target !== anchor) _closeActionMenu();
+      if (!el.contains(e.target) && !anchor.contains(e.target)) _closeActionMenu();
     };
     var onKeydown = function (e) {
       if (window.CommandPalette && window.CommandPalette.isOpen && window.CommandPalette.isOpen()) return;
-      if (e.key !== 'Escape') return;
-      e.stopPropagation();
-      _closeActionMenu();
-      anchor.focus();
+      var buttons = Array.prototype.slice.call(el.querySelectorAll('.fp-menu-item:not([disabled])'));
+      var index = buttons.indexOf(document.activeElement), next;
+      if (e.key === 'ArrowDown') next = (index + 1) % buttons.length;
+      else if (e.key === 'ArrowUp') next = (index + buttons.length - 1) % buttons.length;
+      else if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = buttons.length - 1;
+      else if (e.key === 'Escape' || e.key === 'Tab') {
+        e.preventDefault(); e.stopPropagation();
+        _closeActionMenu(); anchor.focus(); return;
+      } else return;
+      e.preventDefault(); e.stopPropagation();
+      if (buttons[next]) buttons[next].focus();
     };
     var onDismiss = function () { _closeActionMenu(); };
     document.addEventListener('mousedown', onOutside, true);
@@ -2008,11 +2032,14 @@ var FilePreview = (function () {
     return Promise.resolve();
   }
   function _copyFallback(text) {
+    var focused = document.activeElement;
+    var host = (_shareDialogClose && document.querySelector('.fp-share-box')) || document.body;
     var ta = document.createElement('textarea');
     ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-    document.body.appendChild(ta); ta.select();
+    host.appendChild(ta); ta.select();
     try { document.execCommand('copy'); } catch (_) {}
     ta.remove();
+    if (focused && focused.isConnected) focused.focus();
   }
 
   function _fmtExpiry(ts) {
@@ -2021,11 +2048,16 @@ var FilePreview = (function () {
 
   function _openShareDialog() {
     if (!_currentFile || _currentFile.isDirectory) return;
+    if (_shareDialogClose) _shareDialogClose();
+    var opener = document.activeElement;
 
     var ov = document.createElement('div');
     ov.className = 'fp-share-overlay';
     var box = document.createElement('div');
     box.className = 'fp-share-box';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    box.setAttribute('aria-label', '生成内网分享链接');
     ov.appendChild(box);
 
     box.innerHTML =
@@ -2062,8 +2094,42 @@ var FilePreview = (function () {
     var listEl = box.querySelector('#fpShareList');
     var genBtn = box.querySelector('#fpShareGen');
 
-    function closeDlg() { ov.remove(); }
-    box.querySelector('#fpShareCancel').addEventListener('click', closeDlg);
+    function paletteOpen() {
+      return window.CommandPalette && window.CommandPalette.isOpen && window.CommandPalette.isOpen();
+    }
+    function focusable() {
+      return Array.prototype.filter.call(box.querySelectorAll('button, input, select, textarea, a[href], [tabindex]'), function (el) {
+        if (el.disabled || el.tabIndex < 0) return false;
+        for (var parent = el; parent && parent !== ov; parent = parent.parentElement) {
+          if (parent.hidden || window.getComputedStyle(parent).display === 'none') return false;
+        }
+        return true;
+      });
+    }
+    function onKey(e) {
+      if (paletteOpen()) return;
+      if (e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation(); closeDlg();
+      } else if (e.key === 'Tab') {
+        var items = focusable(), first = items[0], last = items[items.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    }
+    function onFocus(e) {
+      if (!paletteOpen() && !ov.contains(e.target)) box.querySelector('#fpShareCancel').focus();
+    }
+    function closeDlg(restoreFocus) {
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('focusin', onFocus);
+      ov.remove();
+      if (_shareDialogClose === closeDlg) _shareDialogClose = null;
+      if (restoreFocus !== false && opener && opener.isConnected && !opener.disabled) opener.focus();
+    }
+    _shareDialogClose = closeDlg;
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('focusin', onFocus);
+    box.querySelector('#fpShareCancel').addEventListener('click', function () { closeDlg(); });
     ov.addEventListener('click', function (e) { if (e.target === ov) closeDlg(); });
 
     ttlSel.addEventListener('change', function () {
@@ -2135,6 +2201,7 @@ var FilePreview = (function () {
       });
     });
 
+    box.querySelector('#fpShareCancel').focus();
     renderList();
   }
 
@@ -2209,6 +2276,7 @@ var FilePreview = (function () {
   }
 
   function close() {
+    if (_shareDialogClose) _shareDialogClose(false);
     _closeActionMenu();
     if (_placement === 'side') {
       _closeDockTab(_activeDockTabId);
@@ -2242,6 +2310,7 @@ var FilePreview = (function () {
   }
 
   function closeModal() {
+    if (_shareDialogClose) _shareDialogClose(false);
     if (_overlay && _placement !== 'side') close();
   }
 
@@ -2260,7 +2329,7 @@ var FilePreview = (function () {
     if (absPath) {
       var btn = document.createElement('button');
       btn.className = 'fp-error-download';
-      btn.textContent = '下载 Raw 文件';
+      btn.textContent = '下载原文件';
       btn.addEventListener('click', function () {
         var _tp = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
         var url = '/api/files/raw?path=' + encodeURIComponent(absPath)

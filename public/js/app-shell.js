@@ -160,7 +160,6 @@
         if (replacement) replacement.focus({ preventScroll: true });
       }
       this._renderMobile(route);
-      this._renderWindowStrip(route);
       this._syncMobileWorkspaceSheet(route);
       this._syncNav(route);
       if (typeof global.NotificationPanel !== 'undefined' && global.NotificationPanel.syncAttention) {
@@ -580,28 +579,6 @@
         else isActive = target === '#/' + name;
         nodes[i].classList.toggle('active', isActive);
         nodes[i].setAttribute('aria-current', isActive ? 'page' : 'false');
-      }
-    },
-
-    _renderWindowStrip: function (route) {
-      var strip = el('workspace-window-strip');
-      if (!strip) return;
-      var params = route.params || {};
-      var workspace = this.workspace(params.serverId || 'local');
-      var session = route.name === 'terminal' && this._findSession(workspace, params.sessionId);
-      var html = session ? (session.windows || []).map(function (win) {
-        var pane = (win.panes || []).find(function (item) { return item.active; }) || (win.panes || [])[0];
-        var target = { name: 'terminal', params: { serverId: params.serverId || 'local',
-          sessionId: session.id, windowId: win.id, paneId: pane && pane.id } };
-        return '<button type="button" class="workspace-window' + (params.windowId === win.id ? ' active' : '')
-          + '" data-route="' + esc(global.Router.serialize(target)) + '" aria-current="'
-          + (params.windowId === win.id ? 'page' : 'false') + '" title="' + esc(win.name) + '">'
-          + icon('terminal') + '<span>' + esc(win.name || '窗口 ' + win.index) + '</span></button>';
-      }).join('') : '';
-      // Preserve keyboard focus and horizontal scroll during background refreshes.
-      if (strip._workspaceMarkup !== html) {
-        strip.innerHTML = html;
-        strip._workspaceMarkup = html;
       }
     },
 

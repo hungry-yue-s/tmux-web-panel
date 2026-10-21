@@ -22,7 +22,6 @@ const SHELL_DOM = `<!DOCTYPE html><html><body>
         <div class="crumb" id="ms-crumb"></div><h1 id="ms-page-title"></h1>
         <div id="ms-top-actions"></div>
       </header>
-      <nav id="workspace-window-strip" aria-label="当前会话窗口"></nav>
       <div id="ms-view"></div>
     </main>
   </div>
@@ -366,76 +365,23 @@ describe('AppShell window bar', () => {
     expect(ctx.document.querySelector('.terminal-back-btn')).toBeNull();
   });
 
-  it('shows only the routed server and session windows even when stable IDs overlap', () => {
+  it('keeps window navigation server-scoped in the single sidebar', () => {
     const ctx = loadShell();
     seedLocalTmux(ctx.Store);
-    ctx.Store.setServers([
-      { id: 'local', name: '本机', kind: 'local' },
-      { id: 'edge', name: '远端', kind: 'remote' },
-    ]);
     const local = ctx.Store.getState().entities.workspaceByServerId.local;
-    ctx.Store.setWorkspace('local', { ...local, sessions: [...local.sessions, {
-      id: '$9', name: '另一会话', windows: [{ id: '@8', index: 8, name: '独立任务', panes: [] }],
-    }] });
+    ctx.Store.setServers([{ id: 'local', name: '本机', kind: 'local' }, { id: 'edge', name: '远端', kind: 'remote' }]);
     ctx.Store.setWorkspace('edge', { ...local, serverId: 'edge', sessions: [{
-      id: '$0', name: '远端会话', windows: [{ id: '@0', index: 1, name: '远端工作区', panes: [{ id: '%95' }] }],
+      id: '$0', name: '远端会话', windows: [{ id: '@0', index: 1, name: '远端任务', panes: [{ id: '%95' }] }],
     }] });
-    const strip = ctx.document.getElementById('workspace-window-strip');
-    ctx.Shell.render();
-    expect([...strip.querySelectorAll('button span')].map((node) => node.textContent)).toEqual(['三绿', '风控点总结']);
-    expect(strip.querySelector('.active').getAttribute('aria-current')).toBe('page');
-    expect(strip.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
-    expect(strip.querySelector('button:not(.active)').getAttribute('aria-current')).toBe('false');
     ctx.Store.setRoute({ name: 'terminal', params: { serverId: 'edge', sessionId: '$0', windowId: '@0' } });
     ctx.Shell.render();
-    expect(strip.querySelectorAll('button')).toHaveLength(1);
-    expect(strip.textContent).toBe('远端工作区');
-    expect(ctx.win.Router.parse(strip.querySelector('button').dataset.route)).toEqual({ name: 'terminal',
-      params: { serverId: 'edge', sessionId: '$0', windowId: '@0', paneId: '%95' } });
-    ctx.Store.setRoute({ name: 'terminal', params: { serverId: 'local', sessionId: '$9', windowId: '@8' } });
-    ctx.Shell.render();
-    expect(strip.textContent).toBe('独立任务');
-    expect(strip.querySelector('.active')).not.toBeNull();
-    ctx.win.close();
-  });
-
-  it('preserves window nodes, keyboard focus and horizontal position on background workspace refresh', () => {
-    const ctx = loadShell();
-    seedLocalTmux(ctx.Store);
-    ctx.Shell.render();
-    const strip = ctx.document.getElementById('workspace-window-strip');
-    const original = strip.querySelector('button');
-    original.focus();
-    strip.scrollLeft = 80;
-    const workspace = ctx.Store.getState().entities.workspaceByServerId.local;
-    ctx.Store.setWorkspace('local', { ...workspace, revision: workspace.revision + 1 });
-    ctx.Shell.render();
-    expect(strip.querySelector('button')).toBe(original);
-    expect(ctx.document.activeElement).toBe(original);
-    expect(strip.scrollLeft).toBe(80);
-    const terminalInput = ctx.document.createElement('textarea');
-    ctx.document.getElementById('ms-view').appendChild(terminalInput);
-    terminalInput.focus();
-    ctx.Shell.render();
-    expect(ctx.document.activeElement).toBe(terminalInput);
-    ctx.win.close();
-  });
-
-  it('clears the strip outside terminal routes and for unresolved session targets', () => {
-    const ctx = loadShell();
-    seedLocalTmux(ctx.Store);
-    const strip = ctx.document.getElementById('workspace-window-strip');
-    ctx.Shell.render();
-    expect(strip.querySelectorAll('button')).toHaveLength(2);
-    for (const route of [
-      { name: 'settings', params: {} },
-      { name: 'server', params: { serverId: 'local', section: 'performance' } },
-      { name: 'terminal', params: { serverId: 'local', sessionId: '$missing' } },
-    ]) {
-      ctx.Store.setRoute(route);
-      ctx.Shell.render();
-      expect(strip.childElementCount).toBe(0);
-    }
+    const links = ctx.document.querySelectorAll('#ms-server-context .tree-window-row > .tree-item');
+    expect(links).toHaveLength(1);
+    expect(links[0].textContent).toContain('远端任务');
+    expect(ctx.win.Router.parse(links[0].dataset.route)).toEqual({ name: 'terminal', params: {
+      serverId: 'edge', sessionId: '$0', windowId: '@0', paneId: '%95',
+    } });
+    expect(links[0].classList.contains('active')).toBe(true);
     ctx.win.close();
   });
 

@@ -130,20 +130,20 @@ describe('single Window Bar', () => {
   });
 
   /** Renders the real header markup, then runs the real embed hook over it. */
-  function embedFixture({ provider = 'tmux', transport = 'local', width = 1440, mobileSheet = false, paneStrip = false, beforeEmbed } = {}) {
+  function embedFixture({ provider = 'tmux', transport = 'local', width = 1440, mobileSheet = false, beforeEmbed } = {}) {
     const dom = new JSDOM(`<!DOCTYPE html><html><body>
       <header class="mobile-header"><div class="mobile-tools" id="ms-mobile-tools"></div></header>
       ${mobileSheet ? '<div id="ms-mobile-workspace-tools"></div>' : ''}
       <header class="ms-topbar" id="ms-topbar"><div id="ms-top-actions"></div></header>
-      ${paneStrip ? '<div id="workspace-pane-strip"></div>' : ''}
       <div id="ms-terminal-host"><div class="terminal-view">
         <div class="terminal-header">
           <button class="terminal-back-btn">back</button>
-          <div class="terminal-header-pills"><button class="pane-pill">1</button></div>
+          <div class="terminal-header-pills"><div class="pane-pills"><button class="pane-pill active" aria-pressed="true"><span class="pane-pill-index">0</span><span class="pane-pill-label">编辑器</span></button><button class="pane-pill" aria-pressed="false"><span class="pane-pill-index">1</span><span class="pane-pill-label">服务日志</span></button></div></div>
           <span class="terminal-header-title">DataAnt : 1</span>
           <div class="terminal-header-actions">
-            <button class="terminal-refresh-btn"></button>
+            <button class="terminal-refresh-btn" aria-label="刷新终端"></button>
             <div class="terminal-mode-toggle"></div>
+            <div class="terminal-font-toggle" role="group" aria-label="终端字号"><button class="terminal-font-btn" aria-label="减小字号">A−</button><button class="terminal-font-btn" aria-label="增大字号">A+</button></div>
             <button class="terminal-split-btn"></button>
             <button class="terminal-label-btn" aria-label="设置标签"></button>
             <button class="terminal-open-buf-btn"></button>
@@ -160,6 +160,7 @@ describe('single Window Bar', () => {
     win.AppShell = {
       activeServerId: () => 'srv',
       workspace: () => ({ provider, transport }),
+      hideServerPicker: vi.fn(),
     };
     win.eval(MS_APP);
     if (beforeEmbed) beforeEmbed(win);
@@ -177,7 +178,7 @@ describe('single Window Bar', () => {
     expect(doc.querySelector('#ms-top-actions .terminal-header-actions')).toBeTruthy();
   });
 
-  it('keeps pane switching available inside the one bar', () => {
+  it('keeps two-pane switching inside a native toolbar picker', () => {
     const doc = embedFixture().document;
 
     const pills = doc.querySelector('#ms-top-actions .terminal-header-pills');
@@ -185,28 +186,28 @@ describe('single Window Bar', () => {
     expect(pills.classList.contains('ms-hoisted-pills')).toBe(true);
     // The live pill node moved, so its bound listener still works.
     expect(pills.querySelector('.pane-pill')).toBeTruthy();
+    expect(pills.closest('details.workspace-pane-picker').hidden).toBe(false);
+    expect(pills.closest('details').querySelector('.workspace-pane-current').textContent).toBe('0 · 编辑器');
   });
 
   it.each([1440, 375])('moves live pills and toolbar listeners into the shared chrome at %spx', width => {
     const switched = vi.fn(), refreshed = vi.fn(), labelled = vi.fn();
     let pills, refresh, label;
-    const win = embedFixture({ width, paneStrip: true, beforeEmbed(window) {
+    const win = embedFixture({ width, beforeEmbed(window) {
       pills = window.document.querySelector('.terminal-header-pills');
       refresh = window.document.querySelector('.terminal-refresh-btn');
       label = window.document.querySelector('.terminal-label-btn');
-      pills.querySelector('.pane-pill').addEventListener('click', switched);
+      pills.querySelector('.pane-pill').addEventListener('click', event => { event.stopPropagation(); switched(); });
       refresh.addEventListener('click', refreshed);
       label.addEventListener('click', labelled);
     } });
     const doc = win.document;
-    const strip = doc.getElementById('workspace-pane-strip');
     const actions = doc.querySelector(width < 768 ? '#ms-mobile-tools' : '#ms-top-actions');
     if (width >= 768) {
-      expect(strip.firstElementChild).toBe(pills);
-      expect(strip.closest('.ms-topbar')).toBeNull();
-      expect(actions.querySelector('.pane-pill')).toBeNull();
+      expect(pills.closest('.workspace-pane-picker')).toBeTruthy();
+      expect(pills.closest('.terminal-header-actions')).toBeTruthy();
+      pills.closest('details').open = true;
     } else {
-      expect(strip.children).toHaveLength(0);
       expect(doc.querySelector('.mobile-header > .mobile-pane-strip')).toBe(pills);
     }
     expect(actions.querySelector('.terminal-refresh-btn')).toBe(refresh);
@@ -214,11 +215,18 @@ describe('single Window Bar', () => {
     refresh.click();
     expect(switched).toHaveBeenCalledOnce();
     expect(refreshed).toHaveBeenCalledOnce();
+    if (width >= 768) expect(pills.closest('details').open).toBe(false);
     const more = actions.querySelector('details.workspace-terminal-more');
     expect(more.querySelector('summary').getAttribute('aria-label')).toBe('更多终端操作');
     expect(more.querySelector('.terminal-label-btn')).toBe(label);
     expect(more.querySelector('.terminal-popout-btn')).toBeTruthy();
     expect(more.querySelector('.terminal-fullscreen-btn')).toBeTruthy();
+    const fontGroup = actions.querySelector('.terminal-font-toggle');
+    expect(fontGroup.getAttribute('aria-label')).toBe('终端字号');
+    if (width >= 768) {
+      expect(more.querySelector('.terminal-refresh-btn')).toBe(refresh);
+      expect(more.contains(fontGroup)).toBe(true);
+    } else expect(more.contains(fontGroup)).toBe(false);
     more.open = true;
     label.click();
     expect(labelled).toHaveBeenCalledOnce();
@@ -227,6 +235,93 @@ describe('single Window Bar', () => {
     more.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     expect(more.open).toBe(false);
     expect(doc.activeElement).toBe(more.querySelector('summary'));
+    win.close();
+  });
+
+  it('restores no-op selection focus after native activation but lets real switches focus the terminal', async () => {
+    let entries, terminalInput;
+    const switched = vi.fn();
+    const win = embedFixture({ beforeEmbed(window) {
+      entries = window.document.querySelectorAll('.pane-pill');
+      terminalInput = window.document.createElement('textarea');
+      window.document.querySelector('.terminal-container').append(terminalInput);
+      entries.forEach((pill, index) => pill.addEventListener('click', event => {
+        event.stopPropagation();
+        if (index === 0) return; // switchPane(currentPane) does not re-mount.
+        switched(index);
+        terminalInput.focus();
+      }));
+    } });
+    const picker = win.document.querySelector('.workspace-pane-picker');
+    const summary = picker.querySelector('summary');
+    picker.open = true;
+    entries[0].focus();
+    entries[0].click();
+    expect(picker.open).toBe(false);
+    expect(win.document.activeElement).toBe(summary);
+    expect(switched).not.toHaveBeenCalled();
+    // Model the browser moving focus after the capture handler hides details.
+    summary.blur();
+    expect(win.document.activeElement).toBe(win.document.body);
+    await new Promise(resolve => win.setTimeout(resolve, 0));
+    expect(win.document.activeElement).toBe(summary);
+    picker.open = true;
+    entries[0].click(); // A pending recovery must not override a real switch.
+    picker.open = true;
+    entries[1].focus();
+    entries[1].click();
+    expect(picker.open).toBe(false);
+    expect(switched).toHaveBeenCalledExactlyOnceWith(1);
+    await new Promise(resolve => win.setTimeout(resolve, 0));
+    expect(win.document.activeElement).toBe(terminalInput);
+    win.close();
+  });
+
+  it('tracks asynchronous pane/label changes locally and supports keyboard selection and outside close', async () => {
+    let livePills;
+    const win = embedFixture({ beforeEmbed(window) {
+      livePills = window.document.querySelector('.terminal-header-pills');
+      livePills.replaceChildren();
+    } });
+    win.MsApp._bindEvents();
+    const picker = win.document.querySelector('.workspace-pane-picker');
+    const summary = picker.querySelector('summary');
+    expect(picker.hidden).toBe(true);
+    livePills.innerHTML = '<button class="pane-pill active"><span class="pane-pill-index">0</span><span class="pane-pill-label">shell</span></button>';
+    await Promise.resolve();
+    expect(picker.hidden).toBe(true);
+    livePills.insertAdjacentHTML('beforeend', '<button class="pane-pill"><span class="pane-pill-index">1</span><span class="pane-pill-label">日志</span></button>');
+    await Promise.resolve();
+    expect(picker.hidden).toBe(false);
+    const entries = livePills.querySelectorAll('.pane-pill');
+    entries[0].classList.remove('active');
+    entries[1].classList.add('active');
+    entries[1].querySelector('.pane-pill-label').textContent = '<b>中文日志</b>';
+    await Promise.resolve();
+    expect(summary.textContent).toBe('1 · <b>中文日志</b>');
+    expect(summary.querySelector('b')).toBeNull();
+    expect(summary.getAttribute('aria-label')).toBe('切换窗格，当前：1 · <b>中文日志</b>');
+    summary.focus();
+    summary.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    expect(picker.open).toBe(true);
+    expect(win.document.activeElement).toBe(entries[0]);
+    entries[0].dispatchEvent(new win.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }));
+    expect(win.document.activeElement).toBe(entries[1]);
+    entries[1].dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(picker.open).toBe(false);
+    expect(win.document.activeElement).toBe(summary);
+    picker.open = true;
+    win.document.querySelector('.terminal-container').click();
+    expect(picker.open).toBe(false);
+    const observer = win.MsApp._panePickerObserver;
+    const disconnect = vi.spyOn(observer, 'disconnect');
+    const header = win.document.createElement('div');
+    header.className = 'terminal-header';
+    header.innerHTML = '<div class="terminal-header-pills"></div><div class="terminal-header-actions"></div>';
+    win.document.querySelector('.terminal-view').prepend(header);
+    win.MsApp.embedTerminalChrome(win.document.querySelector('.terminal-view'));
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(win.document.querySelectorAll('.workspace-pane-picker')).toHaveLength(1);
     win.close();
   });
 
@@ -417,7 +512,6 @@ const STATUS_DOM = `<!DOCTYPE html><html><body>
         <div class="crumb" id="ms-crumb"></div><h1 id="ms-page-title"></h1>
         <div id="ms-top-actions"></div>
       </header>
-      <nav id="workspace-window-strip" aria-label="当前会话窗口"></nav>
       <div class="ms-content" id="ms-view"></div>
     </main>
   </div>
@@ -502,8 +596,8 @@ function fakeAgentHub() {
   };
 }
 
-describe('MsApp session window strip', () => {
-  it('delegates nested window-button clicks to the stable routed server/session/window and active pane', () => {
+describe('MsApp sidebar window navigation', () => {
+  it('delegates nested sidebar clicks to the stable routed server/session/window and entry pane', () => {
     const ctx = loadStatusShell();
     ctx.Store.setWorkspace('api-linux', {
       serverId: 'api-linux', provider: 'tmux', transport: 'ssh', actions: {},
@@ -515,13 +609,13 @@ describe('MsApp session window strip', () => {
     ctx.Store.setRoute({ name: 'terminal', params: { serverId: 'api-linux', sessionId: '$4', windowId: '@1', paneId: '%5' } });
     ctx.win.AppShell.render();
     ctx.MsApp._bindEvents();
-    const button = ctx.document.querySelectorAll('#workspace-window-strip button')[1];
+    const button = ctx.document.querySelector('[data-sidebar-entity="window"][data-window="@2"] .tree-item');
     expect(button.dataset.route).toBe(ctx.Router.serialize({ name: 'terminal', params: {
-      serverId: 'api-linux', sessionId: '$4', windowId: '@2', paneId: '%9',
+      serverId: 'api-linux', sessionId: '$4', windowId: '@2', paneId: '%8',
     } }));
-    button.querySelector('svg path').dispatchEvent(new ctx.win.MouseEvent('click', { bubbles: true }));
+    button.querySelector('.tree-item-name').dispatchEvent(new ctx.win.MouseEvent('click', { bubbles: true }));
     expect(ctx.Router.current()).toEqual({ name: 'terminal', params: {
-      serverId: 'api-linux', sessionId: '$4', windowId: '@2', paneId: '%9',
+      serverId: 'api-linux', sessionId: '$4', windowId: '@2', paneId: '%8',
     } });
     ctx.win.close();
   });
@@ -721,6 +815,16 @@ describe('MsApp mobile workspace action', () => {
 });
 
 describe('MsApp status mode routing', () => {
+  it('disconnects the local pane-picker observer when leaving the terminal route', async () => {
+    const ctx = loadStatusShell();
+    const observer = { disconnect: vi.fn() };
+    ctx.MsApp._panePickerObserver = observer;
+    await ctx.MsApp._onRoute({ name: 'settings', params: {} });
+    expect(observer.disconnect).toHaveBeenCalledOnce();
+    expect(ctx.MsApp._panePickerObserver).toBeNull();
+    ctx.win.close();
+  });
+
   it('removes the terminal preview dock before rendering status', async () => {
     const ctx = loadStatusShell();
     const calls = [];

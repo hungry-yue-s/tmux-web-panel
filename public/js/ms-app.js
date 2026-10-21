@@ -117,8 +117,10 @@
       this._hideSidebarContextMenu();
       const view = global.document.getElementById('ms-view');
       if (!view) return;
-      const desktopPills = global.document.getElementById('workspace-pane-strip');
-      if (desktopPills) desktopPills.replaceChildren();
+      if (this._panePickerObserver) {
+        this._panePickerObserver.disconnect();
+        this._panePickerObserver = null;
+      }
       const mobilePills = global.document.querySelector('.mobile-header > .mobile-pane-strip');
       if (mobilePills) mobilePills.remove();
       if (route.name !== 'terminal') {
@@ -334,12 +336,85 @@
       return { target: desktop, other: mobile };
     },
 
+    _createPanePicker(pills) {
+      const picker = global.document.createElement('details');
+      picker.className = 'workspace-pane-picker';
+      const summary = global.document.createElement('summary');
+      const current = global.document.createElement('span');
+      current.className = 'workspace-pane-current';
+      summary.appendChild(current);
+      summary.insertAdjacentHTML('beforeend', '<svg class="ms-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>');
+      pills.classList.add('workspace-pane-menu');
+      pills.setAttribute('role', 'group');
+      pills.setAttribute('aria-label', '选择窗格');
+      picker.append(summary, pills);
+      const sync = () => {
+        const entries = [...pills.querySelectorAll('.pane-pill')];
+        picker.hidden = entries.length < 2;
+        if (picker.hidden) picker.open = false;
+        const active = entries.find(pill => pill.classList.contains('active') || pill.getAttribute('aria-pressed') === 'true') || entries[0];
+        const index = active && active.querySelector('.pane-pill-index');
+        const label = active && active.querySelector('.pane-pill-label');
+        const text = index && label ? index.textContent + ' · ' + label.textContent : (active ? active.textContent.trim() : '窗格');
+        current.textContent = text;
+        summary.setAttribute('aria-label', '切换窗格，当前：' + text);
+        summary.title = text;
+      };
+      // renderTerminal fills this live node asynchronously after it is moved.
+      // Observe only pills; writing the summary cannot trigger this observer.
+      this._panePickerObserver = new global.MutationObserver(sync);
+      this._panePickerObserver.observe(pills, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'aria-pressed'] });
+      sync();
+      picker.addEventListener('click', event => {
+        const pill = event.target.closest('.pane-pill');
+        if (!pill) return;
+        picker.open = false;
+        // Selecting the current pane is a no-op, so no terminal re-mount will
+        // rescue focus from this now-hidden button. Real switches own focus.
+        if (pill.classList.contains('active') || pill.getAttribute('aria-pressed') === 'true') {
+          summary.focus({ preventScroll: true });
+          // Native keyboard activation can move focus to BODY after capture
+          // closes details. Recheck after that default action, without taking
+          // focus from a newly mounted terminal or another chosen control.
+          global.setTimeout(() => {
+            const focused = global.document.activeElement;
+            if (summary.isConnected && !picker.open && (focused === global.document.body || focused === pill)) {
+              summary.focus({ preventScroll: true });
+            }
+          }, 0);
+        }
+      }, true); // Pane listeners stop propagation; capture keeps their actions intact.
+      picker.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          picker.open = false;
+          summary.focus();
+          return;
+        }
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+        const entries = [...pills.querySelectorAll('.pane-pill')];
+        if (!entries.length) return;
+        event.preventDefault();
+        picker.open = true;
+        const at = entries.indexOf(global.document.activeElement);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? entries.length - 1
+          : at < 0 ? (event.key === 'ArrowUp' ? entries.length - 1 : 0)
+            : (at + (event.key === 'ArrowUp' ? -1 : 1) + entries.length) % entries.length;
+        entries[next].focus();
+      });
+      return picker;
+    },
+
     embedTerminalChrome(view) {
       const root = view || global.document.querySelector('#ms-terminal-host .terminal-view');
       if (!root) return;
       const header = root.querySelector('.terminal-header');
       const { target: actions, other } = this._chromeTarget();
       if (!header || !actions) return;
+      if (this._panePickerObserver) {
+        this._panePickerObserver.disconnect();
+        this._panePickerObserver = null;
+      }
 
       const workspace = global.AppShell.workspace(global.AppShell.activeServerId()) || {};
       const remote = workspace.transport === 'ssh';
@@ -385,8 +460,6 @@
       // keeps its own reference to the pills node, so relocating it is safe.
       const oldMobilePills = global.document.querySelector('.mobile-header > .mobile-pane-strip');
       if (oldMobilePills) oldMobilePills.remove();
-      const paneStrip = global.document.getElementById('workspace-pane-strip');
-      if (paneStrip) paneStrip.replaceChildren();
       const pills = header.querySelector('.terminal-header-pills');
       if (pills) {
         pills.classList.add('ms-hoisted-pills');
@@ -395,11 +468,13 @@
           const mobileHeader = global.document.querySelector('.mobile-header');
           (mobileHeader || root).appendChild(pills);
         } else {
-          (paneStrip || actions).appendChild(pills);
+          (toolbar || actions).appendChild(this._createPanePicker(pills));
         }
       }
       if (toolbar) {
-        const secondary = ['.terminal-label-btn', '.terminal-popout-btn', '.terminal-fullscreen-btn']
+        const secondary = (global.innerWidth < 768
+          ? ['.terminal-label-btn', '.terminal-popout-btn', '.terminal-fullscreen-btn']
+          : ['.terminal-refresh-btn', '.terminal-font-toggle', '.terminal-label-btn', '.terminal-popout-btn', '.terminal-fullscreen-btn'])
           .map((selector) => toolbar.querySelector(selector)).filter(Boolean);
         if (secondary.length) {
           const more = global.document.createElement('details');
@@ -411,15 +486,18 @@
           const panel = global.document.createElement('div');
           panel.className = 'workspace-terminal-menu';
           for (const button of secondary) {
-            const label = global.document.createElement('span');
-            label.textContent = button.getAttribute('aria-label') || button.title;
-            button.appendChild(label);
+            if (button.tagName === 'BUTTON') {
+              const label = global.document.createElement('span');
+              label.textContent = button.getAttribute('aria-label') || button.title;
+              button.appendChild(label);
+            }
             panel.appendChild(button);
           }
           more.append(summary, panel);
           more.addEventListener('click', (event) => {
-            if (event.target.closest('button')) more.open = false;
-          });
+            const button = event.target.closest('button');
+            if (button && !button.closest('.terminal-font-toggle')) more.open = false;
+          }, true);
           more.addEventListener('keydown', (event) => {
             if (event.key === 'Escape') { event.preventDefault(); more.open = false; summary.focus(); }
           });
@@ -647,7 +725,7 @@
         if (output) output.textContent = global.Theme.getTransparency() + '%';
       });
       global.document.addEventListener('click', (event) => {
-        for (const more of global.document.querySelectorAll('.workspace-terminal-more[open]')) {
+        for (const more of global.document.querySelectorAll('.workspace-terminal-more[open], .workspace-pane-picker[open]')) {
           if (!more.contains(event.target)) more.open = false;
         }
         const actionTarget = event.target.closest('[data-action]');
