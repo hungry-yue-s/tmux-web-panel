@@ -14,13 +14,18 @@
         ".superdesign/design-system.md",
         ".superdesign/context/current-terminal.html",
         "public/css/style.css:36:56",
-        "public/js/servers.js"
+        "public/js/servers.js",
+        "public/index.html:42:61",
+        "public/css/style.css:6470:6535",
+        "public/js/app-shell.js:772:785"
       ],
       "fingerprints": {
-        ".superdesign/design-system.md": "932fdc7c0276b633502b26fbf22a40756118266209ef0187819435cebbbf5730",
+        ".superdesign/design-system.md": "03565167899d8a7a9bdbd40a310299e0b2e4552de18be673c8dc7b58aec51b75",
         ".superdesign/context/current-terminal.html": "3478f2b47f0d61d0347d664d4a399b1bede6bcfd9ab0ededd3a68e6373e7fde1",
         "public/css/style.css": "d62f062ec8fc5fb4c6715b068c22f754feee35e8d031813009b17b876a722fba",
-        "public/js/servers.js": "322daa3f79efd8751ff6dcd6e3bf5f71c0f0637f162f29c74aa922779e018063"
+        "public/js/servers.js": "322daa3f79efd8751ff6dcd6e3bf5f71c0f0637f162f29c74aa922779e018063",
+        "public/index.html": "e7204e2bb6f108435d712c0f3d6a4b3748b64c8e5f1104c76e9bd55689671016",
+        "public/js/app-shell.js": "a0ba62e545e94201d2f5b975b8881e48b96fbcf33cab67f4543fbbe7a642e9fb"
       },
       "components": [
         {
@@ -32,11 +37,11 @@
       "drafts": {
         "b0ab4875-7894-4135-a01a-e7386eb8f10e": {
           "title": "Tmux Panel - Crafted Graphite Workspace",
-          "visualDirection": "crafted graphite materials, refined Chinese document typography, inset controls; v5 interaction corrections; production implementation pending design approval",
-          "currentVersion": 5
+          "visualDirection": "crafted graphite; v6 restores production-style grouped sidebar, persistent 248/152px collapse, 1px shared pane divider with overlapping 12px drag target; production implementation pending design approval",
+          "currentVersion": 6
         }
       },
-      "updatedAt": "2026-10-21T08:15:30.676416+00:00"
+      "updatedAt": "2026-10-21T08:28:29.553064+00:00"
     }
   }
 }

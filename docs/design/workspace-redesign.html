@@ -241,7 +241,7 @@
     /* Work Panes */
     .work-pane-container {
       padding: 12px;
-      gap: 12px;
+      gap: 0;
       background: var(--workspace);
     }
     .work-pane {
@@ -278,14 +278,21 @@
 
     /* Resizer */
     .resizer-x {
-      width: 4px;
+      position: relative;
+      width: 12px;
+      flex: 0 0 12px;
+      margin: 0 -5.5px;
       cursor: col-resize;
-      background: transparent;
-      transition: background 0.2s;
-      margin: 0 -2px;
+      touch-action: none;
       z-index: 10;
     }
-    .resizer-x:hover {
+    .resizer-x::after {
+      content: "";
+      position: absolute;
+      inset: 0 5.5px;
+      background: var(--line-strong);
+    }
+    .resizer-x:hover::after, .resizer-x:focus-visible::after {
       background: var(--accent);
     }
 
@@ -307,6 +314,28 @@
 .document-pane h1{font-weight:600;letter-spacing:-.025em;line-height:1.5}.document-pane h2{font-weight:600;font-size:14px}.document-pane p,.document-pane li{font-size:13px;line-height:1.85}.document-meta{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--readable-muted);margin-bottom:18px}.document-meta>span:last-child{font-size:12px;border:1px solid var(--line);padding:1px 5px;border-radius:4px}.document-summary{display:flex;flex-wrap:wrap;gap:8px 14px;padding:14px 16px;background:color-mix(in srgb,var(--accent) 4%,transparent);border:1px solid var(--line);border-radius:8px;margin:18px 0 26px;font-size:12px;color:var(--secondary)}.document-summary .summary-label{color:var(--readable-muted)}.document-summary strong{font-weight:500;color:var(--text)}.document-summary>span:last-child{width:100%;color:var(--readable-muted)}.document-table{overflow-x:auto;border:1px solid var(--line);border-radius:8px}.document-table table{width:100%;border-collapse:collapse;text-align:left;font-size:12px}.document-table th,.document-table td{padding:9px 12px;border-bottom:1px solid var(--line)}.document-table th{color:var(--readable-muted);font-weight:500;background:color-mix(in srgb,var(--workspace) 35%,transparent)}.document-table tr:last-child td{border:0}.document-table td{color:var(--secondary)}.document-task{display:flex;align-items:center;gap:9px;font-size:12px;min-height:32px;color:var(--secondary)}.document-task input{width:13px;height:13px;accent-color:var(--accent)}.document-pane>div:last-child{align-items:center;padding:10px 12px;background:transparent!important}.document-pane>div:last-child .control{font-size:12px;background:transparent;border-color:transparent;box-shadow:none}.document-footer-note{margin-right:auto;font-size:12px;color:var(--readable-muted)}.terminal-demo-badge{position:absolute;right:12px;bottom:12px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:12px;color:var(--readable-muted);padding:1px 6px;border:1px solid var(--line);border-radius:4px;background:var(--terminal)}.tree-group-header .session-trigger span:last-child{font-size:12px;font-weight:400}.mac-topbar .segmented-control:last-child{background:transparent;border-color:transparent;box-shadow:none}.document-pane>div:nth-child(2){font-size:14px;line-height:1.75}.work-pane-container{min-width:0}.terminal-pane pre{overflow-wrap:anywhere}
 html.tmux-native-shell,html.tmux-native-shell body{background:transparent}html.tmux-native-shell #prototype{background:rgba(21,24,33,.91)}html.tmux-native-shell #navigation{background:rgba(27,31,43,.58)!important;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}html.tmux-native-shell.light-theme #prototype{background:rgba(255,255,255,.94)}html.tmux-native-shell.light-theme #navigation{background:rgba(242,244,247,.65)!important}
 @media(max-width:767px){.document-task{min-height:44px;font-size:13px}.document-task input{width:18px;height:18px}.document-pane>div:last-child .control{min-height:44px}.document-footer-note{font-size:12px}.document-pane.mobile-preview{margin:0;border-radius:0}.terminal-demo-badge{font-size:12px}.terminal-pane pre{font-size:12px}}
+
+/* Preserve the production sidebar's compact grouped navigation. */
+.brand-bar{padding-right:8px!important;gap:4px!important;flex-shrink:0}
+.brand-title{min-width:0;flex:1;font-size:13px;font-weight:600;letter-spacing:0;overflow:hidden;text-overflow:ellipsis}
+.brand-bar>.flex-1{display:none}.brand-bar .icon-btn{margin-left:0;flex:0 0 28px;width:28px;height:28px}
+#sidebar-toggle{font-size:20px;line-height:1}
+.server-context{padding:8px 10px 12px}.server-tile{min-height:44px;padding:8px 10px;margin:0;gap:10px;border-radius:7px;background:color-mix(in srgb,var(--raised) 48%,transparent);box-shadow:none}
+.server-online{width:7px;height:7px;flex:0 0 7px;border-radius:50%;background:var(--terminal-green);box-shadow:0 0 0 3px color-mix(in srgb,var(--terminal-green) 9%,transparent)}
+.server-detail{font-size:12px;color:var(--readable-muted);margin-top:2px}
+.session-tree{padding:0 10px 12px}.session-group{padding:3px;margin-bottom:4px;border-radius:8px;background:color-mix(in srgb,var(--raised) 24%,transparent)}
+.session-group.current-session{background:color-mix(in srgb,var(--accent) 6%,transparent)}
+.tree-group-header{margin:0;padding:0 5px;min-height:34px;font-weight:600;gap:2px}
+.session-trigger{gap:6px;min-height:34px}.session-trigger>svg{width:14px;height:14px}.session-trigger>span:last-child{font-size:12px;flex:none}
+.window-list{padding:1px 0 2px;gap:1px}.tree-row{min-height:31px;padding:6px 8px}.tree-row::before,.tree-row::after{display:none}
+.tree-row.active{background:color-mix(in srgb,var(--accent) 13%,transparent);box-shadow:inset 2px 0 0 var(--accent)}
+#navigation>.p-3{padding:8px}.nav-item{padding:7px 8px}
+.terminal-pane{border-radius:10px 0 0 10px;border-right:0}.document-pane{border-radius:0 10px 10px 0;border-left:0}
+.work-pane::after{border-radius:inherit}.terminal-pane::after{border-right:0}.document-pane::after{border-left:0}
+.terminal-pane:only-child{border-radius:10px;border-right:1px solid var(--line)}
+.work-pane-container:has(.dock-hidden) .terminal-pane{border-radius:10px;border-right:1px solid var(--line)}
+@media(min-width:768px){#prototype.sidebar-collapsed #navigation{width:152px}#prototype.sidebar-collapsed .brand-title,#prototype.sidebar-collapsed .brand-bar>[aria-label="通知"]{display:none}#prototype.sidebar-collapsed #sidebar-toggle{margin-left:auto}#prototype.sidebar-collapsed .server-context{padding:8px}#prototype.sidebar-collapsed .server-tile{min-height:40px;padding:6px 8px;gap:8px}#prototype.sidebar-collapsed .server-detail,#prototype.sidebar-collapsed .server-tile>svg,#prototype.sidebar-collapsed .session-trigger>span:last-child,#prototype.sidebar-collapsed .tree-group-header>.icon-btn,#prototype.sidebar-collapsed .tree-row>span:last-child{display:none}#prototype.sidebar-collapsed .session-tree{padding:0 8px 12px}}
+@media(max-width:767px){#sidebar-toggle{display:none}.session-trigger,.tree-row{min-height:44px}.terminal-pane{border-radius:10px;border-right:1px solid var(--line)}.document-pane.mobile-preview{border-radius:0;border:0}}
 </style></head>
 <body>
   <div id="prototype" class="flex h-screen w-full flex-col md:flex-row">
@@ -326,34 +355,33 @@ html.tmux-native-shell,html.tmux-native-shell body{background:transparent}html.t
     <aside id="navigation" class="hidden md:flex flex-col flex-shrink-0 w-[248px] border-r h-full relative z-20" style="background: var(--rail); border-color: var(--line); box-shadow: 1px 0 10px rgba(0,0,0,0.1);">
       <!-- Brand Header --><span class="traffic-lights" aria-hidden="true"><i></i><i></i><i></i></span>
       <div class="brand-bar flex items-center h-[44px] px-4 gap-3">
-        <div class="text-[14px] font-bold tracking-wide" style="color: var(--text);">
+        <div class="brand-title" style="color: var(--text);">
           Tmux Panel
         </div>
         <div class="flex-1"></div>
         <button class="icon-btn h-[28px] w-[28px]" aria-label="通知">
           <svg class="text-[16px]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"></path></svg>
         </button>
+        <button id="sidebar-toggle" class="icon-btn" aria-label="收起侧边栏" title="收起侧边栏" aria-expanded="true" aria-controls="navigation">‹</button>
       </div>
 
       <!-- Server Context Tile -->
-      <div class="px-3 py-2">
+      <div class="server-context">
         <button class="server-tile interactive" aria-label="切换服务器">
-          <div class="server-icon">
-              <svg class="text-[14px]" style="color: var(--accent);" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
-          </div>
+          <span class="server-online" aria-label="在线"></span>
           <div class="flex-1 overflow-hidden">
             <div class="flex items-center gap-2">
                 <span class="text-[13px] font-semibold truncate" style="color: var(--text);">本机</span>
-                <span class="w-1.5 h-1.5 rounded-full" style="background: var(--terminal-green); box-shadow: 0 0 4px var(--terminal-green)"></span>
+
             </div>
-            <div class="text-[11px] truncate" style="color: var(--readable-muted);">当前服务器 · 30ms</div>
+            <div class="server-detail">本机连接 · 30 ms</div>
           </div>
           <svg class="text-[14px]" style="color: var(--secondary);" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
         </button>
       </div>
 
       <!-- Scrollable Tree -->
-      <div class="flex-1 overflow-y-auto px-3 pb-4">
+      <div class="session-tree flex-1 overflow-y-auto">
         <div class="flex items-center gap-2 mb-2 px-2 mt-1">
           <span class="text-[11px] font-bold uppercase tracking-wider flex-1" style="color: var(--readable-muted);">会话</span>
           <button class="icon-btn h-[24px] w-[24px]" aria-label="新建会话">
@@ -364,13 +392,16 @@ html.tmux-native-shell,html.tmux-native-shell body{background:transparent}html.t
         <!-- Flat Tree Structure -->
         <div class="flex flex-col">
           <!-- Session 1 -->
+          <div class="session-group">
           <div class="tree-group-header group interactive">
             <svg class="text-[14px]" style="color: var(--secondary);" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
             <span class="flex-1 truncate">个人工作台</span>
             <span class="text-[11px] font-mono" style="color: var(--readable-muted);">1 个窗口</span>
           </div>
 
+          </div>
           <!-- Session 2 (Expanded) -->
+          <div class="session-group current-session">
           <div class="tree-group-header group interactive">
             <svg class="text-[14px]" style="color: var(--secondary);" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
             <span class="flex-1 truncate">产品开发</span>
@@ -381,7 +412,7 @@ html.tmux-native-shell,html.tmux-native-shell body{background:transparent}html.t
           </div>
 
           <!-- Windows for Session 2 -->
-          <div class="flex flex-col pl-4 mt-1 mb-1">
+          <div class="window-list flex flex-col">
             <div class="tree-row active group interactive">
               <span class="flex-1 truncate">工作区</span>
               <span class="text-[11px] font-mono opacity-60" style="color: var(--readable-muted);">zsh</span>
@@ -400,7 +431,9 @@ html.tmux-native-shell,html.tmux-native-shell body{background:transparent}html.t
             </div>
           </div>
 
+          </div>
           <!-- Session 3 -->
+          <div class="session-group">
           <div class="tree-group-header group interactive">
             <svg class="text-[14px]" style="color: var(--secondary);" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
             <span class="flex-1 truncate">基础设施</span>
@@ -409,6 +442,7 @@ html.tmux-native-shell,html.tmux-native-shell body{background:transparent}html.t
         </div>
       </div>
 
+      </div>
       <!-- Footer Navigation -->
       <div class="p-3 flex flex-col" style="border-top: 1px solid var(--line);">
         <button class="nav-item active interactive">
@@ -598,9 +632,13 @@ $$('[data-status]').forEach(e=>{e.setAttribute('aria-pressed',e.classList.contai
 $$('[data-agent]').forEach(e=>e.onclick=()=>{$$('[data-agent]').forEach(b=>{b.classList.toggle('selected',b===e);b.setAttribute('aria-pressed',b===e)});$('#agent-name').textContent=e.dataset.agent});
 function appearance(){let a=+$('#transparency').value,g=+$('#glass').value;$('#transparency-value').value=a+'%';$('#glass-value').value=g+'%';const sample=$('.glass-sample'),light=document.documentElement.classList.contains('light-theme');sample.style.background=light?'rgba(255,255,255,'+(1-a/100)+')':'rgba(21,24,33,'+(1-a/100)+')';sample.style.backdropFilter=sample.style.webkitBackdropFilter='blur('+(g*.16)+'px)'}
 $$('[data-theme]').forEach(e=>e.onclick=()=>{document.documentElement.classList.toggle('light-theme',e.dataset.theme==='light');$$('[data-theme]').forEach(b=>{b.classList.toggle('selected',b===e);b.setAttribute('aria-pressed',b===e); const check = b.querySelector('svg').parentElement; if(check) check.classList.toggle('hidden', b!==e);});$('#theme-name').textContent=e.dataset.theme==='light'?'GitHub Light':'Tokyo Night';appearance()});$('#transparency').oninput=appearance;$('#glass').oninput=appearance;appearance();
+const sidebarToggle=$('#sidebar-toggle');
+function setSidebarCollapsed(collapsed){$('#prototype').classList.toggle('sidebar-collapsed',collapsed);const label=collapsed?'展开侧边栏':'收起侧边栏';sidebarToggle.textContent=collapsed?'›':'‹';sidebarToggle.setAttribute('aria-expanded',String(!collapsed));sidebarToggle.setAttribute('aria-label',label);sidebarToggle.title=label;try{localStorage.setItem('tmux-panel-design-sidebar-collapsed',String(collapsed))}catch{}}
+sidebarToggle.onclick=()=>{setSidebarCollapsed(!$('#prototype').classList.contains('sidebar-collapsed'));resize(dock.getBoundingClientRect().width||420)};
+let savedCollapsed=true;try{savedCollapsed=localStorage.getItem('tmux-panel-design-sidebar-collapsed')!=='false'}catch{}setSidebarCollapsed(savedCollapsed);
 const dock=$('.preview-dock'),grip=$('.resizer-x');function preview(open){if(innerWidth<768){dock.classList.toggle('mobile-preview',open)}else{dock.classList.toggle('dock-hidden',!open);dock.style.display=open?'flex':'none';grip.style.display=open?'block':'none'}$('#restore-preview').hidden=open;$$('[title="打开文件"]').forEach(b=>b.classList.toggle('active',open));$$('[aria-label="打开预览"]').forEach(b=>b.setAttribute('aria-pressed',open))}
 $$('[aria-label="打开预览"],[title="打开文件"]').forEach(e=>e.onclick=()=>preview(innerWidth<768?!dock.classList.contains('mobile-preview'):dock.classList.contains('dock-hidden')));$('[title="隐藏预览（保留标签）"]').onclick=()=>preview(false);$('#restore-preview').onclick=()=>preview(true);
-function resize(width){const max=Math.max(320,Math.min(820,$('main').clientWidth-280));const next=Math.max(320,Math.min(max,width));dock.style.width=next+'px';grip.setAttribute('aria-valuenow',next);grip.setAttribute('aria-valuemax',max)}
+function resize(width){const max=Math.max(320,Math.min(820,$('.work-pane-container').clientWidth-305));const next=Math.max(320,Math.min(max,width));dock.style.width=next+'px';grip.setAttribute('aria-valuenow',next);grip.setAttribute('aria-valuemax',max)}
 grip.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();resize(e.key==='Home'?320:e.key==='End'?820:dock.getBoundingClientRect().width+(e.key==='ArrowLeft'?20:-20))}};
 grip.onpointerdown=e=>{e.preventDefault();grip.setPointerCapture(e.pointerId);const x=e.clientX,w=dock.getBoundingClientRect().width;grip.onpointermove=m=>resize(w+x-m.clientX);grip.onpointerup=()=>grip.onpointermove=null};
 $('#mobile-header button').onclick=()=>mobileNav(!$('#navigation').classList.contains('mobile-open'));$('#mobile-shade').onclick=()=>mobileNav(false);
@@ -614,6 +652,6 @@ $$('[title="减小字号"],[title="增大字号"]').forEach(e=>e.onclick=()=>{co
 $$('[data-demo]').forEach(e=>e.onclick=()=>toast('演示：'+e.dataset.demo+'，没有请求正式服务'));$('[title="刷新 (Cmd+R)"]').onclick=()=>toast('演示终端已刷新');
 $$('button').forEach(e=>{if(!e.hasAttribute('aria-label')&&e.title)e.setAttribute('aria-label',e.title);if(!e.onclick&&!e.hasAttribute('data-view')&&!e.hasAttribute('data-status')&&!e.hasAttribute('data-theme')&&!e.classList.contains('nav-item'))e.addEventListener('click',()=>toast('演示操作，不会影响正式环境'))});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeMenu();mobileNav(false);dock.classList.remove('mobile-preview')}});window.addEventListener('resize',()=>{if(innerWidth>=768){mobileNav(false);dock.classList.remove('mobile-preview');resize(dock.getBoundingClientRect().width||420)}});
-setView('terminal');
+setView('terminal');if(innerWidth>=768)resize(420);
 </script>
 </body></html>
