@@ -769,7 +769,6 @@
       var toggle = global.document.querySelector('.sidebar-toggle');
       if (toggle) {
         var label = collapsed ? '展开侧边栏' : '收起侧边栏';
-        toggle.textContent = collapsed ? '›' : '‹';
         toggle.setAttribute('aria-expanded', String(!collapsed));
         toggle.setAttribute('aria-label', label);
         toggle.title = label;

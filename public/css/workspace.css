@@ -38,6 +38,9 @@ html.tmux-native-titlebar body { --workspace-chrome-height:44px; }
   background:none; border-radius:6px; color:var(--workspace-muted); font-size:18px;
 }
 .workspace-chrome .sidebar-toggle:hover { color:var(--workspace-text); background:var(--workspace-hover); }
+.workspace-chrome .sidebar-toggle svg { width:16px; height:16px; }
+.workspace-chrome .sidebar-toggle .sidebar-panel { stroke:none; fill:currentColor; opacity:0; }
+.workspace-chrome .sidebar-toggle[aria-expanded="true"] .sidebar-panel { opacity:.2; }
 .workspace-chrome .ms-topbar,.workspace-chrome .ms-topbar.terminal-layout {
   display:flex; align-items:center; gap:14px; position:relative; top:auto;
   grid-row:auto; grid-column:auto; width:100%; height:100%; min-height:0;
@@ -239,11 +242,16 @@ html.tmux-native-titlebar body { --workspace-chrome-height:44px; }
 .cmd-palette-close{border:1px solid var(--workspace-line);border-radius:4px;padding:3px 5px;background:none;color:var(--workspace-muted);font-size:11px;cursor:pointer}.cmd-palette-results{overflow:auto;min-height:0;padding:6px;overscroll-behavior:contain}.cmd-palette-item{display:flex;align-items:center;gap:12px;min-height:46px;padding:8px 12px;border-radius:6px;background:none;color:var(--workspace-text);cursor:pointer}.cmd-palette-item-active{background:var(--workspace-hover);box-shadow:inset 2px 0 0 var(--workspace-accent)}.cmd-palette-item-name{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.cmd-palette-item-meta{color:var(--workspace-muted);font-size:12px;flex-shrink:0}.cmd-palette-item-icon{display:inline-flex;color:var(--workspace-muted)}.cmd-palette-item-icon svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5}.cmd-palette-empty{padding:36px 20px;text-align:center;color:var(--workspace-muted);font-size:13px}.cmd-palette-footer{border-top:1px solid var(--workspace-line);padding:9px 16px;font-size:11px;color:var(--workspace-muted)}
 
 .ms-app button:focus-visible,.ms-app summary:focus-visible,.workspace-jump:focus-visible,.cmd-palette-close:focus-visible { outline:2px solid var(--workspace-accent); outline-offset:-2px; }
-html.tmux-native-titlebar .workspace-chrome .brand { padding-left:80px; }
-html.tmux-native-titlebar .ms-app.sidebar-collapsed .workspace-chrome .brand-copy { display:none; }
+/* Native window controls and the sidebar switch form one compact cluster.
+   Location starts beside it, independent of the sidebar width below. */
+html.tmux-native-titlebar .workspace-chrome { grid-template-columns:120px minmax(0,1fr); }
+html.tmux-native-titlebar .ms-app .workspace-chrome .brand {
+  padding:0 8px 0 84px; gap:0; justify-content:flex-start; background:transparent;
+}
+html.tmux-native-titlebar .ms-app .workspace-chrome .brand-copy { display:none; }
 html[data-native-transparency] .ms-app { background:transparent!important; }
 html[data-native-transparency] .workspace-chrome { background:transparent; backdrop-filter:none; -webkit-backdrop-filter:none; }
-html[data-native-transparency] .ms-app .ms-sidebar,html[data-native-transparency] .workspace-chrome .brand { background:color-mix(in srgb,var(--workspace-sidebar) 12%,transparent)!important; backdrop-filter:none; -webkit-backdrop-filter:none; }
+html[data-native-transparency] .ms-app .ms-sidebar { background:color-mix(in srgb,var(--workspace-sidebar) 12%,transparent)!important; backdrop-filter:none; -webkit-backdrop-filter:none; }
 html[data-native-transparency] .ms-app .ms-main,html[data-native-transparency] .ms-app .ms-content.terminal-mode { background:transparent!important; }
 button { touch-action:manipulation; }
 @media (prefers-reduced-motion:reduce) { .ms-app *,.cmd-palette-overlay * { animation:none!important; transition:none!important; } }

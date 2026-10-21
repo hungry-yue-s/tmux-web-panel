@@ -337,17 +337,22 @@ describe('AppShell sidebar preferences', () => {
 
   it('toggles the collapsed class and the toggle affordance', () => {
     const ctx = loadShell();
+    const toggle = ctx.document.querySelector('.sidebar-toggle');
+    toggle.innerHTML = '<svg aria-hidden="true"><path d="M9 4v16"/></svg>';
+    const icon = toggle.firstElementChild;
     ctx.Shell.setSidebarCollapsed(false);
 
     const app = ctx.document.querySelector('.ms-app');
-    const toggle = ctx.document.querySelector('.sidebar-toggle');
     expect(app.classList.contains('sidebar-collapsed')).toBe(false);
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    expect(toggle.textContent).toBe('‹');
+    expect(toggle.getAttribute('aria-label')).toBe('收起侧边栏');
+    expect(toggle.firstElementChild).toBe(icon);
 
     ctx.Shell.setSidebarCollapsed(true);
     expect(app.classList.contains('sidebar-collapsed')).toBe(true);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(toggle.getAttribute('aria-label')).toBe('展开侧边栏');
+    expect(toggle.firstElementChild).toBe(icon);
   });
 });
 
