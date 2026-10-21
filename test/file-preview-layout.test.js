@@ -1000,7 +1000,7 @@ describe('file preview dock tabs', () => {
 
     expect(await preview.switchDockContext('local', '@42')).toBe(true);
     expect(dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('window-two.md');
-    expect(dom.window.document.querySelector('.fp-dock').style.width).toBe('576px');
+    expect(dom.window.document.querySelector('.fp-dock').style.width).toBe('650px');
 
     expect(await preview.switchDockContext(null, null)).toBe(false);
     expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
@@ -1114,13 +1114,13 @@ describe('file preview dock tabs', () => {
     dockCurrent(dom);
 
     const dock = dom.window.document.querySelector('.fp-dock');
-    const cap = Math.min(820, Math.floor(dom.window.innerWidth * 0.4), dom.window.innerWidth - 480);
+    const cap = Math.floor(dom.window.innerWidth * 0.7);
     expect(parseInt(dock.style.flexBasis, 10)).toBeLessThanOrEqual(cap);
     expect(parseInt(dock.style.flexBasis, 10)).toBeGreaterThanOrEqual(320);
     expect(dock.style.width).toBe(dock.style.flexBasis);
   });
 
-  it('defaults to a 360px inspector and keeps at least 60 percent of the workstage for the terminal', async () => {
+  it('defaults to 360px and allows 70 percent of the workstage after excluding the sidebar', async () => {
     const { dom, preview } = createPreview();
     const doc = dom.window.document;
     // Legacy layout includes its sidebar; the modern shell passes only ms-main.
@@ -1133,11 +1133,10 @@ describe('file preview dock tabs', () => {
     expect(dock.style.width).toBe('360px');
     const grip = dock.querySelector('[role="separator"]');
     grip.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
-    expect(dock.style.width).toBe('380px');
+    expect(dock.style.width).toBe('666px');
     const terminalWidth = 1200 - 248 - parseInt(dock.style.width, 10);
-    expect(terminalWidth).toBe(572);
-    expect(terminalWidth).toBeGreaterThanOrEqual((1200 - 248) * 0.6);
-    expect(terminalWidth).toBeGreaterThanOrEqual(480);
+    expect(terminalWidth).toBe(286);
+    expect(terminalWidth).toBeGreaterThanOrEqual((1200 - 248) * 0.3);
     preview.closeDocked(); dom.window.close();
   });
 
@@ -1153,23 +1152,23 @@ describe('file preview dock tabs', () => {
     const key = preview._test.dockStateKey('local', '@0');
     dom.window.localStorage.setItem(key, JSON.stringify({
       version: 1, tabs: [{ path: '/tmp/one.md', paneId: '%1' }],
-      activePath: '/tmp/one.md', hidden: false, width: 666,
+      activePath: '/tmp/one.md', hidden: false, width: 1600,
     }));
     await preview.openFile('/tmp/one.md', '%1'); dockCurrent(dom);
     const dock = doc.querySelector('.fp-dock');
-    expect(dock.style.width).toBe('380px');
-    expect(workstageWidth - parseInt(dock.style.width, 10)).toBe(572);
-    expect(workstageWidth - parseInt(dock.style.width, 10)).toBeGreaterThanOrEqual(workstageWidth * 0.6);
-    expect(JSON.parse(dom.window.localStorage.getItem(key)).width).toBe(380);
+    expect(dock.style.width).toBe('666px');
+    expect(workstageWidth - parseInt(dock.style.width, 10)).toBe(286);
+    expect(workstageWidth - parseInt(dock.style.width, 10)).toBeGreaterThanOrEqual(workstageWidth * 0.3);
+    expect(JSON.parse(dom.window.localStorage.getItem(key)).width).toBe(666);
     // An explicit drag cannot grow the inspector back over the terminal budget.
     dock.getBoundingClientRect = () => ({ width: parseFloat(dock.style.width) });
     const grip = dock.querySelector('.fp-side-resizer');
     grip.dispatchEvent(new dom.window.MouseEvent('pointerdown', { clientX: 800, bubbles: true }));
     dom.window.dispatchEvent(new dom.window.MouseEvent('pointermove', { clientX: 0, bubbles: true }));
     dom.window.dispatchEvent(new dom.window.MouseEvent('pointerup', { bubbles: true }));
-    expect(dock.style.width).toBe('380px');
-    expect(JSON.parse(dom.window.localStorage.getItem(key)).width).toBe(380);
-    workstageWidth = 650;
+    expect(dock.style.width).toBe('666px');
+    expect(JSON.parse(dom.window.localStorage.getItem(key)).width).toBe(666);
+    workstageWidth = 440;
     dom.window.dispatchEvent(new dom.window.Event('resize'));
     expect(doc.querySelector('.fp-dock')).toBeNull();
     expect(doc.querySelector('.fp-dock-restore')).not.toBeNull();
@@ -1180,7 +1179,7 @@ describe('file preview dock tabs', () => {
     preview.close();
     workstageWidth = 952;
     doc.querySelector('.fp-dock-restore').click();
-    expect(doc.querySelector('.fp-dock').style.width).toBe('380px');
+    expect(doc.querySelector('.fp-dock').style.width).toBe('666px');
     expect(doc.querySelectorAll('.fp-dock-tab')).toHaveLength(1);
     preview.closeDocked(); dom.window.close();
   });
@@ -1289,7 +1288,7 @@ describe('file preview dock tabs', () => {
     preview.closeDocked(); dom.window.close();
   });
 
-  it('resizes with the keyboard, exposes the current width and caps large desktops at 820px', async () => {
+  it('resizes with the keyboard and exposes a 70 percent limit without a fixed desktop cap', async () => {
     const { dom, preview } = createPreview();
     Object.defineProperty(dom.window, 'innerWidth', { value: 2560, configurable: true });
     await preview.openFile('/tmp/one.md', '%1'); dockCurrent(dom);
@@ -1302,11 +1301,12 @@ describe('file preview dock tabs', () => {
     }));
     expect(grip.tabIndex).toBe(0);
     press('End');
-    expect(dock.style.width).toBe('820px');
-    expect(grip.getAttribute('aria-valuemax')).toBe('820');
+    expect(dock.style.width).toBe('1792px');
+    expect(grip.getAttribute('aria-valuemax')).toBe('1792');
+    expect(dock.style.getPropertyValue('--fp-side-max-width')).toBe('1792px');
     press('ArrowRight', true);
-    expect(grip.getAttribute('aria-valuenow')).toBe('770');
-    expect(JSON.parse(dom.window.localStorage.getItem(key)).width).toBe(770);
+    expect(grip.getAttribute('aria-valuenow')).toBe('1742');
+    expect(JSON.parse(dom.window.localStorage.getItem(key)).width).toBe(1742);
     press('Home'); press('ArrowRight');
     expect(dock.style.width).toBe('320px');
     press('ArrowLeft');

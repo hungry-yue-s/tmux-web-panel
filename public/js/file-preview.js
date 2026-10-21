@@ -183,9 +183,9 @@ var FilePreview = (function () {
 
     var available = Math.max(0, layoutWidth - sidebarWidth);
     var min = 320;
-    // Terminal work takes at least 60% and 480px, including restored widths.
-    // When a 320px inspector cannot fit that budget, keep the file in a modal.
-    var max = Math.max(0, Math.min(820, Math.floor(available * 0.4), Math.floor(available - 480)));
+    // Dragging left may use 70% of the shared workstage, including restored
+    // widths. Keep the file in a modal when the 320px minimum cannot fit.
+    var max = Math.floor(available * 0.7);
     var preferred = Math.min(max, 360);
     return { min: min, max: max, preferred: Math.min(preferred, max) };
   }
@@ -221,6 +221,7 @@ var FilePreview = (function () {
       var next = Math.round(_clampSideWidth(width));
       sideOverlay.style.flexBasis = next + 'px';
       sideOverlay.style.width = next + 'px';
+      sideOverlay.style.setProperty('--fp-side-max-width', _sideWidthBounds().max + 'px');
       grip.setAttribute('aria-valuemin', '320');
       grip.setAttribute('aria-valuemax', String(_sideWidthBounds().max));
       grip.setAttribute('aria-valuenow', String(next));

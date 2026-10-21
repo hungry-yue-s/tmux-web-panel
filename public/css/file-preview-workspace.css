@@ -38,7 +38,7 @@
 /* The border is the only visible seam; its 12px hit target overlaps both panes. */
 .fp-overlay.fp-side {
   min-width: 320px;
-  max-width: 820px;
+  max-width: var(--fp-side-max-width, 70vw);
   margin: 0;
   border-left: 1px solid var(--fp-line);
   box-shadow: none;

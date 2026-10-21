@@ -111,7 +111,7 @@ describe('extended terminal themes', () => {
     expect(indexSource).toContain('/js/theme.js?v=7');
     expect(indexSource).toContain('/js/terminal.js?v=22');
     expect(indexSource).toContain('/css/style.css?v=51');
-    expect(indexSource).toContain('/js/file-preview.js?v=44');
+    expect(indexSource).toContain('/js/file-preview.js?v=45');
   });
 });
 
