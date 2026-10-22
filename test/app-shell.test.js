@@ -804,3 +804,39 @@ describe('AppShell mobile workspace sheet', () => {
     expect(ctx.document.querySelector('.mobile-menu-nav [data-terminal-home]').dataset.route).toBe('#/terminal/local');
   });
 });
+
+
+describe('native titlebar drag regions', () => {
+  it('reports interactive holes and updates them after a toolbar change', async () => {
+    const dom = new JSDOM('<header class="workspace-chrome"><span>工作台</span><button>通知</button><summary>更多</summary></header>',
+      { url: 'http://localhost/', runScripts: 'outside-only' });
+    const win = dom.window;
+    const header = win.document.querySelector('header');
+    const button = header.querySelector('button');
+    const summary = header.querySelector('summary');
+    header.getBoundingClientRect = () => ({ height: 44, top: 0 });
+    button.getBoundingClientRect = () => ({ left: 900, top: 8, width: 28, height: 28 });
+    summary.getBoundingClientRect = () => ({ left: 940, top: 8, width: 28, height: 28 });
+    const messages = [];
+    win.webkit = { messageHandlers: { tmuxPanelAction: { postMessage: (message) => messages.push(message) } } };
+    win.requestAnimationFrame = (callback) => { callback(); return 1; };
+    win.eval(SHELL);
+    expect(messages[0]).toMatchObject({ action: 'titlebarDragRegions', height: 44, viewportWidth: 1024,
+      exclusions: [{ x: 900, y: 8, width: 28, height: 28 }, { x: 940, y: 8, width: 28, height: 28 }] });
+    button.getBoundingClientRect = () => ({ left: 860, top: 8, width: 28, height: 28 });
+    button.setAttribute('aria-pressed', 'true');
+    await Promise.resolve();
+    expect(messages.at(-1).exclusions[0].x).toBe(860);
+    expect(messages.at(-1).exclusions).toHaveLength(2);
+    const overlay = win.document.createElement('div'); overlay.className = 'fp-overlay';
+    win.document.body.append(overlay);
+    await Promise.resolve();
+    expect(messages.at(-1)).toMatchObject({ height: 0, exclusions: [] });
+    overlay.remove(); await Promise.resolve();
+    expect(messages.at(-1).height).toBe(44);
+    header.getBoundingClientRect = () => ({ height: 0, top: 0 });
+    header.hidden = true; await Promise.resolve();
+    expect(messages.at(-1)).toMatchObject({ height: 0, exclusions: [] });
+    dom.window.close();
+  });
+});

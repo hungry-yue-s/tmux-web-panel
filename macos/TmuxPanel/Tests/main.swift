@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 private enum SelfTestError: Error, CustomStringConvertible {
@@ -124,10 +125,26 @@ private func testServiceStateParsing() throws {
     try expect(ServiceInspector.parseLaunchctlOutput("") == .unavailable, "empty state should be unavailable")
 }
 
+@MainActor
+private func testTitlebarDragHitTesting() throws {
+    let container = NSView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800))
+    let drag = PanelTitlebarDragView(frame: NSRect(x: 80, y: 756, width: 1120, height: 44))
+    container.addSubview(drag)
+    drag.exclusions = [NSRect(x: 4, y: 8, width: 28, height: 28)]
+    try expect(drag.hitTest(NSPoint(x: 500, y: 778)) === drag, "blank titlebar must receive native dragging")
+    try expect(drag.hitTest(NSPoint(x: 100, y: 778)) == nil, "sidebar button must remain clickable")
+    try expect(drag.hitTest(NSPoint(x: 500, y: 730)) == nil, "content below titlebar must remain clickable")
+    drag.exclusions = [NSRect(x: 4, y: 8, width: 28, height: 28), NSRect(x: 400, y: 8, width: 28, height: 28)]
+    try expect(drag.hitTest(NSPoint(x: 500, y: 778)) == nil, "new toolbar controls must be excluded")
+    drag.frame.size.height = 0
+    try expect(drag.hitTest(NSPoint(x: 500, y: 778)) == nil, "hidden titlebar must not intercept modal clicks")
+}
+
 do {
     try testEndpointResolution()
     try testServiceStateParsing()
-    print("macOS shell self-tests passed: endpoint, TLS pin, loopback policy, service state")
+    try MainActor.assumeIsolated { try testTitlebarDragHitTesting() }
+    print("macOS shell self-tests passed: endpoint, TLS pin, loopback policy, service state, native titlebar hit-testing")
 } catch {
     fputs("macOS shell self-test failed: \(error)\n", stderr)
     exit(1)

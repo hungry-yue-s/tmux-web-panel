@@ -795,5 +795,43 @@
     },
   };
 
+  // Native hit-test regions let AppKit drag blank chrome without stealing web controls.
+  var nativeActions = global.webkit && global.webkit.messageHandlers && global.webkit.messageHandlers.tmuxPanelAction;
+  var chrome = global.document.querySelector('.workspace-chrome');
+  if (nativeActions && chrome) {
+    var pendingTitlebar = false;
+    var lastTitlebar = null;
+    var syncTitlebar = function () {
+      if (pendingTitlebar) return;
+      pendingTitlebar = true;
+      global.requestAnimationFrame(function () {
+        pendingTitlebar = false;
+        var rect = chrome.getBoundingClientRect();
+        var controls = Array.from(chrome.querySelectorAll('button,a,input,select,textarea,summary,[role="button"],[contenteditable="true"]'));
+        var covered = global.document.querySelector('.fp-overlay:not(.fp-side),.fp-side-maximized,.fp-mermaid-dialog,.fp-share-overlay,.cmd-palette-overlay,.modal-overlay,.ms-modal-backdrop:not([hidden])');
+        var height = covered ? 0 : rect.height;
+        var payload = {
+          action: 'titlebarDragRegions', height: height, viewportWidth: global.innerWidth,
+          exclusions: height ? controls.map(function (control) {
+            var r = control.getBoundingClientRect();
+            return { x: r.left, y: r.top - rect.top, width: r.width, height: r.height };
+          }) : [],
+        };
+        var serialized = JSON.stringify(payload);
+        if (serialized !== lastTitlebar) {
+          lastTitlebar = serialized;
+          nativeActions.postMessage(payload);
+        }
+      });
+    };
+    new global.MutationObserver(syncTitlebar).observe(chrome, { childList: true, subtree: true, attributes: true });
+    new global.MutationObserver(syncTitlebar).observe(global.document.body, {
+      childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'hidden'],
+    });
+    if (global.ResizeObserver) new global.ResizeObserver(syncTitlebar).observe(chrome);
+    global.addEventListener('resize', syncTitlebar);
+    syncTitlebar();
+  }
+
   global.AppShell = AppShell;
 })(typeof window !== 'undefined' ? window : globalThis);
