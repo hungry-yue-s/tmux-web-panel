@@ -31,6 +31,32 @@ function loadHub(data = {}) {
 }
 
 describe('AgentHub', () => {
+  it('switches DSH between existing native models and the shared enterprise pool in the same view', async () => {
+    const { win, hub } = loadHub({ hub: {
+      dsh: { installed: true, version: '0.16.1', backend: 'dsh', provider: 'tmux-enterprise', model: 'mode-auto', enterpriseModelId: 'mode-auto',
+        profiles: [{ provider: 'glm', model: 'glm-test', name: 'GLM', providerName: 'Coding Plan' }] },
+      enterprise: { available: true, pools: [{ id: 'enterprise', name: '集团 AI 资源包', usage: { usedCredits: 10, totalCredits: 100, remainingCredits: 90, usedPercent: 10 } }],
+        tokenSwitch: { loggedIn: true, canSwitchInPanel: true, models: [
+          { id: 'mode-auto', app: 'codex', name: 'Auto', meta: { managedCatalog: { multiplier: 1 } } },
+          { id: 'mode-base', app: 'codex', name: '基础', meta: { managedCatalog: { multiplier: 0.1 } } },
+        ] } },
+    } });
+    win.showConfirm = vi.fn().mockResolvedValue(true);
+    hub.start();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    win.document.querySelector('[data-agent-id="dsh"]').click();
+    expect(win.document.querySelector('.section-head h3').textContent).toBe('dsh-tui 运行身份');
+    expect(win.document.querySelector('.ah-current-profile').textContent).toContain('Auto');
+    expect(win.document.getElementById('agent-hub').textContent).toContain('集团 AI 资源包');
+    win.document.querySelector('[data-ah-action="activate-managed"]').click();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    expect(win.Api.post).toHaveBeenCalledWith('/api/agent-hub/enterprise/models/mode-base/activate', { agent: 'dsh' });
+    win.document.querySelector('[data-ah-action="activate-dsh"]').click();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    expect(win.Api.post).toHaveBeenCalledWith('/api/agent-hub/dsh/models/activate', { provider: 'glm', model: 'glm-test' });
+    hub.stop();
+  });
+
   it('uses one focused URL that opens as a browser tab or a Swift child window', () => {
     const { hub } = loadHub();
     expect(hub._detachedURL()).toBe('http://localhost:7681/?standalone=agents#/servers/local/agents');

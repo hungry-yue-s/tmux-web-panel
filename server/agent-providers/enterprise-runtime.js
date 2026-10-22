@@ -9,6 +9,7 @@ import { stringify } from 'smol-toml';
 import { AppError, ErrorCode } from '../servers/errors.js';
 import { mutateSQLite } from './token-switch-claude-relay.js';
 import { requestToResponses, responseToAnthropic, responsesToAnthropicStream } from './anthropic-responses.js';
+import { createDshTuiManager } from './dsh-tui.js';
 
 const sql = (value) => `'${String(value).replaceAll("'", "''")}'`;
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -23,6 +24,7 @@ export function createEnterpriseRuntime(options = {}) {
   const settingsPath = join(home, '.config', 'tmux-web-panel', 'enterprise-relay.json');
   const database = join(home, '.cc-switch', 'cc-switch.db');
   const writeSQLite = options.writeSQLite || mutateSQLite;
+  const dsh = options.dsh || createDshTuiManager({ home, dshHome: options.dshHome || process.env.DSH_HOME });
   let server = null;
   let starting = null;
   let local = null;
@@ -163,9 +165,14 @@ export function createEnterpriseRuntime(options = {}) {
   }
 
   async function prepare(agent, modelId) {
-    if (!['claude', 'codex'].includes(agent)) throw new AppError(ErrorCode.VALIDATION_ERROR, '不支持此 Agent 的集团模型配置');
+    if (!['claude', 'codex', 'dsh'].includes(agent)) throw new AppError(ErrorCode.VALIDATION_ERROR, '不支持此 Agent 的集团模型配置');
     const model = await modelFor(modelId);
     if (!(await client.checkQuota('Codex', model.id)).available) throw new AppError(ErrorCode.UNSUPPORTED, '该集团模型当前没有可用额度');
+    if (agent === 'dsh') {
+      const base = await start();
+      const catalog = await catalogCache;
+      return dsh.activate({ model: model.id, models: catalog.models.filter((item) => item.app === 'codex'), base, key: local.key });
+    }
     if (!(await stat(database).catch(() => null))?.isFile()) throw new AppError(ErrorCode.UNSUPPORTED, '未找到现有供应商配置库');
     const base = await start();
     const id = `tmux-group-${model.id}`;
@@ -199,5 +206,6 @@ commit;`); } catch { throw new AppError(ErrorCode.PROVIDER_CHANGED, '集团供�
     if (listener) await new Promise((resolve) => { listener.close(resolve); listener.closeAllConnections(); });
   }
 
-  return { start, resume, stop, prepare, status: () => ({ running: Boolean(address), activeRequests: requests.size }) };
+  return { start, resume, stop, prepare, dshStatus: dsh.status, activateDshModel: dsh.activate,
+    status: () => ({ running: Boolean(address), activeRequests: requests.size }) };
 }

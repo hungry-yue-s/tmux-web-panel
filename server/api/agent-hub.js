@@ -692,7 +692,7 @@ export function createAgentHubService(options = {}) {
     const store = await readJSON(accountsPath, { accounts: [], active_account_id: null, masked_account_ids: [] });
     const accounts = includeCodex && Array.isArray(store.accounts) ? store.accounts : [];
     const providerAgents = [includeClaude && 'claude', includeCodex && 'codex'].filter(Boolean);
-    const [usages, providers, qoderTasks, qoderHistory, qoderUsage, warmups, enterprise] = await Promise.all([
+    const [usages, providers, qoderTasks, qoderHistory, qoderUsage, warmups, enterprise, dsh] = await Promise.all([
       includeCodex ? usageFor(accounts) : new Map(),
       ccSwitchProviders(ccSwitchDatabase, runSQLite, cachedProviderUsage, false, providerAgents),
       includeCodex ? qoderActivity(qoderTasksPath) : { installed: false, taskCount: 0, lastActivityAt: null },
@@ -700,6 +700,7 @@ export function createAgentHubService(options = {}) {
       includeCodex ? fetchQoderUsage() : null,
       includeCodex ? readWarmupHistory() : { accounts: {} },
       enterpriseService.status({ claude: includeClaude, codex: includeCodex }),
+      includeCodex ? enterpriseService.dshStatus?.() : null,
     ]);
     const qoder = {
       installed: qoderTasks.installed || qoderHistory.installed,
@@ -755,6 +756,7 @@ export function createAgentHubService(options = {}) {
       ccSwitch: { available: publicProviders.length > 0, providers: publicProviders },
       qoder: { ...qoder, usage: enterprise?.pools?.find((pool) => pool.id === 'qoder-ide')?.usage || qoderUsage },
       enterprise,
+      dsh: dsh || { installed: false, profiles: [] },
       profileEvents: events,
     };
   }
@@ -1132,7 +1134,17 @@ export function createAgentHubService(options = {}) {
     prepareClaudeRelay: enterpriseService.prepareClaudeRelay,
     activateManagedModel: async (agent, modelId) => {
       const prepared = await enterpriseService.prepareManaged(agent, modelId);
+      if (agent === 'dsh') {
+        await recordProfile('dsh', { id: modelId, name: '集团资源池 · ' + modelId, kind: 'subscription' }, 'switched');
+        return prepared;
+      }
       return activateProvider(prepared.providerId, agent);
+    },
+    activateDshModel: async (input) => {
+      if (typeof input?.provider !== 'string' || typeof input?.model !== 'string' || input.provider === 'tmux-enterprise') {
+        throw new AppError(ErrorCode.VALIDATION_ERROR, '无效的 DSH 提供方或模型');
+      }
+      return enterpriseService.activateDshModel({ provider: input.provider, model: input.model });
     },
     retryEnterpriseQuota: enterpriseService.retryQuota,
     startEnterpriseRuntime: enterpriseService.startRuntime,
@@ -1162,6 +1174,7 @@ export function createAgentHubRouter(service = createAgentHubService()) {
   router.post('/enterprise/claude-relay/preview', handle(() => service.previewClaudeRelay()));
   router.post('/enterprise/claude-relay/prepare', handle(() => service.prepareClaudeRelay()));
   router.post('/enterprise/models/:modelId/activate', handle((req) => service.activateManagedModel(req.body?.agent, req.params.modelId)));
+  router.post('/dsh/models/activate', handle((req) => service.activateDshModel(req.body)));
   router.post('/enterprise/quota/refresh', handle(() => service.retryEnterpriseQuota()));
   return router;
 }

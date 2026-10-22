@@ -99,5 +99,6 @@ export function createEnterpriseAiService(options = {}) {
   }
 
   return { status, openApp, previewClaudeRelay: relay.preview, prepareClaudeRelay: relay.prepare,
-    prepareManaged: runtime.prepare, startRuntime: runtime.resume, stopRuntime: runtime.stop, retryQuota };
+    prepareManaged: runtime.prepare, dshStatus: runtime.dshStatus, activateDshModel: runtime.activateDshModel,
+    startRuntime: runtime.resume, stopRuntime: runtime.stop, retryQuota };
 }

@@ -8165,7 +8165,7 @@ button.list-row:hover {
 .ah-error { color: var(--accent-red); border-color: color-mix(in srgb, var(--accent-red) 35%, var(--border-subtle)); }
 .ah-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 11px; }
 .ah-actions > div { display: flex; gap: 8px; }
-.ah-source-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.ah-source-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .ah-source-card,
 .ah-profile-card,
 .ah-usage-card,
@@ -8182,6 +8182,7 @@ button.list-row:hover {
 .ah-source-card.claude { border-top-color: color-mix(in srgb, var(--accent-orange) 70%, var(--border-subtle)); }
 .ah-source-card.codex { border-top-color: color-mix(in srgb, var(--accent-blue) 70%, var(--border-subtle)); }
 .ah-source-card.qoder { border-top-color: color-mix(in srgb, var(--accent-purple) 70%, var(--border-subtle)); }
+.ah-source-card.dsh { border-top-color: color-mix(in srgb, var(--accent-blue) 70%, var(--border-subtle)); }
 .ah-source-head { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; margin-bottom: 18px; }
 .ah-source-head h3 { margin: 0; font-size: 15px; }
 .ah-source-head p { margin: 2px 0 0; overflow: hidden; color: var(--text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
@@ -8302,7 +8303,6 @@ button.list-row:hover {
 
 @media (max-width: 1100px) {
   .ah-source-grid { grid-template-columns: 1fr 1fr; }
-  .ah-source-card.qoder { grid-column: 1 / -1; }
   .ah-activity-row { grid-template-columns: minmax(0, 1fr) 100px 110px auto; }
   .ah-activity-row time { display: none; }
 }

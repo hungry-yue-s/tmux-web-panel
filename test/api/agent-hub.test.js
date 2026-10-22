@@ -81,6 +81,21 @@ afterEach(async () => {
 });
 
 describe('Agent hub service', () => {
+  it('dispatches DSH activation without projecting a CC Switch provider or exposing local keys', async () => {
+    const paths = await fixture();
+    const prepareManaged = vi.fn(async () => ({ agent: 'dsh', modelId: 'mode-auto', active: true }));
+    const activateDshModel = vi.fn(async () => ({ active: true }));
+    const switchProvider = vi.fn();
+    const service = createAgentHubService({ ...paths, switchProvider,
+      enterpriseService: { ...paths.enterpriseService, prepareManaged, activateDshModel } });
+    expect(await service.activateManagedModel('dsh', 'mode-auto')).toMatchObject({ active: true });
+    expect(prepareManaged).toHaveBeenCalledWith('dsh', 'mode-auto');
+    expect(switchProvider).not.toHaveBeenCalled();
+    await service.activateDshModel({ provider: 'glm', model: 'glm-test', key: 'must-not-forward' });
+    expect(activateDshModel).toHaveBeenCalledWith({ provider: 'glm', model: 'glm-test' });
+    await expect(service.activateDshModel({ provider: 'tmux-enterprise', model: 'unauthorized' })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
   it('returns only public account/provider metadata and sanitized live quotas', async () => {
     const paths = await fixture();
     const fetchImpl = vi.fn().mockResolvedValue({

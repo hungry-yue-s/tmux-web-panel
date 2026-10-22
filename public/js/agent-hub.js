@@ -130,6 +130,7 @@ var AgentHub = (function () {
     var providers = (hub.ccSwitch && hub.ccSwitch.providers) || [];
     var accounts = (hub.codexSwitcher && hub.codexSwitcher.accounts) || [];
     var qoder = hub.qoder || {};
+    var dsh = hub.dsh || {};
     var enterprise = hub.enterprise || {};
     var tokenSwitch = enterprise.tokenSwitch || {};
     var enterprisePool = (enterprise.pools || []).find(function (pool) { return pool.id === 'enterprise'; });
@@ -142,9 +143,10 @@ var AgentHub = (function () {
         var active = providers.find(function (provider) {
           return provider.agent === agentId && provider.active && provider.embeddedEnterprise && provider.enterpriseModelId === model.id;
         });
+        if (agentId === 'dsh') active = dsh.enterpriseModelId === model.id;
         return {
           id: model.id, name: model.name, kind: 'subscription', enterprise: true, current: Boolean(active),
-          switchable: tokenSwitch.canSwitchInPanel === true, switchAction: 'activate-managed', agentId: agentId,
+          switchable: tokenSwitch.canSwitchInPanel === true && (agentId !== 'dsh' || dsh.installed), switchAction: 'activate-managed', agentId: agentId,
           detail: (agentId === 'claude' ? '集团资源池 · 兼容路由' : '集团资源池') + (catalog.multiplier == null ? '' : ' · ' + catalog.multiplier + '×'),
           capabilityNote: catalog.description,
           message: tokenSwitch.loggedIn ? (tokenSwitch.canSwitchInPanel ? null : tokenSwitch.error) : '集团登录已过期，请刷新登录态',
@@ -240,6 +242,18 @@ var AgentHub = (function () {
           { label: '会话', value: fmt(codex.aggregate && codex.aggregate.totalSessions) },
           { label: 'Tokens', value: fmt(codex.aggregate && codex.aggregate.totalTokens) },
         ],
+      },
+      {
+        id: 'dsh', name: 'dsh-tui', mark: 'D', installed: Boolean(dsh.installed),
+        profiles: (dsh.profiles || []).map(function (item) {
+          return { id: JSON.stringify({ provider: item.provider, model: item.model }), name: item.name,
+            detail: item.providerName, kind: 'api',
+            current: dsh.backend === 'dsh' && dsh.provider === item.provider && dsh.model === item.model,
+            switchable: true, switchAction: 'activate-dsh', agentId: 'dsh', quota: [] };
+        }).concat(managedProfiles('dsh')),
+        note: dsh.reason || (dsh.installed ? '原生 DSH 后端 · 启动：dsh-tui --backend dsh；已有会话可用 /model 选择集团模型。' : '尚未发现本机 dsh-tui profile'),
+        sessions: [], modelUsage: {},
+        consumption: [{ label: '版本', value: dsh.version || '—' }, { label: '后端', value: dsh.backend || '—' }],
       },
       {
         id: 'qoder', name: 'Qoder', mark: 'Q', installed: Boolean(qoder.installed),
@@ -384,7 +398,7 @@ var AgentHub = (function () {
     var managed = agent.profiles.filter(function (profile) { return profile.switchAction === 'activate-managed'; });
     var regular = agent.profiles.filter(function (profile) { return profile.switchAction !== 'activate-managed'; });
     var managedMessage = managed.find(function (profile) { return profile.message; });
-    return '<div class="ah-profile-grid">' + regular.map(card).join('')
+    return (agent.note ? '<p class="ah-managed-note">' + esc(agent.note) + '</p>' : '') + '<div class="ah-profile-grid">' + regular.map(card).join('')
       + (managed.length ? '<div class="ah-managed-models"><p class="ah-managed-note">'
         + esc(managedMessage ? managedMessage.message : '集团模型共用月 Credits，额度统一见下方“额度与消耗”。切换仅对新会话生效。')
         + '</p>' + managed.map(card).join('') + '</div>' : '') + '</div>';
@@ -622,10 +636,10 @@ var AgentHub = (function () {
       confirmAuto.then(function (yes) { if (yes) return saveAuto(); });
       return;
     }
-    if (action === 'activate-account' || action === 'activate-provider' || action === 'activate-managed') {
+    if (action === 'activate-account' || action === 'activate-provider' || action === 'activate-managed' || action === 'activate-dsh') {
       var isAccount = action === 'activate-account';
       var agentId = isAccount ? 'codex' : (button.dataset.agentId || 'codex');
-      var agentName = agentId === 'claude' ? 'Claude' : 'Codex';
+      var agentName = agentId === 'dsh' ? 'dsh-tui' : agentId === 'claude' ? 'Claude' : 'Codex';
       var targetName = button.dataset.targetName || '这个运行身份';
       var proceed = window.showConfirm ? window.showConfirm({
         title: '切换 ' + agentName + ' 运行身份',
@@ -635,12 +649,12 @@ var AgentHub = (function () {
       proceed.then(function (yes) {
         if (!yes) return;
         button.disabled = true;
-        var endpoint = action === 'activate-managed'
+        var endpoint = action === 'activate-dsh' ? '/api/agent-hub/dsh/models/activate' : action === 'activate-managed'
           ? '/api/agent-hub/enterprise/models/' + encodeURIComponent(button.dataset.providerId) + '/activate'
           : isAccount
           ? '/api/agent-hub/codex-switcher/' + encodeURIComponent(button.dataset.accountId) + '/activate'
           : '/api/agent-hub/providers/' + encodeURIComponent(button.dataset.providerId) + '/activate';
-        return window.Api.post(endpoint, isAccount ? undefined : { agent: agentId })
+        return window.Api.post(endpoint, action === 'activate-dsh' ? JSON.parse(button.dataset.providerId) : isAccount ? undefined : { agent: agentId })
           .then(function () { window.AppShell.toast('已切换到 ' + targetName + '，新会话生效'); return load(); })
           .catch(function (error) { button.disabled = false; window.AppShell.toast(error.message || '切换失败'); });
       });

@@ -103,4 +103,19 @@ describe('embedded enterprise runtime', () => {
     const row = JSON.parse(execFileSync('sqlite3', ['-readonly', '-json', database, 'select settings_config,is_current from providers'], { encoding: 'utf8' }))[0];
     expect(row).toEqual({ settings_config: '{}', is_current: 1 });
   });
+
+  it('gates DSH by the same catalog/quota and configures it without requiring CC Switch', async () => {
+    const { home, client, fetchImpl } = await fixture();
+    await rm(join(home, '.cc-switch'), { recursive: true });
+    const dsh = { status: vi.fn(), activate: vi.fn(async () => ({ agent: 'dsh', active: true })) };
+    const relayHome = await mkdtemp(join(tmpdir(), 'dsh-relay-'));
+    roots.push(relayHome);
+    const runtime = createEnterpriseRuntime({ home: relayHome, port: 0, client, fetchImpl, dsh });
+    runtimes.push(runtime);
+    expect(await runtime.prepare('dsh', MODEL.id)).toEqual({ agent: 'dsh', active: true });
+    expect(dsh.activate).toHaveBeenCalledWith(expect.objectContaining({ model: MODEL.id, models: [MODEL], base: expect.stringMatching(/^http:\/\/127.0.0.1:/), key: expect.any(String) }));
+    client.checkQuota.mockResolvedValue({ available: false });
+    await expect(runtime.prepare('dsh', MODEL.id)).rejects.toMatchObject({ code: 'UNSUPPORTED' });
+    expect(dsh.activate).toHaveBeenCalledTimes(1);
+  });
 });
