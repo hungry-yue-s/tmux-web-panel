@@ -167,10 +167,16 @@
       }
     },
 
+    isStandaloneStatus: function (route) {
+      var standalone = new URLSearchParams(global.location.search).get('standalone');
+      return Boolean(route && route.name === 'server' && (standalone === 'status' || standalone === 'agents'));
+    },
+
     _syncMode: function (route) {
       var app = global.document.querySelector('.ms-app');
       if (!app) return;
       var mode = this.mode(route);
+      global.document.documentElement.classList.toggle('status-standalone', this.isStandaloneStatus(route));
       app.classList.toggle('mode-terminal', mode === 'terminal');
       app.classList.toggle('mode-status', mode === 'status');
       app.classList.toggle('mode-settings', mode === 'settings');

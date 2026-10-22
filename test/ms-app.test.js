@@ -552,6 +552,41 @@ function loadStatusShell({ perfPanel = null, agentHub = null, theme = null, auth
   return { win, MsApp: win.MsApp, Store: win.Store, Router: win.Router, document: win.document };
 }
 
+describe('MsApp standalone status page', () => {
+  it.each([
+    ['local', 'performance'], ['local', 'agents'], ['api-linux', 'performance'], ['api-linux', 'connection'],
+  ])('opens the current %s %s panel synchronously in a separate tab or native window', async (serverId, section) => {
+    const ctx = loadStatusShell();
+    const hash = '#/servers/' + serverId + '/' + section;
+    ctx.win.history.replaceState(null, '', '/?source=monitor' + hash);
+    ctx.win.open = vi.fn();
+    const button = ctx.document.createElement('button');
+    const pending = ctx.MsApp._handleAction('detach-status', button);
+
+    // Popups and WKWebView child windows require the originating click turn.
+    expect(ctx.win.open).toHaveBeenCalledOnce();
+    const [rawURL, target] = ctx.win.open.mock.calls[0];
+    const url = new URL(rawURL);
+    expect(url.origin).toBe(ctx.win.location.origin);
+    expect(url.searchParams.get('standalone')).toBe('status');
+    expect(url.searchParams.get('source')).toBe('monitor');
+    expect(url.hash).toBe(hash);
+    expect(target).toBe('_blank');
+    expect(ctx.Router.current()).toEqual({ name: 'server', params: { serverId, section } });
+    await pending;
+    ctx.win.close();
+  });
+
+  it('ignores a stale detach action after leaving the server panel', async () => {
+    const ctx = loadStatusShell();
+    ctx.win.history.replaceState(null, '', '/#/terminal/local');
+    ctx.win.open = vi.fn();
+    await ctx.MsApp._handleAction('detach-status', ctx.document.createElement('button'));
+    expect(ctx.win.open).not.toHaveBeenCalled();
+    ctx.win.close();
+  });
+});
+
 function seedRemoteSidebarWorkspace(Store) {
   Store.setWorkspace('api-linux', {
     serverId: 'api-linux', provider: 'ssh', transport: 'ssh', persistence: 'process-memory',

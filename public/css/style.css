@@ -8289,18 +8289,6 @@ button.list-row:hover {
 .ah-activity-row time { text-align: right; }
 .ah-session-profile { color: var(--text-muted); }
 
-/* The same URL is a browser tab in normal browsers and an NSWindow in the
-   Swift WKWebView shell. The page itself only switches to a focused layout. */
-.agent-standalone .ms-app { grid-template-columns: minmax(0, 1fr); }
-.agent-standalone .ms-sidebar,
-.agent-standalone .ms-topbar,
-.agent-standalone .mobile-header { display: none !important; }
-.agent-standalone .ms-app.mode-status .ms-main { height: 100vh; }
-.agent-standalone .ms-content { width: min(1480px, 100%); margin: 0 auto; padding-top: 26px; }
-.agent-standalone .server-hero,
-.agent-standalone .tabs { display: none; }
-.agent-standalone [data-ah-action="detach"] { display: none; }
-
 @media (max-width: 1100px) {
   .ah-source-grid { grid-template-columns: 1fr 1fr; }
   .ah-activity-row { grid-template-columns: minmax(0, 1fr) 100px 110px auto; }
@@ -8322,7 +8310,6 @@ button.list-row:hover {
   .ah-activity-row { grid-template-columns: minmax(0, 1fr) auto; }
   .ah-activity-row > span:not(.ah-session-profile),
   .ah-activity-row time { display: none; }
-  .agent-standalone .ms-content { padding: 14px; }
 }
 
 /* Compact context on the left, three previewable pane slots on the right. */

@@ -471,7 +471,7 @@ var AgentHub = (function () {
     var agent = selectedAgent(agents);
     var error = state.error ? '<div class="ah-error">部分数据刷新失败：' + esc(state.error) + '</div>' : '';
     root.innerHTML = '<div class="ah-actions"><span>切换 Agent 查看其运行身份、额度与会话</span><div><button class="ms-btn ghost" data-ah-action="refresh">刷新</button>'
-      + '<button class="ms-btn primary" data-ah-action="detach">独立展示</button></div></div>'
+      + '</div></div>'
       + error + renderAgentCards(agents) + renderCurrentProfile(agent)
       + '<div class="ah-binding-note"><span><strong>额度</strong> 跟随运行身份</span><span><strong>消耗</strong> 从会话汇总</span><span><strong>切换</strong> 只影响新会话</span></div>'
       + '<section><div class="section-head"><h3>' + esc(agent.name) + ' 运行身份</h3><span>官方订阅与 API 服务使用同一个切换入口</span></div>' + renderProfiles(agent) + '</section>'
@@ -507,11 +507,6 @@ var AgentHub = (function () {
     });
   }
 
-  function detachedURL() {
-    var route = window.Router.serialize({ name: 'server', params: { serverId: 'local', section: 'agents' } });
-    return window.location.origin + '/?standalone=agents' + route;
-  }
-
   function onClick(event) {
     var agentButton = event.target.closest('[data-agent-id]');
     if (agentButton && !agentButton.dataset.ahAction) {
@@ -524,10 +519,6 @@ var AgentHub = (function () {
     event.preventDefault();
     event.stopPropagation();
     var action = button.dataset.ahAction;
-    if (action === 'detach') {
-      window.open(detachedURL(), '_blank');
-      return;
-    }
     if (action === 'refresh') {
       load();
       return;
@@ -665,7 +656,6 @@ var AgentHub = (function () {
     stop();
     root = document.getElementById('agent-hub');
     if (!root) return;
-    if (new URLSearchParams(window.location.search).get('standalone') === 'agents') document.documentElement.classList.add('agent-standalone');
     root.addEventListener('click', onClick);
     load();
     timer = setInterval(load, POLL_MS);
@@ -678,5 +668,5 @@ var AgentHub = (function () {
     root = null;
   }
 
-  return { renderSkeleton: renderSkeleton, start: start, stop: stop, _state: state, _detachedURL: detachedURL, _normalizeAgents: normalizeAgents };
+  return { renderSkeleton: renderSkeleton, start: start, stop: stop, _state: state, _normalizeAgents: normalizeAgents };
 })();

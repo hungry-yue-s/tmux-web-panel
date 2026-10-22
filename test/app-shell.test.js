@@ -479,6 +479,38 @@ function seedTwoServers(Store) {
 }
 
 describe('AppShell shell modes', () => {
+  it.each(['status', 'agents'])('focuses the entire status page for standalone=%s and restores the shell when leaving', (standalone) => {
+    const ctx = loadShell();
+    seedTwoServers(ctx.Store);
+    ctx.win.history.replaceState(null, '', '/?standalone=' + standalone);
+    const status = { name: 'server', params: { serverId: 'local', section: 'performance' } };
+    expect(ctx.Shell.isStandaloneStatus(status)).toBe(true);
+    ctx.Shell._syncMode(status);
+    expect(ctx.document.documentElement.classList.contains('status-standalone')).toBe(true);
+
+    for (const name of ['terminal', 'settings', 'servers']) {
+      const route = { name, params: {} };
+      expect(ctx.Shell.isStandaloneStatus(route)).toBe(false);
+      ctx.Shell._syncMode(route);
+      expect(ctx.document.documentElement.classList.contains('status-standalone')).toBe(false);
+    }
+    ctx.Shell._syncMode(status);
+    expect(ctx.document.documentElement.classList.contains('status-standalone')).toBe(true);
+    ctx.win.close();
+  });
+
+  it('keeps ordinary and unrecognized standalone URLs in the complete shell', () => {
+    const ctx = loadShell();
+    const route = { name: 'server', params: { serverId: 'local', section: 'agents' } };
+    for (const search of ['', '?standalone=terminal']) {
+      ctx.win.history.replaceState(null, '', '/' + search);
+      expect(ctx.Shell.isStandaloneStatus(route)).toBe(false);
+      ctx.Shell._syncMode(route);
+      expect(ctx.document.documentElement.classList.contains('status-standalone')).toBe(false);
+    }
+    ctx.win.close();
+  });
+
   it('maps each route to its mode', () => {
     const { Shell } = loadShell();
     expect(Shell.mode({ name: 'terminal', params: {} })).toBe('terminal');

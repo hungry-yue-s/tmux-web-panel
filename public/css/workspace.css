@@ -301,3 +301,18 @@ button { touch-action:manipulation; }
   .ms-app .server-hero,.ms-app .hero-actions { flex-wrap:wrap; gap:16px; }
   .ms-app .server-hero h2 { font-size:23px; }
 }
+
+/* A complete status workspace in a browser tab or a native child window. */
+.status-standalone .ms-app {
+  grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr);
+}
+.status-standalone .workspace-chrome,
+.status-standalone .ms-sidebar,
+.status-standalone .mobile-header { display:none!important; }
+.status-standalone .ms-app.mode-status .ms-main {
+  grid-row:1; grid-column:1; height:100%;
+}
+.status-standalone .ms-app .ms-content { padding:24px; }
+@media (max-width:767px) {
+  .status-standalone .ms-app .ms-content { padding:16px; }
+}

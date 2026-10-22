@@ -39,10 +39,24 @@ describe('ServersPage real connection facts and actions', () => {
       expect(view.querySelectorAll('[data-action="probe"]')).toHaveLength(1);
       expect(view.querySelectorAll('button[data-route="#/terminal/' + id + '"]')).toHaveLength(1);
       expect(view.querySelector('.hero-actions [data-action="probe"]')).not.toBeNull();
+      expect(view.querySelectorAll('.hero-actions [data-action="detach-status"]')).toHaveLength(1);
       if (id === 'remote') {
         render(ctx, id, { state: 'unknown', capabilities: {} });
         expect(view.querySelectorAll('[data-action="edit-server"]')).toHaveLength(1);
       }
+    }
+  });
+
+  it.each(['status', 'agents'])('retains the whole server panel without another detach button for standalone=%s', (standalone) => {
+    const ctx = setup();
+    ctx.win.history.replaceState(null, '', '/?standalone=' + standalone);
+    for (const id of ['local', 'remote']) {
+      const view = render(ctx, id, { state: 'online', checkedAt, capabilities: {} }, 'performance');
+      expect(view.querySelector('.server-hero')).not.toBeNull();
+      expect(view.querySelector('.tabs')).not.toBeNull();
+      expect(view.querySelectorAll('[data-action="detach-status"]')).toHaveLength(0);
+      expect(view.querySelector('[data-route="#/servers/' + id + '/performance"]')).not.toBeNull();
+      expect(view.querySelector('[data-route="#/servers/' + id + '/connection"]')).not.toBeNull();
     }
   });
 

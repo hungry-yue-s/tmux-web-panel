@@ -837,6 +837,15 @@
         name: node.dataset.entityName || (row && row.dataset.entityName) || null,
       };
 
+      if (action === 'detach-status') {
+        const route = global.Router.current();
+        if (route.name !== 'server') return;
+        const url = new URL(global.location.href);
+        url.searchParams.set('standalone', 'status');
+        url.hash = global.Router.serialize(route);
+        global.open(url.href, '_blank');
+        return;
+      }
       if (action === 'workspace-entity-menu') {
         if (row && row === this._sidebarContextOrigin) {
           this._hideSidebarContextMenu({ restoreFocus: true });

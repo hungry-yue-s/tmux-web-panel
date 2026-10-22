@@ -57,9 +57,15 @@ describe('AgentHub', () => {
     hub.stop();
   });
 
-  it('uses one focused URL that opens as a browser tab or a Swift child window', () => {
-    const { hub } = loadHub();
-    expect(hub._detachedURL()).toBe('http://localhost:7681/?standalone=agents#/servers/local/agents');
+  it('keeps refresh inside the Agent panel without a duplicate standalone action', async () => {
+    const { win, hub } = loadHub();
+    hub.start();
+    await new Promise((resolve) => win.setTimeout(resolve, 0));
+    expect(win.document.querySelector('[data-ah-action="refresh"]')).not.toBeNull();
+    expect(win.document.querySelector('[data-ah-action="detach"]')).toBeNull();
+    expect(hub._detachedURL).toBeUndefined();
+    hub.stop();
+    win.close();
   });
 
   it('treats background indexing as a soft state instead of a panel error', async () => {

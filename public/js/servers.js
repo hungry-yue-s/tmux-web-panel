@@ -95,7 +95,7 @@
         '',
       );
 
-      var base = this._hero(server, health, openWorkspace) + this._tabs(server, section);
+      var base = this._hero(server, health, openWorkspace, route) + this._tabs(server, section);
       if (section === 'connection') return base + this._connection(server, health, workspace);
       if (section === 'agents' && server.kind === 'local') return base + this._localAgents();
       return base + (server.kind === 'local'
@@ -137,7 +137,7 @@
       return '<div class="section local-agent-host">' + global.AgentHub.renderSkeleton() + '</div>';
     },
 
-    _hero: function (server, health, openWorkspace) {
+    _hero: function (server, health, openWorkspace, route) {
       var stateTone = shell().tone(health.state);
       var facts = health.facts || {};
       return '<div class="ms-card server-hero"><div class="server-icon">' + shell().icon('server') + '</div>'
@@ -148,6 +148,7 @@
         + esc([facts.platform, facts.arch].filter(Boolean).join(' ') || '—') + ' · '
         + esc(shell()._latencyOf(health)) + ' · 更新于 ' + esc(relativeTime(health.checkedAt)) + '</p></div>'
         + '<div class="hero-actions">' + openWorkspace
+        + (shell().isStandaloneStatus(route) ? '' : actionButton('独立展示', 'detach-status', false, ''))
         + actionButton('立即检测', 'probe', false, 'refresh')
         + (server.immutable ? '' : actionButton('编辑', 'edit-server', false, '')) + '</div></div>';
     },
