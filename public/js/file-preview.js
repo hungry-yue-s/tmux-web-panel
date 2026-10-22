@@ -3005,6 +3005,37 @@ var FilePreview = (function () {
     });
   }
 
+  // Accept image tags without enabling arbitrary HTML in Markdown documents.
+  function _installMarkdownImages(md) {
+    md.inline.ruler.before('html_inline', 'fp_image_tag', function (state, silent) {
+      if (state.src.charAt(state.pos) !== '<') return false;
+      var match = /^<img(?=\s|\/?>)(?:"[^"]*"|'[^']*'|[^'">])*\/?>/i.exec(state.src.slice(state.pos, state.posMax));
+      if (!match) return false;
+      var template = document.createElement('template');
+      template.innerHTML = match[0];
+      var image = template.content.firstElementChild;
+      if (!image || image.tagName !== 'IMG' || template.content.childElementCount !== 1) return false;
+      var src = (image.getAttribute('src') || '').trim();
+      if (!src || /[\x00-\x1f\x7f]/.test(src)) return false;
+      var target = _resolveMarkdownHref('/__markdown__.md', src);
+      if (target.kind !== 'file' && target.kind !== 'web') return false;
+      if (!silent) {
+        var attrs = ' src="' + _escapeHtml(src) + '"';
+        ['alt', 'title'].forEach(function (name) {
+          if (image.hasAttribute(name)) attrs += ' ' + name + '="' + _escapeHtml(image.getAttribute(name)) + '"';
+        });
+        ['width', 'height'].forEach(function (name) {
+          var value = image.getAttribute(name) || '';
+          if (/^[1-9]\d*$/.test(value) && Number(value) <= 4096) attrs += ' ' + name + '="' + value + '"';
+        });
+        var token = state.push('html_inline', '', 0);
+        token.content = '<img' + attrs + '>';
+      }
+      state.pos += match[0].length;
+      return true;
+    });
+  }
+
   // markdown-it plugin: Obsidian-flavored inline syntax.
   // We push our own html_inline tokens (rendered verbatim regardless of the
   // `html:false` option), so every bit of user text is escaped by hand first.
@@ -3365,6 +3396,7 @@ var FilePreview = (function () {
           },
         });
 
+        md.use(_installMarkdownImages);
         md.use(_obsidianMarkdown);
         _installMarkdownTasks(md);
 
@@ -4378,6 +4410,7 @@ var FilePreview = (function () {
       prepareMarkdownNavigation: _prepareMarkdownNavigation,
       prepareMarkdownMedia: _prepareMarkdownMedia,
       obsidianMarkdown: _obsidianMarkdown,
+      installMarkdownImages: _installMarkdownImages,
       buildStandaloneDoc: _buildStandaloneDoc,
       buildArchiveTree: _buildArchiveTree,
       renderArchiveTree: _renderArchiveTree,

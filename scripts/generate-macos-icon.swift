@@ -22,7 +22,7 @@ try MainActor.assumeIsolated {
             let edge = CGFloat(pixels)
             let tile = NSRect(x: edge * 0.09, y: edge * 0.09, width: edge * 0.82, height: edge * 0.82)
             let outline = NSBezierPath(roundedRect: tile, xRadius: edge * 0.15375, yRadius: edge * 0.15375)
-            NSColor(calibratedRed: 0.02, green: 0.075, blue: 0.055, alpha: 1).setFill()
+            NSColor(calibratedRed: 0.96, green: 0.945, blue: 0.91, alpha: 1).setFill()
             outline.fill()
             outline.addClip()
             image.draw(in: NSRect(x: edge * 0.025, y: edge * 0.025, width: edge * 0.95, height: edge * 0.95))

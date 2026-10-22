@@ -35,11 +35,17 @@ per machine and per terminal window.
 | Video | Native player with playback controls, seeking and fullscreen for MP4/M4V, WebM, Ogg/OGV and MOV (codec support depends on the browser) |
 | Others | Images, PDF, directory listings |
 
+Markdown images support `![Description](images/example.png)` and image tags such
+as `<img src="images/example.png" width="200" alt="Description">`. Tags retain
+`src`, `alt`, `title` and integer `width`/`height` values from 1 to 4096 pixels.
+Local image paths resolve relative to the document; HTTP(S) images also work.
+Event handlers and other attributes are discarded.
+
 Markdown video embeds use `![Demo](clips/demo.mp4)` or Obsidian syntax
 `![[clips/demo.mp4]]`. Video links such as `[Demo](clips/demo.mp4)` also show an
 inline player and keep the original link. Relative paths resolve from the
 Markdown file; absolute paths and HTTP(S) video URLs also work. Links to local
-videos open in the file preview. Raw HTML remains disabled. Local videos stream
+videos open in the file preview. Other raw HTML remains disabled. Local videos stream
 with byte-range support
 without the text preview size limit. Closing or hiding a preview, or switching
 dock tabs, pauses playback. Standalone HTML exports and shares keep a label for

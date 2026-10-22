@@ -1822,3 +1822,76 @@ describe('FilePreview share link origin', () => {
     preview._test.setLanHost(null);
   });
 });
+
+describe('Markdown image HTML tags', () => {
+  function parse(markup, silent = false) {
+    const { dom, preview } = createPreview();
+    const rules = {};
+    preview._test.installMarkdownImages({ inline: { ruler: {
+      before: (anchor, name, rule) => { rules[name] = rule; },
+    } } });
+    const tokens = [];
+    const state = { src: markup, pos: 0, push: () => {
+      const token = {}; tokens.push(token); return token;
+    } };
+    const matched = rules.fp_image_tag(state, silent);
+    const wrap = dom.window.document.createElement('div');
+    wrap.innerHTML = tokens.map((token) => token.content).join('');
+    return { dom, preview, state, tokens, matched, wrap };
+  }
+
+  it('preserves local source, escaped text and explicit image dimensions', () => {
+    const ctx = parse('<img src="assets/a.png" alt="A &amp; B > C" title="&quot;image&quot;" width="200" height=48> trailing');
+    expect(ctx.matched).toBe(true);
+    const image = ctx.wrap.querySelector('img');
+    expect(image.getAttribute('src')).toBe('assets/a.png');
+    expect(image.alt).toBe('A & B > C');
+    expect(image.title).toBe('"image"');
+    expect(image.width).toBe(200);
+    expect(image.height).toBe(48);
+    expect(ctx.state.src.slice(ctx.state.pos)).toBe(' trailing');
+    ctx.preview._test.prepareMarkdownMedia(ctx.wrap, '/notes/docs/icons.md');
+    expect(new URL(image.src).searchParams.get('path')).toBe('/notes/docs/assets/a.png');
+    ctx.dom.window.close();
+  });
+
+  it('accepts single quotes and self-closing tags in silent link-label scans', () => {
+    const markup = "<IMG src='https://cdn.test/a.png' width='48' />";
+    const ctx = parse(markup, true);
+    expect(ctx.matched).toBe(true);
+    expect(ctx.state.pos).toBe(markup.length);
+    expect(ctx.tokens).toHaveLength(0);
+    ctx.dom.window.close();
+  });
+
+  it('rebuilds only supported attributes and leaves other HTML unrecognized', () => {
+    const ctx = parse('<img src="a.png" onerror="alert(1)" onload="bad()" style="position:fixed" srcset="bad 2x" class="bad" width="48">');
+    expect(Array.from(ctx.wrap.querySelector('img').attributes, (attr) => attr.name)).toEqual(['src', 'width']);
+    ctx.dom.window.close();
+    for (const markup of ['<script>alert(1)</script>', '<iframe src="https://test/"></iframe>', '<image src="a.png">', '<img src="unclosed>']) {
+      const blocked = parse(markup);
+      expect(blocked.matched).toBe(false);
+      expect(blocked.tokens).toHaveLength(0);
+      blocked.dom.window.close();
+    }
+  });
+
+  it('rejects unsafe or obfuscated source protocols', () => {
+    for (const src of ['javascript:alert(1)', 'jav&#x61;script&#x3a;alert(1)', 'java&#x09;script:alert(1)', 'data:image/svg+xml,evil', 'file:///tmp/a.png', 'blob:https://test/id', 'vbscript:bad', '']) {
+      const ctx = parse('<img src="' + src + '" width="48">');
+      expect(ctx.matched, src).toBe(false);
+      expect(ctx.tokens).toHaveLength(0);
+      ctx.dom.window.close();
+    }
+  });
+
+  it('ignores invalid or excessive dimensions', () => {
+    for (const width of ['0', '-1', '4097', '99999999999999999', '48px', '100%', '1.5', '48;position:fixed']) {
+      const ctx = parse('<img src="a.png" width="' + width + '" height="48">');
+      expect(ctx.matched).toBe(true);
+      expect(ctx.wrap.querySelector('img').hasAttribute('width')).toBe(false);
+      expect(ctx.wrap.querySelector('img').height).toBe(48);
+      ctx.dom.window.close();
+    }
+  });
+});
