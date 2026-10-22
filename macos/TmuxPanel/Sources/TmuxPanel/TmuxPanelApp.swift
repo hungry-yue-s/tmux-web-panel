@@ -147,55 +147,9 @@ struct PanelCommands: Commands {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NativeNotificationCenter.shared.installDelegate()
-        NSApp.applicationIconImage = AppIcon.make()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
-    }
-}
-
-enum AppIcon {
-    @MainActor
-    static func make() -> NSImage {
-        let size = NSSize(width: 512, height: 512)
-        let image = NSImage(size: size)
-        image.lockFocus()
-
-        // Runtime-provided Dock icons are not given the automatic safe margin
-        // applied to asset-catalog icons. Keep the artwork inside an 82% tile
-        // so its visual size matches neighboring macOS app icons.
-        let artworkScale: CGFloat = 0.82
-        let artworkInset = size.width * (1 - artworkScale) / 2
-        let transform = NSAffineTransform()
-        transform.translateX(by: artworkInset, yBy: artworkInset)
-        transform.scale(by: artworkScale)
-        transform.concat()
-
-        let background = NSBezierPath(roundedRect: NSRect(origin: .zero, size: size), xRadius: 96, yRadius: 96)
-        NSColor(calibratedRed: 0.12, green: 0.13, blue: 0.19, alpha: 1).setFill()
-        background.fill()
-
-        NSColor(calibratedRed: 0.48, green: 0.64, blue: 0.97, alpha: 1).setStroke()
-        let split = NSBezierPath()
-        split.lineWidth = 24
-        split.lineCapStyle = .round
-        split.move(to: NSPoint(x: 256, y: 62))
-        split.line(to: NSPoint(x: 256, y: 450))
-        split.move(to: NSPoint(x: 62, y: 256))
-        split.line(to: NSPoint(x: 256, y: 256))
-        split.stroke()
-
-        let prompt = ">_" as NSString
-        prompt.draw(
-            at: NSPoint(x: 76, y: 320),
-            withAttributes: [
-                .font: NSFont.monospacedSystemFont(ofSize: 102, weight: .bold),
-                .foregroundColor: NSColor(calibratedRed: 0.62, green: 0.81, blue: 0.42, alpha: 1),
-            ]
-        )
-
-        image.unlockFocus()
-        return image
     }
 }

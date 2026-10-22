@@ -15,7 +15,11 @@ rm -rf "$APP_PATH"
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
 cp "$BIN_DIR/TmuxPanel" "$APP_PATH/Contents/MacOS/TmuxPanel"
 cp "$PACKAGE_DIR/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
-cp "$PROJECT_DIR/public/favicon.svg" "$APP_PATH/Contents/Resources/favicon.svg"
+ICON_FILE="$(plutil -extract CFBundleIconFile raw "$APP_PATH/Contents/Info.plist")"
+ICON_WORK_DIR="$(mktemp -d /tmp/tmux-panel-icon.XXXXXX)"
+trap 'rm -rf "$ICON_WORK_DIR"' EXIT
+swift "$SCRIPT_DIR/generate-macos-icon.swift" "$ICON_WORK_DIR/AppIcon.iconset"
+iconutil --convert icns --output "$APP_PATH/Contents/Resources/$ICON_FILE" "$ICON_WORK_DIR/AppIcon.iconset"
 
 plutil -lint "$APP_PATH/Contents/Info.plist" >/dev/null
 codesign --force --deep --sign - "$APP_PATH" >/dev/null

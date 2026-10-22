@@ -8,6 +8,8 @@
     <string>Tmux Panel</string>
     <key>CFBundleExecutable</key>
     <string>TmuxPanel</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon.icns</string>
     <key>CFBundleIdentifier</key>
     <string>com.tmux-web-panel.app</string>
     <key>CFBundleInfoDictionaryVersion</key>
