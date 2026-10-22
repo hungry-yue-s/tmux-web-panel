@@ -18,7 +18,7 @@ cp "$PACKAGE_DIR/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
 ICON_FILE="$(plutil -extract CFBundleIconFile raw "$APP_PATH/Contents/Info.plist")"
 ICON_WORK_DIR="$(mktemp -d /tmp/tmux-panel-icon.XXXXXX)"
 trap 'rm -rf "$ICON_WORK_DIR"' EXIT
-swift "$SCRIPT_DIR/generate-macos-icon.swift" "$ICON_WORK_DIR/AppIcon.iconset"
+swift "$SCRIPT_DIR/generate-macos-icon.swift" "$ICON_WORK_DIR/AppIcon.iconset" "$PROJECT_DIR/public/app-icon.png"
 iconutil --convert icns --output "$APP_PATH/Contents/Resources/$ICON_FILE" "$ICON_WORK_DIR/AppIcon.iconset"
 
 plutil -lint "$APP_PATH/Contents/Info.plist" >/dev/null

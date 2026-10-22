@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="public/favicon.svg" width="76" alt="Tmux Web Panel 图标">
+<img src="public/app-icon.png" width="76" alt="Tmux Web Panel 图标">
 
 [English](README.md) | 中文版
 
