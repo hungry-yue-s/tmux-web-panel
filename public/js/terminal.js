@@ -121,19 +121,42 @@ function _createFabPanel(container) {
       });
   });
 
-  // -- FAB button --
-  var fabEl = document.createElement('div');
-  fabEl.className = 'fab-tool';
-  fabEl.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>';
-  container.appendChild(fabEl);
+  // The input deck stays in the layout, so no terminal cells sit behind a FAB.
+  var controlsEl = document.createElement('div');
+  controlsEl.className = 'mobile-terminal-controls';
+  controlsEl.setAttribute('role', 'toolbar');
+  controlsEl.setAttribute('aria-label', '终端输入');
+  controlsEl.innerHTML =
+    '<button type="button" class="fab-tool" aria-label="打开终端工具" aria-expanded="false" aria-controls="terminal-key-drawer">' +
+    '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 7 5 5-5 5"/><path d="M13 17h6"/></svg><span>工具</span></button>' +
+    '<div class="mobile-terminal-quick-keys" role="group" aria-label="常用按键">' +
+    '<button type="button" data-terminal-key="esc" aria-label="发送 Escape">Esc</button>' +
+    '<button type="button" data-terminal-key="tab" aria-label="发送 Tab">Tab</button></div>' +
+    '<button type="button" class="mobile-terminal-keyboard" aria-label="打开键盘输入">' +
+    '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 15h10"/></svg><span>输入</span></button>';
+  container.appendChild(controlsEl);
+  var fabEl = controlsEl.querySelector('.fab-tool');
+  controlsEl.querySelector('[data-terminal-key="esc"]').addEventListener('click', function () { _sendTermData('\x1b'); });
+  controlsEl.querySelector('[data-terminal-key="tab"]').addEventListener('click', function () { _sendTermData('\t'); });
+  controlsEl.querySelector('.mobile-terminal-keyboard').addEventListener('click', focusKeyboard);
 
   // -- Scene-aware drawer (FabDrawer) --
   var fabDrawerApi = null;
   var drawerVisible = false;
   var drawerMountEl = null;
+  var fitTimer = null;
+
+  function focusKeyboard() {
+    toggleDrawer(false);
+    // Keep this synchronous in the trusted click: iOS otherwise rejects IME focus.
+    if (terminalState.term) {
+      try { terminalState.term.focus(); } catch (_e) { /* ignore */ }
+    }
+  }
 
   function toggleDrawer(open) {
     var willOpen = typeof open === 'boolean' ? open : !drawerVisible;
+    if (willOpen === drawerVisible) return;
 
     if (willOpen) {
       // Mutually exclusive with soft keyboard: blur xterm textarea to
@@ -146,6 +169,8 @@ function _createFabPanel(container) {
     if (!drawerMountEl) {
       drawerMountEl = document.createElement('div');
       drawerMountEl.className = 'fab-drawer-mount';
+      drawerMountEl.id = 'terminal-key-drawer';
+      drawerMountEl.setAttribute('aria-label', '终端工具');
       container.appendChild(drawerMountEl);
     }
 
@@ -162,12 +187,7 @@ function _createFabPanel(container) {
             _sendTermData(seq);
           }
         },
-        onKeyboard: function () {
-          if (terminalState.term) {
-            try { terminalState.term.focus(); } catch (_e) { /* ignore */ }
-          }
-          toggleDrawer(false);
-        },
+        onKeyboard: focusKeyboard,
         onClose: function () { toggleDrawer(false); },
       });
     }
@@ -182,8 +202,14 @@ function _createFabPanel(container) {
       fabDrawerApi.setScene(sceneId);
     }
 
+    var restoreTriggerFocus = !willOpen && drawerMountEl.contains(document.activeElement);
     drawerMountEl.classList.toggle('open', willOpen);
     drawerVisible = willOpen;
+    fabEl.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    drawerMountEl.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
+    drawerMountEl.inert = !willOpen;
+    document.documentElement.classList.toggle('mobile-tools-open', willOpen);
+    document.querySelectorAll('.mobile-dock').forEach(function (dock) { dock.inert = willOpen; });
 
     // Hide the FAB itself while the drawer is open
     fabEl.classList.toggle('hidden-by-drawer', willOpen);
@@ -193,10 +219,14 @@ function _createFabPanel(container) {
       ? container
       : (container.closest ? container.closest('.terminal-view') : null);
     if (tv) tv.classList.toggle('drawer-pushed', willOpen);
+    if (restoreTriggerFocus) {
+      fabEl.focus({ preventScroll: true });
+    }
 
-    // Re-fit xterm after CSS transition settles (0.25s), then tell tmux
+    // Re-fit xterm after the drawer transition, then tell tmux
     // about the new cols/rows so the pane redraws at the right size.
-    setTimeout(function () {
+    clearTimeout(fitTimer);
+    fitTimer = setTimeout(function () {
       if (terminalState.fitAddon) {
         try { terminalState.fitAddon.fit(); } catch (_e) { /* ignore */ }
       }
@@ -217,53 +247,19 @@ function _createFabPanel(container) {
   }
   document.addEventListener('focusin', _onTerminalFocus);
 
-  // -- FAB drag + tap-to-open-drawer --
-  var dragStartX, dragStartY, fabStartX, fabStartY, dragMoved;
-
-  fabEl.addEventListener('touchstart', function (e) {
-    var t = e.touches[0];
-    dragStartX = t.clientX; dragStartY = t.clientY;
-    var rect = fabEl.getBoundingClientRect();
-    fabStartX = rect.left; fabStartY = rect.top;
-    dragMoved = false;
-    fabEl.classList.add('dragging');
-  }, { passive: true });
-
-  fabEl.addEventListener('touchmove', function (e) {
-    var t = e.touches[0];
-    var dx = t.clientX - dragStartX, dy = t.clientY - dragStartY;
-    if (Math.abs(dx) > 5 || Math.abs(dy) > 5) dragMoved = true;
-    if (!dragMoved) return;
-    var nx = Math.max(0, Math.min(window.innerWidth - 48, fabStartX + dx));
-    var ny = Math.max(0, Math.min(window.innerHeight - 48, fabStartY + dy));
-    fabEl.style.left = nx + 'px'; fabEl.style.top = ny + 'px';
-    fabEl.style.right = 'auto'; fabEl.style.bottom = 'auto';
-  }, { passive: true });
-
-  fabEl.addEventListener('touchend', function () {
-    fabEl.classList.remove('dragging');
-    if (!dragMoved) toggleDrawer(true);
-    if (dragMoved) {
-      localStorage.setItem('fab-pos', JSON.stringify({ left: fabEl.style.left, top: fabEl.style.top }));
-    }
-  }, { passive: true });
-
-  fabEl.addEventListener('click', function () {
-    if (!('ontouchstart' in window)) toggleDrawer(true);
-  });
-
-  // Restore position
-  try {
-    var pos = JSON.parse(localStorage.getItem('fab-pos'));
-    if (pos) {
-      fabEl.style.left = pos.left; fabEl.style.top = pos.top;
-      fabEl.style.right = 'auto'; fabEl.style.bottom = 'auto';
-    }
-  } catch (_e) { /* ignore */ }
+  // Native click activation cancels a scrolling gesture and works with assistive input.
+  fabEl.addEventListener('click', function () { toggleDrawer(true); });
 
   // Return cleanup function
   return function () {
+    clearTimeout(fitTimer);
     document.removeEventListener('focusin', _onTerminalFocus);
+    if (fabDrawerApi && fabDrawerApi.destroy) fabDrawerApi.destroy();
+    controlsEl.remove();
+    fileInput.remove();
+    container.classList.remove('drawer-pushed');
+    document.documentElement.classList.remove('mobile-tools-open');
+    document.querySelectorAll('.mobile-dock').forEach(function (dock) { dock.inert = false; });
     if (drawerMountEl && drawerMountEl.parentNode) {
       drawerMountEl.parentNode.removeChild(drawerMountEl);
     }
@@ -327,9 +323,13 @@ function _terminalContainer() {
 
 // === Cleanup ===
 
-function _cleanupTerminalResources() {
+function _cleanupTerminalResources(preserveMobileControls) {
   terminalState.renderVersion = (terminalState.renderVersion || 0) + 1;
   terminalState.termContainer = null;
+  if (!preserveMobileControls && terminalState._mobileControlsCleanup) {
+    terminalState._mobileControlsCleanup();
+    terminalState._mobileControlsCleanup = null;
+  }
   if (terminalState._resizeHandler) {
     window.removeEventListener('resize', terminalState._resizeHandler);
     terminalState._resizeHandler = null;
@@ -440,7 +440,7 @@ document.addEventListener('fullscreenchange', function () {
 function _resolvePreviewPaneId() {
   var fallback = state.currentPane;
   var useSplit = _terminalMode === 'split' && state.panes && state.panes.length > 1
-    && window.innerWidth >= 768 && TerminalTarget.supportsTmuxActions();
+    && !_isMobileTerminal() && TerminalTarget.supportsTmuxActions();
   if (!useSplit || !state.currentSession || state.currentWindow == null) {
     return Promise.resolve(fallback);
   }
@@ -469,8 +469,8 @@ function switchPane(newPaneId) {
   // Keep the mobile strip mounted so its scroll position animates across panes.
   var strip = document.querySelector('.mobile-pane-strip .pane-pills');
   var previous = terminalState.termContainer;
-  if (window.innerWidth < 768 && strip && previous && previous.isConnected) {
-    _cleanupTerminalResources();
+  if (_isMobileTerminal() && strip && previous && previous.isConnected) {
+    _cleanupTerminalResources(true);
     var next = document.createElement('div');
     next.className = 'terminal-container';
     previous.replaceWith(next);
@@ -596,7 +596,7 @@ function _saveFontOffsets() {
 function _adjustFontSize(dir) {
   if (!terminalState.term || !terminalState.fitAddon) return;
   var current = terminalState.term.options.fontSize || 14;
-  var mobile = window.innerWidth < 768;
+  var mobile = _isMobileTerminal();
   var next = Math.max(mobile ? MOBILE_MIN_FONT_SIZE : 8, Math.min(22, current + dir));
   if (next === current) return;
   _setFontOffset(next - (mobile ? MOBILE_BASE_FONT_SIZE : DESKTOP_BASE_FONT_SIZE));
@@ -617,10 +617,15 @@ var MOBILE_MIN_FONT_SIZE = 11;
 var DESKTOP_BASE_FONT_SIZE = 14;
 var TERMINAL_FONT_FAMILY = "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
 
+function _isMobileTerminal() {
+  return window.MobileUI ? window.MobileUI.isMobile() : window.innerWidth < 768;
+}
+
+
 function _calcTerminalFontSize(paneCols, paneRows, containerEl) {
   // FitAddon changes the grid to fit the viewport. Old tmux geometry must not
   // change typography when switching windows or opening the document dock.
-  if (window.innerWidth < 768) {
+  if (_isMobileTerminal()) {
     var mobileSize = MOBILE_BASE_FONT_SIZE + _getFontOffset();
     return Math.max(MOBILE_MIN_FONT_SIZE, Math.min(22, mobileSize));
   }
@@ -770,7 +775,7 @@ function connectTerminalWs(paneId, term, nozoom) {
     //     never makes a selection → getSelection() is empty → this is inert.
     //     Split mode relies on tmux's pane-aware copy-mode instead.
     termEl.addEventListener('mouseup', function () {
-      if (window.innerWidth < 768) return; // mobile has its own selection UI
+      if (_isMobileTerminal()) return; // mobile has its own selection UI
       var text = term.getSelection();
       if (text) _copyToClipboard(text);
     });
@@ -795,9 +800,9 @@ function _terminalFontIcon(sign) {
 
 function _watchTerminalViewport(container) {
   if (terminalState._resizeHandler) window.removeEventListener('resize', terminalState._resizeHandler);
-  var desktop = window.innerWidth >= 768;
+  var desktop = !_isMobileTerminal();
   terminalState._resizeHandler = function () {
-    if (desktop === (window.innerWidth >= 768)) return;
+    if (desktop === (!_isMobileTerminal())) return;
     if (state.currentTab !== 'terminal' || !container || !container.isConnected) return;
     renderTerminal(container);
   };
@@ -813,7 +818,7 @@ function renderTerminal(container) {
   var renderVersion = terminalState.renderVersion;
   // Watch before fetching: a breakpoint can change while panes are loading.
   _watchTerminalViewport(container);
-  var displayMode = window.innerWidth < 768 ? 'tab' : _terminalMode;
+  var displayMode = _isMobileTerminal() ? 'tab' : _terminalMode;
 
   // Reset scroll position — if #content was scrolled (e.g. long window list),
   // the terminal header would be pushed above the visible area.
@@ -875,13 +880,13 @@ function renderTerminal(container) {
     '</div>';
 
   var view = container.querySelector('.terminal-view');
-  if (window.innerWidth < 768) _createFabPanel(view);
+  if (_isMobileTerminal()) terminalState._mobileControlsCleanup = _createFabPanel(view);
   var titleEl = view.querySelector('.terminal-header-title');
   // Captured now rather than re-queried later: the shell may relocate this node
   // into the single Window Bar before the asynchronous pane fetch resolves.
   var headerPillsEl = view.querySelector('.terminal-header-pills');
   var paneSwitcher = view.querySelector('.terminal-pane-switcher');
-  if (window.innerWidth < 768 && !(window.MsApp && window.MsApp.embedTerminalChrome)) {
+  if (_isMobileTerminal() && !(window.MsApp && window.MsApp.embedTerminalChrome)) {
     headerPillsEl.classList.add('mobile-pane-strip');
   }
   var termContainer = view.querySelector('.terminal-container');
@@ -931,7 +936,7 @@ function renderTerminal(container) {
 
   view.querySelector('.terminal-split-btn').addEventListener('click', function (e) {
     // Mobile: split directly (direction doesn't matter, each pane gets its own screen)
-    if (window.innerWidth < 768) {
+    if (_isMobileTerminal()) {
       doSplit('vertical');
       return;
     }
@@ -1000,6 +1005,18 @@ function renderTerminal(container) {
 
   // Pop-out button
   view.querySelector('.terminal-popout-btn').addEventListener('click', function () {
+    if (_isMobileTerminal() && window.Router) {
+      // Reuse the complete phone workbench, including its input deck and server.
+      var workspaceUrl = new URL(window.location.href);
+      workspaceUrl.searchParams.delete('standalone');
+      var currentRoute = window.Router.current();
+      var popoutRoute = Object.assign({}, currentRoute, {
+        params: Object.assign({}, currentRoute.params, { paneId: state.currentPane }),
+      });
+      workspaceUrl.hash = window.Router.serialize(popoutRoute);
+      window.open(workspaceUrl.href, '_blank');
+      return;
+    }
     // terminal.html addresses a pane by id alone, which only means anything on
     // the local server.
     if (TerminalTarget.isRemote()) {
@@ -1051,7 +1068,7 @@ function renderTerminal(container) {
         state.currentPane = panes.length > 0 ? panes[0].id : null;
       }
 
-      var useSplit = _terminalMode === 'split' && panes.length > 1 && window.innerWidth >= 768
+      var useSplit = _terminalMode === 'split' && panes.length > 1 && !_isMobileTerminal()
         && TerminalTarget.supportsTmuxActions();
 
       // Render pane pills only in tab mode — split mode shows all panes natively
@@ -1222,7 +1239,7 @@ function _mountTerminal(termContainer, nozoom) {
     // again so tmux never keeps drawing at the default/narrow PTY width.
     _syncTerminalSize(ws, term, true);
     // On mobile, don't auto-focus to avoid browser scroll-to-focus pushing header away
-    if (window.innerWidth >= 768) {
+    if (!_isMobileTerminal()) {
       term.focus();
     }
     // Reset the mount container's scroll after mount — focus or xterm layout
@@ -1617,9 +1634,9 @@ function _mountTerminal(termContainer, nozoom) {
       var dist = _pinchDist(e);
       var scale = dist / pinch.startDist;
       var newSize = Math.round(pinch.startFontSize * scale);
-      newSize = Math.max(window.innerWidth < 768 ? MOBILE_MIN_FONT_SIZE : 8, Math.min(22, newSize));
+      newSize = Math.max(_isMobileTerminal() ? MOBILE_MIN_FONT_SIZE : 8, Math.min(22, newSize));
       if (newSize !== term.options.fontSize) {
-        _setFontOffset(newSize - (window.innerWidth < 768 ? MOBILE_BASE_FONT_SIZE : DESKTOP_BASE_FONT_SIZE));
+        _setFontOffset(newSize - (_isMobileTerminal() ? MOBILE_BASE_FONT_SIZE : DESKTOP_BASE_FONT_SIZE));
         term.options.fontSize = newSize;
         fitAddon.fit();
         cellCache = null;
@@ -1718,7 +1735,7 @@ function _mountTerminal(termContainer, nozoom) {
       return;
     }
 
-    if (ts.direction === 'horizontal' && window.innerWidth < 768) {
+    if (ts.direction === 'horizontal' && _isMobileTerminal()) {
       var dx = e.changedTouches[0].clientX - ts.startX;
       if (Math.abs(dx) >= 56) {
         e.preventDefault();
@@ -1787,60 +1804,31 @@ function _mountTerminal(termContainer, nozoom) {
     }, 150);
   }, { passive: false, capture: true });
 
-  // Handle mobile virtual keyboard: when keyboard opens, visualViewport
-  // shrinks but CSS vh doesn't. Resize terminal-container (not the whole view)
-  // to keep the header visible.
+  // The shell follows visualViewport height. Legacy terminal pages still need a
+  // ceiling measured from their actual top edge, not a guessed header height.
   var vpHandler = null;
-  if (window.visualViewport && window.innerWidth < 768) {
+  if (window.visualViewport && _isMobileTerminal()) {
     var initialVpHeight = window.visualViewport.height;
     vpHandler = function () {
-      var vvHeight = window.visualViewport.height;
-      // Only intervene when keyboard is likely open (viewport shrunk > 100px)
-      var fabTool = document.querySelector('.fab-tool');
-      if (initialVpHeight - vvHeight > 100) {
-        var header = termContainer.closest('.terminal-view')
-          ? termContainer.closest('.terminal-view').querySelector('.terminal-header')
-          : null;
-        var headerH = header ? header.offsetHeight : 36;
-        var contentPad = 24; // #content padding top+bottom
-        var available = vvHeight - headerH - contentPad;
-        if (available > 0) {
-          termContainer.style.height = available + 'px';
-          termContainer.style.maxHeight = available + 'px';
-        }
-        // Move FAB above the keyboard
-        if (fabTool) {
-          var visibleBottom = window.visualViewport.offsetTop + vvHeight;
-          var fabY = visibleBottom - 48 - 16; // 48=fab height, 16=margin
-          fabTool.style.top = fabY + 'px';
-          fabTool.style.bottom = 'auto';
-          fabTool.style.right = '16px';
-          fabTool.style.left = 'auto';
-          fabTool._kbOpen = true;
-        }
+      var viewport = window.visualViewport;
+      var keyboardOpen = initialVpHeight - viewport.height > 100;
+      var view = termContainer.closest('.terminal-view');
+      var controls = view && view.querySelector('.mobile-terminal-controls');
+      var controlsHeight = controls ? controls.getBoundingClientRect().height : 0;
+      if (keyboardOpen) {
+        var available = viewport.offsetTop + viewport.height
+          - termContainer.getBoundingClientRect().top - controlsHeight;
+        termContainer.style.maxHeight = Math.max(0, available) + 'px';
       } else {
-        termContainer.style.height = '';
+        initialVpHeight = Math.max(initialVpHeight, viewport.height);
         termContainer.style.maxHeight = '';
-        // Reset FAB position
-        if (fabTool && fabTool._kbOpen) {
-          fabTool._kbOpen = false;
-          var savedPos = null;
-          try { savedPos = JSON.parse(localStorage.getItem('fab-pos')); } catch(_e) {}
-          if (savedPos) {
-            fabTool.style.left = savedPos.left;
-            fabTool.style.top = savedPos.top;
-            fabTool.style.right = 'auto';
-            fabTool.style.bottom = 'auto';
-          } else {
-            fabTool.style.top = '';
-            fabTool.style.left = '';
-            fabTool.style.right = '';
-            fabTool.style.bottom = '';
-          }
-        }
       }
-      fitAddon.fit();
-      _syncTerminalSize(ws, term);
+      // Other viewport listeners resize the shell in the same event turn.
+      requestAnimationFrame(function () {
+        if (terminalState.term !== term) return;
+        fitAddon.fit();
+        _syncTerminalSize(ws, term);
+      });
     };
     window.visualViewport.addEventListener('resize', vpHandler);
     window.visualViewport.addEventListener('scroll', vpHandler);

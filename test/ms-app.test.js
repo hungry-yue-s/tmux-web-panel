@@ -657,6 +657,22 @@ describe('MsApp sidebar window navigation', () => {
 });
 
 describe('MsApp mobile workspace action', () => {
+  it('opens the current local directory even when a terminal URL omits its pane', async () => {
+    const ctx = loadStatusShell();
+    const route = { name: 'terminal', params: { serverId: 'local', sessionId: '$1', windowId: '@0' } };
+    ctx.Store.setRoute(route);
+    ctx.Router.current = () => route;
+    ctx.Store.setWorkspace('local', { sessions: [{ id: '$1', windows: [{ id: '@0', panes: [{ id: '%1' }] }] }] });
+    ctx.win.FilePreview = { openFile: vi.fn() };
+    const button = ctx.document.createElement('button');
+    await ctx.MsApp._handleAction('mobile-files', button);
+    expect(ctx.win.FilePreview.openFile).toHaveBeenCalledWith('.', '%1');
+    route.params.serverId = 'api-linux';
+    await ctx.MsApp._handleAction('mobile-files', button);
+    expect(ctx.win.FilePreview.openFile).toHaveBeenCalledTimes(1);
+    ctx.win.close();
+  });
+
   function mobileWorkspace(serverId, provider) {
     const ctx = loadStatusShell();
     Object.defineProperty(ctx.win, 'innerWidth', { value: 375, configurable: true });

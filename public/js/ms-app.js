@@ -332,7 +332,7 @@
       const sheetTools = global.document.getElementById('ms-mobile-workspace-tools');
       const mobile = sheetTools || global.document.getElementById('ms-mobile-tools');
       const desktop = global.document.getElementById('ms-top-actions');
-      if (global.innerWidth < 768 && mobile) return { target: mobile, other: desktop };
+      if ((global.MobileUI ? global.MobileUI.isMobile() : global.innerWidth < 768) && mobile) return { target: mobile, other: desktop };
       return { target: desktop, other: mobile };
     },
 
@@ -463,7 +463,7 @@
       const pills = header.querySelector('.terminal-header-pills');
       if (pills) {
         pills.classList.add('ms-hoisted-pills');
-        if (global.innerWidth < 768) {
+        if (global.MobileUI ? global.MobileUI.isMobile() : global.innerWidth < 768) {
           pills.classList.add('mobile-pane-strip');
           const mobileHeader = global.document.querySelector('.mobile-header');
           (mobileHeader || root).appendChild(pills);
@@ -472,7 +472,7 @@
         }
       }
       if (toolbar) {
-        const secondary = (global.innerWidth < 768
+        const secondary = ((global.MobileUI ? global.MobileUI.isMobile() : global.innerWidth < 768)
           ? ['.terminal-label-btn', '.terminal-popout-btn', '.terminal-fullscreen-btn']
           : ['.terminal-refresh-btn', '.terminal-font-toggle', '.terminal-label-btn', '.terminal-popout-btn', '.terminal-fullscreen-btn'])
           .map((selector) => toolbar.querySelector(selector)).filter(Boolean);
@@ -790,7 +790,7 @@
       global.document.addEventListener('scroll', () => this._hideSidebarContextMenu(), true);
       global.addEventListener('resize', () => {
         this._hideSidebarContextMenu();
-        if (global.innerWidth >= 768) global.AppShell.closeMobileWorkspaceSheet({ restoreFocus: false });
+        if (!(global.MobileUI ? global.MobileUI.isMobile() : global.innerWidth < 768)) global.AppShell.closeMobileWorkspaceSheet({ restoreFocus: false });
       });
 
       this._bindResizer();
@@ -800,7 +800,7 @@
       const resizer = global.document.querySelector('.sidebar-resizer');
       if (!resizer) return;
       resizer.addEventListener('pointerdown', (event) => {
-        if (global.innerWidth < 768) return;
+        if (global.MobileUI ? global.MobileUI.isMobile() : global.innerWidth < 768) return;
         this._resizing = true;
         global.AppShell.setSidebarCollapsed(false);
         global.document.querySelector('.ms-app').classList.add('resizing-sidebar');
@@ -857,7 +857,20 @@
       if (action === 'server-switcher' || action === 'mobile-server') {
         const anchor = node.closest('#ms-mobile-workspace-sheet')
           ? global.AppShell._mobileWorkspaceTrigger() : node;
+        global.AppShell.closeMobileWorkspaceSheet({ restoreFocus: false });
         global.AppShell.showServerPicker(anchor);
+        return;
+      }
+      if (action === 'mobile-search') {
+        if (global.CommandPalette) global.CommandPalette.open(node);
+        return;
+      }
+      if (action === 'mobile-files') {
+        const route = global.Router.current();
+        const server = global.AppShell.server(serverId);
+        const paneId = global.AppShell.mobilePaneId(route);
+        if (route.name !== 'terminal' || !server || server.kind !== 'local' || !paneId) return;
+        if (global.FilePreview) global.FilePreview.openFile('.', paneId);
         return;
       }
       if (action === 'mobile-workspace') {

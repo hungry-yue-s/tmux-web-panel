@@ -31,6 +31,20 @@ function render(ctx, id, health, section = 'connection') {
 const checkedAt = '2026-10-21T10:00:00.000Z';
 
 describe('ServersPage real connection facts and actions', () => {
+  it('exposes every settings category in the mobile page and folds host operations', () => {
+    const ctx = setup();
+    ctx.win.MobileUI = { isMobile: () => true };
+    ctx.doc.getElementById('view').innerHTML = ctx.Page.renderSettings();
+    const nav = ctx.doc.querySelector('.mobile-settings-nav');
+    expect([...nav.querySelectorAll('button')].map(button => button.dataset.settingsSection)).toEqual(['appearance', 'management', 'security', 'about']);
+    expect(nav.querySelector('[aria-current="page"]').dataset.settingsSection).toBe('appearance');
+    const view = render(ctx, 'local', { state: 'online', capabilities: {} }, 'performance');
+    const operations = view.querySelector('.mobile-server-operations');
+    expect(operations.open).toBe(false);
+    expect(operations.querySelector('[data-action="detach-status"]')).not.toBeNull();
+    expect(operations.querySelector('[data-action="probe"]')).not.toBeNull();
+  });
+
   it('keeps one action group in the server hero, including empty performance pages', () => {
     const ctx = setup();
     for (const id of ['local', 'remote']) {

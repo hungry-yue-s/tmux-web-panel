@@ -23,6 +23,15 @@ resize between 320 px and 70% of the available width; the chosen width is
 restored on expand. Closing the last tab removes the dock. Dock state is scoped
 per machine and per terminal window.
 
+On phones, previews open as a full-screen reader with a filename and parent
+directory in the header. **Back** returns a file to the directory it came from,
+or leaves the reader when the file was opened directly. In a directory, Back
+returns to the workspace; breadcrumbs and **Parent directory** navigate folders.
+Refresh remains in the header, while copying, downloading, sharing and closing
+are in the bottom action sheet. Tables and source code scroll inside their own
+surfaces. The same layout applies to short landscape touch screens. Desktop
+dock tabs remain intact when the viewport becomes too narrow for a split.
+
 ## Renderers
 
 | Type | What you get |

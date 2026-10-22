@@ -1,8 +1,4 @@
-/* fab-drawer.js — Scene-aware drawer renderer (v2 skeleton)
- * Exposes: window.FabDrawer
- * Depends on: window.FabScene (fab-scene.js), window.FabHeat (fab-heat.js)
- * Task 11 will implement renderBody(); Task 15 will wire this to the FAB button.
- */
+/* Scene-aware terminal tool drawer. Depends on FabScene and FabHeat. */
 (function (global) {
   'use strict';
 
@@ -14,6 +10,7 @@
   function h(tag, attrs, children) {
     var el = document.createElement(tag);
     attrs = attrs || {};
+    if (tag === 'button' && !attrs.type) el.type = 'button';
     children = children || [];
     var keys = Object.keys(attrs);
     for (var i = 0; i < keys.length; i++) {
@@ -69,13 +66,22 @@
       overrideMenuOpen: false,
     };
 
+    var repeatCleanups = [];
+    var formOverlays = [];
+    function stopRepeats() {
+      repeatCleanups.forEach(function (stop) { stop(); });
+      repeatCleanups = [];
+    }
+
     /* ── DOM skeleton ─────────────────────────────────────────────── */
-    var drawerEl = h('div', { class: 'fab-drawer' });
+    var drawerEl = h('div', { class: 'fab-drawer', role: 'region', 'aria-label': '终端工具台' });
+    var headerEl = h('div', { class: 'fab-drawer-header' });
     var overrideEl = h('div', { class: 'fab-override-menu' });
-    var tabbarEl = h('div', { class: 'fab-drawer-tabbar' });
+    var tabbarEl = h('div', { class: 'fab-drawer-tabbar', role: 'group', 'aria-label': '快捷操作分类' });
     var bodyEl = h('div', { class: 'fab-drawer-body' });
 
     drawerEl.appendChild(overrideEl);
+    drawerEl.appendChild(headerEl);
     drawerEl.appendChild(tabbarEl);
     drawerEl.appendChild(bodyEl);
     container.appendChild(drawerEl);
@@ -95,16 +101,18 @@
     function renderBadge() {
       var s = getScene();
       if (!s) return h('span');
-      var badge = h('div', {
+      var badge = h('button', {
         class: 'scene-inline',
+        'aria-label': '切换工具场景，当前' + s.name,
+        'aria-expanded': state.overrideMenuOpen ? 'true' : 'false',
         onclick: function () {
           state.overrideMenuOpen = !state.overrideMenuOpen;
           renderOverride();
         },
       }, [
-        h('span', { class: 'dot' }),
-        h('span', { class: 'icn' }, [s.icon]),
-        document.createTextNode(' ' + s.name),
+        h('span', { class: 'dot', 'aria-hidden': 'true' }),
+        h('span', { class: 'scene-name' }, [s.name]),
+        h('span', { class: 'scene-chevron', 'aria-hidden': 'true', html: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m5 6 3 3 3-3"/></svg>' }),
       ]);
       return badge;
     }
@@ -113,17 +121,23 @@
 
     function renderTabbar() {
       tabbarEl.innerHTML = '';
-      tabbarEl.appendChild(renderBadge());
+      headerEl.innerHTML = '';
+      headerEl.appendChild(h('div', { class: 'fab-drawer-heading' }, [
+        h('strong', {}, ['终端工具']), renderBadge(),
+      ]));
 
       var s = getScene();
       if (s && s.tabs) {
         s.tabs.forEach(function (t, i) {
           var btn = h('button', {
             class: i === state.currentTab ? 'fab-drawer-tab active' : 'fab-drawer-tab',
+            'aria-pressed': i === state.currentTab ? 'true' : 'false',
             onclick: function () {
+              var restoreFocus = document.activeElement === btn;
               state.currentTab = i;
               renderBody();
               renderTabbar();
+              if (restoreFocus) tabbarEl.children[i].focus({ preventScroll: true });
             },
           }, [t.name]);
           tabbarEl.appendChild(btn);
@@ -131,26 +145,32 @@
       }
 
       // Keyboard switch button
-      tabbarEl.appendChild(h('button', {
+      headerEl.appendChild(h('button', {
         class: 'fab-drawer-kbd-btn',
+        'aria-label': '切换到键盘输入',
+        html: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 15h10"/></svg>',
         onclick: function () {
           if (options.onKeyboard) options.onKeyboard();
         },
-      }, ['⌨']));
+      }));
 
       // Close button
-      tabbarEl.appendChild(h('button', {
+      headerEl.appendChild(h('button', {
         class: 'fab-drawer-close',
+        'aria-label': '收起终端工具',
+        html: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M6 18 18 6"/></svg>',
         onclick: function () {
           if (options.onClose) options.onClose();
         },
-      }, ['✕']));
+      }));
     }
 
     /* ── Override (scene picker) menu ─────────────────────────────── */
 
     function renderOverride() {
       overrideEl.innerHTML = '';
+      var badge = headerEl.querySelector('.scene-inline');
+      if (badge) badge.setAttribute('aria-expanded', state.overrideMenuOpen ? 'true' : 'false');
       if (!state.overrideMenuOpen) {
         overrideEl.classList.remove('show');
         return;
@@ -161,7 +181,7 @@
 
       state.scenes.forEach(function (s) {
         var isCurrent = s.id === state.currentScene;
-        overrideEl.appendChild(h('div', {
+        overrideEl.appendChild(h('button', {
           class: 'mitem' + (isCurrent ? ' current' : ''),
           onclick: function () {
             state.currentScene = s.id;
@@ -173,7 +193,7 @@
       });
 
       // Add scene entry point
-      overrideEl.appendChild(h('div', {
+      overrideEl.appendChild(h('button', {
         class: 'mitem add',
         onclick: function () {
           state.overrideMenuOpen = false;
@@ -190,20 +210,22 @@
     }
 
     // Close override menu when clicking outside
-    document.addEventListener('click', function (e) {
+    function onOutsideClick(e) {
       if (!state.overrideMenuOpen) return;
       if (overrideEl.contains(e.target)) return;
       // Check if click was on the badge that toggles the menu
-      var badge = tabbarEl.querySelector('.scene-inline');
+      var badge = headerEl.querySelector('.scene-inline');
       if (badge && badge.contains(e.target)) return;
       state.overrideMenuOpen = false;
       renderOverride();
-    });
+    }
+    document.addEventListener('click', onOutsideClick);
 
     /* ── Scene form (add / edit) ─────────────────────────────────── */
 
     function showSceneForm(existingScene, onSave) {
       var overlay = h('div', { class: 'fab-form-overlay show' });
+      formOverlays.push(overlay);
       var modal = h('div', { class: 'fab-form-modal' });
 
       var nameInput = h('input', { type: 'text', value: existingScene ? existingScene.name : '', placeholder: '场景名称' });
@@ -236,7 +258,10 @@
         inheritSel.appendChild(h('option', { value: opt.value }, [opt.label]));
       });
 
-      function close() { overlay.remove(); }
+      function close() {
+        overlay.remove();
+        formOverlays = formOverlays.filter(function (item) { return item !== overlay; });
+      }
 
       var cancelBtn = h('button', { class: 'fab-form-btn cancel', onclick: close }, ['取消']);
       var saveBtn = h('button', { class: 'fab-form-btn save', onclick: function () {
@@ -319,12 +344,13 @@
     function renderArrowPad() {
       var pad = h('div', { class: 'fab-arrow-pad' });
       var cells = [
-        { label: 'Esc', send: '\x1b' }, { label: '↑', send: '\x1b[A' }, { label: '↵', send: '\r' },
-        { label: '←', send: '\x1b[D' }, { label: '↓', send: '\x1b[B' }, { label: '→', send: '\x1b[C' },
+        { label: 'Esc', name: 'Escape', send: '\x1b' }, { label: '↑', name: '向上', send: '\x1b[A' }, { label: '↵', name: '回车', send: '\r' },
+        { label: '←', name: '向左', send: '\x1b[D' }, { label: '↓', name: '向下', send: '\x1b[B' }, { label: '→', name: '向右', send: '\x1b[C' },
       ];
       cells.forEach(function (c) {
         var b = h('button', {
           class: 'fab-drawer-btn',
+          'aria-label': '发送' + c.name,
           onclick: function () {
             state.sendKey(c.send);
             if (navigator.vibrate) navigator.vibrate(10);
@@ -343,10 +369,13 @@
               }, 80);
             }, 300);
           }, { passive: true });
-          b.addEventListener('touchend', function () {
+          function stopRepeat() {
             clearTimeout(rTimer);
             clearInterval(rInterval);
-          });
+          }
+          repeatCleanups.push(stopRepeat);
+          b.addEventListener('touchend', stopRepeat);
+          b.addEventListener('touchcancel', stopRepeat);
         }
         pad.appendChild(b);
       });
@@ -418,7 +447,7 @@
         }
       });
       if (fxGrid.children.length > 0) fxWrap.appendChild(fxGrid);
-      frag.appendChild(renderSection('<span class="tag-fix">固定</span>场景装置', '不参与热度', fxWrap));
+      frag.appendChild(renderSection('快捷按键', '', fxWrap));
 
       // --- Heat Top 8 ---
       var fixtureIds = {};
@@ -430,20 +459,24 @@
 
       var heatGrid = h('div', { class: 'fab-drawer-grid' });
       top8.forEach(function (item) { heatGrid.appendChild(renderHeatBtn(item)); });
-      frag.appendChild(renderSection('<span class="tag-heat">热度</span>Top 8 混排', '14 天半衰期', heatGrid));
+      frag.appendChild(renderSection('常用操作', '按使用频率排序', heatGrid));
 
       return frag;
     }
 
     function showAddItemForm(sceneId, tabKey, onDone) {
       var overlay = h('div', { class: 'fab-form-overlay show' });
+      formOverlays.push(overlay);
       var modal = h('div', { class: 'fab-form-modal' });
       var labelInput = h('input', { type: 'text', placeholder: '显示名称（如 /pua:p9）' });
       var sendInput = h('input', { type: 'text', placeholder: '发送内容（留空则同名称+回车）' });
       var hint = h('div', { style: { fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' } },
         ['\\x03=C-c  \\x1b=Esc  \\r=回车  或任意文本']);
 
-      function close() { overlay.remove(); }
+      function close() {
+        overlay.remove();
+        formOverlays = formOverlays.filter(function (item) { return item !== overlay; });
+      }
       function parseEsc(s) {
         return s.replace(/\\x([0-9a-fA-F]{2})/g, function (_, hex) {
           return String.fromCharCode(parseInt(hex, 16));
@@ -570,12 +603,8 @@
     }
 
     function renderBody() {
+      stopRepeats();
       bodyEl.innerHTML = '';
-      // Reset swap animation
-      bodyEl.style.animation = 'none';
-      void bodyEl.offsetWidth; // reflow to restart animation
-      bodyEl.style.animation = '';
-
       var scene = getScene();
       if (!scene) return;
       var tab = scene.tabs[state.currentTab];
@@ -607,7 +636,7 @@
       state.currentScene = sceneId;
       state.currentTab = 0;
       rerender();
-      var badge = tabbarEl.querySelector('.scene-inline');
+      var badge = headerEl.querySelector('.scene-inline');
       if (badge) {
         badge.classList.remove('flash');
         void badge.offsetWidth;
@@ -622,6 +651,14 @@
       setScene: setScene,
       getState: function () { return state; },
       rerender: rerender,
+      destroy: function () {
+        stopRepeats();
+        formOverlays.forEach(function (overlay) { overlay.remove(); });
+        formOverlays = [];
+        document.removeEventListener('click', onOutsideClick);
+        drawerEl.remove();
+        if (global._fabDrawerInstance === api) global._fabDrawerInstance = null;
+      },
     };
     global._fabDrawerInstance = api;
     return api;

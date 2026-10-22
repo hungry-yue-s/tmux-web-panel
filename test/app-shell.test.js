@@ -734,6 +734,50 @@ describe('AppShell sidebar width applies immediately', () => {
 });
 
 describe('AppShell mobile workspace sheet', () => {
+  it('makes the thumb rail follow the current server and resolves omitted pane IDs', () => {
+    const ctx = loadShell();
+    seedLocalTmux(ctx.Store);
+    ctx.document.querySelector('.ms-main').insertAdjacentHTML('beforeend', '<nav class="mobile-dock"><button data-route="#/terminal/local" data-terminal-home></button><button data-action="mobile-files"></button><button data-route="#/servers"></button></nav>');
+    const route = { name: 'terminal', params: { serverId: 'local', sessionId: '$0', windowId: '@0' } };
+    ctx.Store.setRoute(route);
+    ctx.Shell.render();
+    expect(ctx.Shell.mobilePaneId(route)).toBe('%95');
+    expect(ctx.document.querySelector('.mobile-dock [data-action="mobile-files"]').disabled).toBe(false);
+    expect(ctx.document.querySelector('.mobile-dock [data-terminal-home]').getAttribute('aria-current')).toBe('page');
+    ctx.win.TerminalTarget = { serverId: 'local', sessionId: '$0', windowId: '@0' };
+    ctx.win.state = { currentSession: 'DataAnt', currentWindow: '1', currentPane: '%live' };
+    expect(ctx.Shell.mobilePaneId(route)).toBe('%live');
+    ctx.win.TerminalTarget.serverId = 'remote';
+    expect(ctx.Shell.mobilePaneId(route)).toBe('%95');
+    ctx.Store.setRoute({ name: 'settings', params: {} });
+    ctx.Shell.render();
+    expect(ctx.document.querySelector('.mobile-dock [data-action="mobile-files"]').disabled).toBe(true);
+    ctx.win.close();
+  });
+
+  it('contains focus in the sheet and restores the actual bottom trigger', () => {
+    const ctx = loadShell();
+    seedLocalTmux(ctx.Store);
+    ctx.win.MobileUI = { isMobile: () => true };
+    const bottom = ctx.document.createElement('button');
+    bottom.dataset.action = 'mobile-workspace';
+    ctx.document.querySelector('.ms-main').appendChild(bottom);
+    bottom.focus();
+    ctx.Shell.openMobileWorkspaceSheet();
+    expect(ctx.document.querySelector('.ms-app').inert).toBe(true);
+    expect(bottom.getAttribute('aria-expanded')).toBe('true');
+    const sheet = ctx.document.getElementById('ms-mobile-workspace-sheet');
+    const buttons = [...sheet.querySelectorAll('button')];
+    buttons.at(-1).focus();
+    ctx.document.dispatchEvent(new ctx.win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+    expect(ctx.document.activeElement).toBe(buttons[0]);
+    ctx.document.dispatchEvent(new ctx.win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(ctx.document.querySelector('.ms-app').inert).toBe(false);
+    expect(ctx.document.activeElement).toBe(bottom);
+    expect(bottom.getAttribute('aria-expanded')).toBe('false');
+    ctx.win.close();
+  });
+
   it('exposes the same creation shortcuts and per-row menus on desktop and mobile', () => {
     const ctx = loadShell();
     Object.defineProperty(ctx.win, 'innerWidth', { value: 375, configurable: true });

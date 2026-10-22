@@ -8,13 +8,14 @@ const TERMINAL_SRC = readFileSync('public/js/terminal.js', 'utf8');
  * only needs the viewport breakpoint and user offset; old pane/container
  * geometry is supplied to prove it does not shrink the type.
  */
-function loadSizer({ width, height = 800, offset = 0, containerWidth = null, containerHeight = null }) {
+function loadSizer({ width, height = 800, offset = 0, containerWidth = null, containerHeight = null, mobile = null }) {
   const container = {
     clientWidth: containerWidth === null ? width : containerWidth,
     clientHeight: containerHeight === null ? height : containerHeight,
   };
   const win = {
     innerWidth: width,
+    MobileUI: mobile === null ? null : { isMobile: () => mobile },
     innerHeight: height,
     document: { querySelector: () => container },
   };
@@ -63,6 +64,11 @@ describe('mobile terminal font size', () => {
       const win = loadSizer({ width, height: 800 });
       expect(win._calcTerminalFontSize(213, 54)).toBeGreaterThanOrEqual(11);
     }
+  });
+
+  it('keeps the phone layout and font in coarse-pointer landscape', () => {
+    expect(loadSizer({ width: 844, height: 390, mobile: true })._calcTerminalFontSize(213, 54)).toBe(13);
+    expect(loadSizer({ width: 844, height: 900, mobile: false })._calcTerminalFontSize(213, 54)).toBe(14);
   });
 
   it('still honors the user font offset, with a readable floor', () => {
@@ -167,7 +173,8 @@ describe('mobile font size constants', () => {
   });
 
   it('branches on the same 768px breakpoint the rest of the view uses', () => {
-    expect(TERMINAL_SRC).toContain('if (window.innerWidth < 768) {');
+    expect(TERMINAL_SRC).toContain('return window.MobileUI ? window.MobileUI.isMobile() : window.innerWidth < 768;');
+    expect(TERMINAL_SRC).toContain('if (_isMobileTerminal()) {');
   });
 });
 
@@ -219,7 +226,8 @@ describe('mobile horizontal swipe', () => {
     const end = TERMINAL_SRC.indexOf("  overlay.addEventListener('touchcancel'", start);
     const switchPaneByDirection = vi.fn();
     let handler;
-    const install = new Function('overlay', 'window', 'ts', 'longPress', 'pinch', 'switchPaneByDirection', TERMINAL_SRC.slice(start, end));
+    const viewportHelper = TERMINAL_SRC.slice(TERMINAL_SRC.indexOf('function _isMobileTerminal()'), TERMINAL_SRC.indexOf('function _calcTerminalFontSize'));
+    const install = new Function('overlay', 'window', 'ts', 'longPress', 'pinch', 'switchPaneByDirection', viewportHelper + TERMINAL_SRC.slice(start, end));
     install({ addEventListener: (_, fn) => { handler = fn; } }, { innerWidth: width },
       { startX: 200, moved: true, direction: 'horizontal', cancelled },
       { timer: null, active: false }, { active: pinching }, switchPaneByDirection);
@@ -256,5 +264,37 @@ describe('initial terminal fit', () => {
 
     expect(readyHandler).toContain('ws._sentCols = null');
     expect(readyHandler).toContain('_syncTerminalSize(ws, term, true)');
+  });
+});
+
+
+describe('mobile keyboard viewport', () => {
+  it('measures the real terminal edge and input deck, then fits after shell resizing', () => {
+    const source = TERMINAL_SRC.slice(TERMINAL_SRC.indexOf('  // The shell follows visualViewport height.'), TERMINAL_SRC.indexOf('  // Store references for cleanup'));
+    const listeners = {};
+    const viewport = { height: 800, offsetTop: 0, addEventListener: (type, fn) => { listeners[type] = fn; } };
+    const controls = { getBoundingClientRect: () => ({ height: 60 }) };
+    const container = {
+      style: {}, getBoundingClientRect: () => ({ top: 96 }),
+      closest: () => ({ querySelector: () => controls }),
+    };
+    const term = {};
+    const fit = vi.fn();
+    const sync = vi.fn();
+    const frames = [];
+    const install = new Function('window', 'termContainer', 'term', 'terminalState', 'fitAddon', 'ws', '_syncTerminalSize', '_isMobileTerminal', 'requestAnimationFrame', source);
+    install({ visualViewport: viewport }, container, term, { term }, { fit }, {}, sync, () => true, fn => frames.push(fn));
+    viewport.height = 340;
+    viewport.offsetTop = 20;
+    listeners.resize();
+    expect(container.style.maxHeight).toBe('204px');
+    expect(fit).not.toHaveBeenCalled();
+    frames.shift()();
+    expect(fit).toHaveBeenCalledOnce();
+    expect(sync).toHaveBeenCalledOnce();
+    viewport.height = 800;
+    viewport.offsetTop = 0;
+    listeners.resize();
+    expect(container.style.maxHeight).toBe('');
   });
 });

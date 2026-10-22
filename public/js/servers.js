@@ -140,6 +140,10 @@
     _hero: function (server, health, openWorkspace, route) {
       var stateTone = shell().tone(health.state);
       var facts = health.facts || {};
+      var mobile = global.MobileUI && global.MobileUI.isMobile();
+      var operations = (shell().isStandaloneStatus(route) ? '' : actionButton('独立展示', 'detach-status', false, ''))
+        + actionButton('立即检测', 'probe', false, 'refresh')
+        + (server.immutable ? '' : actionButton('编辑', 'edit-server', false, ''));
       return '<div class="ms-card server-hero"><div class="server-icon">' + shell().icon('server') + '</div>'
         + '<div class="server-hero-copy"><h2>' + esc(server.name) + ' '
         + '<span class="ms-badge ' + stateTone.tone + '"><span class="dot ' + stateTone.dot + '"></span>'
@@ -148,9 +152,8 @@
         + esc([facts.platform, facts.arch].filter(Boolean).join(' ') || '—') + ' · '
         + esc(shell()._latencyOf(health)) + ' · 更新于 ' + esc(relativeTime(health.checkedAt)) + '</p></div>'
         + '<div class="hero-actions">' + openWorkspace
-        + (shell().isStandaloneStatus(route) ? '' : actionButton('独立展示', 'detach-status', false, ''))
-        + actionButton('立即检测', 'probe', false, 'refresh')
-        + (server.immutable ? '' : actionButton('编辑', 'edit-server', false, '')) + '</div></div>';
+        + '<details class="mobile-server-operations"' + (mobile ? '' : ' open') + '><summary>服务器操作</summary><div>' + operations + '</div></details>'
+        + '</div></div>';
     },
 
     _tabs: function (server, section) {
@@ -289,10 +292,14 @@
     renderSettings: function () {
       shell().setHeader('全局', '设置', '');
       var section = this.settingsSection || 'appearance';
-      if (section === 'management') return '<div id="managed-resources"></div>';
-      if (section === 'security') return this._settingsSecurity();
-      if (section === 'about') return this._settingsAbout();
-      return this._settingsAppearance();
+      var navigation = '<nav class="mobile-settings-nav" aria-label="设置分类">' + shell().SETTINGS_SECTIONS.map(function (entry) {
+        return '<button type="button" data-settings-section="' + entry[0] + '"'
+          + (entry[0] === section ? ' aria-current="page"' : '') + '>' + esc(entry[1]) + '</button>';
+      }).join('') + '</nav>';
+      var content = section === 'management' ? '<div id="managed-resources"></div>'
+        : section === 'security' ? this._settingsSecurity()
+          : section === 'about' ? this._settingsAbout() : this._settingsAppearance();
+      return navigation + content;
     },
 
     _settingsAppearance: function () {

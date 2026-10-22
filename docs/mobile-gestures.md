@@ -20,7 +20,7 @@ tail, dragging up shows the head.
 
 - Vertical drag on the terminal scrolls tmux copy-mode with inertial fling
   (decay matched to UIScrollView).
-- Horizontal drags stay in the terminal and do not navigate back.
+- Horizontal swipes move to the adjacent pane with first/last wrap; they do not navigate back.
 
 ## Sessions and windows
 
@@ -35,9 +35,21 @@ These actions use the selected server and its current workspace capabilities.
 
 ## The key drawer
 
-The floating button opens a scene-aware key drawer. It is mutually exclusive
-with the soft keyboard: focusing the terminal input closes the drawer, and
-opening the drawer does not steal focus from a running TUI.
+The bottom input deck keeps **Tools**, **Esc**, **Tab** and **Input** within
+thumb reach without covering terminal output. **Input** opens the system keyboard
+synchronously from the tap. **Tools** opens a scene-aware key drawer and dismisses
+the keyboard; focusing the terminal input closes the drawer. Sending a key keeps
+the drawer open so repeated navigation does not require reopening it. The drawer
+replaces the global navigation while open and reserves visible terminal space above
+it. Its header keeps scene selection, keyboard input and close controls separate
+from the shortcut categories.
+
+Phones in landscape keep this interface when a coarse pointer is detected up to
+1023px wide and 560px high. Viewport resizing measures the terminal's actual top
+edge and input deck rather than assuming a fixed header size. Leaving the terminal
+releases the drawer, focus sentinel and pending fit timer. **Open in new window**
+opens the complete phone workbench for the current server and pane; desktop
+pop-out windows keep their dedicated terminal view.
 
 Built-in scenes — **Terminal**, **Claude**, **Codex**, **Vim**, **Lazygit** — are
 auto-detected from the command running in the active pane. Each scene ships a

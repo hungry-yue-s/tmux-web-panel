@@ -161,9 +161,15 @@ var FilePreview = (function () {
       || document.getElementById('main-layout');
   }
 
+  function _isMobileReader() {
+    if (window.MobileUI && typeof window.MobileUI.isMobile === 'function') return window.MobileUI.isMobile();
+    return window.innerWidth < 768 || !!(window.matchMedia
+      && window.matchMedia('(pointer: coarse) and (max-height: 560px) and (max-width: 1023px)').matches);
+  }
+
   function _canDockRight() {
     var bounds = _sideWidthBounds();
-    return window.innerWidth >= 900
+    return !_isMobileReader() && window.innerWidth >= 900
       && !!_dockContextKey
       && !!_dockLayout()
       && !!document.querySelector('.terminal-view')
@@ -398,8 +404,20 @@ var FilePreview = (function () {
     if (!_overlay) return;
     var titleEl = _overlay.querySelector('.fp-title');
     if (!titleEl) return;
-    titleEl.textContent = _placement === 'side' && !(_currentFile && _currentFile.isDirectory) ? (path.replace(/\/[^/]+\/?$/, '') || '/') : path;
+    var parent = path.replace(/\/[^/]+\/?$/, '') || '/';
+    var mobile = _isMobileReader();
+    titleEl.textContent = mobile ? (path.split('/').filter(Boolean).pop() || '/')
+      : (_placement === 'side' && !(_currentFile && _currentFile.isDirectory) ? parent : path);
+    titleEl.setAttribute('data-parent', parent);
+    titleEl.setAttribute('aria-label', path);
     titleEl.title = path;
+    var back = _overlay.querySelector('.fp-btn-back');
+    if (back) {
+      var label = mobile && (!_dirContext || (_currentFile && _currentFile.isDirectory))
+        ? '返回工作区' : '返回上级目录';
+      back.setAttribute('aria-label', label);
+      back.title = label;
+    }
   }
 
   function _refreshCurrent(force) {
@@ -963,6 +981,12 @@ var FilePreview = (function () {
     actions.className = 'fp-actions';
 
     var btnBack = _btn('', '返回上级目录', function () {
+      // On a phone, this is the reader's back affordance. Directories have
+      // their own breadcrumb/up row; leaving them returns to the workspace.
+      if (_isMobileReader() && (!_dirContext || (_currentFile && _currentFile.isDirectory))) {
+        close();
+        return;
+      }
       if (_dirContext) {
         var parent = _dirContext;
         _dirContext = null;
@@ -971,6 +995,10 @@ var FilePreview = (function () {
     });
     btnBack.className += ' fp-btn-back';
     _setSvgIcon(btnBack, '<path d="m15 18-6-6 6-6"/><path d="M9 12h10"/>');
+    var backLabel = document.createElement('span');
+    backLabel.className = 'fp-back-label';
+    backLabel.textContent = '返回';
+    btnBack.appendChild(backLabel);
 
     var btnMaximize = _btn('', '最大化预览', function () {
       _maximized = !_maximized;
@@ -1034,11 +1062,12 @@ var FilePreview = (function () {
         run: function () { button.click(); } };
     }
     var btnMore = _menuBtn('更多文件操作', '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>', function () {
-      var items = [buttonAction(btnMaximize)];
+      var items = _isMobileReader() ? [] : [buttonAction(btnMaximize)];
       if (_currentFile && !_currentFile.isDirectory) {
         items.push(buttonAction(btnNewTab));
         items = items.concat(copyItems, [buttonAction(btnShare)], downloadItems);
       }
+      if (_isMobileReader()) items.push(buttonAction(btnClose));
       return items;
     });
     btnMore.className += ' fp-btn-more';
@@ -1065,10 +1094,11 @@ var FilePreview = (function () {
     modal.appendChild(body);
     _overlay.appendChild(modal);
     document.body.appendChild(_overlay);
+    _setPreviewTitle(title);
     _syncPlacementButton();
     _syncMaximizeButton();
 
-    btnClose.focus();
+    (_isMobileReader() ? btnBack : btnClose).focus();
     _overlay.addEventListener('keydown', function (e) {
       if (window.CommandPalette && window.CommandPalette.isOpen && window.CommandPalette.isOpen()) return;
       if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); close(); e.stopPropagation(); }
@@ -1126,6 +1156,7 @@ var FilePreview = (function () {
     document.removeEventListener('keydown', menu.onKeydown, true);
     window.removeEventListener('resize', menu.onDismiss);
     menu.el.remove();
+    if (menu.scrim) menu.scrim.remove();
     menu.anchor.classList.remove('is-active');
     menu.anchor.setAttribute('aria-expanded', 'false');
   }
@@ -1176,6 +1207,15 @@ var FilePreview = (function () {
       el.appendChild(btn);
     });
 
+    var scrim = null;
+    if (_isMobileReader()) {
+      scrim = document.createElement('button');
+      scrim.type = 'button';
+      scrim.className = 'fp-menu-scrim';
+      scrim.setAttribute('aria-label', '关闭文件操作');
+      scrim.addEventListener('click', function () { _closeActionMenu(); anchor.focus(); });
+      document.body.appendChild(scrim);
+    }
     document.body.appendChild(el);
     var rect = anchor.getBoundingClientRect();
     var width = el.offsetWidth, height = el.offsetHeight;
@@ -1188,7 +1228,7 @@ var FilePreview = (function () {
     // The anchor is excluded so its own click handler performs the toggle
     // instead of the outside-mousedown closing it first.
     var onOutside = function (e) {
-      if (!el.contains(e.target) && !anchor.contains(e.target)) _closeActionMenu();
+      if (e.target !== scrim && !el.contains(e.target) && !anchor.contains(e.target)) _closeActionMenu();
     };
     var onKeydown = function (e) {
       if (window.CommandPalette && window.CommandPalette.isOpen && window.CommandPalette.isOpen()) return;
@@ -1211,7 +1251,7 @@ var FilePreview = (function () {
     window.addEventListener('resize', onDismiss);
 
     _actionMenu = {
-      el: el, anchor: anchor,
+      el: el, anchor: anchor, scrim: scrim,
       onOutside: onOutside, onKeydown: onKeydown, onDismiss: onDismiss,
     };
     anchor.classList.add('is-active');
@@ -3822,6 +3862,7 @@ var FilePreview = (function () {
       else _currentFile = next;
       _previewReady = true;
       _applyMode(mode);
+      _setPreviewTitle(next.absPath);
       return true;
     }
 
@@ -4016,9 +4057,13 @@ var FilePreview = (function () {
   }
 
   function _iconFor(entry) {
-    if (entry.type === 'dir' || entry.targetType === 'dir') return '📁'; // 📁
-    if (entry.type === 'symlink' && entry.targetType === 'broken') return '⚠️'; // ⚠️
-    return '📄'; // 📄
+    var paths = entry.type === 'dir' || entry.targetType === 'dir'
+      ? '<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3z"/>'
+      : (entry.type === 'symlink' && entry.targetType === 'broken'
+        ? '<path d="m12 3 10 18H2z"/><path d="M12 9v5m0 3h.01"/>'
+        : '<path d="M14 3H5v18h14V8z"/><path d="M14 3v5h5m-11 5h8m-8 4h6"/>');
+    return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+      + ' stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>';
   }
 
   function _navDir(body, dirPath) {
@@ -4099,7 +4144,7 @@ var FilePreview = (function () {
       var row = document.createElement('div');
       row.className = 'fp-dir-row fp-arch-row' + (child.isDir ? ' fp-arch-dir' : '');
       row.style.paddingLeft = (8 + depth * 16) + 'px';
-      var icon = child.isDir ? '📁' : '📄';
+      var icon = _iconFor({ type: child.isDir ? 'dir' : 'file' });
       row.innerHTML = '<span class="fp-dir-icon">' + icon + '</span>'
         + '<span class="fp-dir-name">' + _escapeHtml(name) + '</span>'
         + '<span class="fp-dir-size">' + (child.isDir ? '' : _escapeHtml(_formatBytes(child.size))) + '</span>';
@@ -4262,7 +4307,7 @@ var FilePreview = (function () {
 
           var icon = document.createElement('span');
           icon.className = 'fp-dir-icon';
-          icon.textContent = _iconFor(entry);
+          icon.innerHTML = _iconFor(entry);
 
           var name = document.createElement('span');
           name.className = 'fp-dir-name';
@@ -4377,6 +4422,9 @@ var FilePreview = (function () {
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', _syncAutoRefresh);
     document.addEventListener('tmux-theme-change', _refreshMermaidTheme);
+    window.addEventListener('resize', function () {
+      if (_overlay) _setPreviewTitle((_currentFile && _currentFile.absPath) || _currentOpenPath || '/');
+    });
   }
 
   return {

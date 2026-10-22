@@ -1,0 +1,199 @@
+/* Phone input deck: terminal cells, input controls, and global navigation never overlap. */
+@media (max-width: 767px), (pointer: coarse) and (max-height: 560px) and (max-width: 1023px) {
+  .terminal-view {
+    --mobile-tools-height: min(44dvh, 380px);
+  }
+  .mobile-terminal-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 60px;
+    min-width: 0;
+    padding: 7px 12px 8px;
+    border-top: 1px solid var(--workspace-line, var(--border-subtle));
+    color: var(--workspace-text, var(--text-primary));
+    background: var(--workspace-bg, var(--bg-primary));
+  }
+  .mobile-terminal-controls button {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-width: 44px;
+    height: 44px;
+    padding: 0 12px;
+    border: 1px solid var(--workspace-line, var(--border));
+    border-radius: 12px;
+    color: inherit;
+    background: var(--workspace-panel, var(--bg-card));
+    font: 600 12px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition: background .15s, border-color .15s;
+  }
+  .mobile-terminal-controls svg { width: 20px; height: 20px; flex-shrink: 0; }
+  .mobile-terminal-controls .fab-tool {
+    position: static;
+    inset: auto;
+    width: auto;
+    flex: 1;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    transform: none;
+    z-index: auto;
+  }
+  .mobile-terminal-quick-keys { display: flex; gap: 4px; }
+  .mobile-terminal-quick-keys button {
+    padding: 0 9px;
+    font-family: 'Tmux Panel Mono', ui-monospace, monospace;
+    color: var(--workspace-muted, var(--text-secondary));
+    background: transparent;
+  }
+  .mobile-terminal-controls .mobile-terminal-keyboard {
+    flex: 1;
+    border-color: color-mix(in srgb, var(--workspace-accent, var(--accent-blue)) 42%, transparent);
+    color: var(--workspace-text, var(--text-primary));
+    background: color-mix(in srgb, var(--workspace-accent, var(--accent-blue)) 14%, var(--workspace-panel, var(--bg-card)));
+  }
+  .mobile-terminal-controls button:active,
+  .fab-drawer button:active { background: var(--workspace-hover, var(--bg-hover)); transform: none; }
+  .mobile-terminal-controls button:focus-visible,
+  .fab-drawer button:focus-visible {
+    outline: 2px solid var(--workspace-accent, var(--accent-blue));
+    outline-offset: -3px;
+  }
+  .mobile-terminal-controls .fab-tool.uploading { animation: none; }
+  .terminal-view.drawer-pushed {
+    /* The drawer replaces the navigation already reserved by the shell. */
+    padding-bottom: max(0px, calc(var(--mobile-tools-height) - var(--mobile-nav-occupied-height, 0px)));
+    transition: padding-bottom .22s ease;
+  }
+  .terminal-view.drawer-pushed .mobile-terminal-controls { display: none; }
+  .mobile-tools-open .mobile-dock { visibility: hidden; pointer-events: none; }
+  .fab-drawer-mount {
+    height: var(--mobile-tools-height);
+    bottom: 0;
+    visibility: hidden;
+    transition: transform .22s ease, visibility .22s;
+  }
+  .fab-drawer-mount.open { visibility: visible; }
+  .fab-drawer-mount > .fab-drawer {
+    border-top: 1px solid var(--workspace-line-strong, var(--border));
+    border-radius: 22px 22px 0 0;
+    background: var(--workspace-panel, var(--bg-card));
+    box-shadow: 0 -12px 48px color-mix(in srgb, var(--workspace-bg, var(--bg-primary)) 36%, transparent);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .fab-drawer-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 0 0 56px;
+    min-width: 0;
+    padding: 4px 8px 0 16px;
+  }
+  .fab-drawer-heading { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+  .fab-drawer-heading strong { font-size: 14px; font-weight: 650; letter-spacing: -.02em; white-space: nowrap; }
+  .fab-drawer-header .scene-inline {
+    min-height: 44px;
+    min-width: 0;
+    max-width: 150px;
+    gap: 6px;
+    padding: 0 7px;
+    border: 0;
+    background: transparent;
+    color: var(--workspace-muted, var(--text-secondary));
+    font: 500 12px/1.2 -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  .scene-inline .scene-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .scene-inline .dot { flex: 0 0 5px; animation: none; background: var(--workspace-accent, var(--accent-blue)); }
+  .scene-chevron { display: flex; }
+  .scene-chevron svg { width: 16px; height: 16px; }
+  .fab-drawer-header .fab-drawer-kbd-btn,
+  .fab-drawer-header .fab-drawer-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--workspace-muted, var(--text-secondary));
+    touch-action: manipulation;
+  }
+  .fab-drawer-header .fab-drawer-kbd-btn svg,
+  .fab-drawer-header .fab-drawer-close svg { width: 21px; height: 21px; }
+  .fab-drawer-tabbar {
+    gap: 4px;
+    flex: 0 0 48px;
+    min-height: 48px;
+    margin: 0 12px;
+    padding: 0 0 5px;
+    border-bottom: 1px solid var(--workspace-line, var(--border-subtle));
+    overscroll-behavior-x: contain;
+  }
+  .fab-drawer-tab {
+    flex: 1 0 auto;
+    min-height: 44px;
+    padding: 0 13px;
+    border: 0;
+    border-radius: 10px;
+    color: var(--workspace-muted, var(--text-secondary));
+    font-size: 12px;
+    font-weight: 600;
+    touch-action: manipulation;
+  }
+  .fab-drawer-tab.active {
+    color: var(--workspace-text, var(--text-primary));
+    background: var(--workspace-hover, var(--bg-hover));
+    box-shadow: inset 0 0 0 1px var(--workspace-line, var(--border));
+  }
+  .fab-drawer-body {
+    min-height: 0;
+    padding: 14px 12px 16px;
+    overscroll-behavior: contain;
+    animation: none;
+  }
+  .fab-section { margin-bottom: 18px; }
+  .fab-section-label { margin-bottom: 9px; color: var(--workspace-muted, var(--text-secondary)); font-size: 11px; opacity: 1; text-transform: none; letter-spacing: 0; }
+  .fab-section-label .meta { font-size: 10px; color: inherit; font-weight: 400; letter-spacing: 0; }
+  .fab-fixture-wrap { padding: 0; border: 0; background: transparent; }
+  .fab-drawer-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+  .fab-arrow-pad { gap: 7px; margin-bottom: 7px; }
+  .fab-drawer-btn {
+    min-width: 0;
+    min-height: 46px;
+    height: auto;
+    padding: 10px 4px;
+    border: 1px solid var(--workspace-line, var(--border));
+    border-radius: 11px;
+    color: var(--workspace-text, var(--text-primary));
+    background: var(--workspace-hover, var(--bg-hover));
+    font-size: 12px;
+    overflow-wrap: anywhere;
+    touch-action: manipulation;
+  }
+  .fab-arrow-pad .fab-drawer-btn { font-size: 16px; }
+  .fab-arrow-pad .fab-drawer-btn:first-child { font-size: 12px; }
+  .fab-heat-badge { display: none; }
+  .fab-override-menu { top: 55px; max-height: calc(100% - 65px); overflow: auto; background: var(--workspace-panel, var(--bg-card)); }
+  .fab-override-menu .mtitle { letter-spacing: 0; text-transform: none; font-size: 11px; }
+  .fab-override-menu .mitem { width: 100%; min-height: 44px; border: 0; background: transparent; text-align: left; font-family: inherit; }
+  .fab-form-modal { max-height: calc(100dvh - 32px); overflow-y: auto; }
+  .fab-form-modal input, .fab-form-modal select { min-height: 44px; font-size: 16px; }
+  .fab-form-actions .fab-form-btn { min-height: 44px; }
+}
+@media (max-width: 767px) and (max-height: 560px), (pointer: coarse) and (max-height: 560px) and (max-width: 1023px) {
+  .terminal-view { --mobile-tools-height: min(60dvh, 300px); }
+  .mobile-terminal-controls { flex-basis: 52px; padding-top: 4px; padding-bottom: 4px; }
+  .fab-drawer-body { padding-top: 10px; }
+  .fab-drawer-body .fab-section:first-child .fab-fixture-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mobile-terminal-controls *, .fab-drawer *, .fab-drawer-mount, .terminal-view.drawer-pushed { transition: none !important; animation: none !important; }
+}

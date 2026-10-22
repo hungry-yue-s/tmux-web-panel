@@ -59,6 +59,7 @@
   }
 
   function el(id) { return global.document.getElementById(id); }
+  function mobileLayout() { return global.MobileUI ? global.MobileUI.isMobile() : global.innerWidth < 768; }
 
   var AppShell = {
     _started: false,
@@ -446,10 +447,35 @@
       trigger.title = subtitle.textContent + ' / ' + title.textContent;
       trigger.setAttribute('aria-label', trigger.title + ' · 工作区与导航菜单');
 
-      var home = global.document.querySelector('[data-terminal-home]');
-      if (home) {
+      global.document.querySelectorAll('[data-terminal-home]').forEach(function (home) {
         home.dataset.route = global.Router.serialize({ name: 'terminal', params: { serverId: serverId } });
+      });
+      var files = global.document.querySelector('.mobile-dock [data-action="mobile-files"]');
+      if (files) {
+        var local = server && server.kind === 'local';
+        files.disabled = !isTerminal || !local || !this.mobilePaneId(route);
+        files.title = files.disabled ? '进入本机终端后浏览文件' : '浏览当前窗格目录';
       }
+      this._syncMobileTriggers();
+    },
+
+    mobilePaneId: function (route) {
+      var params = (route && route.params) || {};
+      var session = this._findSession(this.workspace(params.serverId || 'local'), params.sessionId);
+      var win = this._findWindow(session, params.windowId);
+      var live = global.state;
+      var target = global.TerminalTarget;
+      if (live && target && target.serverId === (params.serverId || 'local')
+        && target.sessionId === params.sessionId && target.windowId === params.windowId && live.currentPane) return live.currentPane;
+      return params.paneId || (win && win.panes && win.panes[0] && win.panes[0].id) || null;
+    },
+
+    _syncMobileTriggers: function () {
+      var open = this.isMobileWorkspaceOpen();
+      global.document.querySelectorAll('[data-action="mobile-workspace"]').forEach(function (button) {
+        button.setAttribute('aria-expanded', String(open));
+        button.setAttribute('aria-controls', 'ms-mobile-workspace-sheet');
+      });
     },
 
     isMobileWorkspaceOpen: function () {
@@ -464,13 +490,13 @@
       var tree = el('ms-mobile-workspace-tree');
       if (!tree) return;
       var route = global.Store.getState().route || {};
-      tree.innerHTML = route.name === 'terminal' ? this._renderTree(this.activeServerId(), route, true) : '';
+      tree.innerHTML = this._renderTree(this.activeServerId(), route, true);
       el('ms-mobile-workspace-sheet').classList.toggle('has-terminal', route.name === 'terminal');
     },
 
     _syncMobileWorkspaceSheet: function (route) {
       if (!this.isMobileWorkspaceOpen()) return;
-      if (!route || global.innerWidth >= 768) {
+      if (!route || !mobileLayout()) {
         this.closeMobileWorkspaceSheet({ restoreFocus: false });
         return;
       }
@@ -479,8 +505,11 @@
 
     openMobileWorkspaceSheet: function () {
       var route = global.Store.getState().route || {};
-      if (global.innerWidth >= 768 || this.isMobileWorkspaceOpen()) return;
+      if (!mobileLayout() || this.isMobileWorkspaceOpen()) return;
       this.hideServerPicker();
+      var focused = global.document.activeElement;
+      if (focused && focused.matches('.xterm-helper-textarea')) focused.blur();
+      this._mobileWorkspaceOrigin = focused;
 
       var overlay = global.document.createElement('div');
       overlay.id = 'ms-mobile-workspace-overlay';
@@ -493,7 +522,7 @@
       sheet.setAttribute('aria-modal', 'true');
       sheet.setAttribute('aria-label', '工作区与导航菜单');
       sheet.innerHTML = '<div class="ms-mobile-workspace-head">'
-        + '<strong>工作区与导航</strong>'
+        + '<div><strong>会话与窗口</strong><small>选择窗口，继续工作</small></div>'
         + '<button class="icon-btn" data-action="mobile-workspace-close" aria-label="关闭菜单">×</button>'
         + '</div><nav class="mobile-menu-nav" aria-label="主导航">'
         + '<button class="ms-btn" data-route="' + esc(global.Router.serialize({ name: 'terminal', params: { serverId: this.activeServerId() } })) + '" data-terminal-home>工作区</button>'
@@ -507,15 +536,30 @@
 
       global.document.body.appendChild(overlay);
       global.document.body.appendChild(sheet);
+      var app = global.document.querySelector('.ms-app');
+      if (app) { this._mobileAppWasInert = app.inert; app.inert = true; }
       this._renderMobileWorkspaceTree();
       this._syncNav(route);
       this._moveMobileToolsToSheet();
       var trigger = this._mobileWorkspaceTrigger();
       if (trigger) trigger.setAttribute('aria-expanded', 'true');
+      this._syncMobileTriggers();
 
       var self = this;
       overlay.addEventListener('click', function () { self.closeMobileWorkspaceSheet(); });
       this._mobileWorkspaceKeydown = function (event) {
+        if (event.key === 'Tab') {
+          var targets = Array.from(sheet.querySelectorAll('button:not(:disabled),a[href],input,select,textarea,summary,[tabindex="0"]'));
+          var first = targets[0];
+          var last = targets[targets.length - 1];
+          if (!first) return;
+          if (event.shiftKey && (global.document.activeElement === first || !sheet.contains(global.document.activeElement))) {
+            event.preventDefault(); last.focus();
+          } else if (!event.shiftKey && (global.document.activeElement === last || !sheet.contains(global.document.activeElement))) {
+            event.preventDefault(); first.focus();
+          }
+          return;
+        }
         if (event.key !== 'Escape' || event.defaultPrevented) return;
         event.preventDefault();
         self.closeMobileWorkspaceSheet();
@@ -531,6 +575,8 @@
       if (!sheet && !overlay) return;
       if (global.MsApp) global.MsApp._hideSidebarContextMenu();
       this._moveMobileToolsToStaging();
+      var app = global.document.querySelector('.ms-app');
+      if (app) app.inert = !!this._mobileAppWasInert;
       if (sheet) sheet.remove();
       if (overlay) overlay.remove();
       if (this._mobileWorkspaceKeydown) {
@@ -540,8 +586,13 @@
       var trigger = this._mobileWorkspaceTrigger();
       if (trigger) {
         trigger.setAttribute('aria-expanded', 'false');
-        if (!options || options.restoreFocus !== false) trigger.focus();
+        if (!options || options.restoreFocus !== false) {
+          var origin = this._mobileWorkspaceOrigin;
+          (origin && origin.isConnected && origin.matches('button,a[href],summary,[tabindex="0"]') ? origin : trigger).focus();
+        }
       }
+      this._mobileWorkspaceOrigin = null;
+      this._syncMobileTriggers();
     },
 
     toggleMobileWorkspaceSheet: function () {
@@ -576,7 +627,7 @@
     /** Marks the active top-level entry, matching the demo's rules. */
     _syncNav: function (route) {
       var name = route && route.name ? route.name : 'terminal';
-      var nodes = global.document.querySelectorAll('.sidebar-footer [data-route], .mobile-menu-nav [data-route]');
+      var nodes = global.document.querySelectorAll('.sidebar-footer [data-route], .mobile-menu-nav [data-route], .mobile-dock [data-route]');
       for (var i = 0; i < nodes.length; i += 1) {
         var target = nodes[i].dataset.route || '';
         var isActive = false;

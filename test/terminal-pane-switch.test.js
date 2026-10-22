@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
 const source = readFileSync('public/js/terminal.js', 'utf8');
-const switching = source.slice(source.indexOf('function switchPane(newPaneId)'), source.indexOf('// === Pane Navigation Bar'));
+const mobileViewport = source.slice(source.indexOf('function _isMobileTerminal()'), source.indexOf('function _calcTerminalFontSize'));
+const switching = mobileViewport + source.slice(source.indexOf('function switchPane(newPaneId)'), source.indexOf('// === Pane Navigation Bar'));
 
 it('reconnects mobile panes without rebuilding the rail, including first/last wrap', () => {
   const dom = new JSDOM('<div class="mobile-pane-strip"><div class="pane-pills"></div></div><div class="terminal-container"></div>');

@@ -19,7 +19,8 @@ it('tracks breakpoints while panes load and rejects stale pane responses', async
     renderPanePills: vi.fn(), _mountTerminal: vi.fn(), switchPane: vi.fn(),
     TerminalTarget: { listPanes: () => new Promise(resolve => pending.push(resolve)), supportsTmuxActions: () => true },
   });
-  win.eval(source.slice(source.indexOf('function _cleanupTerminalResources()'), source.indexOf('function cleanupTerminal()')));
+  win._isMobileTerminal = () => win.MobileUI ? win.MobileUI.isMobile() : win.innerWidth < 768;
+  win.eval(source.slice(source.indexOf('function _cleanupTerminalResources('), source.indexOf('function cleanupTerminal()')));
   win.eval(source.slice(source.indexOf('function _terminalToolIcon'), source.indexOf('// === Mount Terminal Instance')));
   const container = win.document.getElementById('content');
   win.renderTerminal(container);

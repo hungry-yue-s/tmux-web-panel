@@ -149,8 +149,10 @@ function createDirectoryPreview() {
     const parsed = new URL(String(url), 'https://panel.test/');
     const path = parsed.searchParams.get('path');
     if (parsed.pathname === '/api/files/info') {
+      if (path.endsWith('.txt')) return response({ isText:true, absPath:path, size:7, mtimeMs:2000 });
       return response({ isDirectory: true, absPath: path, size: 64, mtimeMs: 1000 });
     }
+    if (parsed.pathname === '/api/files/content') return response({ content:'example', language:null });
     if (parsed.pathname === '/api/files/list') {
       listFetches++;
       if (path === '/root' && heldRoot) return heldRoot.promise;
@@ -703,6 +705,71 @@ describe('file preview dock tabs', () => {
     expect(file.dom.window.document.querySelector('.fp-title').textContent).toBe('/tmp');
     expect(file.dom.window.document.querySelector('.fp-title').title).toBe('/tmp/live.csv');
     file.preview.closeDocked(); file.dom.window.close();
+  });
+
+  it('gives phone readers a filename, parent path and predictable return to directory or workspace', async () => {
+    const live = createDirectoryPreview();
+    const { dom, preview } = live;
+    const doc = dom.window.document;
+    Object.defineProperty(dom.window, 'innerWidth', { value:375, configurable:true });
+    await preview.openFile('/root', '%1');
+    expect(doc.querySelector('.fp-btn-back').getAttribute('aria-label')).toBe('返回工作区');
+    const note = Array.from(doc.querySelectorAll('.fp-dir-row')).find((row) => row.textContent.includes('note.txt'));
+    expect(note.querySelector('.fp-dir-icon svg[aria-hidden="true"]')).not.toBeNull();
+    note.click(); await flush();
+    expect(doc.querySelector('.fp-title').textContent).toBe('note.txt');
+    expect(doc.querySelector('.fp-title').getAttribute('data-parent')).toBe('/root');
+    expect(doc.querySelector('.fp-title').title).toBe('/root/note.txt');
+    expect(doc.querySelector('.fp-btn-back').getAttribute('aria-label')).toBe('返回上级目录');
+    doc.querySelector('.fp-btn-back').click(); await flush();
+    expect(doc.querySelector('.fp-title').textContent).toBe('root');
+    expect(doc.querySelector('.fp-dir-list')).not.toBeNull();
+    doc.querySelector('.fp-btn-back').click();
+    expect(doc.querySelector('.fp-overlay')).toBeNull();
+    dom.window.close();
+  });
+
+  it('uses a dismissible phone action sheet without redundant maximize and keeps direct Back simple', async () => {
+    const { dom, preview } = createLivePreview();
+    const doc = dom.window.document;
+    Object.defineProperty(dom.window, 'innerWidth', { value:375, configurable:true });
+    await preview.openFile('/tmp/live.csv', '%1');
+    expect(doc.activeElement).toBe(doc.querySelector('.fp-btn-back'));
+    const trigger = openMore(dom);
+    expect(doc.querySelector('.fp-menu [aria-label="最大化预览"]')).toBeNull();
+    expect(doc.querySelector('.fp-menu [aria-label="带格式复制"]')).not.toBeNull();
+    expect(doc.querySelector('.fp-menu [aria-label="关闭预览"]')).not.toBeNull();
+    doc.querySelector('.fp-menu-scrim').click();
+    expect(doc.querySelector('.fp-menu')).toBeNull();
+    expect(doc.querySelector('.fp-menu-scrim')).toBeNull();
+    expect(doc.activeElement).toBe(trigger);
+    doc.querySelector('.fp-btn-back').click();
+    expect(doc.querySelector('.fp-overlay')).toBeNull();
+    dom.window.close();
+  });
+
+  it('treats landscape touch devices as readers and preserves desktop dock tabs during viewport changes', async () => {
+    const { dom, preview } = createLivePreview();
+    const doc = dom.window.document;
+    await preview.openFile('/tmp/live.csv', '%1'); dockCurrent(dom);
+    Object.defineProperty(dom.window, 'innerWidth', { value:980, configurable:true });
+    dom.window.MobileUI = { isMobile:() => true };
+    dom.window.dispatchEvent(new dom.window.Event('resize'));
+    expect(doc.querySelector('.fp-dock')).toBeNull();
+    expect(doc.querySelector('.fp-dock-restore')).not.toBeNull();
+    const key = preview._test.dockStateKey('local', '@0');
+    expect(JSON.parse(dom.window.localStorage.getItem(key)).tabs).toHaveLength(1);
+    await preview.openFile('/tmp/live.csv', '%1');
+    expect(doc.querySelector('.fp-title').textContent).toBe('live.csv');
+    dockCurrent(dom);
+    expect(doc.querySelector('.fp-dock')).toBeNull();
+    preview.closeModal();
+    dom.window.MobileUI.isMobile = () => false;
+    Object.defineProperty(dom.window, 'innerWidth', { value:1440, configurable:true });
+    doc.querySelector('.fp-dock-restore').click();
+    expect(doc.querySelectorAll('.fp-dock-tab')).toHaveLength(1);
+    expect(doc.querySelector('.fp-dock-tab').textContent).toBe('live.csv');
+    preview.closeDocked(); dom.window.close();
   });
 
   it('owns share-dialog focus and Escape without closing the file or generating a share', async () => {
