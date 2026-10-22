@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { parseDocument } from 'yaml';
+import { runInNewContext } from 'node:vm';
 import { createDshTuiManager } from '../../server/agent-providers/dsh-tui.js';
 import { ManagedResources } from '../../server/managed-resources.js';
 
@@ -38,6 +39,30 @@ async function fixture() {
 }
 
 describe('native dsh-tui maintenance', () => {
+  it('repairs stale capacity display after a model switch, preserves projection fallback and applies once', async () => {
+    const { manager, profile } = await fixture();
+    const file = join(profile, 'node_modules/@deepseek-harness-tui/dsh-tui/lib/types/dsh-adapter/context-occupancy.js');
+    await mkdir(dirname(file), { recursive: true });
+    const source = `export function resolveContextOccupancy(projected, sample, requestWindow) {
+  const contextWindow = projected?.contextWindow ?? requestWindow;
+  return { usedTokens: projected?.pressureTokens ?? sample?.input, contextWindow };
+}\n`;
+    await writeFile(file, source);
+    const display = (text, currentWindow) => runInNewContext(text.replace('export ', '')
+      + '\nresolveContextOccupancy({pressureTokens: 400000, contextWindow: 1000000}, undefined, window)', { window: currentWindow });
+    expect(display(source, 800000).contextWindow).toBe(1000000);
+    expect(await manager.activate(group)).toMatchObject({ contextWindowRepaired: true, backups: 3 });
+    const patched = await readFile(file, 'utf8');
+    expect(display(patched, 800000)).toEqual({ usedTokens: 400000, contextWindow: 800000 });
+    expect(display(patched, undefined).contextWindow).toBe(1000000);
+    expect(await manager.activate(group)).toMatchObject({ contextWindowRepaired: false });
+    expect(await readFile(file, 'utf8')).toBe(patched);
+    const newerSource = source.replace('projected?.contextWindow ?? requestWindow', 'requestWindow ?? projected?.contextWindow ?? 262144');
+    await writeFile(file, newerSource);
+    expect(await manager.activate(group)).toMatchObject({ contextWindowRepaired: false });
+    expect(await readFile(file, 'utf8')).toBe(newerSource);
+  });
+
   it('reads version and native profiles without returning credentials or evaluating YAML', async () => {
     const { manager } = await fixture();
     const status = await manager.status();
@@ -84,7 +109,11 @@ describe('native dsh-tui maintenance', () => {
   });
 
   it('restores completed writes if selecting the default model fails', async () => {
-    const { manager, patchPath, credentialsPath, modelPath } = await fixture();
+    const { manager, profile, patchPath, credentialsPath, modelPath } = await fixture();
+    const contextPath = join(profile, 'node_modules/@deepseek-harness-tui/dsh-tui/lib/types/dsh-adapter/context-occupancy.js');
+    const contextSource = 'export function resolveContextOccupancy(projected, sample, requestWindow) { const contextWindow = projected?.contextWindow ?? requestWindow; return contextWindow; }';
+    await mkdir(dirname(contextPath), { recursive: true });
+    await writeFile(contextPath, contextSource);
     const original = await readFile(patchPath, 'utf8');
     const creds = await readFile(credentialsPath, 'utf8');
     const backupWrite = ManagedResources.prototype.backupWrite;
@@ -95,6 +124,7 @@ describe('native dsh-tui maintenance', () => {
     await expect(manager.activate(group)).rejects.toThrow('write failed');
     expect(await readFile(patchPath, 'utf8')).toBe(original);
     expect(await readFile(credentialsPath, 'utf8')).toBe(creds);
+    expect(await readFile(contextPath, 'utf8')).toBe(contextSource);
     await expect(stat(join(dirname(modelPath), 'kernel.json'))).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(stat(`${credentialsPath}.lock`)).rejects.toMatchObject({ code: 'ENOENT' });
   });
