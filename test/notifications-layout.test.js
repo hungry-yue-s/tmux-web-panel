@@ -1,0 +1,50 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
+
+const source = readFileSync('public/js/notifications.js', 'utf8');
+let dom;
+
+afterEach(() => {
+  dom?.window.close();
+  dom = null;
+});
+
+describe('notification viewport layout', () => {
+  it.each([
+    { width: 844, mobile: true, sheet: true },
+    { width: 844, mobile: false, sheet: false },
+    { width: 375, mobile: undefined, sheet: true },
+    { width: 1024, mobile: undefined, sheet: false },
+  ])('uses the shared viewport decision at $width px (MobileUI=$mobile)', ({ width, mobile, sheet }) => {
+    dom = new JSDOM('<div id="sidebar" hidden><button class="notification-bell"></button></div><button id="visible-bell" class="notification-bell"></button>', {
+      url: 'https://panel.example/', runScripts: 'outside-only',
+    });
+    const win = dom.window;
+    win.innerWidth = width;
+    if (mobile !== undefined) win.MobileUI = { isMobile: vi.fn(() => mobile) };
+    const hiddenBell = win.document.querySelector('#sidebar .notification-bell');
+    hiddenBell.getBoundingClientRect = vi.fn(() => ({ left: 0, bottom: 0 }));
+    const visibleBell = win.document.getElementById('visible-bell');
+    visibleBell.getBoundingClientRect = vi.fn(() => ({ left: 120, bottom: 60 }));
+    win.eval(source);
+    const stopPropagation = vi.fn();
+    win.NotificationPanel.render({ currentTarget: visibleBell, stopPropagation });
+
+    const panel = win.document.getElementById('notification-panel');
+    expect(panel.classList.contains('notification-mobile-sheet')).toBe(sheet);
+    expect(Boolean(win.document.getElementById('notification-sheet-overlay'))).toBe(sheet);
+    expect(hiddenBell.getBoundingClientRect).not.toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    if (mobile !== undefined) expect(win.MobileUI.isMobile).toHaveBeenCalledOnce();
+    if (!sheet) {
+      expect(panel.style.top).toBe('64px');
+      expect(panel.style.left).toBe('120px');
+      expect(visibleBell.getBoundingClientRect).toHaveBeenCalledOnce();
+    }
+    const icon = panel.querySelector('.notification-panel-title svg');
+    expect(icon.getAttribute('aria-hidden')).toBe('true');
+    expect(icon.getAttribute('stroke')).toBe('currentColor');
+    expect(panel.textContent).not.toContain('🔔');
+  });
+});

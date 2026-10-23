@@ -167,7 +167,7 @@ var NotificationPanel = (function () {
     // Stop the click from propagating to the document close handler
     if (event && event.stopPropagation) event.stopPropagation();
 
-    var isMobile = window.innerWidth < 768;
+    var isMobile = window.MobileUI ? window.MobileUI.isMobile() : window.innerWidth < 768;
     if (isMobile) {
       // Mobile: bottom sheet with overlay
       var existing = document.getElementById('notification-panel');
@@ -258,7 +258,7 @@ var NotificationPanel = (function () {
       html += '</div>';
     } else {
       html += '<div class="notification-panel-header">';
-      html += '<span class="notification-panel-title">🔔 通知 <span class="notification-bell-count" style="' +
+      html += '<span class="notification-panel-title"><svg class="notification-title-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg> 通知 <span class="notification-bell-count" style="' +
         (unreadCount() > 0 ? '' : 'display:none') + '">' + unreadCount() + '</span></span>';
       html += '<button class="notification-clear-btn" onclick="NotificationPanel.clearAll()">全部清除</button>';
       html += '</div>';
