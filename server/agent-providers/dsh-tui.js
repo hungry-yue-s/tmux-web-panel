@@ -58,6 +58,9 @@ export function createDshTuiManager(options = {}) {
     { id: 'bound-route', path: join(nativeRoot, 'channel/binding-events.js'),
       from: 'const selected = deps.modelSelection.selection.current;',
       to: 'const selected = deps.modelSelection.selection.current\n                ?? (deps.binding.agent.options?.provider && deps.binding.agent.options?.model ? deps.binding.agent.options : undefined);' },
+    { id: 'assembly-route', path: join(nativeRoot, 'channel/model-selection.js'),
+      from: 'return { ...assembled, variables: { ...assembled.variables, provider: selected.provider, model: selected.model } };\n            }));',
+      to: 'return { ...assembled, variables: { ...assembled.variables, provider: selected.provider, model: selected.model } };\n            }, { prepend: true }));' },
   ];
   const resources = new ManagedResources({ projectDir: '', configDir: join(home, '.config/tmux-web-panel'), userHome: home });
   const parseJSON = (text) => {
@@ -133,8 +136,8 @@ export function createDshTuiManager(options = {}) {
       } else if (!profiles(doc).some((item) => item.provider === provider && item.model === model)) {
         throw new AppError(ErrorCode.VALIDATION_ERROR, 'DSH 提供方或模型不在当前配置中');
       }
-      // Repair only known dsh-tui 0.16.1 expressions. A displayed launch route
-      // must not make selecting that model a no-op on a resumed GLM agent.
+      // Repair only known dsh-tui 0.16.1 expressions. Route selection must run
+      // before third-party assembly hooks that return without calling next().
       const repaired = [];
       for (const repair of nativeRepairs) {
         const source = before.get(repair.path);

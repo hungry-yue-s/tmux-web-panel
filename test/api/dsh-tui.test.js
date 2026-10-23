@@ -39,6 +39,42 @@ async function fixture() {
 }
 
 describe('native dsh-tui maintenance', () => {
+  it('captures the selected route before an existing assembly plugin can short-circuit the waterfall', async () => {
+    const { manager, profile } = await fixture();
+    const file = join(profile, 'node_modules/@deepseek-harness-tui/dsh-tui/lib/types/dsh-adapter/channel/model-selection.js');
+    await mkdir(dirname(file), { recursive: true });
+    const source = `function install(agent, ref, own) {
+      own(agent.ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
+        const selected = ref.current;
+        const assembled = await next();
+        ref.assembled = selected;
+        if (selected === undefined) return assembled;
+        return { ...assembled, variables: { ...assembled.variables, provider: selected.provider, model: selected.model } };
+            }));
+    }`;
+    await writeFile(file, source);
+    const run = async (text, selected) => {
+      // Cordis waterfall listeners that omit next() stop all later listeners.
+      const hooks = [async (assembly) => ({ ...assembly, memory: 'preserved' })];
+      const agent = { ctx: { on: (_event, hook, options) => {
+        hooks[options?.prepend ? 'unshift' : 'push'](hook);
+        return () => {};
+      } } };
+      const ref = { current: selected };
+      runInNewContext(text + '\ninstall')(agent, ref, (dispose) => dispose);
+      const next = () => (hooks.shift() ?? (async () => ({ variables: {} })))({ variables: {} }, {}, next);
+      const assembly = await next();
+      return { assembly, request: ref.assembled ?? { provider: 'glm', model: 'glm-test' } };
+    };
+    const route = { provider: 'tmux-enterprise', model: group.model };
+    expect((await run(source, route)).request.provider).toBe('glm');
+    expect(await manager.activate(group)).toMatchObject({ runtimeRepairs: ['assembly-route'] });
+    const patched = await readFile(file, 'utf8');
+    expect(await run(patched, route)).toEqual({ request: route, assembly: { variables: route, memory: 'preserved' } });
+    expect((await run(patched, undefined)).request.provider).toBe('glm');
+    expect(await manager.activate(group)).toMatchObject({ runtimeRepairs: [] });
+  });
+
   it('pins an explicitly selected displayed model when the resumed agent still uses a different provider', async () => {
     const { manager, profile } = await fixture();
     const channel = join(profile, 'node_modules/@deepseek-harness-tui/dsh-tui/lib/types/dsh-adapter/channel');
