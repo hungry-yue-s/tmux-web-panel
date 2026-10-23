@@ -9,13 +9,14 @@ function setup({ width = 390, height = 844, landscape = false } = {}) {
   win = new JSDOM('<textarea></textarea><button>菜单</button>', { runScripts: 'outside-only', pretendToBeVisual: true }).window;
   Object.defineProperty(win, 'innerWidth', { value: width, configurable: true });
   Object.defineProperty(win, 'innerHeight', { value: height, configurable: true });
-  win.matchMedia = () => ({ matches: landscape });
+  const media = { matches: landscape };
+  win.matchMedia = () => media;
   const viewport = new win.EventTarget();
   viewport.height = height;
   viewport.offsetTop = 0;
   win.visualViewport = viewport;
   win.eval(source);
-  return { root: win.document.documentElement, viewport, ui: win.MobileUI };
+  return { root: win.document.documentElement, viewport, ui: win.MobileUI, media };
 }
 
 describe('mobile workspace viewport', () => {
@@ -45,6 +46,37 @@ describe('mobile workspace viewport', () => {
     viewport.offsetTop = 0;
     viewport.dispatchEvent(new win.Event('resize'));
     expect(root.style.getPropertyValue('--mobile-viewport-height')).toBe('844px');
+  });
+
+  it('detects keyboards that resize both viewports and restores navigation on dismissal', () => {
+    const { root, viewport } = setup();
+    win.document.querySelector('textarea').focus();
+    Object.defineProperty(win, 'innerHeight', { value: 420, configurable: true });
+    viewport.height = 420;
+    win.dispatchEvent(new win.Event('resize'));
+    expect(root.classList.contains('mobile-keyboard-open')).toBe(true);
+    expect(root.style.getPropertyValue('--mobile-viewport-height')).toBe('420px');
+    // Android's back button may dismiss the keyboard without blurring the editor.
+    Object.defineProperty(win, 'innerHeight', { value: 844, configurable: true });
+    viewport.height = 844;
+    viewport.dispatchEvent(new win.Event('resize'));
+    expect(win.document.activeElement.tagName).toBe('TEXTAREA');
+    expect(root.classList.contains('mobile-keyboard-open')).toBe(false);
+  });
+
+  it('uses a fresh height after rotation rather than the previous portrait baseline', () => {
+    const { root, viewport, ui, media } = setup();
+    win.document.querySelector('textarea').focus();
+    Object.defineProperty(win, 'innerWidth', { value: 844, configurable: true });
+    Object.defineProperty(win, 'innerHeight', { value: 390, configurable: true });
+    media.matches = true;
+    viewport.height = 390;
+    ui.syncViewport();
+    expect(root.classList.contains('mobile-keyboard-open')).toBe(false);
+    Object.defineProperty(win, 'innerHeight', { value: 230, configurable: true });
+    viewport.height = 230;
+    ui.syncViewport();
+    expect(root.classList.contains('mobile-keyboard-open')).toBe(true);
   });
 
   it('keeps host controls available when crossing between phone and desktop layouts', () => {

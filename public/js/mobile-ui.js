@@ -1,5 +1,7 @@
 (function (global) {
   var landscape = global.matchMedia && global.matchMedia('(pointer: coarse) and (max-height: 560px) and (max-width: 1023px)');
+  var viewportWidth = global.innerWidth;
+  var expandedHeight = global.innerHeight;
   var MobileUI = {
     isMobile: function () { return global.innerWidth < 768 || !!(landscape && landscape.matches); },
     syncViewport: function () {
@@ -11,8 +13,15 @@
       }
       var focused = global.document.activeElement;
       var editing = focused && focused.matches('input,textarea,[contenteditable="true"]');
+      // Some keyboards resize both viewports, leaving innerHeight === viewport.height.
+      // A width change starts a fresh baseline so rotation does not look like an IME.
+      if (viewportWidth !== global.innerWidth) {
+        viewportWidth = global.innerWidth;
+        expandedHeight = global.innerHeight;
+      }
+      expandedHeight = Math.max(expandedHeight, global.innerHeight);
       root.classList.toggle('mobile-layout', mobile);
-      root.classList.toggle('mobile-keyboard-open', !!(mobile && viewport && editing && global.innerHeight - viewport.height > 120));
+      root.classList.toggle('mobile-keyboard-open', !!(mobile && viewport && editing && expandedHeight - viewport.height > 120));
       root.style.setProperty('--mobile-viewport-height', (viewport ? viewport.height : global.innerHeight) + 'px');
       root.style.setProperty('--mobile-viewport-top', (viewport ? viewport.offsetTop : 0) + 'px');
     },
