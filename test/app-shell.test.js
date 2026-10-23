@@ -885,7 +885,7 @@ describe('AppShell mobile workspace sheet', () => {
     expect(ctx.document.querySelector('#ms-mobile-tools .terminal-refresh-btn')).toBe(tool);
   });
 
-  it('keeps navigation available on settings without terminal controls', () => {
+  it('keeps sessions and server switching on settings without duplicate primary navigation', () => {
     const ctx = loadShell();
     Object.defineProperty(ctx.win, 'innerWidth', { value: 375, configurable: true });
     seedLocalTmux(ctx.Store);
@@ -898,12 +898,19 @@ describe('AppShell mobile workspace sheet', () => {
     const sheet = ctx.document.getElementById('ms-mobile-workspace-sheet');
     expect(sheet).not.toBeNull();
     expect(sheet.classList.contains('has-terminal')).toBe(false);
-    expect(sheet.querySelectorAll('.mobile-menu-nav button')).toHaveLength(4);
-    expect(sheet.querySelector('[data-route="#/settings"]')).not.toBeNull();
+    expect(sheet.querySelector('.mobile-menu-nav')).toBeNull();
+    expect(sheet.querySelector('[data-route="#/settings"]')).toBeNull();
+    expect(sheet.querySelector('[data-route="#/servers"]')).toBeNull();
+    expect(sheet.querySelector('[data-action="notifications"]')).toBeNull();
+    expect(sheet.querySelector('[data-terminal-home]')).toBeNull();
+    expect(sheet.querySelector('#ms-mobile-workspace-tree')).not.toBeNull();
+    expect(sheet.querySelector('[data-action="mobile-server"]')).not.toBeNull();
     expect(ctx.document.querySelector('.mobile-workspace-trigger').hidden).toBe(false);
     ctx.Shell.closeMobileWorkspaceSheet();
     ctx.Shell.openMobileWorkspaceSheet();
-    expect(ctx.document.querySelector('.mobile-menu-nav [data-terminal-home]').dataset.route).toBe('#/terminal/local');
+    const reopened = ctx.document.getElementById('ms-mobile-workspace-sheet');
+    expect(reopened.querySelector('.mobile-menu-nav')).toBeNull();
+    expect(reopened.querySelector('[data-action="mobile-server"]')).not.toBeNull();
   });
 });
 

@@ -109,9 +109,6 @@
   .ms-mobile-workspace-head strong { font-size:20px; letter-spacing:-.03em; }
   .ms-mobile-workspace-head small { display:block; margin-top:2px; color:var(--workspace-muted); font-size:12px; }
   .ms-mobile-workspace-head .icon-btn { width:44px; height:44px; border-radius:50%; background:var(--workspace-hover); font-size:24px; }
-  .mobile-menu-nav { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:4px; margin:0 0 12px; }
-  .mobile-menu-nav .ms-btn { min-width:0; min-height:44px; padding:4px; font-size:12px; border-radius:10px; background:none; color:var(--workspace-muted); border:1px solid var(--workspace-line); }
-  .mobile-menu-nav .ms-btn.active { background:var(--workspace-hover); color:var(--workspace-accent); border-color:var(--workspace-accent); }
   .ms-mobile-workspace-tree { min-height:80px; padding-bottom:8px; }
   .ms-mobile-workspace-tree .tree { display:grid; gap:12px; }
   .ms-mobile-workspace-tree .tree-session-group { padding:8px; border:1px solid var(--workspace-line); border-radius:16px; background:var(--workspace-panel); }

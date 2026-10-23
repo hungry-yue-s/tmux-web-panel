@@ -445,7 +445,7 @@
       }
 
       trigger.title = subtitle.textContent + ' / ' + title.textContent;
-      trigger.setAttribute('aria-label', trigger.title + ' · 工作区与导航菜单');
+      trigger.setAttribute('aria-label', trigger.title + ' · 会话与窗口菜单');
 
       global.document.querySelectorAll('[data-terminal-home]').forEach(function (home) {
         home.dataset.route = global.Router.serialize({ name: 'terminal', params: { serverId: serverId } });
@@ -520,16 +520,11 @@
       sheet.className = 'ms-mobile-workspace-sheet';
       sheet.setAttribute('role', 'dialog');
       sheet.setAttribute('aria-modal', 'true');
-      sheet.setAttribute('aria-label', '工作区与导航菜单');
+      sheet.setAttribute('aria-label', '会话与窗口');
       sheet.innerHTML = '<div class="ms-mobile-workspace-head">'
         + '<div><strong>会话与窗口</strong><small>选择窗口，继续工作</small></div>'
         + '<button class="icon-btn" data-action="mobile-workspace-close" aria-label="关闭菜单">×</button>'
-        + '</div><nav class="mobile-menu-nav" aria-label="主导航">'
-        + '<button class="ms-btn" data-route="' + esc(global.Router.serialize({ name: 'terminal', params: { serverId: this.activeServerId() } })) + '" data-terminal-home>工作区</button>'
-        + '<button class="ms-btn" data-route="#/servers">状态</button>'
-        + '<button class="ms-btn" data-action="notifications">通知</button>'
-        + '<button class="ms-btn" data-route="#/settings">设置</button>'
-        + '</nav><div id="ms-mobile-workspace-tree" class="ms-mobile-workspace-tree"></div>'
+        + '</div><div id="ms-mobile-workspace-tree" class="ms-mobile-workspace-tree"></div>'
         + '<div id="ms-mobile-workspace-tools" class="ms-mobile-workspace-tools"></div>'
         + '<button class="ms-btn mobile-menu-server" data-action="mobile-server">切换服务器 · '
         + esc((this.server(this.activeServerId()) || {}).name || this.activeServerId()) + '</button>';
@@ -627,7 +622,7 @@
     /** Marks the active top-level entry, matching the demo's rules. */
     _syncNav: function (route) {
       var name = route && route.name ? route.name : 'terminal';
-      var nodes = global.document.querySelectorAll('.sidebar-footer [data-route], .mobile-menu-nav [data-route], .mobile-dock [data-route]');
+      var nodes = global.document.querySelectorAll('.sidebar-footer [data-route], .mobile-dock [data-route]');
       for (var i = 0; i < nodes.length; i += 1) {
         var target = nodes[i].dataset.route || '';
         var isActive = false;

@@ -8402,19 +8402,6 @@ button.list-row:hover {
   .mobile-pane-strip .pane-pills[data-count="1"] .pane-pill { flex-basis: 100%; }
 }
 
-/* All mobile destinations live in the header menu. */
-.mobile-menu-nav {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  padding: 8px 0 12px;
-}
-.mobile-menu-nav .ms-btn { min-height: 44px; justify-content: center; }
-.mobile-menu-nav .active {
-  color: var(--accent-blue);
-  border-color: var(--accent-blue);
-  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
-}
 .ms-mobile-workspace-sheet:not(.has-terminal) .ms-mobile-workspace-tools,
 .ms-mobile-workspace-tree:empty { display: none; }
 
