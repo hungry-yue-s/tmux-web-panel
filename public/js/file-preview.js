@@ -362,7 +362,7 @@ var FilePreview = (function () {
   function _capturePreviewScroll(body) {
     var selectors = [
       '.fp-md-wrap', '.fp-code-wrap', '.fp-code-wrap pre > code',
-      '.fp-image-wrap', '.fp-xlsx-wrap', '.fp-dir-wrap',
+      '.fp-image-wrap', '.fp-xlsx-wrap', '.fp-dir-wrap', '.fp-dir-list',
     ];
     var state = [{ selector: null, top: body.scrollTop, left: body.scrollLeft }];
     selectors.forEach(function (selector) {
@@ -432,7 +432,6 @@ var FilePreview = (function () {
     var body = _overlay.querySelector('.fp-body');
     if (!body) return Promise.resolve(false);
     var button = _refreshButton;
-    var scroll = _capturePreviewScroll(body);
     var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
     var qs = '?path=' + encodeURIComponent(fileAtStart.absPath);
     if (_currentPaneId) qs += '&paneId=' + encodeURIComponent(_currentPaneId);
@@ -466,7 +465,6 @@ var FilePreview = (function () {
         })).then(function () {
           if (!_isPreviewRequestCurrent(requestId, body, fileAtStart, pathAtStart)) return false;
           _saveActiveDockTab();
-          _restorePreviewScroll(body, scroll);
           return true;
         });
       })
@@ -3857,12 +3855,14 @@ var FilePreview = (function () {
 
     function commit(next, mode) {
       if (!isCurrent()) return false;
+      var scroll = options.reuseCurrent ? _capturePreviewScroll(body) : null;
       _replacePreviewBody(body, renderedBody);
       if (options.reuseCurrent && expectedFile) Object.assign(expectedFile, next);
       else _currentFile = next;
       _previewReady = true;
       _applyMode(mode);
       _setPreviewTitle(next.absPath);
+      if (scroll) _restorePreviewScroll(body, scroll);
       return true;
     }
 

@@ -1589,6 +1589,39 @@ describe('file preview dock tabs', () => {
     expect(live.dom.window.document.querySelectorAll('.fp-dir-size')[2].textContent).toBe('99 B');
   });
 
+  it.each([false, true])('preserves the latest directory list scroll during refresh (docked: %s)', async (docked) => {
+    const live = createDirectoryPreview();
+    await live.preview.openFile('/root', '%1');
+    if (docked) dockCurrent(live.dom);
+    const doc = live.dom.window.document;
+
+    for (const force of [false, true]) {
+      const list = doc.querySelector('.fp-dir-list');
+      list.scrollTop = 120;
+      live.holdNextRootList();
+      const refresh = live.preview._test.refreshCurrent(force);
+      await flush();
+      expect(list.isConnected).toBe(true);
+
+      // Scrolling while the response is pending must survive the DOM replacement.
+      list.scrollTop = 360;
+      list.scrollLeft = 24;
+      live.releaseRootList({
+        absPath: '/root', parent: '/', truncated: false, totalCount: 1,
+        entries: [{ name: 'updated.txt', type: 'file', size: 99, mtime: 3000 }],
+      });
+      expect(await refresh).toBe(true);
+
+      const refreshedList = doc.querySelector('.fp-dir-list');
+      expect(refreshedList).not.toBe(list);
+      expect(refreshedList.textContent).toContain('updated.txt');
+      expect(refreshedList.scrollTop).toBe(360);
+      expect(refreshedList.scrollLeft).toBe(24);
+    }
+    live.preview.close();
+    live.dom.window.close();
+  });
+
   it('discards an old directory refresh after navigating to a child', async () => {
     const live = createDirectoryPreview();
     live.preview.openFile('/root', '%1');
