@@ -171,6 +171,8 @@
   .ms-app .pp-wt-drill { grid-column:1/-1; overflow:auto; }
   .ms-app .pp-wt-cpu-val { font-size:14px; }
   .ms-app .ah-source-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+  .ms-app .agent-hub { grid-template-columns:minmax(0,1fr); min-width:0; max-width:100%; overflow-wrap:anywhere; }
+  .ms-app .agent-hub>*,.ms-app .agent-hub section>* { min-width:0; max-width:100%; }
   .ms-app .ah-source-card { padding:12px; border-radius:16px; box-shadow:none; }
   .ms-app .ah-source-head { grid-template-columns:minmax(0,1fr) auto; gap:8px; margin-bottom:12px; }
   .ms-app .ah-source-head .ah-agent-mark { display:none; }
@@ -183,10 +185,24 @@
   .ms-app .ah-profile-grid,.ms-app .ah-managed-models,.ms-app .ah-usage-grid { grid-template-columns:minmax(0,1fr); }
   .ms-app .ah-current-profile { grid-template-columns:minmax(0,1fr); gap:12px; }
   .ms-app .ah-current-next { min-width:0; padding:12px 0 0; border-left:0; border-top:1px solid var(--workspace-line); }
+  .ms-app .ah-current-profile>div,.ms-app .ah-card-route { min-width:0; }
+  .ms-app .ah-current-profile strong,.ms-app .ah-card-route strong,.ms-app .ah-capability-note { overflow-wrap:anywhere; }
+  .ms-app .ah-card-route { grid-template-columns:auto minmax(0,1fr); }
   .ms-app .ah-profile-card,.ms-app .ah-usage-card { padding:16px; box-shadow:none; }
-  .ms-app .ah-activity-row { grid-template-columns:minmax(0,1fr) auto; min-height:64px; }
+  .ms-app .ah-activity-row { grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); min-height:64px; }
+  .ms-app .ah-session-profile { min-width:0; overflow-wrap:anywhere; }
   .ms-app .ah-activity-row>span:not(.ah-session-profile),.ms-app .ah-activity-row time { display:none; }
   .ms-app .ah-card-controls { gap:8px; }
+  .ms-app .ah-model-usage { min-width:0; overflow:visible; }
+  .ms-app .ah-model-usage table { display:block; width:100%; }
+  .ms-app .ah-model-usage caption { display:block; font-size:12px; }
+  .ms-app .ah-model-usage thead { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+  .ms-app .ah-model-usage tbody { display:grid; gap:12px; }
+  .ms-app .ah-model-usage tbody tr { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; padding:16px; border:1px solid var(--workspace-line); border-radius:16px; background:var(--workspace-panel); }
+  .ms-app .ah-model-usage th,.ms-app .ah-model-usage td { min-width:0; padding:0; border:0; white-space:normal; overflow-wrap:anywhere; text-align:left; }
+  .ms-app .ah-model-usage tbody th { grid-column:1/-1; font-size:14px; font-weight:600; }
+  .ms-app .ah-model-usage td { font-size:14px; }
+  .ms-app .ah-model-usage td::before { display:block; margin-bottom:4px; content:attr(data-label); color:var(--workspace-muted); font:12px/1.5 -apple-system,BlinkMacSystemFont,sans-serif; }
   .ms-app .ms-btn,.ms-app .ms-btn.compact,.ms-app .ah-link-button { min-height:44px; }
   .ms-app .intro h2 { font-size:28px; letter-spacing:-.03em; }
   .ms-app .intro p { font-size:13px; line-height:1.7; }
@@ -200,9 +216,6 @@
   .ms-popover { max-width:calc(100vw - 24px); max-height:calc(var(--mobile-viewport-height,100dvh) - 80px); overflow:auto; }
   .ms-app :is(button,summary):focus-visible,.mobile-settings-nav button:focus-visible,.ms-mobile-workspace-sheet :is(button,summary):focus-visible { outline:2px solid var(--workspace-accent); outline-offset:2px; }
   .ms-toast { max-width:calc(100vw - 32px); bottom:calc(80px + env(safe-area-inset-bottom,0px)); }
-  .cmd-palette-overlay { padding:max(12px,env(safe-area-inset-top,0px)) 12px 12px; }
-  .cmd-palette-modal { max-height:calc(var(--mobile-viewport-height,100dvh) - 24px); }
-  .cmd-palette-item,.cmd-palette-close { min-height:44px; }
   .notification-panel.notification-mobile-sheet {
     inset:auto max(8px,env(safe-area-inset-right,0px)) calc(100dvh - var(--mobile-viewport-height,100dvh) - var(--mobile-viewport-top,0px) + max(8px,env(safe-area-inset-bottom,0px))) max(8px,env(safe-area-inset-left,0px))!important;
     width:auto; max-width:none; height:auto; max-height:min(75dvh,calc(var(--mobile-viewport-height,100dvh) - 48px));
@@ -215,6 +228,39 @@
   .notification-mobile-sheet .notification-clear-btn { min-height:44px; }
   .notification-sheet-overlay { position:fixed; inset:0; z-index:999; background:#0006; }
 }
+/* Search stays inside the visible viewport when an IME or a landscape phone
+   makes it shorter; only the results scroll. */
+.cmd-palette-overlay.cmd-palette-is-mobile {
+  top:var(--mobile-viewport-top,0px); bottom:auto; height:var(--mobile-viewport-height,100dvh);
+  padding:max(12px,env(safe-area-inset-top,0px)) max(12px,env(safe-area-inset-right,0px)) max(12px,env(safe-area-inset-bottom,0px)) max(12px,env(safe-area-inset-left,0px));
+  align-items:stretch;
+}
+.cmd-palette-is-mobile .cmd-palette-modal {
+  width:100%; max-width:480px; height:100%; max-height:100%; min-height:0; margin:0 auto; padding:0;
+  align-self:stretch; border-radius:24px; background:var(--workspace-bg); box-shadow:0 16px 64px #0003;
+}
+.cmd-palette-is-mobile .cmd-palette-heading { display:flex; flex-direction:column; gap:6px; padding:24px 20px 16px; }
+.cmd-palette-is-mobile .cmd-palette-heading strong { font-size:24px; line-height:1.25; font-weight:600; letter-spacing:-.04em; }
+.cmd-palette-is-mobile .cmd-palette-heading span { color:var(--workspace-muted); font-size:12px; }
+.cmd-palette-is-mobile .cmd-palette-input-wrap { flex:none; padding:0 12px 16px 16px; gap:4px; border:0; min-height:0; }
+.cmd-palette-is-mobile .cmd-palette-search-field { min-height:48px; padding:0 12px; gap:8px; border:1px solid var(--workspace-line-strong); border-radius:14px; background:var(--workspace-panel); }
+.cmd-palette-is-mobile .cmd-palette-search-field:focus-within { border-color:var(--workspace-accent); box-shadow:0 0 0 1px var(--workspace-accent); }
+.cmd-palette-is-mobile .cmd-palette-input { width:100%; padding:12px 0; font-size:16px; }
+.cmd-palette-is-mobile .cmd-palette-input:focus-visible { outline:none; }
+.cmd-palette-is-mobile .cmd-palette-clear { width:44px; height:44px; flex-basis:44px; border-radius:8px; background:none; }
+.cmd-palette-is-mobile .cmd-palette-close { flex:0 0 48px; min-height:48px; padding:0 4px; border:0; border-radius:12px; color:var(--workspace-accent); font-size:14px; }
+.cmd-palette-is-mobile .cmd-palette-status { flex:none; border-top:1px solid var(--workspace-line); padding:14px 20px 8px; font-size:12px; }
+.cmd-palette-is-mobile .cmd-palette-results { padding:0 8px 8px; scrollbar-gutter:stable; }
+.cmd-palette-is-mobile .cmd-palette-item { gap:12px; min-height:76px; margin:0; padding:12px; border-radius:16px; }
+.cmd-palette-is-mobile .cmd-palette-item-icon { flex:none; align-items:center; justify-content:center; width:36px; height:40px; border-radius:12px; background:var(--workspace-panel); color:var(--workspace-accent); }
+.cmd-palette-is-mobile .cmd-palette-item-icon svg { width:18px; height:18px; }
+.cmd-palette-is-mobile .cmd-palette-item-body { display:grid; gap:4px; }
+.cmd-palette-is-mobile .cmd-palette-item-name { display:block; font-size:15px; font-weight:550; line-height:1.4; }
+.cmd-palette-is-mobile .cmd-palette-item-meta { min-width:0; max-width:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.cmd-palette-is-mobile .cmd-palette-item-kind { display:block; flex:none; color:var(--workspace-muted); font-size:11px; }
+.cmd-palette-is-mobile .cmd-palette-item-active { box-shadow:none; background:var(--workspace-hover); }
+.cmd-palette-is-mobile .cmd-palette-footer { display:none; }
+/* Keep the header geometry stable when Cancel takes focus from the IME. */
 /* A phone keyboard can make portrait viewports short; only wide viewports use this rail. */
 @media (pointer:coarse) and (min-width:768px) and (max-height:560px) and (max-width:1023px) {
   html { --mobile-nav-height:0px; --mobile-nav-occupied-height:0px; }

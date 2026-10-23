@@ -785,7 +785,15 @@
     showServerPicker: function (anchor) {
       this.closeMobileWorkspaceSheet({ restoreFocus: false });
       var popover = el('ms-server-popover');
-      if (!popover) return;
+      if (!popover || !anchor) return;
+      if (!popover.hidden && this._serverPickerAnchor === anchor) {
+        this.hideServerPicker();
+        return;
+      }
+      if (global.NotificationPanel && global.NotificationPanel.close) global.NotificationPanel.close();
+      if (this._serverPickerAnchor) this._serverPickerAnchor.setAttribute('aria-expanded', 'false');
+      this._serverPickerAnchor = anchor;
+      anchor.setAttribute('aria-expanded', 'true');
       var self = this;
       popover.innerHTML = '<div class="ms-popover-title">选择服务器</div>'
         + this.servers().map(function (server) {
@@ -808,14 +816,21 @@
         + '<div style="padding:7px 8px 2px"><button class="ms-btn" style="width:100%" data-route="#/servers">状态</button></div>';
 
       var rect = anchor.getBoundingClientRect();
-      popover.style.left = Math.min(rect.left, global.innerWidth - 318) + 'px';
-      popover.style.top = (rect.bottom + 6) + 'px';
       popover.hidden = false;
+      popover.style.maxHeight = mobileLayout() ? '' : Math.min(420, global.innerHeight - 24) + 'px';
+      var size = popover.getBoundingClientRect();
+      var width = size.width || 306;
+      var top = rect.bottom + 6;
+      if (top + size.height > global.innerHeight - 12) top = rect.top - size.height - 6;
+      popover.style.left = Math.max(12, Math.min(rect.left, global.innerWidth - width - 12)) + 'px';
+      popover.style.top = Math.max(12, Math.min(top, global.innerHeight - size.height - 12)) + 'px';
     },
 
     hideServerPicker: function () {
       var popover = el('ms-server-popover');
       if (popover) popover.hidden = true;
+      if (this._serverPickerAnchor) this._serverPickerAnchor.setAttribute('aria-expanded', 'false');
+      this._serverPickerAnchor = null;
     },
 
     setSidebarCollapsed: function (collapsed) {
@@ -865,7 +880,7 @@
         pendingTitlebar = false;
         var rect = chrome.getBoundingClientRect();
         var controls = Array.from(chrome.querySelectorAll('button,a,input,select,textarea,summary,[role="button"],[contenteditable="true"]'));
-        var covered = global.document.querySelector('.fp-overlay:not(.fp-side),.fp-side-maximized,.fp-mermaid-dialog,.fp-share-overlay,.cmd-palette-overlay,.modal-overlay,.ms-modal-backdrop:not([hidden])');
+        var covered = global.document.querySelector('.fp-overlay:not(.fp-side),.fp-side-maximized,.fp-mermaid-dialog,.fp-share-overlay,.cmd-palette-overlay,.modal-overlay,.ms-modal-backdrop:not([hidden]),.notification-panel,#ms-server-popover:not([hidden])');
         var height = covered ? 0 : rect.height;
         var payload = {
           action: 'titlebarDragRegions', height: height, viewportWidth: global.innerWidth,

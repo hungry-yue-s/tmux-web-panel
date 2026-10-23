@@ -782,6 +782,7 @@
 
       global.document.addEventListener('keydown', (event) => {
         if (event.key !== 'Escape') return;
+        global.AppShell.hideServerPicker();
         const menu = global.document.getElementById('ms-sidebar-context-menu');
         if (!menu || menu.hidden) return;
         event.preventDefault();
@@ -790,6 +791,7 @@
       global.document.addEventListener('scroll', () => this._hideSidebarContextMenu(), true);
       global.addEventListener('resize', () => {
         this._hideSidebarContextMenu();
+        global.AppShell.hideServerPicker();
         if (!(global.MobileUI ? global.MobileUI.isMobile() : global.innerWidth < 768)) global.AppShell.closeMobileWorkspaceSheet({ restoreFocus: false });
       });
 
@@ -829,7 +831,7 @@
       });
     },
 
-    async _handleAction(action, node) {
+    async _handleAction(action, node, event) {
       const row = node.closest('[data-sidebar-entity]');
       const serverId = node.dataset.serverId || (row && row.dataset.serverId) || global.AppShell.activeServerId();
       const entityContext = {
@@ -888,7 +890,8 @@
       }
       if (action === 'notifications') {
         global.AppShell.closeMobileWorkspaceSheet({ restoreFocus: false });
-        if (global.NotificationPanel) global.NotificationPanel.render();
+        global.AppShell.hideServerPicker();
+        if (global.NotificationPanel) global.NotificationPanel.render(event, node);
         return;
       }
       if (action === 'probe') {

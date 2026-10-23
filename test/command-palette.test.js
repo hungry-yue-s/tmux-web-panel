@@ -31,6 +31,34 @@ function search(win, doc, value) {
 }
 
 describe('command palette destinations and focus', () => {
+  it('provides mobile result hierarchy, a touch cancel action and a keyboard-accessible clear action', () => {
+    const { win, doc, palette } = setup();
+    win.MobileUI = { isMobile: () => true };
+    win.eval(router); win.eval(store);
+    win.Store.setServers([{ id: 'local', name: '本机' }]);
+    win.Store.setWorkspace('local', { sessions: [{ id: '$0', name: '产品开发', windows: [
+      { id: '@1', name: '构建任务', panes: [{ id: '%1', command: 'npm' }] },
+    ] }] });
+    palette.open(doc.getElementById('opener'));
+    expect(doc.querySelector('.cmd-palette-is-mobile')).not.toBeNull();
+    expect(doc.querySelector('.cmd-palette-close').textContent).toBe('取消');
+    expect(doc.querySelector('.cmd-palette-footer').textContent).not.toContain('Esc');
+    const input = search(win, doc, '构建');
+    expect(doc.querySelector('.cmd-palette-item-name').textContent).toBe('构建任务');
+    expect(doc.querySelector('.cmd-palette-item-meta').textContent).toContain('本机 / 产品开发');
+    expect(doc.querySelector('.cmd-palette-item-kind').textContent).toBe('窗口');
+    key(win, input, 'Tab');
+    expect(doc.activeElement).toBe(doc.querySelector('.cmd-palette-clear'));
+    key(win, doc.activeElement, 'Tab');
+    expect(doc.activeElement).toBe(doc.querySelector('.cmd-palette-close'));
+    doc.querySelector('.cmd-palette-clear').click();
+    expect(input.value).toBe('');
+    expect(doc.activeElement).toBe(input);
+    expect(doc.querySelector('.cmd-palette-clear').hidden).toBe(true);
+    doc.querySelector('.cmd-palette-close').click();
+    expect(palette.isOpen()).toBe(false);
+  });
+
   it('searches cached cross-server windows, ranks live recents, navigates stable IDs and traps/restores focus', () => {
     const { win, doc, palette } = setup();
     win.eval(router);

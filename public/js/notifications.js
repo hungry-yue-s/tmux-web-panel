@@ -138,6 +138,30 @@ var NotificationPanel = (function () {
   }
 
   var _closeHandler = null;
+  var _closeTimer = null;
+  var _anchor = null;
+
+  function _closePanel() {
+    var panel = document.getElementById('notification-panel');
+    var overlay = document.getElementById('notification-sheet-overlay');
+    if (panel) panel.remove();
+    if (overlay) overlay.remove();
+    if (_anchor) _anchor.setAttribute('aria-expanded', 'false');
+    _anchor = null;
+    _isOpen = false;
+    clearTimeout(_closeTimer);
+    if (_closeHandler) document.removeEventListener('click', _closeHandler);
+    _closeHandler = null;
+    document.removeEventListener('keydown', _onKeydown);
+    window.removeEventListener('resize', _closePanel);
+  }
+
+  function _onKeydown(event) {
+    if (event.key !== 'Escape') return;
+    var anchor = _anchor;
+    _closePanel();
+    if (anchor && anchor.isConnected) anchor.focus({ preventScroll: true });
+  }
 
   function _notificationText(n) {
     if (n.type !== 'agent-event') {
@@ -163,7 +187,7 @@ var NotificationPanel = (function () {
     if (panel) _renderInto(panel, false);
   }
 
-  function render(event) {
+  function render(event, anchor) {
     // Stop the click from propagating to the document close handler
     if (event && event.stopPropagation) event.stopPropagation();
 
@@ -171,11 +195,8 @@ var NotificationPanel = (function () {
     if (isMobile) {
       // Mobile: bottom sheet with overlay
       var existing = document.getElementById('notification-panel');
-      var existingOverlay = document.getElementById('notification-sheet-overlay');
       if (existing) {
-        existing.remove();
-        if (existingOverlay) existingOverlay.remove();
-        _isOpen = false;
+        _closePanel();
         return;
       }
 
@@ -192,22 +213,12 @@ var NotificationPanel = (function () {
       document.body.appendChild(panel);
       _isOpen = true;
 
-      var closeSheet = function () {
-        panel.remove();
-        overlay.remove();
-        _isOpen = false;
-      };
-      overlay.addEventListener('click', closeSheet);
+      overlay.addEventListener('click', _closePanel);
     } else {
       // Toggle: if already open, close it
       var existing = document.getElementById('notification-panel');
       if (existing) {
-        existing.remove();
-        _isOpen = false;
-        if (_closeHandler) {
-          document.removeEventListener('click', _closeHandler);
-          _closeHandler = null;
-        }
+        _closePanel();
         return;
       }
 
@@ -218,34 +229,37 @@ var NotificationPanel = (function () {
       document.body.appendChild(panel);
 
       // Position below the bell icon that was clicked
-      var bell = (event && event.currentTarget) ||
-        document.querySelector('#sidebar .notification-bell') ||
-        document.querySelector('.notification-bell');
+      var bell = anchor || (event && event.currentTarget);
+      if (!bell || typeof bell.getBoundingClientRect !== 'function') {
+        bell = Array.from(document.querySelectorAll('.workspace-notification,.notification-bell,[data-action="notifications"]'))
+          .find(function (button) { return button.getClientRects().length > 0; });
+      }
       if (bell) {
         var rect = bell.getBoundingClientRect();
-        panel.style.top = (rect.bottom + 4) + 'px';
-        // Align left edge with bell, but clamp to viewport
-        var left = rect.left;
-        if (left + 320 > window.innerWidth) left = window.innerWidth - 324;
-        if (left < 4) left = 4;
+        var size = panel.getBoundingClientRect();
+        var width = size.width || Math.min(360, window.innerWidth - 24);
+        var height = size.height;
+        var top = rect.bottom + 4;
+        if (top + height > window.innerHeight - 12) top = (rect.top || 0) - height - 4;
+        panel.style.top = Math.max(12, Math.min(top, window.innerHeight - height - 12)) + 'px';
+        var left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
         panel.style.left = left + 'px';
         panel.style.right = 'auto';
+        _anchor = bell;
+        bell.setAttribute('aria-expanded', 'true');
       }
 
       _isOpen = true;
 
       // Close on outside click (delay to avoid catching current click)
       _closeHandler = function (e) {
-        if (!panel.contains(e.target) && !e.target.closest('.notification-bell')) {
-          panel.remove();
-          _isOpen = false;
-          document.removeEventListener('click', _closeHandler);
-          _closeHandler = null;
-        }
+        if (!panel.contains(e.target) && !(_anchor && _anchor.contains(e.target))) _closePanel();
       };
-      setTimeout(function () {
+      _closeTimer = setTimeout(function () {
         document.addEventListener('click', _closeHandler);
       }, 10);
+      document.addEventListener('keydown', _onKeydown);
+      window.addEventListener('resize', _closePanel);
     }
   }
 
@@ -254,13 +268,13 @@ var NotificationPanel = (function () {
     if (isMobile) {
       html += '<div class="notification-mobile-header">';
       html += '<button class="notification-back-btn" onclick="navigate(\'windows\')">&larr; 通知</button>';
-      html += '<button class="notification-clear-btn" onclick="NotificationPanel.clearAll()">全部清除</button>';
+      html += '<button type="button" class="notification-clear-btn">全部清除</button>';
       html += '</div>';
     } else {
       html += '<div class="notification-panel-header">';
       html += '<span class="notification-panel-title"><svg class="notification-title-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg> 通知 <span class="notification-bell-count" style="' +
         (unreadCount() > 0 ? '' : 'display:none') + '">' + unreadCount() + '</span></span>';
-      html += '<button class="notification-clear-btn" onclick="NotificationPanel.clearAll()">全部清除</button>';
+      html += '<button type="button" class="notification-clear-btn">全部清除</button>';
       html += '</div>';
     }
 
@@ -289,6 +303,12 @@ var NotificationPanel = (function () {
     }
 
     container.innerHTML = html;
+    container.querySelector('.notification-clear-btn').addEventListener('click', function (event) {
+      // Rerender replaces the clicked node. Keep the outside-click listener
+      // from mistaking that detached target for a click outside the panel.
+      event.stopPropagation();
+      clearAll();
+    });
 
     container.querySelectorAll('.notification-item').forEach(function (el) {
       el.addEventListener('click', function () {
@@ -299,8 +319,7 @@ var NotificationPanel = (function () {
         if (typeof navigate === 'function' && winIdx !== '' && winIdx !== null) {
           navigate('terminal', { currentSession: sess, currentWindow: winIdx, currentPane: null });
         }
-        var panel = document.getElementById('notification-panel');
-        if (panel) { panel.remove(); _isOpen = false; }
+        _closePanel();
       });
     });
   }
@@ -358,6 +377,7 @@ var NotificationPanel = (function () {
     clearAll: clearAll,
     unreadCount: unreadCount,
     render: render,
+    close: _closePanel,
     updateBadge: _updateBadge,
     handleServerPush: handleServerPush,
     refresh: _fetchAll,

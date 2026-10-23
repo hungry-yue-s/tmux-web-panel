@@ -11,6 +11,49 @@ afterEach(() => {
 });
 
 describe('notification viewport layout', () => {
+  it('anchors delegated desktop clicks to the actual toolbar and keeps clear-all clickable after rerender', async () => {
+    dom = new JSDOM('<button class="notification-bell" hidden></button><button class="workspace-notification" data-action="notifications">通知</button>', {
+      url: 'https://panel.example/', runScripts: 'outside-only',
+    });
+    const win = dom.window;
+    const bell = win.document.querySelector('.workspace-notification');
+    bell.getBoundingClientRect = () => ({ left: 980, right: 1008, top: 8, bottom: 36, width: 28, height: 28 });
+    win.api = { post: vi.fn(async () => ({})), delete: vi.fn(async () => ({})) };
+    win.eval(source);
+    win.NotificationPanel.handleServerPush([{ id: 'n1', session: 'work', windowIndex: 1, timestamp: Date.now() }]);
+    win.NotificationPanel.render({ currentTarget: win.document, stopPropagation: vi.fn() }, bell);
+    const panel = win.document.getElementById('notification-panel');
+    expect(panel.style.top).toBe('40px');
+    expect(parseFloat(panel.style.left) + 360).toBeLessThanOrEqual(win.innerWidth - 12);
+    await new Promise(resolve => win.setTimeout(resolve, 15));
+    panel.querySelector('.notification-clear-btn').click();
+    expect(win.api.delete).toHaveBeenCalledExactlyOnceWith('/api/notifications');
+    expect(win.NotificationPanel.unreadCount()).toBe(0);
+    expect(panel.isConnected).toBe(true);
+    expect(panel.textContent).toContain('暂无通知');
+    win.document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(panel.isConnected).toBe(false);
+    expect(bell.getAttribute('aria-expanded')).toBe('false');
+    expect(win.document.activeElement).toBe(bell);
+  });
+
+  it('uses a visible modern bell for shortcut opens and closes listeners on a rapid toggle', async () => {
+    dom = new JSDOM('<button class="notification-bell" hidden></button><button class="workspace-notification"></button>', {
+      url: 'https://panel.example/', runScripts: 'outside-only',
+    });
+    const win = dom.window;
+    const bell = win.document.querySelector('.workspace-notification');
+    bell.getClientRects = () => [{}];
+    bell.getBoundingClientRect = () => ({ left: 900, top: 8, bottom: 36 });
+    win.eval(source);
+    win.NotificationPanel.render();
+    expect(win.document.getElementById('notification-panel').style.top).toBe('40px');
+    win.NotificationPanel.render();
+    await new Promise(resolve => win.setTimeout(resolve, 15));
+    expect(win.document.getElementById('notification-panel')).toBeNull();
+    expect(() => win.document.body.click()).not.toThrow();
+  });
+
   it.each([
     { width: 844, mobile: true, sheet: true },
     { width: 844, mobile: false, sheet: false },

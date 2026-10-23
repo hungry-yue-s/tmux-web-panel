@@ -418,11 +418,12 @@ var AgentHub = (function () {
       var total = usage.totalTokens == null ? input + output + cache : Number(usage.totalTokens);
       return { name: entry[0], input: input, output: output, cache: cache, total: total };
     }).sort(function (a, b) { return b.total - a.total; });
-    var details = models.length ? '<div class="ah-model-usage"><table><caption>模型用量 · ' + esc(agent.usageScope || '本地历史会话')
-      + '</caption><thead><tr><th>模型</th><th>非缓存输入</th><th>输出</th><th>缓存</th><th>总 Tokens</th></tr></thead><tbody>'
+    var details = models.length ? '<div class="ah-model-usage"><table role="table"><caption>模型用量 · ' + esc(agent.usageScope || '本地历史会话')
+      + '</caption><thead><tr role="row"><th scope="col">模型</th><th scope="col">非缓存输入</th><th scope="col">输出</th><th scope="col">缓存</th><th scope="col">总 Tokens</th></tr></thead><tbody role="rowgroup">'
       + models.map(function (model) {
-        return '<tr><th scope="row">' + esc(model.name) + '</th><td>' + fmt(model.input) + '</td><td>' + fmt(model.output)
-          + '</td><td>' + fmt(model.cache) + '</td><td>' + fmt(model.total) + '</td></tr>';
+        return '<tr role="row"><th role="rowheader" scope="row">' + esc(model.name) + '</th>'
+          + '<td role="cell" data-label="非缓存输入">' + fmt(model.input) + '</td><td role="cell" data-label="输出">' + fmt(model.output)
+          + '</td><td role="cell" data-label="缓存">' + fmt(model.cache) + '</td><td role="cell" data-label="总 Tokens">' + fmt(model.total) + '</td></tr>';
       }).join('') + '</tbody></table></div>' : '<div class="ah-account-message">本地日志尚未记录 Token 明细</div>';
     return '<div class="ah-usage-grid">' + (sharedQuota ? '' : '<article class="ah-usage-card"><div class="ah-usage-title"><strong>' + (agent.id === 'qoder' && profile && !profile.configureAction ? 'Qoder 月额度' : '额度') + '</strong><span>归属当前运行身份</span></div>' + quota + '</article>')
       + '<article class="ah-usage-card"><div class="ah-usage-title"><strong>本地消耗</strong><span>' + esc(agent.usageScope || '由历史会话汇总') + '</span></div><div class="ah-consumption">'

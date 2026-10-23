@@ -450,6 +450,32 @@ describe('AppShell recent targets', () => {
 });
 
 describe('AppShell server picker', () => {
+  it('opens above a low anchor, clamps the actual width and toggles the same trigger', () => {
+    const ctx = loadShell();
+    seedLocalTmux(ctx.Store);
+    const anchor = ctx.document.querySelector('.sidebar-toggle');
+    const popover = ctx.document.getElementById('ms-server-popover');
+    anchor.getBoundingClientRect = () => ({ left: 950, top: 730, bottom: 760 });
+    popover.getBoundingClientRect = () => ({ width: 306, height: 200 });
+    ctx.Shell.showServerPicker(anchor);
+    expect(popover.hidden).toBe(false);
+    expect(popover.style.top).toBe('524px');
+    expect(popover.style.left).toBe('706px');
+    expect(anchor.getAttribute('aria-expanded')).toBe('true');
+    ctx.Shell.showServerPicker(anchor);
+    expect(popover.hidden).toBe(true);
+    expect(anchor.getAttribute('aria-expanded')).toBe('false');
+    anchor.getBoundingClientRect = () => ({ left: -20, top: 30, bottom: 60 });
+    ctx.Shell.showServerPicker(anchor);
+    expect(popover.style.left).toBe('12px');
+    expect(popover.style.top).toBe('66px');
+    ctx.Shell.hideServerPicker();
+    ctx.win.MobileUI = { isMobile: () => true };
+    ctx.Shell.showServerPicker(anchor);
+    expect(popover.style.maxHeight).toBe('');
+    ctx.win.close();
+  });
+
   it('sends an unreachable server to its connection page instead of a terminal', () => {
     const ctx = loadShell();
     ctx.Store.setServers([
@@ -909,6 +935,17 @@ describe('native titlebar drag regions', () => {
     await Promise.resolve();
     expect(messages.at(-1)).toMatchObject({ height: 0, exclusions: [] });
     overlay.remove(); await Promise.resolve();
+    expect(messages.at(-1).height).toBe(44);
+    const notification = win.document.createElement('div'); notification.className = 'notification-panel';
+    win.document.body.append(notification); await Promise.resolve();
+    expect(messages.at(-1).height).toBe(0);
+    notification.remove(); await Promise.resolve();
+    const picker = win.document.createElement('div'); picker.id = 'ms-server-popover'; picker.hidden = true;
+    win.document.body.append(picker); await Promise.resolve();
+    expect(messages.at(-1).height).toBe(44);
+    picker.hidden = false; await Promise.resolve();
+    expect(messages.at(-1).height).toBe(0);
+    picker.hidden = true; await Promise.resolve();
     expect(messages.at(-1).height).toBe(44);
     header.getBoundingClientRect = () => ({ height: 0, top: 0 });
     header.hidden = true; await Promise.resolve();

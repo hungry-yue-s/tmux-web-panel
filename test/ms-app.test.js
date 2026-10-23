@@ -553,6 +553,16 @@ function loadStatusShell({ perfPanel = null, agentHub = null, theme = null, auth
 }
 
 describe('MsApp standalone status page', () => {
+  it('forwards the clicked notification control instead of the document delegation target', async () => {
+    const ctx = loadStatusShell();
+    const button = ctx.document.createElement('button');
+    const event = { currentTarget: ctx.document, stopPropagation: vi.fn() };
+    ctx.win.NotificationPanel = { render: vi.fn() };
+    await ctx.MsApp._handleAction('notifications', button, event);
+    expect(ctx.win.NotificationPanel.render).toHaveBeenCalledWith(event, button);
+    ctx.win.close();
+  });
+
   it.each([
     ['local', 'performance'], ['local', 'agents'], ['api-linux', 'performance'], ['api-linux', 'connection'],
   ])('opens the current %s %s panel synchronously in a separate tab or native window', async (serverId, section) => {

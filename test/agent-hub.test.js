@@ -370,6 +370,8 @@ describe('AgentHub', () => {
     await new Promise((resolve) => win.setTimeout(resolve, 0));
     const cells = [...win.document.querySelectorAll('.ah-model-usage tbody tr > *')].map((cell) => cell.textContent);
     expect(cells).toEqual(['codex-model', '60', '20', '40', '120']);
+    expect([...win.document.querySelectorAll('.ah-model-usage td')].map(cell => cell.dataset.label))
+      .toEqual(['非缓存输入', '输出', '缓存', '总 Tokens']);
     hub.stop();
   });
 
