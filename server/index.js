@@ -267,8 +267,8 @@ app.use('/api/scene/discover', createSceneDiscoverRouter());
 app.use('/api/pins', createPinsRouter(pinStore));
 app.use('/api/share', createShareRouter(shareStore));
 
-// File upload (uses /tmp — cleaned by OS on reboot)
-app.use('/api/upload', createUploadRouter('/tmp/tmux-web-panel-uploads'));
+// Desktop uploads stay in this installation's data directory.
+app.use('/api/upload', createUploadRouter(config.managedRuntime ? join(configDir, 'uploads') : '/tmp/tmux-web-panel-uploads'));
 app.use('/api/files', createFilesRouter([homedir(), '/tmp']));
 app.use('/api/claude-usage', createClaudeUsageRouter());
 app.use('/api/codex-usage', createCodexUsageRouter({ configDir }));

@@ -30,7 +30,6 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/tmux-panel-runtime.XXXXXX")"
 cleanup() {
   local status=$?
   if [[ "$status" != 0 ]]; then
-    if [[ -f "$WORK/deps/malloc/config.log" ]]; then cp "$WORK/deps/malloc/config.log" "$CACHE/last-$ARCH-malloc-config.log"; fi
     if [[ -f "$WORK/tmux/config.log" ]]; then cp "$WORK/tmux/config.log" "$CACHE/last-$ARCH-tmux-config.log"; fi
   fi
   if [[ "$status" != 0 && "${TMUX_PANEL_KEEP_BUILD:-0}" == 1 ]]; then
@@ -48,7 +47,6 @@ export CFLAGS="-O2 -arch $MACHINE -mmacosx-version-min=$MINIMUM_MACOS"
 export CXXFLAGS="$CFLAGS"
 # Keep architecture selection in one place for reproducible link arguments.
 export LDFLAGS="-mmacosx-version-min=$MINIMUM_MACOS"
-if [[ "$ARCH" == arm64 ]]; then LG_PAGE=14; else LG_PAGE=12; fi
 export CC="$(xcrun --find clang)" CXX="$(xcrun --find clang++)"
 
 fetch_checked() {
@@ -83,16 +81,14 @@ export PATH="$WORK/node/bin:$PATH"
 
 # Static dependencies are compiled for the advertised minimum OS. Copying a
 # current Homebrew bottle can silently introduce a macOS 26-only dependency.
-PREFIX="$CACHE/static-$ARCH-$MINIMUM_MACOS-v1"
-if [[ ! -f "$PREFIX/.static-components-complete-v3" ]]; then
+PREFIX="$CACHE/static-$ARCH-$MINIMUM_MACOS-v2"
+if [[ ! -f "$PREFIX/.static-components-complete-v4" ]]; then
   mkdir -p "$PREFIX" "$WORK/deps"
   event_archive="$(fetch_checked 'https://github.com/libevent/libevent/releases/download/release-2.1.13-stable/libevent-2.1.13-stable.tar.gz' libevent-2.1.13.tar.gz f7e9383b8c0baa81b687e5b5eecc01beefaf1b19b64151d95ed61647fe7a315c)"
   unicode_archive="$(fetch_checked 'https://github.com/JuliaStrings/utf8proc/archive/refs/tags/v2.12.0.tar.gz' utf8proc-2.12.0.tar.gz f564011d38b2888d583d510b08e69ffa15aa117155db1b9b49ef1dfe1fa25111)"
-  malloc_archive="$(fetch_checked 'https://github.com/jemalloc/jemalloc/releases/download/5.4.0/jemalloc-5.4.0.tar.bz2' jemalloc-5.4.0.tar.bz2 200776fac271093e7c2f21edd6d62657ecd2be578d9328633f2a86bfa6ef4f1d)"
-  for name in event unicode malloc; do mkdir "$WORK/deps/$name"; done
+  for name in event unicode; do mkdir "$WORK/deps/$name"; done
   tar -xf "$event_archive" --strip-components=1 -C "$WORK/deps/event"
   tar -xf "$unicode_archive" --strip-components=1 -C "$WORK/deps/unicode"
-  tar -xf "$malloc_archive" --strip-components=1 -C "$WORK/deps/malloc"
   if [[ ! -f "$PREFIX/lib/libevent_core.a" || ! -f "$PREFIX/lib/pkgconfig/libevent_core.pc" ]]; then
     cmake -S "$WORK/deps/event" -B "$WORK/deps/event-build" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MINIMUM_MACOS" -DCMAKE_OSX_ARCHITECTURES="$MACHINE" -DCMAKE_C_FLAGS="-O2 -mmacosx-version-min=$MINIMUM_MACOS" -DCMAKE_CXX_FLAGS="-O2 -mmacosx-version-min=$MINIMUM_MACOS" -DEVENT__LIBRARY_TYPE=STATIC -DEVENT__DISABLE_OPENSSL=ON -DEVENT__DISABLE_TESTS=ON -DEVENT__DISABLE_SAMPLES=ON -DEVENT__DISABLE_BENCHMARK=ON
     cmake --build "$WORK/deps/event-build" --parallel "$JOBS"
@@ -103,17 +99,12 @@ if [[ ! -f "$PREFIX/.static-components-complete-v3" ]]; then
     cmake --build "$WORK/deps/unicode-build" --parallel "$JOBS"
     cmake --install "$WORK/deps/unicode-build"
   fi
-  if [[ ! -f "$PREFIX/.jemalloc-page-$LG_PAGE-unprefixed" ]]; then
-    (cd "$WORK/deps/malloc" && ./configure --host="$MACHINE-apple-darwin" --build="$MACHINE-apple-darwin" --prefix="$PREFIX" --with-lg-page="$LG_PAGE" --with-jemalloc-prefix= --disable-shared --enable-static --disable-initial-exec-tls && make -j"$JOBS" && make install)
-    touch "$PREFIX/.jemalloc-page-$LG_PAGE-unprefixed"
-  fi
   mkdir -p "$PREFIX/licenses"
   cp "$WORK/deps/event/LICENSE" "$PREFIX/licenses/libevent-LICENSE.txt"
   cp "$WORK/deps/unicode/LICENSE.md" "$PREFIX/licenses/utf8proc-LICENSE.md"
-  cp "$WORK/deps/malloc/COPYING" "$PREFIX/licenses/jemalloc-COPYING.txt"
-  touch "$PREFIX/.static-components-complete-v3"
+  touch "$PREFIX/.static-components-complete-v4"
 fi
-for name in libevent-LICENSE.txt utf8proc-LICENSE.md jemalloc-COPYING.txt; do
+for name in libevent-LICENSE.txt utf8proc-LICENSE.md; do
   cp "$PREFIX/licenses/$name" "$RUNTIME/licenses/"
 done
 # macOS ships the curses APIs tmux needs; use its SDK/library and tools rather
@@ -128,7 +119,7 @@ echo 'Building the bundled project tmux (not the installed service binary)...'
 mkdir "$WORK/tmux"
 (cd "$PROJECT_DIR/vendor/tmux" && git ls-files -z | tar --null -T - -cf -) | tar -xf - -C "$WORK/tmux"
 mkdir "$WORK/pkgconfig"
-for name in libevent_core.pc libutf8proc.pc jemalloc.pc; do cp "$PREFIX/lib/pkgconfig/$name" "$WORK/pkgconfig/"; done
+for name in libevent_core.pc libutf8proc.pc; do cp "$PREFIX/lib/pkgconfig/$name" "$WORK/pkgconfig/"; done
 (
   cd "$WORK/tmux"
   export PKG_CONFIG_LIBDIR="$WORK/pkgconfig" PKG_CONFIG_PATH="$WORK/pkgconfig"
@@ -142,7 +133,7 @@ for name in libevent_core.pc libutf8proc.pc jemalloc.pc; do cp "$PREFIX/lib/pkgc
   # tmux's established tparm fallback also works on the minimum supported OS.
   export ac_cv_func_tiparm=no ac_cv_func_tiparm_s=no
   sh autogen.sh
-  ./configure --prefix="$WORK/tmux-install" --enable-optimizations --disable-debug --enable-utf8proc --enable-jemalloc
+  ./configure --prefix="$WORK/tmux-install" --enable-optimizations --disable-debug --enable-utf8proc --disable-jemalloc
   make -j"$JOBS"
 )
 install -m 755 "$WORK/tmux/tmux" "$RUNTIME/bin/tmux"
@@ -165,7 +156,7 @@ cat > "$RUNTIME/licenses/THIRD-PARTY-NOTICES.md" <<'NOTICES'
 
 - Node.js: Node-LICENSE.txt (includes Node's third-party notices).
 - tmux: tmux-COPYING.txt; source is the project's vendor/tmux submodule.
-- libevent, utf8proc and jemalloc: their license files in this directory.
+- libevent and utf8proc: their license files in this directory.
 - macOS ncurses and system frameworks: supplied by macOS, not copied into this runtime.
 - Maple Mono: ../app/public/fonts/OFL-MapleMono.txt.
 - Symbols Nerd Font Mono: ../app/public/fonts/LICENSE-SymbolsNerdFont.txt (upstream v3.4.0 and glyph-source notices).
