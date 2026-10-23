@@ -39,6 +39,41 @@ async function fixture() {
 }
 
 describe('native dsh-tui maintenance', () => {
+  it('pins an explicitly selected displayed model when the resumed agent still uses a different provider', async () => {
+    const { manager, profile } = await fixture();
+    const channel = join(profile, 'node_modules/@deepseek-harness-tui/dsh-tui/lib/types/dsh-adapter/channel');
+    await mkdir(channel, { recursive: true });
+    const switchSource = `function select(provider, model, state, deps) {
+  if (provider === state.provider && model === state.model) return true;
+  deps.selection.current = { provider, model };
+  return true;
+}`;
+    const bindingSource = `function bind(deps) {
+  const selected = deps.modelSelection.selection.current;
+  return selected;
+}`;
+    await writeFile(join(channel, 'model-switch.js'), switchSource);
+    await writeFile(join(channel, 'binding-events.js'), bindingSource);
+    const state = { provider: 'tmux-enterprise', model: group.model };
+    const deps = { selection: { current: undefined } };
+    const select = (text) => runInNewContext(text + '\nselect');
+    expect(select(switchSource)(state.provider, state.model, state, deps)).toBe(true);
+    expect(deps.selection.current).toBeUndefined();
+    expect(await manager.activate(group)).toMatchObject({ runtimeRepairs: ['model-switch', 'bound-route'] });
+    const patchedSwitch = await readFile(join(channel, 'model-switch.js'), 'utf8');
+    select(patchedSwitch)(state.provider, state.model, state, deps);
+    expect(deps.selection.current).toEqual({ provider: 'tmux-enterprise', model: group.model });
+    const existingPin = deps.selection.current;
+    select(patchedSwitch)(state.provider, state.model, state, deps);
+    expect(deps.selection.current).toBe(existingPin);
+    const bind = runInNewContext(await readFile(join(channel, 'binding-events.js'), 'utf8') + '\nbind');
+    const resumed = { modelSelection: { selection: { current: undefined } }, binding: { agent: { options: { provider: 'glm', model: 'glm-test' } } } };
+    expect(bind(resumed)).toEqual({ provider: 'glm', model: 'glm-test' });
+    resumed.modelSelection.selection.current = existingPin;
+    expect(bind(resumed)).toEqual(existingPin);
+    expect(await manager.activate(group)).toMatchObject({ runtimeRepairs: [] });
+  });
+
   it('repairs stale capacity display after a model switch, preserves projection fallback and applies once', async () => {
     const { manager, profile } = await fixture();
     const file = join(profile, 'node_modules/@deepseek-harness-tui/dsh-tui/lib/types/dsh-adapter/context-occupancy.js');

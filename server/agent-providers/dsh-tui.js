@@ -47,7 +47,18 @@ export function createDshTuiManager(options = {}) {
   const credentialsPath = join(dshHome, '.credentials.yaml');
   const modelPath = join(home, '.dsh-tui', 'model.json');
   const kernelPath = join(home, '.dsh-tui', 'kernel.json');
-  const contextDisplayPath = join(profile, 'node_modules/@deepseek-harness-tui/dsh-tui/lib/types/dsh-adapter/context-occupancy.js');
+  const nativeRoot = join(profile, 'node_modules/@deepseek-harness-tui/dsh-tui/lib/types/dsh-adapter');
+  const nativeRepairs = [
+    { id: 'context-window', path: join(nativeRoot, 'context-occupancy.js'),
+      from: 'const contextWindow = projected?.contextWindow ?? requestWindow;',
+      to: 'const contextWindow = requestWindow ?? projected?.contextWindow;' },
+    { id: 'model-switch', path: join(nativeRoot, 'channel/model-switch.js'),
+      from: 'if (provider === state.provider && model === state.model)',
+      to: 'if (provider === state.provider && model === state.model && deps.selection.current?.provider === provider && deps.selection.current?.model === model)' },
+    { id: 'bound-route', path: join(nativeRoot, 'channel/binding-events.js'),
+      from: 'const selected = deps.modelSelection.selection.current;',
+      to: 'const selected = deps.modelSelection.selection.current\n                ?? (deps.binding.agent.options?.provider && deps.binding.agent.options?.model ? deps.binding.agent.options : undefined);' },
+  ];
   const resources = new ManagedResources({ projectDir: '', configDir: join(home, '.config/tmux-web-panel'), userHome: home });
   const parseJSON = (text) => {
     try { const value = JSON.parse(text || '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
@@ -93,7 +104,8 @@ export function createDshTuiManager(options = {}) {
         locks.push({ path: `${path}.lock`, handle });
         await handle.writeFile(`${process.pid}\n`);
       }
-      const before = new Map(await Promise.all([patchPath, credentialsPath, kernelPath, modelPath, contextDisplayPath].map(async (path) => [path, await optional(path)])));
+      const before = new Map(await Promise.all([patchPath, credentialsPath, kernelPath, modelPath, ...nativeRepairs.map((repair) => repair.path)]
+        .map(async (path) => [path, await optional(path)])));
       const doc = document(before.get(patchPath), true);
       const backend = plain(row(doc, 'dsh-tui')?.getIn(['config', 'backend'], true));
       if (backend && backend !== 'dsh') throw new AppError(ErrorCode.UNSUPPORTED, 'DSH profile 固定了其他后端，请先在 dsh-tui 中选择 DSH 后端');
@@ -121,15 +133,15 @@ export function createDshTuiManager(options = {}) {
       } else if (!profiles(doc).some((item) => item.provider === provider && item.model === model)) {
         throw new AppError(ErrorCode.VALIDATION_ERROR, 'DSH 提供方或模型不在当前配置中');
       }
-      // dsh-tui 0.16.1 prefers the preceding request's projected capacity even
-      // after /model has resolved the new route's window. Patch only this known
-      // expression; newer/unrecognized implementations remain untouched.
-      const contextSource = before.get(contextDisplayPath);
-      const staleWindow = 'const contextWindow = projected?.contextWindow ?? requestWindow;';
-      const liveWindow = 'const contextWindow = requestWindow ?? projected?.contextWindow;';
-      const repairContextWindow = contextSource?.includes('export function resolveContextOccupancy(')
-        && contextSource.split(staleWindow).length === 2;
-      if (repairContextWindow) changes.push([contextDisplayPath, contextSource.replace(staleWindow, liveWindow)]);
+      // Repair only known dsh-tui 0.16.1 expressions. A displayed launch route
+      // must not make selecting that model a no-op on a resumed GLM agent.
+      const repaired = [];
+      for (const repair of nativeRepairs) {
+        const source = before.get(repair.path);
+        if (!source || source.split(repair.from).length !== 2) continue;
+        changes.push([repair.path, source.replace(repair.from, repair.to)]);
+        repaired.push(repair.id);
+      }
       changes.push([kernelPath, JSON.stringify({ backend: 'dsh' }) + '\n'], [modelPath, JSON.stringify({ provider, model }) + '\n']);
       const backups = [];
       for (const [path, text] of changes) {
@@ -138,7 +150,7 @@ export function createDshTuiManager(options = {}) {
         written.push({ path, text, before: before.get(path) });
       }
       return { agent: 'dsh', modelId: model, active: true, backups: backups.filter(Boolean).length, source: 'native-dsh-profile',
-        contextWindowRepaired: Boolean(repairContextWindow) };
+        contextWindowRepaired: repaired.includes('context-window'), runtimeRepairs: repaired };
     } catch (error) {
       for (const item of written.reverse()) {
         // A running TUI may save preferences without taking a file lock.
