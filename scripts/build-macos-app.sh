@@ -35,7 +35,7 @@ swift build --package-path "$PACKAGE_DIR" --configuration "$CONFIGURATION" --tri
 BIN_DIR="$(swift build --package-path "$PACKAGE_DIR" --configuration "$CONFIGURATION" --triple "$MACHINE-apple-macosx$MINIMUM_MACOS" --show-bin-path)"
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
 cp "$BIN_DIR/TmuxPanel" "$APP_PATH/Contents/MacOS/TmuxPanel"
-/usr/bin/lipo -verify_arch "$MACHINE" "$APP_PATH/Contents/MacOS/TmuxPanel"
+/usr/bin/lipo "$APP_PATH/Contents/MacOS/TmuxPanel" -verify_arch "$MACHINE"
 cp "$PACKAGE_DIR/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
 plutil -replace LSMinimumSystemVersion -string "$MINIMUM_MACOS" "$APP_PATH/Contents/Info.plist"
 if [[ -n "${TMUX_PANEL_APP_VERSION:-}" ]]; then plutil -replace CFBundleShortVersionString -string "$TMUX_PANEL_APP_VERSION" "$APP_PATH/Contents/Info.plist"; fi
