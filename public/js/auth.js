@@ -55,10 +55,15 @@ var Auth = {
 // fragment is stripped so the token does not linger in the URL or history.
 // Not validated here — every later use is checked server-side.
 (function adoptHandoffToken() {
-  var match = /[#&]handoff=([^&]+)/.exec(window.location.hash || '');
-  if (!match) return;
+  var fragment = new URLSearchParams(window.location.hash.slice(1));
+  var token = fragment.get('handoff');
+  if (!token) return;
   try {
-    Auth.setToken(decodeURIComponent(match[1]));
+    Auth.setToken(token);
+    var theme = fragment.get('theme');
+    try {
+      if (theme && /^[a-z][a-z0-9-]{0,63}$/.test(theme)) localStorage.setItem('tmux_theme', theme);
+    } catch (_e) {}
     window.history.replaceState(null, '', window.location.pathname + window.location.search);
   } catch (_e) {}
 })();

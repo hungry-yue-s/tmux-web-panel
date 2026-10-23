@@ -54,6 +54,15 @@ sed -e "s|__DUCKDNS_FQDN__|${DUCKDNS_DOMAIN}.duckdns.org|g" \
     -e "s|__PANEL_PORT__|${PORT}|g" \
     "$TEMPLATE" > "$SITE_DIR/index.html"
 cp "$PROJECT_DIR/relay/robots.txt" "$SITE_DIR/robots.txt"
+# One palette source for the workspace, browser relay and native WebViews.
+cp "$PROJECT_DIR/public/js/theme.js" "$SITE_DIR/theme.js"
+cp "$PROJECT_DIR/relay/relay.js" "$SITE_DIR/relay.js"
+cp "$PROJECT_DIR/relay/themes.html" "$SITE_DIR/themes.html"
+# Same layout, with no resolver or token-handling code in appearance previews.
+sed -e '/window.PANEL_RELAY_CONFIG/d' \
+    -e 's|<script src="relay.js"></script>|<script>document.getElementById("theme-name").textContent = Theme.getName(document.documentElement.dataset.theme);</script>|' \
+    -e 's|正在定位工作台…|外观预览，不会发起连接|g' \
+    "$SITE_DIR/index.html" > "$SITE_DIR/preview.html"
 if [[ -r "$CA_CRT" ]]; then
   cp "$CA_CRT" "$SITE_DIR/ca.crt"
 else

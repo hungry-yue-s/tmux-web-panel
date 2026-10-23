@@ -8,7 +8,9 @@ afterEach(() => win?.close());
 function setup(fetch) {
   win = new JSDOM(html, { url: 'https://panel.example/login.html', runScripts: 'outside-only' }).window;
   win.fetch = fetch;
-  win.eval([...win.document.scripts].find(script => !script.src).textContent);
+  for (const script of win.document.scripts) {
+    if (!script.src) win.eval(script.textContent);
+  }
   return win.document;
 }
 

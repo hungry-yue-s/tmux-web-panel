@@ -90,6 +90,29 @@ and hands the stored token to the new origin via a URL fragment, which
    `/Library/Preferences/SystemConfiguration`, plus a 30-minute backstop) publishes the IP if
    it moved, re-issues the leaf cert, and restarts the panel and the macOS shell.
 
+## 引导页主题与动画
+
+引导页直接使用 `public/js/theme.js` 的完整配色；`setup-relay.sh` 会一起发布主题、连接脚本和预览页，新增主题无需另维护一套颜色。桌面为左右布局，手机为纵向布局；解析中显示不定进度与连接动效，找到地址立即跳转，失败可重试。系统开启“减少动态效果”时停用动画。
+
+同一个引导地址支持 `?theme=<id>`。优先使用显式主题，其次是客户端注入/本地保存的 `tmux_theme`、中继保存的 `panel_relay_theme`；没有偏好时，手机默认 `oyster`，桌面默认 `tokyo-night`。原生 Android 已在页面脚本前注入保存的主题，进入引导页后可继续通过 `Theme.apply` 同步。Swift/Web 使用相同的主题文件；登录回跳及跨 IP 的 token 交接同时携带主题，使新地址下的登录页和工作台继续使用相同配色。
+
+发布地址下的 `themes.html` 展示全部主题动画。网格中的预览使用隔离存储的 iframe，不执行地址解析或 token 交接；点击“使用并预览”会在当前浏览器保存选定配色。单页外观路径为 `preview.html?theme=<id>`，真正连接的路径为 `?theme=<id>`。
+
+| 主题 | ID |
+|---|---|
+| Prism · 棱镜 | `prism` |
+| Graphite · 石墨 | `graphite` |
+| Deep Current | `deep-current` |
+| Forest Ink · 森林 | `forest-ink` |
+| Tokyo Night | `tokyo-night` |
+| Nord | `nord` |
+| Gruvbox Dark | `gruvbox-dark` |
+| Oyster · 牡蛎白 | `oyster` |
+| Solarized Light | `solarized-light` |
+| GitHub Light | `github-light` |
+
+每次 DoH 尝试最多 5 秒，主解析失败后尝试备用解析，两个均失败后显示重试。动画不增加等待时间，也不将“解析到地址”误报为服务已连接。
+
 ## Maintenance and update paths
 
 | Changed | Takes effect |

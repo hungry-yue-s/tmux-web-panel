@@ -7,6 +7,16 @@
   <link rel="icon" type="image/png" href="/app-icon.png?v=2">
   <meta name="color-scheme" content="dark light">
   <title>登录工作台 — Tmux Panel</title>
+  <script>
+    // The panel may have a new IP (and an empty origin's storage). Keep the
+    // relay's selected palette through this login, before the first paint.
+    try {
+      var entryQuery = new URLSearchParams(location.search);
+      var entryTheme = entryQuery.get('theme');
+      if (entryQuery.get('relay') && entryTheme && /^[a-z][a-z0-9-]{0,63}$/.test(entryTheme)) localStorage.setItem('tmux_theme', entryTheme);
+    } catch (_e) {}
+  </script>
+  <script src="/js/theme.js"></script>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     :root { --login-bg:var(--workspace-bg,#101e21); --login-panel:var(--workspace-panel,#1e3235); --login-text:var(--workspace-text,#e4ece9); --login-muted:var(--workspace-muted,#a9bbb6); --login-accent:var(--workspace-accent,#ebc093); --login-line:var(--workspace-line,#354d50); }
@@ -94,7 +104,6 @@
       <p class="login-footer">关闭页面不会结束电脑上的 tmux 会话</p>
     </section>
   </main>
-  <script src="/js/theme.js"></script>
   <script src="/js/relay-config.js"></script>
   <script>
     (function () {

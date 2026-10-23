@@ -1,282 +1,144 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="robots" content="noindex,nofollow">
-<meta name="theme-color" content="#1a1b26">
-<title>panel</title>
-<style>
-  /* Palette mirrors the panel's own theme variables (public/js/theme.js), so
-     this page reads as part of the same product. Light variant tracks the
-     panel's github-light theme, passed along by the relay handoff. */
-  :root, body[data-theme="tokyo-night"] {
-    --bg-primary: #1a1b26;
-    --bg-deep: #16161e;
-    --bg-card: #24283b;
-    --bg-hover: #292e42;
-    --border: #3b4261;
-    --border-subtle: #2f3450;
-    --text-primary: #c0caf5;
-    --text-secondary: #a9b1d6;
-    --text-muted: #565f89;
-    --accent-blue: #7aa2f7;
-    --accent-green: #9ece6a;
-    --accent-red: #f7768e;
-    --accent-yellow: #e0af68;
-    color-scheme: dark;
-  }
-  body[data-theme="github-light"] {
-    --bg-primary: #ffffff;
-    --bg-deep: #f6f8fa;
-    --bg-card: #f6f8fa;
-    --bg-hover: #ebeef1;
-    --border: #d0d7de;
-    --border-subtle: #e8ebef;
-    --text-primary: #1f2328;
-    --text-secondary: #656d76;
-    --text-muted: #8b949e;
-    --accent-blue: #0969da;
-    --accent-green: #1a7f37;
-    --accent-red: #cf222e;
-    --accent-yellow: #9a6700;
-    color-scheme: light;
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; }
-  body {
-    margin: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: clamp(16px, 5vw, 48px);
-    padding-bottom: calc(clamp(16px, 5vw, 48px) + env(safe-area-inset-bottom, 0px));
-    background: var(--bg-primary);
-    background-image: radial-gradient(min(720px, 90vw) 340px at 50% -12%,
-      color-mix(in srgb, var(--accent-blue) 14%, transparent), transparent 72%);
-    color: var(--text-primary);
-    font: clamp(14px, 1.6vw, 15px)/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
-      Ubuntu, Cantarell, 'PingFang SC', 'Noto Sans SC', 'Helvetica Neue', Arial, sans-serif;
-    -webkit-font-smoothing: antialiased;
-  }
-  .mono { font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, Menlo, Consolas, monospace; }
-  .card {
-    width: min(100%, 400px);
-    border: 1px solid var(--border-subtle);
-    border-radius: 14px;
-    background: var(--bg-card);
-    box-shadow: 0 24px 60px -28px rgba(0, 0, 0, .55);
-    overflow: hidden;
-  }
-  @media (min-width: 720px) {
-    .card { width: 440px; border-radius: 16px; }
-  }
-  /* Slim titlebar echoing the panel's window chrome */
-  .titlebar {
-    display: flex; align-items: center; gap: 7px;
-    padding: 11px 14px;
-    background: var(--bg-deep);
-    border-bottom: 1px solid var(--border-subtle);
-  }
-  .tl-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
-  .tl-dot.r { background: var(--accent-red); }
-  .tl-dot.y { background: var(--accent-yellow); }
-  .tl-dot.g { background: var(--accent-green); }
-  .tl-label {
-    margin-left: auto;
-    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, Menlo, Consolas, monospace;
-    font-size: 11px;
-    color: var(--text-muted);
-    letter-spacing: .4px;
-  }
-  .body { padding: clamp(22px, 6vw, 32px) clamp(18px, 5vw, 28px) clamp(16px, 4vw, 22px); text-align: center; }
-  .mark {
-    width: 54px; height: 54px;
-    margin: 0 auto 14px;
-    display: grid; place-items: center;
-    border-radius: 14px;
-    background: color-mix(in srgb, var(--accent-blue) 18%, var(--bg-hover));
-    border: 1px solid color-mix(in srgb, var(--accent-blue) 34%, transparent);
-  }
-  .mark svg { width: 26px; height: 26px; stroke: var(--accent-blue); }
-  h1 { margin: 0; font-size: clamp(17px, 4.6vw, 19px); font-weight: 650; letter-spacing: .2px; }
-  .sub { margin: 4px 0 20px; font-size: clamp(12px, 3.4vw, 13px); color: var(--text-muted); }
-  .status {
-    display: flex; align-items: center; justify-content: center; gap: 9px;
-    min-height: 22px;
-    margin: 0 0 18px;
-    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, Menlo, Consolas, monospace;
-    font-size: clamp(12px, 3.3vw, 13px);
-    color: var(--text-secondary);
-    overflow-wrap: anywhere;
-  }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-blue); flex: none;
-         animation: pulse 1.1s ease-in-out infinite; }
-  body[data-state="ready"]  .dot { background: var(--accent-green); animation: none; }
-  body[data-state="failed"] .dot { background: var(--accent-red); animation: none; }
-  @keyframes pulse { 0%,100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
-  .btn {
-    display: block; width: 100%;
-    min-height: 48px;
-    padding: 12px 16px;
-    border: 1px solid color-mix(in srgb, var(--accent-blue) 34%, transparent);
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--accent-blue) 22%, var(--bg-hover));
-    color: var(--accent-blue);
-    font: inherit; font-size: 15px; font-weight: 600;
-    text-decoration: none;
-    cursor: pointer;
-    transition: background .15s ease, transform .05s ease;
-  }
-  @media (min-width: 720px) { .btn { min-height: 44px; } }
-  .btn:hover { background: color-mix(in srgb, var(--accent-blue) 30%, var(--bg-hover)); }
-  .btn:active { transform: scale(.985); }
-  .btn[hidden] { display: none; }
-  .ghost {
-    display: inline-flex; align-items: center; gap: 7px;
-    margin-top: 14px;
-    min-height: 38px;
-    padding: 8px 14px;
-    border: 1px solid var(--border);
-    border-radius: 9px;
-    background: var(--bg-hover);
-    color: var(--text-secondary);
-    font-size: 13px; font-weight: 550;
-    text-decoration: none;
-  }
-  .ghost:hover { background: color-mix(in srgb, var(--bg-hover) 70%, var(--border)); color: var(--text-primary); }
-  .hint { margin: 14px 2px 0; font-size: 12px; line-height: 1.7; color: var(--text-muted); }
-  footer {
-    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
-    border-top: 1px solid var(--border-subtle);
-    background: var(--bg-deep);
-    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, Menlo, Consolas, monospace;
-    font-size: 11px;
-    color: var(--text-muted);
-    text-align: center;
-  }
-  @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
-</style>
-</head>
-<body data-state="resolving" data-theme="tokyo-night">
-  <main class="card">
-    <div class="titlebar" aria-hidden="true">
-      <span class="tl-dot r"></span><span class="tl-dot y"></span><span class="tl-dot g"></span>
-      <span class="tl-label">relay</span>
-    </div>
-
-    <div class="body">
-      <div class="mark">
-        <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <polyline points="5 8 9 12 5 16"></polyline>
-          <line x1="12" y1="16" x2="19" y2="16"></line>
-        </svg>
-      </div>
-      <h1>Tmux Panel</h1>
-      <p class="sub">中继跳转 · 自动定位当前内网地址</p>
-
-      <p class="status" role="status"><span class="dot"></span><span id="status-text">正在解析面板地址…</span></p>
-
-      <a class="btn" id="go" hidden>进入面板</a>
-
-      <a class="ghost" href="ca.crt" download>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 3v12"></path><polyline points="7 10 12 15 17 10"></polyline><path d="M4 21h16"></path>
-        </svg>
-        下载 CA 证书
-      </a>
-      <p class="hint">CA 证书只需在手机上安装一次，之后访问不再出现证书告警。</p>
-    </div>
-
-    <footer>DoH 实时查询 · 记录于 Duck DNS</footer>
-  </main>
-
-<script>
-// The panel's LAN IP changes (and the machine roams between networks), and
-// browser localStorage is per-origin, so a session token stored under the old
-// IP is unreachable under the new one. This page keeps a copy of the token in
-// ITS origin and re-seeds the panel origin via a URL fragment on every hop.
-const NAME = '__DUCKDNS_FQDN__';
-const PORT = __PANEL_PORT__;
-const TOKEN_KEY = 'panel_relay_token';
-const THEME_KEY = 'panel_relay_theme';
-const ENDPOINTS = [
-  'https://dns.alidns.com/resolve?name=' + NAME + '&type=A',
-  'https://dns.google/resolve?name=' + NAME + '&type=A'
-];
-const bodyEl = document.body;
-const statusText = document.getElementById('status-text');
-const goBtn = document.getElementById('go');
-const hash = location.hash || '';
-const query = new URLSearchParams(location.search);
-
-// Match the panel's own theme: the handoff carries the panel's theme id; light
-// families get the github-light palette, everything else stays tokyo-night.
-(function applyTheme() {
-  let theme = query.get('theme');
-  if (!theme) {
-    try { theme = localStorage.getItem(THEME_KEY); } catch (e) { theme = null; }
-  }
-  if (theme && /light/i.test(theme)) {
-    bodyEl.dataset.theme = 'github-light';
-    document.querySelector('meta[name="theme-color"]').content = '#ffffff';
-  }
-})();
-
-function setState(state, text) {
-  bodyEl.dataset.state = state;
-  statusText.textContent = text;
-}
-
-function readStored(key) {
-  try { return localStorage.getItem(key); } catch (e) { return null; }
-}
-
-// Role 1 — deposit: the panel bounces here right after a relayed login so this
-// origin's copies (token, theme) stay fresh, then we hand the token straight back.
-const storeMatch = /[#&]store=([^&]+)(?:&return=([^&]+))?/.exec(hash);
-if (storeMatch) {
-  const token = decodeURIComponent(storeMatch[1]);
-  const back = storeMatch[2] ? decodeURIComponent(storeMatch[2]) : '/';
-  try {
-    localStorage.setItem(TOKEN_KEY, token);
-    const theme = query.get('theme');
-    if (theme) localStorage.setItem(THEME_KEY, theme);
-  } catch (e) {}
-  setState('ready', '会话已保存，正在返回…');
-  location.replace(back + '#handoff=' + encodeURIComponent(token));
-} else {
-  // Role 2 — relay: resolve the current IP and hop to the panel, carrying the
-  // stored token if we have one, otherwise asking for a relayed login.
-  (async () => {
-    const saved = readStored(TOKEN_KEY);
-    for (const url of ENDPOINTS) {
-      try {
-        const res = await fetch(url);
-        if (!res.ok) continue;
-        const payload = await res.json();
-        const answer = (payload.Answer || []).find(a => a.type === 1);
-        if (!answer) continue;
-        const target = saved
-          ? 'https://' + answer.data + ':' + PORT + '/#handoff=' + encodeURIComponent(saved)
-          : 'https://' + answer.data + ':' + PORT + '/login.html?relay=1';
-        setState('ready', answer.data + ':' + PORT + ' · 正在进入…');
-        goBtn.href = target;
-        goBtn.hidden = false;
-        location.replace(target);
-        return;
-      } catch (e) { /* try the next resolver */ }
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#1a1b26">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>接续工作台 — Tmux Panel</title>
+  <script>
+    // Native clients seed tmux_theme before page scripts. Browsers retain the
+    // last handoff preference here, independently of the panel's changing IP.
+    var relayTheme = new URLSearchParams(location.search).get('theme');
+    if (!relayTheme) {
+      try { relayTheme = localStorage.getItem('tmux_theme') || localStorage.getItem('panel_relay_theme'); } catch (_e) {}
     }
-    setState('failed', '解析失败，请检查网络');
-    goBtn.hidden = true;
-    const retry = document.createElement('button');
-    retry.className = 'btn';
-    retry.style.marginTop = '6px';
-    retry.textContent = '重试';
-    retry.onclick = () => location.reload();
-    goBtn.parentNode.insertBefore(retry, goBtn.nextSibling);
-  })();
-}
-</script>
+    relayTheme = relayTheme || (matchMedia('(max-width: 760px), (pointer: coarse)').matches ? 'oyster' : 'tokyo-night');
+  </script>
+  <script src="theme.js"></script>
+  <script>Theme.apply(relayTheme);</script>
+  <style>
+    * { box-sizing:border-box; }
+    [hidden] { display:none!important; }
+    :root { --relay-bg:var(--workspace-bg,#1a1b26); --relay-panel:var(--workspace-panel,#24283b); --relay-text:var(--workspace-text,#c0caf5); --relay-muted:var(--workspace-muted,#a9b1d6); --relay-accent:var(--workspace-accent,#7aa2f7); --relay-line:var(--workspace-line,#414868); }
+    html { background:var(--relay-bg); color:var(--relay-text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif; }
+    body { margin:0; min-height:100vh; min-height:100dvh; }
+    button,a,summary { -webkit-tap-highlight-color:transparent; }
+    button { font:inherit; }
+    a { color:inherit; }
+    a:focus-visible,button:focus-visible,summary:focus-visible { outline:2px solid var(--relay-accent); outline-offset:5px; }
+    .shell { width:min(1120px,100%); min-height:100vh; min-height:100dvh; margin:auto; padding:40px 48px 28px; display:flex; flex-direction:column; overflow:hidden; }
+    .masthead { display:flex; align-items:center; justify-content:space-between; gap:20px; }
+    .brand { display:flex; align-items:center; gap:12px; font-size:18px; font-weight:650; letter-spacing:-.035em; }
+    .brand svg { width:30px; height:30px; color:var(--relay-accent); }
+    .theme-name { color:var(--relay-muted); font-size:12px; }
+    .content { flex:1; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr); align-items:center; gap:64px; padding:72px 0; }
+    h1 { margin:0 0 24px; font-size:clamp(40px,4.5vw,56px); line-height:1.22; font-weight:600; letter-spacing:-.055em; text-wrap:balance; }
+    .intro { max-width:28em; margin:0; font-size:15px; line-height:1.9; color:var(--relay-muted); }
+    .connection { margin-top:40px; }
+    .status { display:flex; align-items:center; gap:10px; margin:0; font-size:14px; font-weight:550; min-height:24px; }
+    .status-dot { width:7px; height:7px; flex:none; border-radius:50%; background:var(--relay-accent); }
+    .progress { height:2px; margin-top:18px; background:var(--relay-line); overflow:hidden; border-radius:2px; }
+    .progress::after { content:""; display:block; width:35%; height:100%; background:var(--relay-accent); animation:locate 1.8s ease-in-out infinite; }
+    .steps { display:flex; justify-content:space-between; gap:12px; list-style:none; padding:0; margin:12px 0 0; color:var(--relay-muted); font-size:12px; }
+    .steps li { display:flex; align-items:center; gap:7px; }
+    .steps span { font-size:10px; border:1px solid var(--relay-line); width:18px; height:18px; display:grid; place-items:center; border-radius:50%; }
+    .steps [aria-current] { color:var(--relay-accent); }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:22px; }
+    .button { display:inline-flex; align-items:center; justify-content:center; min-height:48px; padding:0 24px; text-decoration:none; border:1px solid var(--relay-accent); border-radius:12px; background:var(--relay-accent); color:var(--relay-bg); cursor:pointer; font-size:14px; font-weight:600; }
+    .button:hover { filter:brightness(1.08); }
+    .button:active { opacity:.8; }
+    .visual { position:relative; min-width:0; padding:46px 0 32px; }
+    .orbit { position:absolute; inset:0 -16px; border:1px solid var(--relay-line); border-radius:50%; opacity:.5; transform:rotate(-18deg); }
+    .orbit::before,.orbit::after { content:""; position:absolute; width:6px; height:6px; border:1px solid var(--relay-accent); background:var(--relay-bg); border-radius:50%; }
+    .orbit::before { top:12%; left:14%; } .orbit::after { bottom:12%; right:14%; }
+    .workbench { position:relative; width:100%; border:1px solid var(--workspace-line-strong,var(--relay-line)); border-radius:18px; background:var(--relay-panel); box-shadow:0 24px 64px -40px var(--relay-text); overflow:hidden; transform:perspective(1000px) rotateY(-8deg) rotateX(5deg); transition:transform .6s ease; }
+    .workbench-header { display:flex; align-items:center; gap:8px; height:42px; padding:0 18px; border-bottom:1px solid var(--relay-line); font-size:11px; color:var(--relay-muted); }
+    .workbench-header svg { width:13px; height:13px; }
+    .workbench-header span:last-child { margin-left:auto; }
+    .workbench-body { display:grid; grid-template-columns:36px minmax(0,1fr) 25%; min-height:240px; }
+    .rail { display:flex; align-items:center; flex-direction:column; gap:16px; padding-top:20px; border-right:1px solid var(--relay-line); }
+    .rail i { width:10px; height:10px; border:1px solid var(--relay-muted); border-radius:3px; }
+    .rail i:first-child { background:var(--relay-accent); border-color:var(--relay-accent); }
+    .terminal { padding:24px 18px; font:12px/1.8 ui-monospace,"SFMono-Regular",Consolas,monospace; }
+    .terminal p { margin:0 0 18px; color:var(--relay-muted); }
+    .terminal strong { color:var(--relay-accent); font-weight:500; }
+    .terminal .code-line { display:block; height:4px; margin:10px 0; width:75%; background:var(--relay-line); border-radius:3px; }
+    .terminal .code-line:nth-of-type(2) { width:54%; } .terminal .code-line:nth-of-type(3) { width:65%; }
+    .prompt { margin-top:26px; color:var(--relay-accent); }
+    .cursor { display:inline-block; width:6px; height:12px; margin-left:5px; background:var(--relay-accent); vertical-align:-2px; }
+    .files { padding:22px 12px; border-left:1px solid var(--relay-line); }
+    .files i { display:block; width:75%; height:4px; margin:9px 0 17px; background:var(--relay-line); border-radius:2px; }
+    .files i:nth-child(even) { width:50%; margin-left:6px; }
+    .workbench-footer { display:flex; align-items:center; justify-content:space-between; padding:10px 18px; border-top:1px solid var(--relay-line); color:var(--relay-muted); font-size:10px; }
+    .signal { display:flex; align-items:center; gap:10px; position:relative; width:max-content; margin:28px auto 0; padding:8px 12px; background:var(--relay-bg); font-size:11px; color:var(--relay-muted); }
+    .signal-track { width:60px; height:1px; background:var(--relay-line); position:relative; }
+    .signal-track::after { content:""; position:absolute; width:14px; height:3px; top:-1px; background:var(--relay-accent); border-radius:2px; animation:signal 1.8s ease-in-out infinite; }
+    .bottom { display:flex; align-items:baseline; justify-content:space-between; gap:24px; border-top:1px solid var(--relay-line); padding-top:20px; color:var(--relay-muted); font-size:12px; line-height:1.7; }
+    .bottom>p { margin:0; }
+    details { max-width:340px; text-align:right; }
+    summary { cursor:pointer; min-height:48px; display:list-item; list-style-position:inside; }
+    details p { margin:0 0 12px; text-align:left; }
+    details a { display:inline-flex; align-items:center; min-height:48px; font-weight:550; color:var(--relay-accent); }
+    body[data-state="ready"] .progress::after { width:100%; animation:none; }
+    body[data-state="ready"] .workbench { transform:none; }
+    body[data-state="ready"] .signal-track::after { width:100%; animation:none; }
+    body[data-state="failed"] .status-dot { background:var(--accent-red,#e49c8b); }
+    body[data-state="failed"] .progress::after,body[data-state="failed"] .signal-track::after { animation:none; width:0; }
+    @keyframes locate { from { transform:translateX(-100%); } to { transform:translateX(390%); } }
+    @keyframes signal { from { transform:translateX(0); opacity:0; } 30%,70% { opacity:1; } to { transform:translateX(46px); opacity:0; } }
+    @media(max-width:760px) {
+      .shell { max-width:480px; padding:max(24px,env(safe-area-inset-top)) max(24px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left)); }
+      .brand { font-size:17px; } .theme-name { font-size:11px; }
+      .content { display:flex; flex-direction:column; align-items:stretch; gap:24px; padding:48px 0 32px; }
+      h1 { font-size:38px; margin-bottom:16px; } .intro { font-size:14px; }
+      .connection { margin-top:28px; }
+      .visual { order:-1; padding:16px 12px 0; margin:0 0 10px; }
+      .workbench { max-width:340px; margin:auto; border-radius:14px; }
+      .workbench-header { height:32px; } .workbench-body { min-height:140px; grid-template-columns:28px minmax(0,1fr) 24%; }
+      .terminal { padding:16px 12px; font-size:10px; } .terminal p { margin-bottom:12px; } .terminal .code-line { margin:8px 0; }
+      .prompt { margin-top:16px; } .files { padding:14px 10px; } .workbench-footer { padding:6px 12px; font-size:9px; }
+      .rail { padding-top:16px; gap:12px; } .rail i { width:8px; height:8px; }
+      .signal { margin:14px auto 0; font-size:10px; } .orbit { inset:-6px -2px 0; }
+      .bottom { flex-wrap:wrap; gap:4px; padding-top:16px; } details { text-align:left; } summary { min-height:48px; display:flex; align-items:center; }
+    }
+    @media(max-width:360px) { .shell { padding-left:20px; padding-right:20px; } .theme-name { max-width:115px; text-align:right; } h1 { font-size:34px; } }
+    @media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important; transition:none!important; } .progress::after { transform:none; } .workbench { transform:none; } }
+  </style>
+</head>
+<body data-state="resolving">
+  <div class="shell">
+    <header class="masthead">
+      <div class="brand"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="24" height="22" rx="5"/><path d="M10 11l4 4-4 4m8 0h4"/></svg><span>Tmux Panel</span></div>
+      <span class="theme-name" id="theme-name"></span>
+    </header>
+    <main class="content">
+      <section aria-labelledby="headline">
+        <h1 id="headline">回到你的<br>工作现场。</h1>
+        <p class="intro">终端、文件与会话，接续如初。<br>正在为你找到工作台的当前位置。</p>
+        <div class="connection">
+          <p class="status" role="status" aria-live="polite"><span class="status-dot" aria-hidden="true"></span><span id="status-text">正在定位工作台…</span></p>
+          <div class="progress" id="progress" role="progressbar" aria-label="正在定位工作台"></div>
+          <ol class="steps" aria-label="连接步骤"><li id="step-locate" aria-current="step"><span aria-hidden="true">1</span>定位地址</li><li id="step-enter"><span aria-hidden="true">2</span>前往工作台</li></ol>
+          <div class="actions"><a class="button" id="go" hidden>进入工作台</a><button class="button" id="retry" type="button" hidden>重新连接</button></div>
+        </div>
+      </section>
+      <div class="visual" aria-hidden="true">
+        <div class="orbit"></div>
+        <div class="workbench">
+          <div class="workbench-header"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M6 2v12m0-6h8"/></svg><span>工作台</span><span>tmux</span></div>
+          <div class="workbench-body"><div class="rail"><i></i><i></i><i></i></div><div class="terminal"><p>~/workspace</p><strong>❯ tmux attach</strong><span class="code-line"></span><span class="code-line"></span><span class="code-line"></span><div class="prompt">❯<span class="cursor"></span></div></div><div class="files"><i></i><i></i><i></i><i></i><i></i></div></div>
+          <div class="workbench-footer"><span>终端 / 会话 / 文件</span><span>随时接续</span></div>
+        </div>
+        <div class="signal"><span>此设备</span><span class="signal-track"></span><span>你的工作台</span></div>
+      </div>
+    </main>
+    <footer class="bottom"><p>页面关闭后，电脑上的会话仍会继续。</p><details><summary>首次连接需要帮助？</summary><p>请确认设备与电脑的网络可互通。如果浏览器提示证书不受信任，可安装这台电脑的 CA 证书，并在系统设置中启用信任。</p><a href="ca.crt" download>下载 CA 证书</a></details></footer>
+    <noscript><p>请开启 JavaScript，以定位并进入工作台。</p></noscript>
+  </div>
+  <script>window.PANEL_RELAY_CONFIG = { name: '__DUCKDNS_FQDN__', port: __PANEL_PORT__ };</script>
+  <script src="relay.js"></script>
 </body>
 </html>
