@@ -6,6 +6,8 @@ English | [中文版](README.zh-CN.md)
 
 # Tmux Web Panel
 
+Native clients: [macOS](macos/README.md) · [Android](android/README.md) (`npm run build:android`).
+
 The **Settings → 管理中心 (Management)** page manages the project-built tmux runtime, configuration backups, plugin lifecycle, and Codex/Claude skill links. The optional `tmux-agent` plugin exposes pane control, persistent commands, and agent handoffs over HTTP MCP. See [management documentation](docs/management.md).
 
 **The tmux sessions on your machines, in any browser — desktop, phone or tablet —

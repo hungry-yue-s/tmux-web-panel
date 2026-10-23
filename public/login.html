@@ -1,148 +1,99 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="icon" type="image/png" href="/app-icon.png?v=2">
-  <title>Login — Tmux Panel</title>
+  <meta name="color-scheme" content="dark light">
+  <title>登录工作台 — Tmux Panel</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body {
-      height: 100%;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg-primary, #1a1b26);
-      color: var(--text-primary, #c0caf5);
+    * { margin:0; padding:0; box-sizing:border-box; }
+    :root { --login-bg:var(--workspace-bg,#101e21); --login-panel:var(--workspace-panel,#1e3235); --login-text:var(--workspace-text,#e4ece9); --login-muted:var(--workspace-muted,#a9bbb6); --login-accent:var(--workspace-accent,#ebc093); --login-line:var(--workspace-line,#354d50); }
+    html { min-height:100%; background:var(--login-bg); color:var(--login-text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    body { min-height:100vh; min-height:100dvh; }
+    button,input { font:inherit; }
+    .login-wrapper { min-height:100vh; min-height:100dvh; width:min(100%,1080px); margin:auto; padding:64px 48px; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,420px); align-items:center; gap:96px; }
+    .login-brand { display:flex; align-items:center; gap:14px; font-size:18px; font-weight:650; letter-spacing:-.03em; }
+    .login-brand img { width:56px; height:56px; object-fit:contain; }
+    .login-heading { margin:48px 0 20px; font-size:44px; line-height:1.25; font-weight:600; letter-spacing:-.05em; }
+    .login-intro>p { color:var(--login-muted); font-size:15px; line-height:1.8; max-width:28em; }
+    .login-workbench { margin-top:44px; height:170px; border:1px solid var(--login-line); border-radius:16px; overflow:hidden; display:grid; grid-template:32px 1fr / 1.8fr 1fr; color:var(--login-muted); }
+    .login-workbench header { grid-column:1/-1; border-bottom:1px solid var(--login-line); display:flex; align-items:center; gap:5px; padding:0 12px; }
+    .login-workbench i { width:5px; height:5px; border-radius:50%; background:currentColor; opacity:.45; }
+    .login-workbench code { padding:20px 18px; font:13px/1.8 ui-monospace,monospace; color:var(--login-text); }
+    .login-workbench aside { border-left:1px solid var(--login-line); padding:20px 14px; }
+    .login-workbench aside span { display:block; height:4px; margin:5px 0 14px; border-radius:3px; background:var(--login-line); }
+    .login-workbench aside span:nth-child(2) { width:60%; }
+    .login-workbench aside span:nth-child(3) { width:80%; }
+    .login-cursor { display:inline-block; width:7px; height:13px; background:var(--login-accent); vertical-align:-2px; margin-left:7px; }
+    .login-card { min-width:0; padding:32px; border:1px solid var(--login-line); border-radius:24px; background:var(--login-panel); }
+    .login-title { font-size:28px; line-height:1.3; font-weight:600; letter-spacing:-.04em; }
+    .login-subtitle { margin:10px 0 30px; color:var(--login-muted); font-size:14px; line-height:1.6; }
+    .login-field { margin-bottom:20px; }
+    .login-field label { display:block; font-size:13px; font-weight:550; margin-bottom:9px; }
+    .login-field input { width:100%; min-height:52px; padding:13px 15px; font-size:16px; border:1px solid var(--login-line); border-radius:12px; background:var(--login-bg); color:var(--login-text); outline:none; }
+    .login-field input::placeholder { color:var(--login-muted); opacity:.8; }
+    .login-field input:focus-visible { outline:2px solid var(--login-accent); outline-offset:2px; }
+    .login-field label span { color:var(--login-muted); font-weight:400; }
+    .login-trust { display:flex; align-items:center; gap:12px; min-height:48px; margin:4px 0 20px; cursor:pointer; }
+    .login-trust input { width:20px; height:20px; flex-shrink:0; accent-color:var(--login-accent); }
+    .login-trust strong { display:block; font-size:14px; font-weight:500; }
+    .login-trust small { display:block; font-size:12px; color:var(--login-muted); margin-top:4px; }
+    .login-btn { width:100%; min-height:52px; border:0; border-radius:12px; background:var(--login-accent); color:var(--login-bg); font-size:16px; font-weight:600; cursor:pointer; }
+    .login-btn:hover { filter:brightness(1.08); }
+    .login-btn:active { transform:translateY(1px); }
+    .login-btn:focus-visible,.login-trust input:focus-visible { outline:2px solid var(--login-accent); outline-offset:4px; }
+    .login-btn:disabled { opacity:.6; cursor:wait; }
+    .login-error { display:none; margin-top:16px; padding:12px 14px; border:1px solid currentColor; border-radius:12px; font-size:14px; line-height:1.5; overflow-wrap:anywhere; color:var(--accent-red,#f7768e); }
+    .login-error.visible { display:block; }
+    .login-footer { margin-top:24px; color:var(--login-muted); text-align:center; font-size:12px; line-height:1.6; }
+    @media(max-width:760px) {
+      .login-wrapper { max-width:480px; padding:40px 28px max(28px,env(safe-area-inset-bottom)); display:flex; flex-direction:column; align-items:stretch; gap:36px; }
+      .login-heading,.login-intro>p,.login-workbench { display:none; }
+      .login-card { padding:0; border:0; border-radius:0; background:none; }
+      .login-title { font-size:30px; }
+      .login-subtitle { margin-bottom:32px; }
+      .login-brand img { width:48px; height:48px; }
     }
-    .login-wrapper {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      padding: 16px;
-    }
-    .login-card {
-      width: 100%;
-      max-width: 380px;
-      background: var(--bg-card, #24283b);
-      border-radius: 12px;
-      padding: 32px 28px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-    }
-    .login-title {
-      font-size: 1.4rem;
-      font-weight: 600;
-      text-align: center;
-      margin-bottom: 8px;
-      color: var(--text-primary, #c0caf5);
-    }
-    .login-subtitle {
-      font-size: 0.85rem;
-      text-align: center;
-      color: var(--text-muted, #565f89);
-      margin-bottom: 24px;
-    }
-    .login-field {
-      margin-bottom: 16px;
-    }
-    .login-field label {
-      display: block;
-      font-size: 0.8rem;
-      color: var(--text-muted, #565f89);
-      margin-bottom: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .login-field input {
-      width: 100%;
-      padding: 10px 12px;
-      font-size: 0.95rem;
-      border: 1px solid var(--border, #3b4261);
-      border-radius: 8px;
-      background: var(--bg-primary, #1a1b26);
-      color: var(--text-primary, #c0caf5);
-      outline: none;
-      transition: border-color 0.2s;
-    }
-    .login-field input:focus {
-      border-color: var(--accent-blue, #7aa2f7);
-    }
-    .login-btn {
-      display: block;
-      width: 100%;
-      padding: 10px;
-      font-size: 1rem;
-      font-weight: 600;
-      border: none;
-      border-radius: 8px;
-      background: var(--accent-blue, #7aa2f7);
-      color: var(--bg-primary, #1a1b26);
-      cursor: pointer;
-      margin-top: 8px;
-      transition: background 0.2s;
-    }
-    .login-btn:hover { opacity: 0.9; }
-    .login-btn:active { opacity: 0.8; }
-    .login-btn:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
-    .login-error {
-      display: none;
-      margin-top: 12px;
-      padding: 8px 12px;
-      font-size: 0.85rem;
-      color: var(--accent-red, #f7768e);
-      background: rgba(247, 118, 142, 0.1);
-      border-radius: 6px;
-      text-align: center;
-    }
-    .login-error.visible { display: block; }
-    .login-trust {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 16px;
-      font-size: 0.85rem;
-      color: var(--text-muted, #565f89);
-      cursor: pointer;
-      user-select: none;
-    }
-    .login-trust input[type="checkbox"] {
-      width: 16px;
-      height: 16px;
-      accent-color: var(--accent-blue, #7aa2f7);
-      cursor: pointer;
-    }
+    @media(min-width:761px) and (max-width:940px) { .login-wrapper { gap:40px; padding:48px 32px; } .login-heading { font-size:36px; } }
+    @media(prefers-reduced-motion:reduce) { .login-btn:active { transform:none; } }
   </style>
 </head>
 <body>
-  <div class="login-wrapper">
-    <div class="login-card">
-      <div class="login-title">Tmux Web Panel</div>
-      <div class="login-subtitle">Sign in to continue</div>
-      <form id="login-form">
-        <div class="login-field">
-          <label for="username">Username</label>
-          <input type="text" id="username" name="username" autocomplete="username" required autofocus>
-        </div>
-        <div class="login-field">
-          <label for="password">Password</label>
-          <input type="password" id="password" name="password" autocomplete="current-password" required>
-        </div>
-        <div class="login-field">
-          <label for="totp">Two-factor code (if enabled)</label>
-          <input type="text" id="totp" name="totp" inputmode="numeric" autocomplete="one-time-code"
-                 pattern="[0-9]*" maxlength="6" placeholder="123456">
-        </div>
-        <label class="login-trust">
-          <input type="checkbox" id="trusted"> Trust this device
-        </label>
-        <button type="submit" class="login-btn" id="login-btn">Sign In</button>
-      </form>
-      <div class="login-error" id="login-error"></div>
-    </div>
-  </div>
+  <main class="login-wrapper">
+    <section class="login-intro" aria-label="Tmux Panel">
+      <div class="login-brand"><img src="/app-icon.png?v=2" alt="" width="56" height="56"><span>Tmux Panel</span></div>
+      <div class="login-heading">你的工作台，<br>随时接续。</div>
+      <p>终端、会话与文件，始终在同一个地方。<br>登录后，继续刚才的工作。</p>
+      <div class="login-workbench" aria-hidden="true"><header><i></i><i></i><i></i></header><code>&gt; tmux attach<br><br>~/workspace<span class="login-cursor"></span></code><aside><span></span><span></span><span></span><span></span></aside></div>
+    </section>
+    <section aria-labelledby="login-title">
+      <div class="login-card">
+        <h1 class="login-title" id="login-title">登录工作台</h1>
+        <p class="login-subtitle">使用面板账号，接续你的终端与会话。</p>
+        <form id="login-form" aria-describedby="login-error">
+          <div class="login-field">
+            <label for="username">账号</label>
+            <input type="text" id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="面板用户名" required>
+          </div>
+          <div class="login-field">
+            <label for="password">密码</label>
+            <input type="password" id="password" name="password" autocomplete="current-password" placeholder="输入密码" required>
+          </div>
+          <div class="login-field">
+            <label for="totp">双因素验证码 <span>（如已开启）</span></label>
+            <input type="text" id="totp" name="totp" inputmode="numeric" autocomplete="one-time-code"
+                   pattern="[0-9]*" maxlength="6" placeholder="6 位验证码">
+          </div>
+          <label class="login-trust"><input type="checkbox" id="trusted"><span><strong>信任此设备</strong><small>下次访问保留登录状态</small></span></label>
+          <button type="submit" class="login-btn" id="login-btn">进入工作台</button>
+        </form>
+        <div class="login-error" id="login-error" role="alert" aria-live="polite"></div>
+      </div>
+      <p class="login-footer">关闭页面不会结束电脑上的 tmux 会话</p>
+    </section>
+  </main>
   <script src="/js/theme.js"></script>
   <script src="/js/relay-config.js"></script>
   <script>
@@ -172,7 +123,8 @@
         e.preventDefault();
         errorEl.classList.remove('visible');
         btn.disabled = true;
-        btn.textContent = 'Signing in...';
+        btn.textContent = '正在登录…';
+        form.setAttribute('aria-busy', 'true');
 
         var username = document.getElementById('username').value;
         var password = document.getElementById('password').value;
@@ -206,15 +158,16 @@
                 window.location.href = '/';
               }
             } else {
-              showError(data.error || 'Login failed');
+              showError(data.error || '登录失败，请检查账号和验证码');
             }
           })
           .catch(function () {
-            showError('Network error — please try again');
+            showError('网络连接失败，请检查网络后重试');
           })
           .finally(function () {
             btn.disabled = false;
-            btn.textContent = 'Sign In';
+            btn.textContent = '进入工作台';
+            form.removeAttribute('aria-busy');
           });
       });
 

@@ -13,3 +13,11 @@ docs/superpowers/
 
 # Per-deployment generated config (scripts/setup-relay.sh); see relay-config.example.js
 /public/js/relay-config.js
+
+# Android local configuration, signing material and build outputs
+/android/.gradle/
+/android/**/build/
+/android/local.properties
+/android/*.jks
+/android/*.keystore
+/android/captures/

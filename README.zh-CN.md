@@ -6,6 +6,8 @@
 
 # Tmux Web Panel
 
+原生客户端：[macOS](macos/README.md) · [Android](android/README.md)（`npm run build:android`）。
+
 **办公室 Mac 上跑着的 tmux，在沙发上的手机里接着用。**
 
 浏览器里跑的是真 `tmux attach`，不是又套一层的终端模拟器。每台机器的每个
