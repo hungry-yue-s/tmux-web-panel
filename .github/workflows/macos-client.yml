@@ -38,9 +38,12 @@ jobs:
         run: brew install autoconf automake bison cmake pkg-config
       - name: Native desktop logic checks
         run: bash scripts/test-macos-shell.sh
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        id: runtime-cache
         with:
-          path: dist/macos-build-cache
+          path: |
+            dist/macos-build-cache/downloads
+            dist/macos-build-cache/static-*
           key: macos-runtime-${{ matrix.arch }}-${{ hashFiles('scripts/bundle-macos-runtime.sh') }}
       - name: Prepare version and signing
         shell: bash
@@ -78,6 +81,14 @@ jobs:
         run: bash scripts/build-macos-app.sh
       - name: First-run service integration (isolated launchd labels)
         run: '"dist/macos/Tmux Panel.app/Contents/Resources/runtime/bin/node" scripts/test-desktop-runtime.mjs "dist/macos/Tmux Panel.app/Contents/Resources/runtime"'
+      - name: Preserve completed build dependencies even if a later check fails
+        if: always() && steps.runtime-cache.outputs.cache-hit != 'true' && hashFiles('dist/macos-build-cache/static-*/.static-components-complete-v3') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            dist/macos-build-cache/downloads
+            dist/macos-build-cache/static-*
+          key: macos-runtime-${{ matrix.arch }}-${{ hashFiles('scripts/bundle-macos-runtime.sh') }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: Tmux-Panel-macOS-${{ matrix.arch }}

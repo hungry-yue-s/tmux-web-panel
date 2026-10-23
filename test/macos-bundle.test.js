@@ -1,10 +1,24 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 describe('macOS distribution build guards', () => {
+  it('uses only credential-free public npm HTTPS tarballs in the lockfile', () => {
+    const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+    const tarballs = Object.values(lock.packages).filter(value => value.resolved);
+    expect(tarballs.length).toBeGreaterThan(0);
+    const unsafeCount = tarballs.filter(value => {
+      try {
+        const url = new URL(value.resolved);
+        return url.origin !== 'https://registry.npmjs.org' || !!(url.username || url.password || url.search || url.hash);
+      } catch { return true; }
+    }).length;
+    // Report a count, never a resolved URL that might contain credentials.
+    expect(unsafeCount, 'Lockfile tarballs must use credential-free public npm HTTPS URLs').toBe(0);
+  });
+
   it('rejects an unsupported runtime architecture before writing output or downloading', () => {
     const temp = mkdtempSync(join(tmpdir(), 'tmux-bundle-guard-'));
     try {

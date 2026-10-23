@@ -172,7 +172,7 @@ cat > "$RUNTIME/licenses/THIRD-PARTY-NOTICES.md" <<'NOTICES'
 - npm production packages: each package's original notices in ../app/node_modules/.
 - Tmux Panel: ../app/package.json declares ISC. This source checkout does not contain a root project license text; the declaration is retained as metadata and does not replace a license grant.
 NOTICES
-"$WORK/node/bin/node" "$WORK/node/lib/node_modules/npm/bin/npm-cli.js" ci --omit=dev --no-audit --no-fund --prefix "$RUNTIME/app"
+"$WORK/node/bin/node" "$WORK/node/lib/node_modules/npm/bin/npm-cli.js" ci --omit=dev --no-audit --no-fund --registry=https://registry.npmjs.org --prefix "$RUNTIME/app"
 # Keep the matching addon only; all other platform prebuilds are irrelevant and
 # can prevent Apple's notarization service from identifying the app's code.
 find "$RUNTIME/app/node_modules/node-pty/prebuilds" -mindepth 1 -maxdepth 1 -type d ! -name "darwin-$ARCH" -exec rm -rf {} +
