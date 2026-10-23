@@ -27,6 +27,16 @@ of every machine you own, plus rendered docs, live perf dashboards and
 
 ---
 
+## Download the desktop client
+
+For a ready-to-run Mac app, choose the complete package for your Mac's architecture under [GitHub Releases → Assets](https://github.com/hungry-yue-s/tmux-web-panel/releases), rather than **Source code (zip)**. Complete packages include the server, Node runtime and project-managed tmux. The first-run guide creates a local account; **Settings and Runtime Status** shows setup progress, service state and logs.
+
+Local use comes first. Phone access, dynamic DNS and a relay website are optional and can be configured later. See the [desktop onboarding guide](docs/desktop-onboarding.md) and [macOS build and signing notes](macos/README.md). Source checkout users can continue with the source deployment instructions below.
+
+The complete bundle targets macOS 13.5+ with `arm64` and `x64` builds. Current local artifacts are ad-hoc signed development previews without Developer ID signing or Apple notarization. Download only assets actually provided by a release and check its stated validation scope; an x64 check under Rosetta does not establish Intel hardware compatibility.
+
+---
+
 ## Sound familiar?
 
 | Your day | What the panel does about it |
@@ -177,7 +187,7 @@ The same workspace tree—server → session → window → pane—is what the s
 
 ---
 
-## Quick start
+## Deploy from source
 
 ```bash
 npm install

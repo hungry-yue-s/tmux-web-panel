@@ -7,7 +7,6 @@ import { homedir } from 'node:os';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import {
-  hashPassword,
   verifyPassword,
   createToken,
   deleteToken,
@@ -15,9 +14,11 @@ import {
   wsTokenAuth,
   startTokenReaper,
   initTokenPersistence,
+  flushTokenPersistence,
   createLoginRateLimiter,
 } from './auth.js';
-import { loadTotpSecret, verifyTotp } from './totp.js';
+import { loadTotpSecret, verifyTotp, totpFilePath } from './totp.js';
+import { resolveRuntimeConfig } from './runtime-config.js';
 import * as tmux from './tmux.js';
 import { TerminalManager } from './terminal.js';
 import { StatusMonitor } from './monitor.js';
@@ -59,37 +60,8 @@ import { createPluginsRouter } from './api/plugins.js';
 import { ManagedResources } from './managed-resources.js';
 import { createManagedResourcesRouter } from './api/managed-resources.js';
 
-// --- CLI Argument Parsing ---
-
-function parseArgs(argv) {
-  const args = {};
-  for (let i = 2; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg.startsWith('--') && i + 1 < argv.length) {
-      const key = arg.slice(2);
-      args[key] = argv[++i];
-    }
-  }
-  return args;
-}
-
-const cliArgs = parseArgs(process.argv);
-
-const tlsCert = cliArgs['tls-cert'] ?? process.env.TLS_CERT ?? null;
-const tlsKey = cliArgs['tls-key'] ?? process.env.TLS_KEY ?? null;
-
-const config = Object.freeze({
-  port: Number(cliArgs.port ?? process.env.PORT ?? 7681),
-  host: cliArgs.host ?? process.env.HOST ?? '0.0.0.0',
-  auth: cliArgs.auth ?? process.env.AUTH ?? null,
-  pollInterval: Number(
-    cliArgs['poll-interval'] ?? process.env.POLL_INTERVAL ?? 3000,
-  ),
-  maxConnections: Number(
-    cliArgs['max-connections'] ?? process.env.MAX_CONNECTIONS ?? 5,
-  ),
-  tls: tlsCert && tlsKey ? { cert: tlsCert, key: tlsKey } : null,
-});
+const config = resolveRuntimeConfig();
+const configDir = config.configDir;
 
 // --- Express App ---
 
@@ -114,15 +86,12 @@ let authSalt = null;
 let authHash = null;
 
 if (config.auth) {
-  const colonIndex = config.auth.indexOf(':');
-  authUser = config.auth.slice(0, colonIndex);
-  const rawPass = config.auth.slice(colonIndex + 1);
-  const hashed = hashPassword(rawPass);
-  authSalt = hashed.salt;
-  authHash = hashed.hash;
+  authUser = config.authCredentials.username;
+  authSalt = config.authCredentials.salt;
+  authHash = config.authCredentials.hash;
 
   // Restore persisted tokens (survives restarts)
-  const tokenFile = join(homedir(), '.config', 'tmux-web-panel', 'tokens.json');
+  const tokenFile = join(configDir, config.tokenFileName);
   initTokenPersistence(tokenMap, tokenFile);
 
   // --- Public auth routes (no token required) ---
@@ -150,7 +119,7 @@ if (config.auth) {
       verifyPassword(password, authSalt, authHash);
 
     // Read per attempt so enrolling or removing MFA needs no restart.
-    const totpSecret = loadTotpSecret();
+    const totpSecret = loadTotpSecret(totpFilePath(configDir));
     const totpOk = !totpSecret || verifyTotp(totpSecret, String(totp ?? ''));
 
     if (passwordOk && totpOk) {
@@ -181,6 +150,12 @@ if (config.auth) {
 }
 
 // Serve static files from public/ (publicly accessible — client JS handles auth redirect)
+if (config.managedRuntime) {
+  app.get('/js/relay-config.js', (_req, res) => {
+    res.type('application/javascript').set('Cache-Control', 'no-store')
+      .send('window.PANEL_RELAY_PAGE = ' + JSON.stringify(config.relayPage) + ';\n');
+  });
+}
 app.use(express.static(join(__dirname, '..', 'public'), { etag: false, maxAge: 0 }));
 
 // --- Token auth middleware (protects API routes below) ---
@@ -211,7 +186,7 @@ app.get('/api/status', async (_req, res) => {
 // --- Notification Store (must be initialized before mounting routes) ---
 
 const notificationStore = new NotificationStore(
-  join(homedir(), '.config', 'tmux-web-panel', 'notifications.json'),
+  join(configDir, 'notifications.json'),
 );
 
 const agentEvents = new AgentEventService({ notificationStore });
@@ -221,14 +196,14 @@ const statusMonitor = new StatusMonitor({ notificationStore, agentEvents });
 // --- Pin Store (window-id pinning, persisted across restarts) ---
 
 const pinStore = new PinStore(
-  join(homedir(), '.config', 'tmux-web-panel', 'pins.json'),
+  join(configDir, 'pins.json'),
 );
 await pinStore.load();
 
 // --- Share Store (file-preview snapshots shared via /s/:id, persisted) ---
 
 const shareStore = new ShareStore(
-  join(homedir(), '.config', 'tmux-web-panel', 'shares.json'),
+  join(configDir, 'shares.json'),
 );
 await shareStore.load();
 
@@ -296,8 +271,8 @@ app.use('/api/share', createShareRouter(shareStore));
 app.use('/api/upload', createUploadRouter('/tmp/tmux-web-panel-uploads'));
 app.use('/api/files', createFilesRouter([homedir(), '/tmp']));
 app.use('/api/claude-usage', createClaudeUsageRouter());
-app.use('/api/codex-usage', createCodexUsageRouter());
-const agentHubService = createAgentHubService();
+app.use('/api/codex-usage', createCodexUsageRouter({ configDir }));
+const agentHubService = createAgentHubService({ configDir });
 app.use('/api/agent-hub', createAgentHubRouter(agentHubService));
 
 // --- HTTP(S) + WebSocket Server ---
@@ -327,8 +302,6 @@ const terminalManager = new TerminalManager({
 // Built after the legacy pieces so existing routes keep their behavior. The
 // registry synthesizes the built-in `local` server, so a fresh install already
 // has one working entry with no configuration.
-
-const configDir = join(homedir(), '.config', 'tmux-web-panel');
 
 const serverRegistry = new ServerRegistry({ configDir });
 await serverRegistry.load();
@@ -404,7 +377,8 @@ const pluginManager = new PluginManager({
 await pluginManager.load();
 app.use('/api/plugins', createPluginsRouter(pluginManager));
 
-const managedResources = new ManagedResources({ projectDir: join(__dirname, '..'), configDir });
+const managedResources = new ManagedResources({ projectDir: join(__dirname, '..'), configDir,
+  packaged: config.managedRuntime, runtimePath: config.runtimePath });
 await managedResources.load();
 app.use('/api/managed-resources', createManagedResourcesRouter(managedResources));
 
@@ -493,6 +467,7 @@ function shutdown(signal) {
   wss.close(() => {
     server.close(() => {
       console.log('Server closed.');
+      flushTokenPersistence(tokenMap);
       process.exit(0);
     });
   });
@@ -500,6 +475,7 @@ function shutdown(signal) {
   // Force exit after 5 seconds if graceful shutdown stalls
   setTimeout(() => {
     console.error('Forced exit after timeout.');
+    flushTokenPersistence(tokenMap);
     process.exit(1);
   }, 5000);
 }
@@ -546,8 +522,8 @@ server.listen(config.port, config.host, () => {
 
 // When TLS is enabled, also start an HTTP server that redirects to HTTPS
 let httpRedirectServer = null;
-if (config.tls) {
-  const httpPort = Number(cliArgs['http-port'] ?? process.env.HTTP_PORT ?? 80);
+if (config.tls && config.httpPort !== null) {
+  const httpPort = config.httpPort;
   httpRedirectServer = createServer((req, res) => {
     const host = (req.headers.host || '').replace(/:.*/, '');
     const portSuffix = config.port === 443 ? '' : ':' + config.port;

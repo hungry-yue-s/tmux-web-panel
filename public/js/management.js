@@ -22,15 +22,17 @@
     root.innerHTML = '<div class="intro"><h2>管理中心</h2><p>管理面板所在机器的 tmux、配置、插件和 Agent Skills。</p></div>'
       + '<div class="section"><div class="section-head"><h3>tmux 运行时</h3>' + button('刷新状态', 'refresh') + '</div>'
       + '<div class="ms-card managed-card"><strong>' + esc(runtime.version || '尚未安装项目 tmux') + '</strong>'
-      + '<p class="mono">' + esc(runtime.path) + '</p><p>从项目固定的 tmux 源码构建；保留上一版本供回退。更新不会重启正在运行的会话。</p>'
-      + '<div class="managed-actions">' + button(runtime.available ? '重新构建 / 更新' : '构建并安装', 'build', runtime.build?.status === 'running' ? 'disabled' : '')
-      + button('回退上一版本', 'rollback', runtime.build?.status === 'running' ? 'disabled' : '') + '</div>'
+      + '<p class="mono">' + esc(runtime.path) + '</p><p>' + (runtime.packaged
+        ? '此 tmux 随桌面客户端提供，无需本机编译。请通过客户端更新运行时，现有个人 tmux 不会被替换。'
+        : '从项目固定的 tmux 源码构建；保留上一版本供回退。更新不会重启正在运行的会话。') + '</p>'
+      + '<div class="managed-actions">' + (runtime.buildSupported === false ? '' : button(runtime.available ? '重新构建 / 更新' : '构建并安装', 'build', runtime.build?.status === 'running' ? 'disabled' : ''))
+      + (runtime.rollbackSupported === false ? '' : button('回退上一版本', 'rollback', runtime.build?.status === 'running' ? 'disabled' : '')) + '</div>'
       + '<div id="managed-build" aria-live="polite">' + buildHtml(runtime.build) + '</div></div></div>'
-      + '<div class="section"><div class="section-head"><h3>tmux 配置</h3><span>' + (config.linked ? '已接入 ~/.tmux.conf' : '尚未接入') + '</span></div>'
+      + '<div class="section"><div class="section-head"><h3>tmux 配置</h3><span>' + (config.linkSupported === false ? '客户端独立配置' : config.linked ? '已接入 ~/.tmux.conf' : '尚未接入') + '</span></div>'
       + '<div class="ms-card managed-card"><label for="managed-config">项目管理的配置片段</label>'
       + '<p class="mono">' + esc(config.path) + '</p><textarea id="managed-config" spellcheck="false" rows="9">' + esc(config.content) + '</textarea>'
-      + '<p>保存会创建备份。接入只添加一个标记区块，保留其他个人配置；应用会影响当前 tmux。</p>'
-      + '<div class="managed-actions">' + button('保存配置', 'save-config') + button(config.linked ? '取消自动加载' : '接入自动加载', config.linked ? 'unlink-config' : 'link-config')
+      + '<p>' + (config.linkSupported === false ? '保存会创建备份。此配置只用于客户端托管的 tmux；应用会影响其当前会话，不修改个人 ~/.tmux.conf。' : '保存会创建备份。接入只添加一个标记区块，保留其他个人配置；应用会影响当前 tmux。') + '</p>'
+      + '<div class="managed-actions">' + button('保存配置', 'save-config') + (config.linkSupported === false ? '' : button(config.linked ? '取消自动加载' : '接入自动加载', config.linked ? 'unlink-config' : 'link-config'))
       + button('应用已保存配置', 'apply-config') + '</div><p class="muted">备份目录：' + esc(config.backupDirectory) + '</p></div></div>'
       + '<div class="section"><div class="section-head"><h3>插件</h3></div>'
       + plugins.plugins.map((plugin) => '<div class="ms-card managed-card"><h3>' + esc(plugin.name) + ' <small>v' + esc(plugin.installedVersion || plugin.version) + '</small></h3>'

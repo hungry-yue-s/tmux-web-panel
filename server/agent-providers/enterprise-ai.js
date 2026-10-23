@@ -23,7 +23,7 @@ const APPS = Object.freeze({
 export function createEnterpriseAiService(options = {}) {
   const home = options.home || homedir();
   const client = options.client || createTokenSwitchClient({ home });
-  const runtime = options.runtime || createEnterpriseRuntime({ home, client });
+  const runtime = options.runtime || createEnterpriseRuntime({ home, client, configDir: options.configDir });
   const localTokenSwitch = createTokenSwitchStatusReader({ home });
   const readTokenSwitch = options.readTokenSwitch || (async () => {
     const local = await localTokenSwitch();

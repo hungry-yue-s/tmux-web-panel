@@ -218,6 +218,13 @@ function schedulePersist(tokenMap) {
   }, PERSIST_DEBOUNCE_MS);
 }
 
+/** Persist pending login/logout changes before a managed service exits. */
+export function flushTokenPersistence(tokenMap) {
+  if (_persistTimer) clearTimeout(_persistTimer);
+  _persistTimer = null;
+  persistNow(tokenMap);
+}
+
 function persistNow(tokenMap) {
   if (!_persistPath) return;
   try {

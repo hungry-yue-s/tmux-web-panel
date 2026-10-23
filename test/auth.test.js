@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   hashPassword,
   verifyPassword,
@@ -7,6 +10,8 @@ import {
   tokenAuth,
   wsTokenAuth,
   SESSION_TTL_MS,
+  initTokenPersistence,
+  flushTokenPersistence,
 } from '../server/auth.js';
 
 describe('hashPassword', () => {
@@ -197,5 +202,45 @@ describe('wsTokenAuth', () => {
 describe('SESSION_TTL_MS', () => {
   it('is 24 hours in milliseconds', () => {
     expect(SESSION_TTL_MS).toBe(24 * 60 * 60 * 1000);
+  });
+});
+
+describe('token persistence at shutdown', () => {
+  let directory, file, tokenMap;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    directory = mkdtempSync(join(tmpdir(), 'panel-token-flush-'));
+    file = join(directory, 'tokens.json');
+    tokenMap = new Map();
+    initTokenPersistence(tokenMap, file);
+  });
+  afterEach(() => {
+    flushTokenPersistence(tokenMap);
+    vi.useRealTimers();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('saves a just-issued trusted login before its debounce timer fires', () => {
+    const token = createToken(tokenMap, { trusted: true });
+    expect(() => readFileSync(file)).toThrow();
+    flushTokenPersistence(tokenMap);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    const restarted = new Map();
+    initTokenPersistence(restarted, file);
+    expect(restarted.get(token)).toEqual({ expiresAt: null, trusted: true });
+  });
+
+  it('saves a just-completed logout so its token cannot return after restart', () => {
+    const token = createToken(tokenMap, { trusted: true });
+    flushTokenPersistence(tokenMap);
+    deleteToken(tokenMap, token);
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toHaveLength(1);
+    flushTokenPersistence(tokenMap);
+    expect(vi.getTimerCount()).toBe(0);
+    const restarted = new Map();
+    initTokenPersistence(restarted, file);
+    expect(restarted.has(token)).toBe(false);
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual([]);
   });
 });

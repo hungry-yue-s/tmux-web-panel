@@ -31,15 +31,32 @@ struct PanelRootView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
+        PanelContentView(model: model, setup: model.desktop)
+    }
+}
+
+private struct PanelContentView: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var setup: DesktopSetupManager
+
+    var body: some View {
         ZStack {
-            PanelWebView(model: model)
-                .ignoresSafeArea()
-            if case let .failed(message) = model.webState {
-                ConnectionFailureView(message: message)
-                    .environmentObject(model)
+            if setup.isChecking {
+                ProgressView("正在检查本机工作台…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if setup.needsSetup {
+                DesktopWelcomeView(setup: setup)
+            } else {
+                PanelWebView(model: model)
+                    .id(model.webViewID).ignoresSafeArea()
+                if case let .failed(message) = model.webState {
+                    ConnectionFailureView(message: message)
+                        .environmentObject(model)
+                }
             }
         }
         .frame(minWidth: 760, minHeight: 520)
+        .sheet(isPresented: $setup.isPresented) { DesktopControlCenter(setup: setup) }
     }
 }
 
@@ -65,6 +82,7 @@ struct ConnectionFailureView: View {
                 Button("重新加载") { model.reload() }
                     .keyboardShortcut(.defaultAction)
                 Button("在浏览器中打开") { model.openInBrowser() }
+                Button("设置与运行状态") { model.desktop.present() }
             }
         }
         .padding(30)
@@ -104,6 +122,11 @@ struct StatusMenuView: View {
         Button("切换全屏") { model.toggleFullScreen() }
             .keyboardShortcut("f", modifiers: [.command, .control])
         Button("刷新服务状态") { model.refreshServices() }
+        Button("设置与运行状态…") {
+            openWindow(id: "panel")
+            NSApp.activate(ignoringOtherApps: true)
+            model.desktop.present()
+        }
         Button("在浏览器中打开") { model.openInBrowser() }
         Button("打开日志目录") { model.openLogs() }
 
@@ -136,6 +159,8 @@ struct PanelCommands: Commands {
 
     var body: some Commands {
         CommandGroup(after: .toolbar) {
+            Button("设置与运行状态…") { model.desktop.present() }
+                .keyboardShortcut(",", modifiers: .command)
             Button("重新加载面板") { model.reload() }
                 .keyboardShortcut("r", modifiers: .command)
             Button("切换全屏") { model.toggleFullScreen() }

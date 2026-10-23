@@ -24,6 +24,16 @@ session、window、pane 都在，文档渲染、性能看板、还有追到手�
 
 ---
 
+## 下载桌面客户端
+
+不想配置开发环境，请到 [GitHub Releases](https://github.com/hungry-yue-s/tmux-web-panel/releases) 的 **Assets** 下载适合自己 Mac 芯片架构的完整安装包；不要选 **Source code (zip)**。完整包内置服务端、Node 与项目 tmux，首次打开按引导创建本机账号，并在“设置与运行状态”查看准备进度、服务状态和日志。
+
+默认只在本机使用，手机连接、DNS 和引导网页都可稍后选配。先读[桌面首次使用指南](docs/desktop-onboarding.md)，构建与签名说明见 [macOS 客户端](macos/README.md)。仅下载源码的用户继续使用下面的源码部署流程。
+
+完整包面向 macOS 13.5+，区分 `arm64` 与 `x64`。当前本地输出为 ad-hoc 签名的开发预览包，没有 Developer ID 签名或 Apple 公证；请以该次 Release 实际附件和验收范围为准。Rosetta 下的 x64 检查不代表 Intel 真机验证。
+
+---
+
 ## 先对几个场景，中了的继续往下翻
 
 | 你的日常 | 面板接手之后 |
@@ -165,7 +175,7 @@ flowchart LR
 
 ---
 
-## 快速开始
+## 源码部署
 
 ```bash
 npm install

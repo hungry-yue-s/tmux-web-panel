@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { isMap, isScalar, isSeq, parseDocument } from 'yaml';
 import { ManagedResources } from '../managed-resources.js';
 import { AppError, ErrorCode } from '../servers/errors.js';
+import { configDirectory } from '../runtime-config.js';
 
 const PROVIDER = 'tmux-enterprise';
 const KEY_REF = 'TMUX_PANEL_ENTERPRISE_API_KEY';
@@ -62,7 +63,7 @@ export function createDshTuiManager(options = {}) {
       from: 'return { ...assembled, variables: { ...assembled.variables, provider: selected.provider, model: selected.model } };\n            }));',
       to: 'return { ...assembled, variables: { ...assembled.variables, provider: selected.provider, model: selected.model } };\n            }, { prepend: true }));' },
   ];
-  const resources = new ManagedResources({ projectDir: '', configDir: join(home, '.config/tmux-web-panel'), userHome: home });
+  const resources = new ManagedResources({ projectDir: '', configDir: configDirectory({ configDir: options.configDir, home }), userHome: home });
   const parseJSON = (text) => {
     try { const value = JSON.parse(text || '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
     catch { return {}; }

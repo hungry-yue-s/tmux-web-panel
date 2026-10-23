@@ -17,7 +17,10 @@ export const TOTP_STEP_SECONDS = 30;
 export const TOTP_DIGITS = 6;
 export const TOTP_WINDOW_STEPS = 1;
 
-export const TOTP_FILE = join(homedir(), '.config', 'tmux-web-panel', 'totp.json');
+export function totpFilePath(configDir = join(homedir(), '.config', 'tmux-web-panel')) {
+  return join(configDir, 'totp.json');
+}
+export const TOTP_FILE = totpFilePath();
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 

@@ -20,7 +20,9 @@ enum WebState: Equatable {
 
 @MainActor
 final class AppModel: ObservableObject {
-    let endpoint: PanelEndpoint
+    @Published private(set) var endpoint: PanelEndpoint
+    @Published private(set) var webViewID = UUID()
+    let desktop = DesktopSetupManager()
 
     @Published private(set) var webState: WebState = .loading
     @Published private(set) var panelService: ServiceState = .checking
@@ -30,9 +32,14 @@ final class AppModel: ObservableObject {
     private weak var webView: WKWebView?
     private var pendingNavigation: NativeNotificationPayload?
     private var statusTimer: Timer?
+    private var desktopObservation: AnyCancellable?
+    private var pendingHandoffToken: String?
 
     init(endpoint: PanelEndpoint = PanelEndpointResolver.resolve()) {
         self.endpoint = endpoint
+        desktopObservation = desktop.$revision.dropFirst().sink { [weak self] _ in
+            self?.applyDesktopState()
+        }
         NativeNotificationCenter.shared.activationHandler = { [weak self] payload in
             self?.openNotification(payload)
         }
@@ -66,6 +73,29 @@ final class AppModel: ObservableObject {
         self.webView = webView
     }
 
+    func initialLoadURL() -> URL {
+        guard let token = pendingHandoffToken else { return endpoint.url }
+        pendingHandoffToken = nil
+        var components = URLComponents(url: endpoint.url, resolvingAgainstBaseURL: false)
+        let encoded = token.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
+        components?.percentEncodedFragment = "handoff=" + encoded
+        return components?.url ?? endpoint.url
+    }
+
+    private func applyDesktopState() {
+        guard let next = desktop.endpoint else { return }
+        let token = desktop.takeSessionToken()
+        if next != endpoint || token != nil {
+            endpoint = next
+            pendingHandoffToken = token
+            webState = .loading
+            webView = nil
+            webViewID = UUID()
+        }
+        panelService = ServiceState(rawValue: desktop.status?.panelState ?? "") ?? .unavailable
+        tmuxService = ServiceState(rawValue: desktop.status?.tmuxState ?? "") ?? .unavailable
+    }
+
     func markLoading() {
         webState = .loading
     }
@@ -93,6 +123,10 @@ final class AppModel: ObservableObject {
     }
 
     func openLogs() {
+        if desktop.isManaged {
+            desktop.openPath(desktop.paths?.logs)
+            return
+        }
         let logs = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs/tmux-web-panel")
         NSWorkspace.shared.open(logs)
@@ -100,10 +134,16 @@ final class AppModel: ObservableObject {
 
     func refreshServices() {
         Task {
+            if desktop.isManaged {
+                await desktop.refresh()
+                applyDesktopState()
+                return
+            }
             async let panel = ServiceInspector.inspect(label: "com.tmux-web-panel")
             async let tmux = ServiceInspector.inspect(label: "com.tmux-web-panel.tmux-server")
             panelService = await panel
             tmuxService = await tmux
+            desktop.updateLegacyServices(panel: panelService, tmux: tmuxService, endpoint: endpoint.url)
         }
     }
 

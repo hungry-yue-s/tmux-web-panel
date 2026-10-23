@@ -13,6 +13,7 @@ import { createClaudeProviderSwitcher } from '../agent-providers/claude-provider
 import { createCodexProviderSwitcher } from '../agent-providers/codex-provider-switch.js';
 import { createEnterpriseAiService } from '../agent-providers/enterprise-ai.js';
 import { requireSameOrigin } from './servers.js';
+import { configDirectory } from '../runtime-config.js';
 
 const execFileAsync = promisify(execFile);
 const PROFILE_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
@@ -462,28 +463,31 @@ async function ccSwitchProviders(databasePath, runSQLite, usageForProvider, stri
 
 export function createAgentHubService(options = {}) {
   const home = options.home || homedir();
+  const configDir = configDirectory({ configDir: options.configDir, home });
   const accountsPath = options.accountsPath || join(home, '.codex-switcher', 'accounts.json');
   const codexAuthPath = options.codexAuthPath || join(home, '.codex', 'auth.json');
   const ccSwitchDatabase = options.ccSwitchDatabase || join(home, '.cc-switch', 'cc-switch.db');
   const qoderTasksPath = options.qoderTasksPath || join(home, '.qoder', 'tasks');
   const qoderProjectsPath = options.qoderProjectsPath || join(home, '.qoder', 'projects');
-  const qoderSessionPath = options.qoderSessionPath || join(home, '.config', 'tmux-web-panel', 'qoder-session.json');
-  const profileEventsPath = options.profileEventsPath || join(home, '.config', 'tmux-web-panel', 'agent-profile-events.json');
-  const warmupHistoryPath = options.warmupHistoryPath || join(home, '.config', 'tmux-web-panel', 'agent-warmups.json');
-  const accountJournalPath = options.accountJournalPath || join(home, '.config', 'tmux-web-panel', 'codex-account-switch.json');
+  const qoderSessionPath = options.qoderSessionPath || join(configDir, 'qoder-session.json');
+  const profileEventsPath = options.profileEventsPath || join(configDir, 'agent-profile-events.json');
+  const warmupHistoryPath = options.warmupHistoryPath || join(configDir, 'agent-warmups.json');
+  const accountJournalPath = options.accountJournalPath || join(configDir, 'codex-account-switch.json');
   const fetchImpl = options.fetchImpl || globalThis.fetch;
-  const enterpriseService = options.enterpriseService || createEnterpriseAiService({ home });
+  const enterpriseService = options.enterpriseService || createEnterpriseAiService({ home, configDir });
   const runSQLite = options.runSQLite || (async (path, sql) => {
     const result = await execFileAsync('sqlite3', ['-json', path, sql], { timeout: 5000 });
     return result.stdout;
   });
   const switchProvider = options.switchProvider || createCodexProviderSwitcher({
     home,
+    configDir,
     databasePath: ccSwitchDatabase,
     runSQLite,
   });
   const switchClaudeProvider = options.switchClaudeProvider || createClaudeProviderSwitcher({
     home,
+    configDir,
     databasePath: ccSwitchDatabase,
     runSQLite,
   });

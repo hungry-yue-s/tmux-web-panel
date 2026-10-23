@@ -64,6 +64,19 @@ describe('GET /api/codex-usage', () => {
     }));
   });
 
+  it('reads a desktop snapshot from the explicit data directory instead of the legacy home', async () => {
+    const cached = { utilization: { primary: { used_percent: 22 } }, aggregate: { totalSessions: 7 } };
+    mockReadFile.mockImplementation(path => path === '/desktop-data/codex-usage.json'
+      ? Promise.resolve(JSON.stringify(cached)) : Promise.reject(new Error('missing')));
+    mockReaddir.mockResolvedValue([]);
+    const createRouter = (await import('../../server/api/codex-usage.js')).default;
+    const app = express(); app.use('/api/codex-usage', createRouter({ configDir: '/desktop-data' }));
+    const response = await get(app, '/api/codex-usage');
+    expect(response.body).toEqual({ success: true, data: cached });
+    expect(mockReadFile).toHaveBeenCalledWith('/desktop-data/codex-usage.json', 'utf8');
+    expect(mockReadFile).not.toHaveBeenCalledWith('/home/tester/.config/tmux-web-panel/codex-usage.json', 'utf8');
+  });
+
   it('returns aggregated Codex usage from session JSONL files', async () => {
     mockReaddir.mockImplementation((path) => {
       if (path === '/home/tester/.codex/sessions') return Promise.resolve([dirent('2026', true)]);

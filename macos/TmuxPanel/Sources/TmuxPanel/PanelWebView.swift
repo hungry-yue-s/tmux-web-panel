@@ -49,7 +49,7 @@ struct PanelWebView: NSViewRepresentable {
         webView.allowsMagnification = true
         context.coordinator.attachPrimary(webView)
         model.attach(webView: webView)
-        context.coordinator.load(model.endpoint.url, in: webView)
+        context.coordinator.load(model.initialLoadURL(), in: webView)
         return webView.makeGlassContainer(integratedTitlebar: true)
     }
 

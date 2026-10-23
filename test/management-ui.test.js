@@ -2,6 +2,24 @@ import { it, expect, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 
+it('shows packaged runtime capabilities without offering local builds or personal configuration linking', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { runScripts: 'outside-only', url: 'http://localhost' });
+  const win = dom.window;
+  win.AppShell = { escape: value => String(value ?? ''), toast: vi.fn() };
+  win.Api = { get: vi.fn(async path => path === '/api/plugins' ? { plugins: [] } : {
+    runtime: { path: '/desktop/runtime/bin/tmux', version: 'tmux bundled', available: true, packaged: true, buildSupported: false, rollbackSupported: false },
+    tmuxConfig: { path: '/desktop/tmux.conf', content: 'set -g exit-empty off\n', linkSupported: false, backupDirectory: '/desktop/backups' }, skills: [],
+  }) };
+  win.eval(readFileSync('public/js/management.js', 'utf8'));
+  await win.ManagementPage.mount(win.document.getElementById('root'));
+  expect(win.document.querySelector('[data-managed="build"]')).toBeNull();
+  expect(win.document.querySelector('[data-managed="rollback"]')).toBeNull();
+  expect(win.document.querySelector('[data-managed="link-config"]')).toBeNull();
+  expect(win.document.querySelector('[data-managed="save-config"]')).not.toBeNull();
+  expect(win.document.body.textContent).toContain('客户端独立配置');
+  dom.window.close();
+});
+
 it('installs a plugin from the management page and protects conflicting skills', async () => {
   const dom = new JSDOM('<div id="root"></div>', { runScripts: 'outside-only', url: 'http://localhost' });
   const win = dom.window;

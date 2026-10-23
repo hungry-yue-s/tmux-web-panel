@@ -4,12 +4,11 @@
 import { Router } from 'express';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { configDirectory } from '../runtime-config.js';
 
 const CODEX_DIR = join(homedir(), '.codex');
 const SESSIONS_DIR = join(CODEX_DIR, 'sessions');
-const CACHE_DIR = join(homedir(), '.config', 'tmux-web-panel');
-const SNAPSHOT_PATH = join(CACHE_DIR, 'codex-usage.json');
 
 function createCache(ttlMs) {
   let data = null;
@@ -31,21 +30,21 @@ function hasRateLimitSnapshot(snapshot) {
   return Boolean(utilization?.primary || utilization?.secondary);
 }
 
-async function loadPersistedSnapshot() {
+async function loadPersistedSnapshot(path) {
   try {
-    const snapshot = JSON.parse(await readFile(SNAPSHOT_PATH, 'utf8'));
+    const snapshot = JSON.parse(await readFile(path, 'utf8'));
     return hasRateLimitSnapshot(snapshot) ? snapshot : null;
   } catch {
     return null;
   }
 }
 
-function persistSnapshot(snapshot) {
+function persistSnapshot(snapshot, path) {
   snapshotWrite = snapshotWrite.catch(() => {}).then(async () => {
-    await mkdir(CACHE_DIR, { recursive: true, mode: 0o700 });
-    const tmp = SNAPSHOT_PATH + '.tmp';
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    const tmp = path + '.tmp';
     await writeFile(tmp, JSON.stringify(snapshot), { encoding: 'utf8', mode: 0o600 });
-    await rename(tmp, SNAPSHOT_PATH);
+    await rename(tmp, path);
   });
   return snapshotWrite;
 }
@@ -298,7 +297,7 @@ async function readSessions() {
   return result;
 }
 
-async function refreshCodexSnapshot() {
+async function refreshCodexSnapshot(path) {
   try {
     const snapshot = await readSessions();
     if (!hasRateLimitSnapshot(snapshot)) {
@@ -307,7 +306,7 @@ async function refreshCodexSnapshot() {
     }
     latestCodexSnapshot = snapshot;
     try {
-      await persistSnapshot(snapshot);
+      await persistSnapshot(snapshot, path);
     } catch (err) {
       console.error('codex-usage cache write error:', err.message);
     }
@@ -316,14 +315,15 @@ async function refreshCodexSnapshot() {
   }
 }
 
-export default function createRouter() {
+export default function createRouter(options = {}) {
   const router = Router();
-  const initialRefresh = loadPersistedSnapshot().then(async (snapshot) => {
+  const path = join(configDirectory({ configDir: options.configDir }), 'codex-usage.json');
+  const initialRefresh = loadPersistedSnapshot(path).then(async (snapshot) => {
     if (snapshot) latestCodexSnapshot = snapshot;
-    await refreshCodexSnapshot();
+    await refreshCodexSnapshot(path);
   });
 
-  setInterval(refreshCodexSnapshot, POLL_INTERVAL);
+  setInterval(() => refreshCodexSnapshot(path), POLL_INTERVAL);
 
   router.get('/', async (_req, res) => {
     await initialRefresh;

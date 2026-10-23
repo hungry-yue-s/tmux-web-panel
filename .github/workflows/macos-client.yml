@@ -1,0 +1,109 @@
+name: macOS self-contained client
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      TMUX_PANEL_ARCH: ${{ matrix.arch }}
+      TMUX_PANEL_BUILD_NUMBER: ${{ github.run_number }}
+      MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+      - name: Build tools (runner only)
+        run: brew install autoconf automake bison cmake pkg-config
+      - name: Native desktop logic checks
+        run: bash scripts/test-macos-shell.sh
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: dist/macos-build-cache
+          key: macos-runtime-${{ matrix.arch }}-${{ hashFiles('scripts/bundle-macos-runtime.sh') }}
+      - name: Prepare version and signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            [[ "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo 'Release tags must use vMAJOR.MINOR.PATCH.' >&2; exit 1; }
+            echo "TMUX_PANEL_APP_VERSION=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
+          fi
+          if [[ -z "$MACOS_CERTIFICATE_P12_BASE64" ]]; then
+            [[ "$GITHUB_REF_TYPE" != tag ]] || { echo 'A public release requires Developer ID signing and Apple notarization secrets.' >&2; exit 1; }
+            echo 'Manual development build: unsigned for distribution; no public release will be created.'
+            exit 0
+          fi
+          for name in MACOS_CERTIFICATE_PASSWORD MACOS_CODESIGN_IDENTITY APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD; do
+            [[ -n "${!name}" ]] || { echo "Missing signing secret: $name" >&2; exit 1; }
+          done
+          umask 077
+          keychain="$RUNNER_TEMP/tmux-panel-signing.keychain-db"
+          password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
+          printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/tmux-panel-signing.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 7200 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/tmux-panel-signing.p12" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          xcrun notarytool store-credentials tmux-panel-ci --keychain "$keychain" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD"
+          echo "TMUX_PANEL_CODESIGN_IDENTITY=$MACOS_CODESIGN_IDENTITY" >> "$GITHUB_ENV"
+          echo 'TMUX_PANEL_NOTARY_PROFILE=tmux-panel-ci' >> "$GITHUB_ENV"
+          echo "TMUX_PANEL_NOTARY_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo 'TMUX_PANEL_DISTRIBUTION=1' >> "$GITHUB_ENV"
+      - name: Build and verify full app
+        run: bash scripts/build-macos-app.sh
+      - name: First-run service integration (isolated launchd labels)
+        run: '"dist/macos/Tmux Panel.app/Contents/Resources/runtime/bin/node" scripts/test-desktop-runtime.mjs "dist/macos/Tmux Panel.app/Contents/Resources/runtime"'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: Tmux-Panel-macOS-${{ matrix.arch }}
+          path: |
+            dist/macos/Tmux-Panel-macOS-*.zip
+            dist/macos/Tmux-Panel-macOS-*.sha256
+          if-no-files-found: error
+      - name: Remove temporary signing material
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/tmux-panel-signing.keychain-db" ]]; then security delete-keychain "$RUNNER_TEMP/tmux-panel-signing.keychain-db"; fi
+          rm -f "$RUNNER_TEMP/tmux-panel-signing.p12"
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: Tmux-Panel-macOS-*
+          merge-multiple: true
+          path: artifacts
+      - name: Create reviewable release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/*-notarized.zip artifacts/*.sha256 --repo "$GITHUB_REPOSITORY" --verify-tag --draft --generate-notes

@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { AppError, ErrorCode } from '../servers/errors.js';
+import { configDirectory } from '../runtime-config.js';
 
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 
@@ -73,11 +74,12 @@ function projectClaudeSettings(rows, target, live) {
 
 export function createClaudeProviderSwitcher(options = {}) {
   const home = options.home || homedir();
+  const configDir = configDirectory({ configDir: options.configDir, home });
   const databasePath = options.databasePath || join(home, '.cc-switch', 'cc-switch.db');
   const settingsPath = options.settingsPath || join(home, '.cc-switch', 'settings.json');
   const livePath = options.livePath || join(home, '.claude', 'settings.json');
-  const lockPath = options.lockPath || join(home, '.config', 'tmux-web-panel', 'claude-provider-switch.lock');
-  const journalPath = options.journalPath || join(home, '.config', 'tmux-web-panel', 'claude-provider-switch.json');
+  const lockPath = options.lockPath || join(configDir, 'claude-provider-switch.lock');
+  const journalPath = options.journalPath || join(configDir, 'claude-provider-switch.json');
   const runSQLite = options.runSQLite;
   if (typeof runSQLite !== 'function') throw new TypeError('runSQLite is required');
 

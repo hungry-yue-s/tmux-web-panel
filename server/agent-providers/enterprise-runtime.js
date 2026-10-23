@@ -10,6 +10,7 @@ import { AppError, ErrorCode } from '../servers/errors.js';
 import { mutateSQLite } from './token-switch-claude-relay.js';
 import { requestToResponses, responseToAnthropic, responsesToAnthropicStream } from './anthropic-responses.js';
 import { createDshTuiManager } from './dsh-tui.js';
+import { configDirectory } from '../runtime-config.js';
 
 const sql = (value) => `'${String(value).replaceAll("'", "''")}'`;
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -21,10 +22,11 @@ export function createEnterpriseRuntime(options = {}) {
   const home = options.home || homedir();
   const client = options.client;
   const fetchImpl = options.fetchImpl || globalThis.fetch;
-  const settingsPath = join(home, '.config', 'tmux-web-panel', 'enterprise-relay.json');
+  const configDir = configDirectory({ configDir: options.configDir, home });
+  const settingsPath = join(configDir, 'enterprise-relay.json');
   const database = join(home, '.cc-switch', 'cc-switch.db');
   const writeSQLite = options.writeSQLite || mutateSQLite;
-  const dsh = options.dsh || createDshTuiManager({ home, dshHome: options.dshHome || process.env.DSH_HOME });
+  const dsh = options.dsh || createDshTuiManager({ home, configDir, dshHome: options.dshHome || process.env.DSH_HOME });
   let server = null;
   let starting = null;
   let local = null;

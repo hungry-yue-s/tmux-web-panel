@@ -20,15 +20,17 @@ async function readOptional(file) {
 }
 
 export class ManagedResources {
-  constructor({ projectDir, configDir, userHome = homedir(), spawnProcess = spawn, execProcess = exec }) {
+  constructor({ projectDir, configDir, userHome = homedir(), spawnProcess = spawn, execProcess = exec, packaged = false, runtimePath }) {
     this.projectDir = projectDir;
     this.configDir = configDir;
     this.home = userHome;
     this.spawn = spawnProcess;
     this.exec = execProcess;
-    this.binary = join(userHome, '.local/share/tmux-web-panel/bin/tmux');
+    this.packaged = packaged;
+    if (packaged && !runtimePath) throw new Error('Packaged runtime path is required');
+    this.binary = packaged ? join(runtimePath, 'bin/tmux') : join(userHome, '.local/share/tmux-web-panel/bin/tmux');
     this.config = join(configDir, 'tmux.conf');
-    this.userConfig = join(userHome, '.tmux.conf');
+    this.userConfig = packaged ? null : join(userHome, '.tmux.conf');
     this.busy = false;
     this.build = null;
   }
@@ -55,7 +57,7 @@ export class ManagedResources {
     let version = null;
     try { version = (await this.exec(this.binary, ['-V'], { timeout: 3000 })).stdout.trim(); } catch { /* Missing/broken binary is shown explicitly. */ }
     const config = await readOptional(this.config);
-    const userConfig = await readOptional(this.userConfig) || '';
+    const userConfig = this.userConfig ? await readOptional(this.userConfig) || '' : '';
     const skills = [];
     for (const [name, relative] of Object.entries(SKILLS)) {
       for (const target of ['codex', 'claude']) {
@@ -68,9 +70,11 @@ export class ManagedResources {
         skills.push({ name, target, path, status });
       }
     }
-    return { runtime: { path: this.binary, version, available: !!version, build: this.build },
+    return { runtime: { path: this.binary, version, available: !!version, build: this.build, packaged: this.packaged,
+      buildSupported: !this.packaged, rollbackSupported: !this.packaged },
       tmuxConfig: { path: this.config, content: config ?? DEFAULT_CONFIG, exists: config !== null,
-        userPath: this.userConfig, linked: userConfig.includes(BEGIN), backupDirectory: join(this.configDir, 'backups') }, skills };
+        userPath: this.userConfig, linked: this.packaged ? config !== null : userConfig.includes(BEGIN), linkSupported: !this.packaged,
+        backupDirectory: join(this.configDir, 'backups') }, skills };
   }
 
   async backupWrite(file, content) {
@@ -108,6 +112,7 @@ export class ManagedResources {
   }
 
   async linkConfig(enable) {
+    if (this.packaged) throw new AppError(ErrorCode.UNSUPPORTED, 'Desktop installations use a separate tmux configuration; personal ~/.tmux.conf is unchanged');
     return this.exclusive(async () => {
       let text = await readOptional(this.userConfig) || '';
       const start = text.indexOf(BEGIN);
@@ -167,6 +172,7 @@ export class ManagedResources {
   }
 
   async buildTmux() {
+    if (this.packaged) throw new AppError(ErrorCode.UNSUPPORTED, 'Update the desktop app to update its bundled tmux; local source builds are unavailable');
     return this.exclusive(async () => {
       if (this.build?.status === 'running' || this.finishingBuild) throw new AppError(ErrorCode.SERVER_IN_USE, 'A tmux build is already running');
       this.build = { id: randomUUID(), status: 'running', startedAt: new Date().toISOString(), output: '' };
@@ -201,6 +207,7 @@ export class ManagedResources {
   }
 
   async rollbackTmux() {
+    if (this.packaged) throw new AppError(ErrorCode.UNSUPPORTED, 'Use a desktop runtime version rollback; bundled binaries cannot be replaced here');
     return this.exclusive(async () => {
       if (this.build?.status === 'running' || this.finishingBuild) throw new AppError(ErrorCode.SERVER_IN_USE, 'Wait for the current build');
       const previous = this.binary + '.previous';
