@@ -377,10 +377,18 @@ private struct DesktopRemoteView: View {
     @State private var certificateError: String?
 
     private var connectionURL: String? {
-        guard !setup.requiresRestart, setup.status?.panelState == "running" else { return nil }
+        guard setup.configuration?.listenOnLAN == true, !setup.requiresRestart,
+              setup.status?.panelState == "running" else { return nil }
         let page = setup.configuration?.relay?.pagesURL ?? ""
         if setup.configuration?.relay?.enabled == true && !page.isEmpty { return page }
         return setup.status?.lanEndpoint
+    }
+
+    private var connectionHint: String {
+        if setup.configuration?.listenOnLAN != true { return "先在基础设置开启局域网访问，保存并应用后再生成手机连接二维码。" }
+        if setup.requiresRestart { return "先应用并重启面板，再生成手机连接二维码。" }
+        if setup.status?.panelState != "running" { return "启动面板服务后，才能生成当前可用的手机连接二维码。" }
+        return "没有可用的局域网地址，请连接 Wi-Fi 或有线网络后重新检查。"
     }
 
     var body: some View {
@@ -403,7 +411,7 @@ private struct DesktopRemoteView: View {
                     }
                 }
             } else if setup.isManaged {
-                Label(setup.requiresRestart ? "先应用并重启面板，再生成手机连接二维码。" : "启动面板服务后，才能生成当前可用的手机连接二维码。", systemImage: "info.circle")
+                Label(connectionHint, systemImage: "info.circle")
                     .font(.callout).foregroundStyle(.secondary)
             }
             if let certificateError { Text(certificateError).foregroundStyle(.red).font(.callout) }
@@ -437,11 +445,13 @@ private struct DesktopRemoteView: View {
                     Button("更新 DNS 地址") { Task { await setup.perform("update-dns") } }.disabled(setup.configuration?.relay?.enabled != true)
                 }
                 .disabled(setup.isBusy)
+                Text("更换网络或局域网 IP 变化后，需要在这里再次更新 DNS；保存设置不会启用持续自动更新。")
+                    .font(.caption).foregroundStyle(.secondary)
             } else {
                 Text("现有服务的远程访问配置由原安装管理；此窗口只提供说明，不会覆盖它的证书、DNS 或引导网页。")
                     .font(.callout).foregroundStyle(.secondary)
             }
-            guideStep("3", title: "发布属于你的引导网页（可选）", detail: "登录 GitHub，新建公开仓库；导出引导网页后，把目录里的网页、脚本和公开 CA 证书上传到仓库。然后进入仓库 Settings → Pages，选择 Deploy from a branch，分支 main，目录 / (root)，保存并等待部署完成。") {
+            guideStep("3", title: "发布属于你的引导网页（可选）", detail: "登录 GitHub，新建公开仓库后，先把计划使用的 Pages 地址填入上方，保存并应用配置；网址尚未发布也可以填写。再导出引导网页，把目录里的网页、脚本和公开 CA 证书上传到仓库根目录。进入仓库 Settings → Pages，选择 Deploy from a branch，选包含导出文件的分支（通常为 main）和目录 / (root)，保存并等待部署完成。") {
                 HStack {
                     Link("新建 GitHub 仓库", destination: URL(string: "https://github.com/new")!)
                     Link("GitHub Pages 官方说明", destination: URL(string: "https://docs.github.com/en/pages/getting-started-with-github-pages/creating-a-github-pages-site")!)

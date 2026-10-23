@@ -138,6 +138,9 @@ for name in libevent_core.pc libutf8proc.pc jemalloc.pc; do cp "$PREFIX/lib/pkgc
   # happens to contain a different ncursesw archive.
   export LIBNCURSES_CFLAGS="-isystem $SDKROOT/usr/include"
   export LIBNCURSES_LIBS="$SDKROOT/usr/lib/libncurses.tbd"
+  # New SDKs expose optional curses APIs without deployment availability.
+  # tmux's established tparm fallback also works on the minimum supported OS.
+  export ac_cv_func_tiparm=no ac_cv_func_tiparm_s=no
   sh autogen.sh
   ./configure --prefix="$WORK/tmux-install" --enable-optimizations --disable-debug --enable-utf8proc --enable-jemalloc
   make -j"$JOBS"
