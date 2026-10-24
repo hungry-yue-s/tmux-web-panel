@@ -121,8 +121,8 @@
         this._panePickerObserver.disconnect();
         this._panePickerObserver = null;
       }
-      const mobilePills = global.document.querySelector('.mobile-header > .mobile-pane-strip');
-      if (mobilePills) mobilePills.remove();
+      global.document.querySelectorAll('.mobile-header > .mobile-pane-strip, .mobile-header > .terminal-refresh-btn')
+        .forEach(node => node.remove());
       if (route.name !== 'terminal') {
         this._setDockContext(null, null);
       }
@@ -458,8 +458,8 @@
 
       // Move the live nodes so their bound listeners keep working. The renderer
       // keeps its own reference to the pills node, so relocating it is safe.
-      const oldMobilePills = global.document.querySelector('.mobile-header > .mobile-pane-strip');
-      if (oldMobilePills) oldMobilePills.remove();
+      global.document.querySelectorAll('.mobile-header > .mobile-pane-strip, .mobile-header > .terminal-refresh-btn')
+        .forEach(node => node.remove());
       const pills = header.querySelector('.terminal-header-pills');
       if (pills) {
         pills.classList.add('ms-hoisted-pills');
@@ -472,6 +472,14 @@
         }
       }
       if (toolbar) {
+        if (global.MobileUI ? global.MobileUI.isMobile() : global.innerWidth < 768) {
+          const refresh = toolbar.querySelector('.terminal-refresh-btn');
+          const mobileHeader = global.document.querySelector('.mobile-header');
+          if (refresh && mobileHeader) {
+            refresh.classList.add('mobile-header-action');
+            mobileHeader.appendChild(refresh);
+          }
+        }
         const secondary = ((global.MobileUI ? global.MobileUI.isMobile() : global.innerWidth < 768)
           ? ['.terminal-label-btn', '.terminal-popout-btn', '.terminal-fullscreen-btn']
           : ['.terminal-refresh-btn', '.terminal-font-toggle', '.terminal-label-btn', '.terminal-popout-btn', '.terminal-fullscreen-btn'])

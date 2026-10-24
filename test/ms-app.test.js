@@ -210,7 +210,7 @@ describe('single Window Bar', () => {
     } else {
       expect(doc.querySelector('.mobile-header > .mobile-pane-strip')).toBe(pills);
     }
-    expect(actions.querySelector('.terminal-refresh-btn')).toBe(refresh);
+    expect(doc.querySelector(width < 768 ? '.mobile-header > .terminal-refresh-btn' : '#ms-top-actions .terminal-refresh-btn')).toBe(refresh);
     pills.querySelector('.pane-pill').click();
     refresh.click();
     expect(switched).toHaveBeenCalledOnce();
@@ -368,6 +368,7 @@ describe('single Window Bar', () => {
     const doc = embedFixture({ width: 360 }).document;
 
     expect(doc.querySelector('#ms-mobile-tools .terminal-header-actions')).toBeTruthy();
+    expect(doc.querySelector('.mobile-header > .terminal-refresh-btn').classList.contains('mobile-header-action')).toBe(true);
     expect(doc.querySelector('.mobile-header > .mobile-pane-strip')).toBeTruthy();
     expect(doc.querySelector('#ms-top-actions').children).toHaveLength(0);
   });
@@ -376,6 +377,8 @@ describe('single Window Bar', () => {
     const doc = embedFixture({ width: 360, mobileSheet: true }).document;
 
     expect(doc.querySelector('#ms-mobile-workspace-tools .terminal-header-actions')).toBeTruthy();
+    expect(doc.querySelector('.mobile-header > .terminal-refresh-btn')).toBeTruthy();
+    expect(doc.querySelector('#ms-mobile-workspace-tools .terminal-refresh-btn')).toBeNull();
     expect(doc.querySelector('.mobile-header > .mobile-pane-strip')).toBeTruthy();
     expect(doc.querySelector('#ms-mobile-tools').children).toHaveLength(0);
   });
@@ -386,16 +389,21 @@ describe('single Window Bar', () => {
     function rebuildHeader() {
       const header = win.document.createElement('div');
       header.className = 'terminal-header';
-      header.innerHTML = '<div class="terminal-header-pills"><button class="pane-pill">2</button></div>';
+      header.innerHTML = '<div class="terminal-header-pills"><button class="pane-pill">2</button></div><div class="terminal-header-actions"><button class="terminal-refresh-btn"></button></div>';
       root.prepend(header);
       win.MsApp.embedTerminalChrome(root);
     }
     rebuildHeader();
     expect(win.document.querySelectorAll('.mobile-header > .mobile-pane-strip')).toHaveLength(1);
+    expect(win.document.querySelectorAll('.terminal-refresh-btn')).toHaveLength(1);
+    expect(win.document.querySelector('.mobile-header > .terminal-refresh-btn')).toBeTruthy();
     expect(root.querySelector('.mobile-pane-strip')).toBeNull();
     Object.defineProperty(win, 'innerWidth', { value: 1024 });
     rebuildHeader();
     expect(win.document.querySelector('.mobile-header > .mobile-pane-strip')).toBeNull();
+    expect(win.document.querySelector('.mobile-header > .terminal-refresh-btn')).toBeNull();
+    expect(win.document.querySelectorAll('.terminal-refresh-btn')).toHaveLength(1);
+    expect(win.document.querySelector('#ms-top-actions .terminal-refresh-btn')).toBeTruthy();
     expect(win.document.querySelector('#ms-top-actions .pane-pill').textContent).toBe('2');
   });
 
@@ -880,9 +888,11 @@ describe('MsApp status mode routing', () => {
     const ctx = loadStatusShell();
     const observer = { disconnect: vi.fn() };
     ctx.MsApp._panePickerObserver = observer;
+    ctx.document.querySelector('.mobile-header').insertAdjacentHTML('beforeend', '<button class="terminal-refresh-btn"></button>');
     await ctx.MsApp._onRoute({ name: 'settings', params: {} });
     expect(observer.disconnect).toHaveBeenCalledOnce();
     expect(ctx.MsApp._panePickerObserver).toBeNull();
+    expect(ctx.document.querySelector('.mobile-header > .terminal-refresh-btn')).toBeNull();
     ctx.win.close();
   });
 

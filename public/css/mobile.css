@@ -50,10 +50,12 @@
   }
   .ms-app .mobile-tools { display:none!important; }
   .mobile-header-action svg { width:19px; height:19px; fill:none; stroke:currentColor; stroke-width:1.65; stroke-linecap:round; stroke-linejoin:round; }
+  .ms-app .mobile-header>.terminal-refresh-btn { width:44px; height:44px; min-width:44px; padding:0; }
   .ms-app .mobile-header>.mobile-pane-strip {
     order:0; flex:0 0 132px; max-width:132px; height:44px; padding:0; margin:0 4px 0 0; box-shadow:none;
   }
   .ms-app .mobile-header>.mobile-pane-strip:has(.pane-pills[data-count="2"]) { flex-basis:88px; max-width:88px; }
+  .ms-app .mobile-header:has(>.terminal-refresh-btn)>.mobile-pane-strip { flex:0 1 88px; min-width:44px; max-width:88px; }
   .ms-app .mobile-pane-strip:has(.pane-pills[data-count="1"]) { display:none; }
   .ms-app .mobile-pane-strip .pane-pills { gap:0; }
   .ms-app .mobile-header .mobile-pane-strip .pane-pill,
