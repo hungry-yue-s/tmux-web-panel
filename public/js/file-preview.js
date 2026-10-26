@@ -1359,16 +1359,42 @@ var FilePreview = (function () {
     return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
   }
 
-  // A diagram can override a node/subgraph fill without overriding its label.
-  // Correct only unreadable labels on solid flowchart shapes, keeping authored
-  // colors intact. Inline SVG styles also survive the viewer and image export.
-  function _repairMermaidContrast(svg) {
-    var preferred = _mermaidThemeValue(window.getComputedStyle(document.documentElement), '--text-primary', '#c0caf5');
+  // Authored pastel fills bypass Mermaid's theme. Rebase them onto dark panel
+  // surfaces while retaining their hue, then repair label/border contrast.
+  // Inline SVG styles also survive the viewer and image export.
+  function _adaptMermaidPalette(svg) {
+    var styles = window.getComputedStyle(document.documentElement);
+    var panel = _mermaidThemeValue(styles, '--bg-primary', '#1a1b26');
+    var card = _mermaidThemeValue(styles, '--bg-card', '#24283b');
+    var preferred = _mermaidThemeValue(styles, '--text-primary', '#c0caf5');
+    var dark = _isDarkMermaidColor(panel);
     function solidColor(value) {
       var color = String(value || '').trim();
       var alpha = /^rgba\([^)]*,\s*([\d.]+)\s*\)$/i.exec(color);
       if (alpha && Number(alpha[1]) !== 1) return null;
       return _mermaidHex(color, null);
+    }
+    function channels(color) {
+      return [1, 3, 5].map(function (offset) { return parseInt(color.slice(offset, offset + 2), 16); });
+    }
+    function mix(base, tint, amount) {
+      var target = channels(tint);
+      return '#' + channels(base).map(function (value, index) {
+        return Math.round(value + (target[index] - value) * amount).toString(16).padStart(2, '0');
+      }).join('');
+    }
+    function hueTint(fill, stroke) {
+      // Pale fills often carry their useful hue in the stronger outline.
+      var rgb = channels(fill);
+      if (Math.max.apply(null, rgb) - Math.min.apply(null, rgb) < 24 && stroke) {
+        var outline = channels(stroke);
+        if (Math.max.apply(null, outline) - Math.min.apply(null, outline) >= 12) rgb = outline;
+      }
+      var low = Math.min.apply(null, rgb), range = Math.max.apply(null, rgb) - low;
+      if (range < 12) return null;
+      return '#' + rgb.map(function (value) {
+        return Math.round(88 + (value - low) / range * 112).toString(16).padStart(2, '0');
+      }).join('');
     }
     svg.querySelectorAll('g.cluster, g.node').forEach(function (group) {
       var shape = Array.prototype.find.call(group.children, function (child) {
@@ -1381,12 +1407,26 @@ var FilePreview = (function () {
         || (shapeStyle.fillOpacity && Number(shapeStyle.fillOpacity) < 1)) return;
       var background = solidColor(shapeStyle.fill || shape.getAttribute('fill'));
       if (!background) return;
+      var adapted = dark && !_isDarkMermaidColor(background);
+      if (adapted) {
+        var cluster = group.classList.contains('cluster');
+        var stroke = solidColor(shapeStyle.stroke || shape.getAttribute('stroke'));
+        var defaultStroke = _mermaidThemeValue(styles, cluster ? '--border' : '--accent-blue', cluster ? '#3b4261' : '#7aa2f7');
+        var tint = hueTint(background, stroke && stroke.toLowerCase() !== defaultStroke.toLowerCase() ? stroke : null);
+        background = tint ? mix(cluster ? panel : card, tint, cluster ? 0.14 : 0.3) : (cluster ? panel : card);
+        shape.style.setProperty('fill', background, 'important');
+        if (stroke && _mermaidContrast(stroke, background) < 3) {
+          var outline = [0.25, 0.5, 0.75, 1].map(function (amount) { return mix(stroke, preferred, amount); })
+            .find(function (color) { return _mermaidContrast(color, background) >= 3; });
+          if (outline) shape.style.setProperty('stroke', outline, 'important');
+        }
+      }
       label.querySelectorAll('*').forEach(function (element) {
         var isSvg = element.namespaceURI === 'http://www.w3.org/2000/svg';
         if (isSvg && !element.matches('text,tspan')) return;
         var property = isSvg ? 'fill' : 'color';
         var current = solidColor(window.getComputedStyle(element)[property]);
-        if (!current || _mermaidContrast(current, background) >= 4.5) return;
+        if (current ? _mermaidContrast(current, background) >= 4.5 : !adapted) return;
         var replacement = [preferred, _contrastText(background), '#000000', '#ffffff'].find(function (color) {
           return _mermaidContrast(color, background) >= 4.5;
         });
@@ -1402,7 +1442,7 @@ var FilePreview = (function () {
   function _prepareMermaid(container) {
     var svg = container.querySelector('svg');
     if (!svg) return false;
-    _repairMermaidContrast(svg);
+    _adaptMermaidPalette(svg);
     var viewBox = (svg.getAttribute('viewBox') || '').trim().split(/[ ,]+/).map(Number);
     var width = viewBox.length === 4 && viewBox[2] > 0 ? viewBox[2]
       : parseFloat(svg.getAttribute('width')) || 800;

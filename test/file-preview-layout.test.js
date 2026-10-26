@@ -253,29 +253,69 @@ describe('file preview dock tabs', () => {
     });
   });
 
-  it('repairs unreadable custom Mermaid labels without replacing authored fills or readable text', () => {
+  it('adapts pastel Mermaid groups and nodes to dark surfaces while retaining semantic hues', () => {
     const { dom, preview } = createPreview();
-    dom.window.document.documentElement.style.setProperty('--text-primary', '#e2ebde');
+    const root = dom.window.document.documentElement;
+    root.style.setProperty('--bg-primary', '#121d17');
+    root.style.setProperty('--bg-card', '#24332a');
+    root.style.setProperty('--text-primary', '#e2ebde');
     const embed = dom.window.document.createElement('div');
     embed.innerHTML = '<svg viewBox="0 0 600 300">'
-      + '<g class="cluster"><rect style="fill:#fff9f7"/><g class="cluster-label"><foreignObject><div xmlns="http://www.w3.org/1999/xhtml"><span style="color:#e2ebde">故障链</span></div></foreignObject></g></g>'
-      + '<g class="node"><rect style="fill:#eaf2fb"/><g class="label"><foreignObject><div xmlns="http://www.w3.org/1999/xhtml"><span style="color:#172536">升级触发</span></div></foreignObject></g></g>'
+      + '<g class="cluster"><rect style="fill:#fff9f7;stroke:#cdb1aa"/><g class="cluster-label"><foreignObject><div xmlns="http://www.w3.org/1999/xhtml"><span style="color:#e2ebde">故障链</span></div></foreignObject></g></g>'
+      + '<g class="node"><rect style="fill:#eaf2fb;stroke:#547ca6"/><g class="label"><foreignObject><div xmlns="http://www.w3.org/1999/xhtml"><span style="color:#172536">升级触发</span></div></foreignObject></g></g>'
       + '<g class="cluster"><rect fill="#f5f8fc"/><g class="cluster-label"><text style="fill:#e2ebde"><tspan style="fill:#e2ebde">升级路径</tspan></text></g></g>'
       + '<g class="node"><rect style="fill:#173b40"/><g class="label"><text style="fill:#111111">暗色节点</text></g></g>'
+      + '<g class="node"><rect style="fill:#fff0ee;stroke:#111111"/><g class="label"><text style="fill:#3c2521">故障节点</text></g></g>'
       + '</svg>';
     dom.window.document.body.appendChild(embed);
     preview._test.prepareMermaid(embed);
     const labels = embed.querySelectorAll('.cluster-label span,.node span,.cluster-label text,.cluster-label tspan,.node text');
-    expect(labels[0].style.color).toBe('rgb(31, 35, 40)');
-    expect(labels[0].style.getPropertyPriority('color')).toBe('important');
-    expect(labels[1].style.color).toBe('rgb(23, 37, 54)');
-    expect(labels[1].style.getPropertyPriority('color')).toBe('');
-    expect(labels[2].style.fill).toBe('rgb(31, 35, 40)');
-    expect(labels[3].style.fill).toBe('rgb(31, 35, 40)');
+    expect(labels[0].style.color).toBe('rgb(226, 235, 222)');
+    expect(labels[1].style.color).toBe('rgb(226, 235, 222)');
+    expect(labels[1].style.getPropertyPriority('color')).toBe('important');
+    expect(labels[2].style.fill).toBe('rgb(226, 235, 222)');
+    expect(labels[3].style.fill).toBe('rgb(226, 235, 222)');
     expect(labels[4].style.fill).toBe('rgb(226, 235, 222)');
+    expect(labels[5].style.fill).toBe('rgb(226, 235, 222)');
+    const shapes = embed.querySelectorAll('rect');
+    const rgb = shape => shape.style.fill.match(/\d+/g).map(Number);
+    expect(rgb(shapes[0]).every(channel => channel < 80)).toBe(true);
+    expect(rgb(shapes[1])[2]).toBeGreaterThan(rgb(shapes[1])[0]);
+    expect(rgb(shapes[4])[0]).toBeGreaterThan(rgb(shapes[4])[2]);
+    expect(shapes[3].style.fill).toBe('rgb(23, 59, 64)');
+    expect(shapes[4].style.stroke).not.toBe('rgb(17, 17, 17)');
+    expect(new dom.window.XMLSerializer().serializeToString(embed.querySelector('svg'))).toContain('color: rgb(226, 235, 222) !important');
+  });
+
+  it('preserves authored light Mermaid fills and readable text in light themes', () => {
+    const { dom, preview } = createPreview();
+    dom.window.document.documentElement.style.setProperty('--bg-primary', '#ffffff');
+    dom.window.document.documentElement.style.setProperty('--text-primary', '#1f2328');
+    const embed = dom.window.document.createElement('div');
+    embed.innerHTML = '<svg viewBox="0 0 600 300">'
+      + '<g class="cluster"><rect style="fill:#fff9f7"/><g class="cluster-label"><text style="fill:#eeeeee">故障链</text></g></g>'
+      + '<g class="node"><rect style="fill:#eaf2fb"/><g class="label"><text style="fill:#172536">升级触发</text></g></g>'
+      + '</svg>';
+    dom.window.document.body.appendChild(embed);
+    preview._test.prepareMermaid(embed);
     expect(embed.querySelector('.cluster rect').style.fill).toBe('rgb(255, 249, 247)');
     expect(embed.querySelector('.node rect').style.fill).toBe('rgb(234, 242, 251)');
-    expect(new dom.window.XMLSerializer().serializeToString(embed.querySelector('svg'))).toContain('color: rgb(31, 35, 40) !important');
+    expect(embed.querySelector('.cluster-label text').style.fill).toBe('rgb(31, 35, 40)');
+    expect(embed.querySelector('.label text').style.fill).toBe('rgb(23, 37, 54)');
+  });
+
+  it('keeps neutral Mermaid fills neutral when the theme supplies a colored outline', () => {
+    const { dom, preview } = createPreview();
+    const root = dom.window.document.documentElement;
+    root.style.setProperty('--bg-card', '#24332a');
+    root.style.setProperty('--accent-blue', '#a1b9ca');
+    const embed = dom.window.document.createElement('div');
+    embed.innerHTML = '<style>.node rect{stroke:#a1b9ca}</style><svg viewBox="0 0 300 200">'
+      + ['#ffffff', '#eeeeee'].map(fill => '<g class="node"><rect style="fill:' + fill + '"/><g class="label"><text>neutral</text></g></g>').join('')
+      + '</svg>';
+    dom.window.document.body.appendChild(embed);
+    preview._test.prepareMermaid(embed);
+    embed.querySelectorAll('rect').forEach(shape => expect(shape.style.fill).toBe('rgb(36, 51, 42)'));
   });
 
   it('leaves gradients, translucent fills and non-flowchart diagrams authored', () => {
@@ -302,7 +342,7 @@ describe('file preview dock tabs', () => {
     dom.window.mermaid = {
       initialize: vi.fn(),
       render: vi.fn(() => Promise.resolve({
-        svg: '<svg viewBox="0 0 640 320"><text>new</text></svg>',
+        svg: '<svg viewBox="0 0 640 320"><g class="node"><rect style="fill:#ffffff"/><g class="label"><text style="fill:#111111">new</text></g></g></svg>',
       })),
     };
     dom.window.document.dispatchEvent(new dom.window.CustomEvent('tmux-theme-change'));
@@ -315,6 +355,11 @@ describe('file preview dock tabs', () => {
     expect(embed.querySelector('text').textContent).toBe('new');
     expect(embed.querySelector('.fp-mermaid-open')).not.toBeNull();
     expect(embed.getAttribute('data-fp-width')).toBe('640');
+    expect(embed.querySelector('rect').style.fill).not.toBe('rgb(255, 255, 255)');
+    dom.window.document.documentElement.style.setProperty('--bg-primary', '#ffffff');
+    dom.window.document.dispatchEvent(new dom.window.CustomEvent('tmux-theme-change'));
+    await flush();
+    expect(embed.querySelector('rect').style.fill).toBe('rgb(255, 255, 255)');
   });
 
   it('keeps wide Mermaid diagrams readable and opens the pan and zoom viewer', () => {
@@ -1946,7 +1991,7 @@ describe('video previews', () => {
     preview.close();
   });
 
-  it('keeps reading and syntax palettes plus repaired SVG labels in standalone snapshots', async () => {
+  it('keeps reading palettes and adapted dark SVG surfaces in standalone snapshots', async () => {
     const { dom, preview } = createLivePreview();
     dom.window.document.documentElement.style.setProperty('--accent-purple', '#c2acd0');
     await preview.openFile('/tmp/live.csv', '%1');
@@ -1961,7 +2006,9 @@ describe('video previews', () => {
     expect(snapshot.html).toContain('--fp-panel:#24332a;');
     expect(snapshot.html).toContain('--accent-purple:#c2acd0;');
     expect(snapshot.html).toContain('pre :is(.hljs-keyword');
-    expect(snapshot.html).toContain('fill: rgb(31, 35, 40) !important');
+    const exportedShape = new JSDOM(snapshot.html).window.document.querySelector('.cluster rect');
+    expect(exportedShape.style.fill).toBe('rgb(26, 27, 38)');
+    expect(exportedShape.style.getPropertyPriority('fill')).toBe('important');
     preview.close();
   });
 });
