@@ -10,7 +10,8 @@
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFile, chmod, mkdir, readFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -552,6 +553,7 @@ export class OpenSSHExecutor {
    * Candidates are remembered so trustHostKey can only accept what was shown.
    */
   async scanHostKeys({ timeout = 8000 } = {}) {
+    this._pendingScan = null;
     const target = await this.resolveTarget();
     const entryName = knownHostsEntryName(target);
     const scanHost = target.host.startsWith('[') && target.host.endsWith(']')
@@ -562,24 +564,21 @@ export class OpenSSHExecutor {
     if (target.port && target.port !== 22) argv.push('-p', String(target.port));
     argv.push(scanHost);
 
-    const { stdout } = await new Promise((resolve, reject) => {
+    const stdout = await new Promise((resolve) => {
       this._execFile(
         KEYSCAN_BIN,
         argv,
         { timeout, maxBuffer: DEFAULT_MAX_BUFFER },
-        (err, out, stderrOut) => {
+        (_err, out) => {
           // ssh-keyscan reports progress on stderr and may exit non-zero even
-          // when it printed usable keys.
-          if (err && !out) {
-            reject(classifySshError(Object.assign(err, { stderr: stderrOut })));
-            return;
-          }
-          resolve({ stdout: out || '' });
+          // when it printed usable keys. An empty result gets a full SSH scan.
+          resolve(out || '');
         },
       );
     });
 
-    const scanned = parseKeyscanOutput(stdout);
+    let scanned = parseKeyscanOutput(stdout);
+    if (scanned.length === 0) scanned = parseKeyscanOutput(await this._scanHostKeyWithSsh({ timeout }));
     if (scanned.length === 0) {
       throw new AppError(ErrorCode.SERVER_OFFLINE, 'No host keys returned; the host may be unreachable');
     }
@@ -607,6 +606,43 @@ export class OpenSSHExecutor {
       // Only the algorithm and fingerprint are meant for display/confirmation.
       keys: candidates.map(({ algorithm, fingerprint }) => ({ algorithm, fingerprint })),
     };
+  }
+
+  /** Some endpoints reject ssh-keyscan while accepting the full SSH client. */
+  async _scanHostKeyWithSsh({ timeout }) {
+    const dir = await mkdtemp(join(tmpdir(), 'tmux-hostkey-'));
+    const candidatePath = join(dir, 'candidate');
+    try {
+      // accept-new is confined to this disposable candidate file. Real
+      // connections still require explicit trust and strict checking.
+      const server = { ...this.server, ssh: { ...this.server.ssh, authMethod: 'agent' } };
+      const argv = ['-N', ...buildSshArgs(server, {
+        knownHostsPath: candidatePath,
+        extraOptions: ['PreferredAuthentications=none', 'PubkeyAuthentication=no',
+          'PasswordAuthentication=no', 'KbdInteractiveAuthentication=no',
+          'GlobalKnownHostsFile=/dev/null', 'KnownHostsCommand=none', 'VerifyHostKeyDNS=no',
+          'HashKnownHosts=no', 'UpdateHostKeys=no',
+          'ControlMaster=no', 'ControlPersist=no', 'ControlPath=none',
+          'ClearAllForwardings=yes', 'PermitLocalCommand=no'],
+      }).map((arg) => arg === 'StrictHostKeyChecking=yes' ? 'StrictHostKeyChecking=accept-new' : arg)];
+      const failure = await new Promise((resolve) => {
+        const child = this._execFile(SSH_BIN, argv, { timeout, maxBuffer: DEFAULT_MAX_BUFFER }, (err, _out, stderr) => {
+          resolve(err ? Object.assign(err, { stderr }) : null);
+        });
+        if (child.stdin) child.stdin.end('');
+      });
+      // Authentication is deliberately refused; the candidate is collected
+      // during key exchange, before any credentials or remote commands.
+      try {
+        return await readFile(candidatePath, 'utf8');
+      } catch (err) {
+        if (err.code !== 'ENOENT') throw err;
+        if (failure) throw classifySshError(failure);
+        return '';
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   }
 
   /**

@@ -508,6 +508,38 @@ describe('OpenSSHExecutor', () => {
   });
 
   describe('scanHostKeys', () => {
+    it('falls back to an unauthenticated SSH handshake without trusting the candidate', async () => {
+      const blob = makeKeyBlob('ssh-ed25519');
+      let candidatePath;
+      const server = { ...REMOTE, ssh: { ...REMOTE.ssh, authMethod: 'password', password: 'unused-password' } };
+      const { executor, calls } = make(server, {
+        'ssh-keyscan': { error: new Error('Broken pipe') },
+        ssh: (argv) => {
+          candidatePath = argv.find((arg) => arg.startsWith('UserKnownHostsFile=')).split('=')[1];
+          return { error: Object.assign(new Error('auth deliberately refused'), { code: 255 }), stderr: 'Permission denied' };
+        },
+      });
+      const original = executor._execFile;
+      executor._execFile = (bin, argv, options, callback) => original(bin, argv, options, (err, out, stderr) => {
+        if (bin === 'ssh') fs.writeFile(candidatePath, `10.0.0.21 ssh-ed25519 ${blob}\n`).then(() => callback(err, out, stderr));
+        else callback(err, out, stderr);
+      });
+      const scan = await executor.scanHostKeys();
+      expect(scan.keys).toEqual([{ algorithm: 'ssh-ed25519', fingerprint: fingerprintFromBase64Key(blob) }]);
+      const fallback = calls.find((call) => call.bin === 'ssh');
+      expect(fallback.argv).toEqual(expect.arrayContaining(['-N', 'BatchMode=yes',
+        'PreferredAuthentications=none', 'PasswordAuthentication=no', 'PubkeyAuthentication=no',
+        'KbdInteractiveAuthentication=no', 'StrictHostKeyChecking=accept-new', 'ControlPath=none', 'ClearAllForwardings=yes']));
+      expect(fallback.argv.at(-1)).toBe('deploy@10.0.0.21'); // no remote command
+      expect(fallback.options.env?.TMUX_PANEL_SSH_SERVER_ID).toBeUndefined();
+      expect(JSON.stringify(fallback)).not.toContain('unused-password');
+      await expect(fs.access(candidatePath)).rejects.toThrow();
+      await expect(fs.access(path.join(dir, 'known_hosts'))).rejects.toThrow();
+      // Permanent trust is still a separate, explicitly confirmed operation.
+      await executor.trustHostKey(scan.keys[0].fingerprint);
+      expect(await fs.readFile(path.join(dir, 'known_hosts'), 'utf8')).toContain(blob);
+    });
+
     it('scans the resolved hostname, never the config alias', async () => {
       const blob = makeKeyBlob('ssh-ed25519');
       const { executor, calls } = make(
