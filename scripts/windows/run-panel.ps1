@@ -32,7 +32,9 @@ while ($true) {
   }
   Add-Content -LiteralPath $log -Encoding UTF8 -Value "[$(Get-Date -Format s)] starting node server/index.js"
   # cmd keeps node's UTF-8 output byte-for-byte; PowerShell 5.1 redirection would re-encode it.
-  & cmd.exe /d /c "`"$($cfg.nodeBin)`" server\index.js >> `"$log`" 2>&1"
-  Add-Content -LiteralPath $log -Encoding UTF8 -Value "[$(Get-Date -Format s)] node exited with code $LASTEXITCODE; restarting in 3s"
+  # Its own hidden console keeps a console Ctrl+C in node's tree from ending this loop.
+  $proc = Start-Process -FilePath cmd.exe -ArgumentList "/d /s /c `"`"$($cfg.nodeBin)`" server\index.js >> `"$log`" 2>&1`"" `
+    -WindowStyle Hidden -Wait -PassThru
+  Add-Content -LiteralPath $log -Encoding UTF8 -Value "[$(Get-Date -Format s)] node exited with code $($proc.ExitCode); restarting in 3s"
   Start-Sleep -Seconds 3
 }

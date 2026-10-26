@@ -73,6 +73,9 @@ export function normalizePlatform(kernel) {
   const value = String(kernel || '').toLowerCase();
   if (value.includes('darwin')) return 'darwin';
   if (value.includes('linux')) return 'linux';
+  // MSYS2 / Cygwin answer uname with MSYS_NT-10.0-…, MINGW64_NT-…, CYGWIN_NT-…:
+  // a POSIX shell with tmux on Windows, distinct from a bare cmd.exe host.
+  if (/^(msys|mingw|ucrt|clang|cygwin)/.test(value)) return 'msys';
   if (value.includes('windows')) return 'windows';
   if (!value || value === 'unknown') return null;
   return value;
@@ -351,7 +354,7 @@ export class HealthService {
     // back to an SSH workspace while keeping the reason visible.
     const tmuxUsable = tmuxFound && Boolean(version);
     const state = tmuxFound && !version ? ServerState.DEGRADED : ServerState.ONLINE;
-    const metricsAvailable = platform === 'linux' || platform === 'darwin';
+    const metricsAvailable = platform === 'linux' || platform === 'darwin' || platform === 'msys';
 
     return {
       serverId: server.id,

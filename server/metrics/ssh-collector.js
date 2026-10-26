@@ -25,7 +25,8 @@ const MAX_BYTES = 2 ** 63;
  * Linux probe. CPU needs two samples, so it sleeps briefly rather than
  * reporting a since-boot average. Only the first eight cpu fields are summed:
  * guest and guest_nice are already included in user and nice, and idle time is
- * idle plus iowait.
+ * idle plus iowait. Kernels before 3.14 and MSYS2 have no MemAvailable, so
+ * free + buffers + cached stands in for it.
  */
 export const LINUX_PROBE = `
 read_cpu() {
@@ -37,7 +38,7 @@ cpu2=$(read_cpu)
 cpu_percent=$(echo "$cpu1 $cpu2" | awk '{ dt=$3-$1; di=$4-$2; if (dt>0) printf "%.1f", (dt-di)*100/dt; else printf "null" }')
 [ -z "$cpu_percent" ] && cpu_percent=null
 cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo null)
-mem=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} /^Cached:/{c=$2} END{ if (t>0) printf "%.0f %.0f %.0f", t*1024, (t-a)*1024, c*1024; else printf "null null null" }' /proc/meminfo 2>/dev/null)
+mem=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} END{ if (a=="") a=f+b+c; if (t>0) printf "%.0f %.0f %.0f", t*1024, (t-a)*1024, c*1024; else printf "null null null" }' /proc/meminfo 2>/dev/null)
 [ -z "$mem" ] && mem="null null null"
 load=$(awk '{printf "%s %s %s", $1, $2, $3}' /proc/loadavg 2>/dev/null)
 [ -z "$load" ] && load="null null null"
@@ -192,7 +193,8 @@ export function normalizeProbe(raw) {
  * inventing numbers.
  */
 export async function collectRemoteMetrics(executor, platform, { timeout = 12_000 } = {}) {
-  const script = platform === 'darwin' ? DARWIN_PROBE : platform === 'linux' ? LINUX_PROBE : null;
+  // MSYS2 emulates the Linux /proc files the Linux probe reads.
+  const script = platform === 'darwin' ? DARWIN_PROBE : platform === 'linux' || platform === 'msys' ? LINUX_PROBE : null;
   if (!script) return null;
   const { stdout } = await executor.runScript(script, { timeout, maxBuffer: MAX_OUTPUT_BYTES });
   return normalizeProbe(parseProbeOutput(stdout));

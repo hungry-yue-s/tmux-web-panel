@@ -176,6 +176,13 @@ describe('collectRemoteMetrics', () => {
     expect(result.platform).toBe('linux');
   });
 
+  it('reuses the Linux probe on MSYS2 hosts', async () => {
+    const executor = { runScript: vi.fn(async () => ({ stdout: probeLine(), stderr: '' })) };
+    await collectRemoteMetrics(executor, 'msys');
+
+    expect(executor.runScript).toHaveBeenCalledWith(LINUX_PROBE, expect.any(Object));
+  });
+
   it('returns null for a platform we have no probe for', async () => {
     const executor = { runScript: vi.fn() };
     await expect(collectRemoteMetrics(executor, 'windows')).resolves.toBeNull();

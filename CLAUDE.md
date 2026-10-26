@@ -21,6 +21,8 @@
 
 **Windows** 上服务管理器是计划任务（`\tmux-web-panel\tmux-web-panel` 与 `\tmux-web-panel\tmux-server`），统一经 `scripts/install-service.ps1` 操作：`restart` / `status` / `logs`（加 `-Tmux` 针对 tmux server）。同样禁止手动 `node server/index.js` 或直接 `Stop-Process` 后自行启动——AUTH/TLS/端口配置在 `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`，只由 `scripts/windows/run-panel.ps1` 注入。
 
+Windows 作为被远程管理的 SSH 主机时，sshd 由 `install-service.ps1 ssh-enable` 配置：DefaultShell 设为 MSYS2 `bash.exe -lc`，`ForceCommand /usr/local/bin/tmux-web-panel-ssh`（源文件为 `scripts/windows/ssh-session.sh`）负责 `eval "$SSH_ORIGINAL_COMMAND"`。不要去掉这个 ForceCommand：Windows OpenSSH 在 pty 会话里会把远程命令不加引号地拼进命令行，bash 只会执行第一个词。比如 attach 命令只剩 `tmux`，结果会新建一个会话。
+
 ## tmux server 守护与会话持久化
 
 Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.tmux-server.plist`；它们都由 `install-service.sh` 生成在用户服务目录中。这是为了让重启电脑后网页面板立刻能看到上次保存的会话。

@@ -237,6 +237,16 @@ next to it in `logs\`. Paths in the file preview are the MSYS paths panes show
 (`/home/me`, `/c/Users/me`); `C:\...` paths printed by native programs work too.
 Per-process CPU/memory/IO and pane port detection are not available on Windows.
 
+To manage this Windows machine from a panel on another computer (a Mac, say)
+over SSH, run `.\scripts\install-service.ps1 ssh-enable` from an elevated
+PowerShell. It enables OpenSSH Server and makes sshd answer with an MSYS2 login
+bash, so the host behaves like any Linux tmux server in the panel (sessions,
+terminals, metrics). Windows OpenSSH pastes the remote command unquoted into the
+shell's command line for `ssh -tt`, so a `ForceCommand` wrapper also runs the
+untouched command from `SSH_ORIGINAL_COMMAND`. Interactive `ssh` logins keep the
+MSYS2 shell sshd used before, and sftp keeps working. `ssh-disable` restores the
+previous settings.
+
 ### Roaming LAN IP? Relay hop + two-factor
 
 The panel listens on 0.0.0.0 and clients reach it by LAN IP. When DHCP moves

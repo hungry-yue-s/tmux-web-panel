@@ -213,6 +213,8 @@ npm ci
 
 在管理员 PowerShell 里安装，任务开机即启动、无需登录（S4U）；否则在你登录时启动（`-Trigger Logon`）。配置写在仅本人可读的 `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`，日志在同目录 `logs\`。文件预览用的是 pane 里显示的 MSYS 路径（`/home/me`、`/c/Users/me`），原生程序打印的 `C:\...` 路径也能点开。Windows 上暂不提供按进程的 CPU/内存/IO 统计和 pane 端口探测。
 
+想让另一台机器（比如 Mac）上的面板经 SSH 管理这台 Windows，在管理员 PowerShell 里运行 `.\scripts\install-service.ps1 ssh-enable`。它会启用 OpenSSH Server，让 sshd 改用 MSYS2 登录 bash 应答，这样这台机器在面板里就和普通 Linux tmux 主机一样（会话、终端、监控）。Windows OpenSSH 在 `ssh -tt` 时会把远程命令不加引号地拼进 shell 命令行，所以还会装一个 `ForceCommand` 包装脚本，从 `SSH_ORIGINAL_COMMAND` 原样执行命令。交互式 `ssh` 登录仍使用原先的 MSYS2 shell，sftp 照常可用。`ssh-disable` 恢复原设置。
+
 ### 局域网 IP 经常变？中继跳转 + 双因素
 
 面板监听 0.0.0.0，手机和其它机器靠局域网 IP 访问。DHCP 一改 IP，浏览器 origin 就变，登录态和缓存随之作废。这套可选组件解决它：

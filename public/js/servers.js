@@ -223,7 +223,7 @@
 
     _localConnection: function (health) {
       var facts = health.facts || {}, capabilities = health.capabilities || {};
-      var platforms = { darwin: 'macOS', linux: 'Linux', windows: 'Windows' };
+      var platforms = { darwin: 'macOS', linux: 'Linux', windows: 'Windows', msys: 'Windows (MSYS2)' };
       var tmux = capabilityStatus(capabilities.tmux, health, true);
       var metrics = capabilityStatus(capabilities.metrics, health, false);
       return '<div class="grid two-col connection-local"><section>'

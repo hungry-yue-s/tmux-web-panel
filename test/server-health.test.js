@@ -60,6 +60,10 @@ describe('fact parsing', () => {
     expect(normalizePlatform('Darwin')).toBe('darwin');
     expect(normalizePlatform('Linux')).toBe('linux');
     expect(normalizePlatform('unknown')).toBeNull();
+    expect(normalizePlatform('MSYS_NT-10.0-26100')).toBe('msys');
+    expect(normalizePlatform('MINGW64_NT-10.0-26100')).toBe('msys');
+    expect(normalizePlatform('CYGWIN_NT-10.0')).toBe('msys');
+    expect(normalizePlatform('Windows')).toBe('windows');
     expect(normalizeArch('x86_64')).toBe('x64');
     expect(normalizeArch('aarch64')).toBe('arm64');
     expect(normalizeArch('arm64')).toBe('arm64');
