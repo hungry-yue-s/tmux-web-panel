@@ -129,8 +129,8 @@ describe('buildSshArgs', () => {
 
   it('spells the port the sftp way and keeps the user in the destination', () => {
     const server = { ...REMOTE, address: { ...REMOTE.address, port: 2222 } };
-    const args = buildSshArgs(server, { ...opts, tool: 'sftp', leading: ['-b', '-'] });
-    expect(args.slice(0, 2)).toEqual(['-b', '-']);
+    const args = buildSshArgs(server, { ...opts, tool: 'sftp', trailing: ['-b', '-'] });
+    expect(args.slice(-4)).toEqual(['-b', '-', '--', 'deploy@10.0.0.21']);
     expect(args).toEqual(expect.arrayContaining(['-P', '2222']));
     expect(args).not.toContain('-p');
     expect(args).not.toContain('-T');
@@ -347,7 +347,7 @@ describe('SshConnection', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0].bin).toBe('sftp');
-    expect(calls[0].argv.slice(0, 2)).toEqual(['-b', '-']);
+    expect(calls[0].argv.slice(-4, -2)).toEqual(['-b', '-']);
     expect(calls[0].argv.at(-1)).toBe('deploy@10.0.0.21');
     // The relative path resolves against the login directory on any shell or OS.
     expect(calls[0].input).toMatch(/^get "\.config\/tmux-web-panel\/node\.json" "[^"]+"\n$/);
@@ -397,6 +397,19 @@ describe('SshConnection', () => {
     expect(spawned[0].argv.slice(0, 3)).toEqual(['-N', '-L', '127.0.0.1:41000:127.0.0.1:7681']);
     expect(spawned[0].argv).toEqual(expect.arrayContaining(['ExitOnForwardFailure=yes', 'StrictHostKeyChecking=yes']));
     expect(spawned[0].argv.at(-1)).toBe('deploy@10.0.0.21');
+  });
+
+  it('puts sftp -b after BatchMode=no so a password login is not refused', async () => {
+    // sftp -b injects "-oBatchMode yes" where it appears and ssh keeps the
+    // first value, which silently disabled password logins during pairing.
+    const server = { ...REMOTE, ssh: { ...REMOTE.ssh, authMethod: 'password' } };
+    const { connection, calls } = makeWithStdin(server, sftpServing(JSON.stringify(PAIRING)));
+    await connection.fetchPairing();
+
+    const argv = calls[0].argv;
+    expect(argv.indexOf('BatchMode=no')).toBeGreaterThan(-1);
+    expect(argv.indexOf('-b')).toBeGreaterThan(argv.indexOf('BatchMode=no'));
+    expect(argv).not.toContain('BatchMode=yes');
   });
 
   it('uses password auth and local askpass for pairing and the forward without leaking the password', async () => {

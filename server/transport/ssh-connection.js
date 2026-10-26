@@ -92,8 +92,12 @@ export function connectionKey(server) {
  *
  * sftp spells two flags differently (-P for the port, no -l), which is the
  * only reason `tool` exists.
+ *
+ * `trailing` flags go after every -o option. sftp's -b injects its own
+ * "-oBatchMode yes" where it appears, and ssh keeps the first value it sees,
+ * so -b must follow our BatchMode=no or password logins are refused.
  */
-export function buildSshArgs(server, { knownHostsPath, tool = 'ssh', connectTimeout = 5, extraOptions = [], leading = null } = {}) {
+export function buildSshArgs(server, { knownHostsPath, tool = 'ssh', connectTimeout = 5, extraOptions = [], leading = null, trailing = [] } = {}) {
   if (!server || server.kind === 'local') throw new Error('buildSshArgs requires a remote server');
   const sftp = tool === 'sftp';
   const args = leading ? [...leading] : (sftp ? [] : ['-T']);
@@ -121,6 +125,7 @@ export function buildSshArgs(server, { knownHostsPath, tool = 'ssh', connectTime
     if (ssh.authMethod === 'password') user(address.user);
     if (ssh.identityFile) args.push('-i', ssh.identityFile);
     if (ssh.proxyJump) args.push('-J', ssh.proxyJump);
+    args.push(...trailing);
     // Terminates option parsing. It must come *before* the destination.
     args.push('--', ssh.configHost);
     return args;
@@ -129,6 +134,7 @@ export function buildSshArgs(server, { knownHostsPath, tool = 'ssh', connectTime
   if (address.port && Number(address.port) !== 22) args.push(sftp ? '-P' : '-p', String(address.port));
   if (ssh.identityFile) args.push('-i', ssh.identityFile);
   if (ssh.proxyJump) args.push('-J', ssh.proxyJump);
+  args.push(...trailing);
   args.push('--', address.user ? `${address.user}@${address.host}` : String(address.host));
   return args;
 }
@@ -339,7 +345,7 @@ export class SshConnection {
     const localPath = join(dir, 'node.json').replace(/\\/g, '/');
     try {
       if (localPath.includes('"')) throw new AppError(ErrorCode.INTERNAL, 'Unsupported temporary directory');
-      const argv = buildSshArgs(this.server, { knownHostsPath: this.knownHostsPath, tool: 'sftp', leading: ['-b', '-'] });
+      const argv = buildSshArgs(this.server, { knownHostsPath: this.knownHostsPath, tool: 'sftp', trailing: ['-b', '-'] });
       try {
         await this._run(SFTP_BIN, argv, { input: `get "${PAIRING_RELATIVE_PATH}" "${localPath}"\n`, timeout });
       } catch (err) {
