@@ -214,6 +214,29 @@ node scripts/install-agent-hooks.js all
 On macOS there is also a native SwiftUI shell (`npm run build:macos`) that adds
 menu-bar status, native notifications and a real clipboard bridge.
 
+### Windows
+
+Windows runs native Node.js against the [MSYS2](https://www.msys2.org/) tmux
+package: panes are MSYS2 login shells (UCRT64 by default) and node-pty attaches
+through ConPTY. Two scheduled tasks under `\tmux-web-panel\` replace
+systemd/launchd: `tmux-server` keeps `tmux -D` alive and `tmux-web-panel`
+restarts node 3 seconds after any exit.
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+winget install MSYS2.MSYS2      # tmux itself is installed with pacman on first install
+npm ci
+.\scripts\install-service.ps1 install -Auth user:secret            # add -TlsAuto for HTTPS, -OpenFirewall for LAN access
+.\scripts\install-service.ps1 status | restart | stop | logs | uninstall
+```
+
+From an elevated PowerShell the tasks start at boot without a logon (S4U);
+otherwise they start when you sign in (`-Trigger Logon`). Settings live in the
+owner-only `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`, logs
+next to it in `logs\`. Paths in the file preview are the MSYS paths panes show
+(`/home/me`, `/c/Users/me`); `C:\...` paths printed by native programs work too.
+Per-process CPU/memory/IO and pane port detection are not available on Windows.
+
 ### Roaming LAN IP? Relay hop + two-factor
 
 The panel listens on 0.0.0.0 and clients reach it by LAN IP. When DHCP moves

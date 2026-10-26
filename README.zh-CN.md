@@ -199,6 +199,20 @@ node scripts/install-agent-hooks.js all
 
 macOS 上还有个原生 SwiftUI 外壳，npm run build:macos 构建，多菜单栏状态、原生通知和真正的剪贴板桥。WKWebView 拦异步剪贴板这件事，踩过坑的都懂。
 
+### Windows
+
+Windows 上是原生 Node.js 配 [MSYS2](https://www.msys2.org/) 的 tmux 包：pane 里跑的是 MSYS2 登录 shell（默认 UCRT64），node-pty 通过 ConPTY 挂上去。systemd/launchd 换成 `\tmux-web-panel\` 下的两个计划任务：`tmux-server` 守着 `tmux -D`，`tmux-web-panel` 在 node 退出 3 秒后自动拉起。
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+winget install MSYS2.MSYS2      # tmux 本身由安装器首次运行时用 pacman 装
+npm ci
+.\scripts\install-service.ps1 install -Auth user:secret            # 加 -TlsAuto 开 HTTPS，加 -OpenFirewall 放行局域网
+.\scripts\install-service.ps1 status | restart | stop | logs | uninstall
+```
+
+在管理员 PowerShell 里安装，任务开机即启动、无需登录（S4U）；否则在你登录时启动（`-Trigger Logon`）。配置写在仅本人可读的 `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`，日志在同目录 `logs\`。文件预览用的是 pane 里显示的 MSYS 路径（`/home/me`、`/c/Users/me`），原生程序打印的 `C:\...` 路径也能点开。Windows 上暂不提供按进程的 CPU/内存/IO 统计和 pane 端口探测。
+
 ### 局域网 IP 经常变？中继跳转 + 双因素
 
 面板监听 0.0.0.0，手机和其它机器靠局域网 IP 访问。DHCP 一改 IP，浏览器 origin 就变，登录态和缓存随之作废。这套可选组件解决它：

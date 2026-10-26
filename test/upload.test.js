@@ -26,3 +26,27 @@ describe('sanitizeFilename', () => {
     expect(sanitizeFilename('C:\\Users\\test\\photo.png')).toBe('C:Userstestphoto.png');
   });
 });
+
+describe('createUploadRouter', () => {
+  it('reports the stored file through displayPath', async () => {
+    const { default: express } = await import('express');
+    const { default: request } = await import('supertest');
+    const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { createUploadRouter } = await import('../server/api/upload.js');
+
+    const dir = mkdtempSync(join(tmpdir(), 'upload-test-'));
+    try {
+      const app = express();
+      app.use('/api/upload', createUploadRouter(dir, { displayPath: (path) => `shown:${path}` }));
+      const res = await request(app).post('/api/upload').attach('file', Buffer.from('hello'), 'a.txt');
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.path).toMatch(/^shown:/);
+      expect(readFileSync(res.body.data.path.slice('shown:'.length), 'utf8')).toBe('hello');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

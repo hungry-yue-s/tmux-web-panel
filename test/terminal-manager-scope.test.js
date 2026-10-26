@@ -4,7 +4,7 @@ const { spawn } = vi.hoisted(() => ({ spawn: vi.fn() }));
 
 vi.mock('node-pty', () => ({ default: { spawn } }));
 
-import { TerminalManager, buildTmuxAttachCommand } from '../server/terminal.js';
+import { TerminalManager, buildTmuxAttachCommand, buildTmuxAttachArgs, localAttachSpawnSpec } from '../server/terminal.js';
 
 function fakeTerm() {
   const handlers = {};
@@ -109,7 +109,26 @@ describe('TerminalManager PTY termination', () => {
     spawn.mockImplementation(() => fakeTerm());
   });
 
-  it('keeps the SIGKILL fallback after a WebSocket closes', () => {
+  // Windows has no process groups; the ConPTY is closed instead.
+  it.runIf(process.platform === 'win32')('closes the PTY directly on Windows', () => {
+    const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
+    try {
+      const term = fakeTerm();
+      spawn.mockReturnValue(term);
+      const manager = new TerminalManager();
+      const ws = fakeWs();
+
+      manager.create(ws, '%1');
+      ws.listeners.close();
+
+      expect(term.kill).toHaveBeenCalledTimes(1);
+      expect(kill).not.toHaveBeenCalled();
+    } finally {
+      kill.mockRestore();
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps the SIGKILL fallback after a WebSocket closes', () => {
     vi.useFakeTimers();
     const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
     try {
@@ -133,7 +152,7 @@ describe('TerminalManager PTY termination', () => {
     }
   });
 
-  it('escalates after the PTY leader exits without targeting its raw PID', () => {
+  it.skipIf(process.platform === 'win32')('escalates after the PTY leader exits without targeting its raw PID', () => {
     vi.useFakeTimers();
     const kill = vi.spyOn(process, 'kill').mockImplementation((target, signal) => {
       if (target === -4242 && signal === 'SIGKILL') throw new Error('ESRCH');
@@ -171,9 +190,7 @@ describe('TerminalManager spawn override', () => {
     manager.create(fakeWs(), '%1');
 
     const [file, args] = spawn.mock.calls[0];
-    expect(file).toBe('sh');
-    expect(args[0]).toBe('-c');
-    expect(args[1]).toBe(buildTmuxAttachCommand('%1', { nozoom: false }));
+    expect({ file, args }).toEqual(localAttachSpawnSpec('%1', { nozoom: false }));
   });
 
   it('honors a remote spawn spec while keeping env and locale behavior', () => {
@@ -321,6 +338,35 @@ describe('TerminalManager refusal reporting', () => {
     expect(manager.scopedCount('local', '%0')).toBe(1);
     expect(manager.scopedCount(null, '%0')).toBe(1);
     expect(manager.scopedCount('build-mac', '%0')).toBe(0);
+  });
+});
+
+describe('localAttachSpawnSpec', () => {
+  it('runs the attach command under sh on Unix', () => {
+    expect(localAttachSpawnSpec('%1', { platform: 'linux' })).toEqual({
+      file: 'sh', args: ['-c', buildTmuxAttachCommand('%1', { nozoom: false })],
+    });
+  });
+
+  it('starts tmux directly with the same command queue on Windows', () => {
+    const spec = localAttachSpawnSpec('%1', { nozoom: true, platform: 'win32' });
+    expect(spec.file).toMatch(/tmux/);
+    expect(spec.args).toEqual(buildTmuxAttachArgs('%1', { nozoom: true }));
+  });
+});
+
+describe('buildTmuxAttachArgs', () => {
+  it('mirrors the shell command as one tmux command queue', () => {
+    expect(buildTmuxAttachArgs('%5', { nozoom: false })).toEqual([
+      '-u', 'select-pane', '-t', '%5', ';',
+      'if-shell', '-F', '-t', '%5', '#{window_zoomed_flag}', '', 'resize-pane -Z -t %5', ';',
+      'attach-session', '-d', '-t', '%5',
+    ]);
+  });
+
+  it('force-unzooms first in split mode', () => {
+    const args = buildTmuxAttachArgs('%5', { nozoom: true });
+    expect(args.slice(10, 12)).toEqual(['resize-pane -Z -t %5', '']);
   });
 });
 

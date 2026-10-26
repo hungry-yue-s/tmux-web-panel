@@ -6,7 +6,7 @@
 
 - 使用中文沟通，优先完成实际修改和必要验证，保持改动范围最小。
 - 保留现有 tmux 会话、运行中的任务及其他任务尚未提交的改动。
-- 后台服务由所属平台的服务管理器管理：Linux 使用 systemd，macOS 使用 launchd。`CLAUDE.md` 中的 systemd 命令适用于 Linux；macOS 按已有 LaunchAgent 配置操作。禁止绕过服务管理器手动启动 Node 服务。
+- 后台服务由所属平台的服务管理器管理：Linux 使用 systemd，macOS 使用 launchd，Windows 使用计划任务（经 `scripts/install-service.ps1` 操作）。`CLAUDE.md` 中的 systemd 命令适用于 Linux；macOS 按已有 LaunchAgent 配置操作。禁止绕过服务管理器手动启动 Node 服务。
 - 前端静态文件修改不需要重启后台服务；Swift 客户端更新与 Node/tmux 服务的生命周期分别处理。
 - 不提交凭据、私钥、证书私密材料、运行时状态、本地备份或构建产物。
 

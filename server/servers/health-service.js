@@ -290,8 +290,8 @@ export class HealthService {
       lastOnlineAt: new Date(this._now()).toISOString(),
       error: null,
       facts: {
-        hostname: process.env.HOSTNAME || null,
-        platform: process.platform === 'darwin' ? 'darwin' : process.platform === 'linux' ? 'linux' : process.platform,
+        hostname: process.env.HOSTNAME || process.env.COMPUTERNAME || null,
+        platform: process.platform === 'win32' ? 'windows' : process.platform,
         arch: normalizeArch(process.arch === 'x64' ? 'x86_64' : process.arch),
       },
       capabilities: {

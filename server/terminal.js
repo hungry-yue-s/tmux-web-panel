@@ -7,6 +7,7 @@
 
 import pty from 'node-pty';
 import { randomUUID } from 'node:crypto';
+import { TMUX_BIN } from './msys.js';
 
 const PANE_ID_PATTERN = /^%\d+$/;
 const PING_INTERVAL_MS = 30_000;
@@ -95,6 +96,26 @@ export function buildTmuxAttachCommand(paneId, { nozoom = false } = {}) {
     `if-shell -F -t '${paneId}' '#{window_zoomed_flag}' '${nozoom ? toggle : ''}' '${nozoom ? '' : toggle}'`,
     `attach-session -d -t '${paneId}'`,
   ].join(' \\; ');
+}
+
+/**
+ * The same command queue as buildTmuxAttachCommand, as tmux argv. Windows has
+ * no `sh` to run the string, so the local PTY starts MSYS2's tmux directly;
+ * keep both builders in step.
+ */
+export function buildTmuxAttachArgs(paneId, { nozoom = false } = {}) {
+  const toggle = `resize-pane -Z -t ${paneId}`;
+  return [
+    '-u', 'select-pane', '-t', paneId, ';',
+    'if-shell', '-F', '-t', paneId, '#{window_zoomed_flag}', nozoom ? toggle : '', nozoom ? '' : toggle, ';',
+    'attach-session', '-d', '-t', paneId,
+  ];
+}
+
+/** Local attach PTY: `sh -c` on Unix, MSYS2 tmux itself on Windows. */
+export function localAttachSpawnSpec(paneId, { nozoom = false, platform = process.platform } = {}) {
+  if (platform === 'win32') return { file: TMUX_BIN, args: buildTmuxAttachArgs(paneId, { nozoom }) };
+  return { file: 'sh', args: ['-c', buildTmuxAttachCommand(paneId, { nozoom })] };
 }
 
 export class TerminalManager {
@@ -187,9 +208,8 @@ export class TerminalManager {
 
     const connectionId = randomUUID();
 
-    const shellCmd = buildTmuxAttachCommand(paneId, { nozoom });
     // A remote host runs the same template as the remote command of ssh -tt.
-    const spawnSpec = options.spawn || { file: 'sh', args: ['-c', shellCmd] };
+    const spawnSpec = options.spawn || localAttachSpawnSpec(paneId, { nozoom });
     let term;
     try {
       term = pty.spawn(spawnSpec.file, spawnSpec.args, {
@@ -361,6 +381,13 @@ export class TerminalManager {
     if (!conn) return;
 
     const pid = conn.pty.pid;
+
+    // Windows has no process groups or signals; node-pty closes the ConPTY,
+    // which ends the attached tmux client.
+    if (process.platform === 'win32') {
+      try { conn.pty.kill(); } catch { /* already gone */ }
+      return;
+    }
 
     // Send SIGTERM first so the attached client can exit cleanly.
     // Then schedule SIGKILL after a short delay as a hard guarantee — SIGTERM alone

@@ -1,12 +1,13 @@
 // Cross-platform host memory, swap, CPU and disk collectors.
 
 import os from 'node:os';
-import { readFile } from 'node:fs/promises';
+import { readFile, statfs } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const IS_DARWIN = process.platform === 'darwin';
+const IS_WINDOWS = process.platform === 'win32';
 
 let _previousCpu = null;
 
@@ -141,6 +142,8 @@ export async function readSystemMemory() {
 }
 
 export async function readSystemSwap() {
+  // Windows grows its page file on demand; there is no fixed swap to report.
+  if (IS_WINDOWS) return { total: 0, used: 0 };
   if (IS_DARWIN) {
     try {
       const { stdout } = await execFileAsync('/usr/sbin/sysctl', ['-n', 'vm.swapusage'], { timeout: 3_000 });
@@ -161,7 +164,29 @@ export async function readSystemSwap() {
   }
 }
 
+/** The system drive plus the drive holding the user profile, e.g. C: and D:. */
+export async function readWindowsDiskStats({ env = process.env, home = os.homedir(), stat = statfs } = {}) {
+  const drives = [env.SystemDrive || 'C:', home.slice(0, 2)]
+    .map((drive) => drive.toUpperCase())
+    .filter((drive, index, all) => /^[A-Z]:$/.test(drive) && all.indexOf(drive) === index);
+  const disks = [];
+  for (const drive of drives) {
+    try {
+      const s = await stat(drive + '\\');
+      const total = s.blocks * s.bsize;
+      if (!(total > 0)) continue;
+      const used = Math.max(0, total - s.bfree * s.bsize);
+      disks.push({
+        device: drive, fstype: null, mount: drive + '\\', total,
+        used, avail: s.bavail * s.bsize, percent: Math.round((used / total) * 1000) / 10,
+      });
+    } catch {}
+  }
+  return disks;
+}
+
 export async function readDiskStats() {
+  if (IS_WINDOWS) return readWindowsDiskStats();
   if (IS_DARWIN) {
     try {
       const { stdout } = await execFileAsync('/bin/df', ['-kP'], { timeout: 3_000 });
@@ -219,6 +244,21 @@ export const platformCapabilities = Object.freeze(IS_DARWIN ? {
   processSwap: false,
   processIo: false,
   externalProcesses: true,
+} : IS_WINDOWS ? {
+  // Pane pids are MSYS pids and Windows has no /proc, so process sampling is
+  // off; host CPU, memory and drive capacity still come from Node.
+  platform: 'windows',
+  systemCpu: true,
+  systemMemory: true,
+  systemSwap: false,
+  systemDiskIo: false,
+  diskCapacity: true,
+  diskIoPerDevice: false,
+  processCpu: false,
+  processMemory: false,
+  processSwap: false,
+  processIo: false,
+  externalProcesses: false,
 } : {
   platform: process.platform,
   systemCpu: true,

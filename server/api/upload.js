@@ -13,14 +13,21 @@ export function sanitizeFilename(name) {
   return cleaned || 'upload';
 }
 
-export function createUploadRouter(uploadDir) {
+/**
+ * @param {string} uploadDir native directory the files are written to
+ * @param {{ displayPath?: (path: string) => string }} [options] maps the stored
+ *   path to the one reported to the client (Windows reports MSYS paths)
+ */
+export function createUploadRouter(uploadDir, { displayPath = (path) => path } = {}) {
   mkdirSync(uploadDir, { recursive: true });
 
   const storage = multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, uploadDir),
     filename: (_req, file, cb) => {
       const timestamp = Date.now();
-      const safe = sanitizeFilename(file.originalname);
+      let safe = sanitizeFilename(file.originalname);
+      // NTFS rejects these characters in file names.
+      if (process.platform === 'win32') safe = safe.replace(/[<>:"|?*]/g, '_');
       cb(null, `${timestamp}_${safe}`);
     },
   });
@@ -43,7 +50,7 @@ export function createUploadRouter(uploadDir) {
 
     res.json({
       success: true,
-      data: { path: join(uploadDir, req.file.filename) },
+      data: { path: displayPath(join(uploadDir, req.file.filename)) },
       error: null,
     });
   });

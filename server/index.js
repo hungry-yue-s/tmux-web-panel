@@ -20,6 +20,7 @@ import {
 import { loadTotpSecret, verifyTotp, totpFilePath } from './totp.js';
 import { resolveRuntimeConfig } from './runtime-config.js';
 import * as tmux from './tmux.js';
+import { IS_WINDOWS, msysHomeRoots, toNativePath, toPosixPath } from './msys.js';
 import { TerminalManager } from './terminal.js';
 import { StatusMonitor } from './monitor.js';
 import sessionsRouter from './api/sessions.js';
@@ -268,8 +269,15 @@ app.use('/api/pins', createPinsRouter(pinStore));
 app.use('/api/share', createShareRouter(shareStore));
 
 // Desktop uploads stay in this installation's data directory.
-app.use('/api/upload', createUploadRouter(config.managedRuntime ? join(configDir, 'uploads') : '/tmp/tmux-web-panel-uploads'));
-app.use('/api/files', createFilesRouter([homedir(), '/tmp']));
+if (IS_WINDOWS) {
+  // Panes run MSYS2 shells, so uploads land in MSYS's /tmp and are reported
+  // (and previewed) by their MSYS path.
+  app.use('/api/upload', createUploadRouter(toNativePath('/tmp/tmux-web-panel-uploads'), { displayPath: toPosixPath }));
+  app.use('/api/files', createFilesRouter([...msysHomeRoots(), '/tmp']));
+} else {
+  app.use('/api/upload', createUploadRouter(config.managedRuntime ? join(configDir, 'uploads') : '/tmp/tmux-web-panel-uploads'));
+  app.use('/api/files', createFilesRouter([homedir(), '/tmp']));
+}
 app.use('/api/claude-usage', createClaudeUsageRouter());
 app.use('/api/codex-usage', createCodexUsageRouter({ configDir }));
 const agentHubService = createAgentHubService({ configDir });

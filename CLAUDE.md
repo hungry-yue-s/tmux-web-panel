@@ -19,6 +19,8 @@
 
 **静态文件改动不需要重启。** `express.static` 用 `{ etag: false, maxAge: 0 }` 挂载 `public/`，改 `public/js/*` 或 `public/css/*` 后用户刷新浏览器即生效——只有改 `server/*` 才需要 `systemctl --user restart`。
 
+**Windows** 上服务管理器是计划任务（`\tmux-web-panel\tmux-web-panel` 与 `\tmux-web-panel\tmux-server`），统一经 `scripts/install-service.ps1` 操作：`restart` / `status` / `logs`（加 `-Tmux` 针对 tmux server）。同样禁止手动 `node server/index.js` 或直接 `Stop-Process` 后自行启动——AUTH/TLS/端口配置在 `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`，只由 `scripts/windows/run-panel.ps1` 注入。
+
 ## tmux server 守护与会话持久化
 
 Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.tmux-server.plist`；它们都由 `install-service.sh` 生成在用户服务目录中。这是为了让重启电脑后网页面板立刻能看到上次保存的会话。
@@ -32,6 +34,7 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 不变量：
 
 - **部署必须使用 `vendor/tmux` 子模块构建的 tmux**：`install-service.sh install` 会调用 `scripts/build-tmux.sh`，原子部署到 `~/.local/share/tmux-web-panel/bin/tmux`，不得退回系统 `PATH` 中的 tmux
+  - 唯一例外是 Windows：使用 MSYS2 打包的 tmux（`C:\msys64\usr\bin\tmux.exe`，带 MSYS 运行时补丁），由 `server/msys.js` 解析；tmux 进程必须带 `MSYS=noglob`，否则 MSYS 会把 `#{session_id}` 这类参数做花括号展开。pane 路径是 MSYS 路径（`/home/me`、`/c/...`），读写文件前经 `toNativePath` 转换
 - **`~/.tmux.conf` 必须保留 `set -g exit-empty off`**：否则 systemd 启动的空 server 会因 continuum auto-restore 慢一拍而自杀
 - **不要在 `tmux-server.service` 里预创建会话**（如 `tmux new-session -d -s main`）：continuum auto-restore 检测到已有 session 就不会触发，会话恢复失效
 - **`server/tmux.js` 的 `listSessions()` 是只读**：不会自动创建/启动 tmux server。如果 server 不存在，网页就是空——这是设计意图，恢复责任在 systemd + continuum

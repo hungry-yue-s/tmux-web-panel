@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { TMUX_BIN } from './msys.js';
 
 const execFileAsync = promisify(execFile);
 
-const TMUX_BIN = 'tmux';
 const EXEC_TIMEOUT = 5000;
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
 
@@ -241,6 +241,8 @@ export async function tmuxExec(args) {
 export const localExecutor = Object.freeze({
   id: 'local',
   transport: 'local',
+  // Only this host's tmux may be a Windows path; remote hosts run plain `tmux`.
+  tmuxBin: TMUX_BIN,
   async exec(command, args, options = {}) {
     const { stdout, stderr } = await execFileAsync(command, args, {
       timeout: options.timeout || EXEC_TIMEOUT,
@@ -304,7 +306,7 @@ export function createTmuxApi(executor) {
   if (!executor || typeof executor.exec !== 'function') {
     throw new Error('createTmuxApi requires an executor with exec()');
   }
-  const bin = executor.tmuxBin || TMUX_BIN;
+  const bin = executor.tmuxBin || 'tmux';
 
   async function run(args, options) {
     const { stdout } = await executor.exec(bin, args, options);

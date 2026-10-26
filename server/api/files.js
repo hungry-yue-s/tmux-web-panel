@@ -1,17 +1,43 @@
 import { Router } from 'express';
-import { resolve, extname, basename } from 'node:path';
-import { stat, lstat, realpath, readFile, readdir, open } from 'node:fs/promises';
+import { resolve as nativeResolve, posix, extname, basename } from 'node:path';
+import * as fs from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { homedir } from 'node:os';
-import { getArchiveType, listArchive, MAX_ENTRIES as ARCHIVE_MAX_ENTRIES } from './archive.js';
+import { homedir as nativeHomedir } from 'node:os';
+import { getArchiveType, listArchive as listNativeArchive, MAX_ENTRIES as ARCHIVE_MAX_ENTRIES } from './archive.js';
+import { IS_WINDOWS, TMUX_BIN, msysHomeRoots, toNativePath, toPosixPath } from '../msys.js';
 
 const execFileAsync = promisify(execFile);
+
+// Paths in this API are the ones panes show. On Windows those are MSYS paths
+// (/home/me, /c/Users/me): every check below works on them unchanged, and only
+// the fs calls translate to native paths.
+const resolve = IS_WINDOWS ? posix.resolve : nativeResolve;
+const fsPath = IS_WINDOWS ? (path) => toNativePath(path) : (path) => path;
+const stat = (path) => fs.stat(fsPath(path));
+const lstat = (path) => fs.lstat(fsPath(path));
+const readFile = (path, options) => fs.readFile(fsPath(path), options);
+const readdir = (path) => fs.readdir(fsPath(path));
+const open = (path, flags) => fs.open(fsPath(path), flags);
+const realpath = IS_WINDOWS ? async (path) => toPosixPath(await fs.realpath(fsPath(path))) : fs.realpath;
+const listArchive = (path, type) => listNativeArchive(fsPath(path), type);
+const homedir = IS_WINDOWS ? () => msysHomeRoots()[0] || toPosixPath(nativeHomedir()) : nativeHomedir;
+// Native programs in a Windows pane print C:\... paths.
+const fromNativeInput = IS_WINDOWS
+  ? (path) => (/^[a-zA-Z]:[\\/]/.test(path) ? toPosixPath(path) : path)
+  : (path) => path;
 const taskWriteQueues = new Map();
 const TASK_MARKER_RE = /^([ \t]*(?:>[ \t]*)*(?:[-+*]|\d+[.)])[ \t]+)\[([ xX])\]/;
 
+// NTFS is case-insensitive: /home/Administrator and /home/administrator are one directory.
+const pathKey = IS_WINDOWS ? (path) => path.toLowerCase() : (path) => path;
+
 function isWithinRoots(target, roots) {
-  return roots.some((root) => root === '/' ? target.startsWith('/') : target === root || target.startsWith(root + '/'));
+  const key = pathKey(target);
+  return roots.some((root) => {
+    const rootKey = pathKey(root);
+    return rootKey === '/' ? key.startsWith('/') : key === rootKey || key.startsWith(rootKey + '/');
+  });
 }
 
 function queueTaskWrite(realPath, operation) {
@@ -164,7 +190,7 @@ function getSizeLimit(info) {
 // (allowedRoots + sensitive patterns). Returns { linkPath, realPath, stat }
 // on success, or an error shape the callers forward verbatim.
 async function resolveTarget(rawPath, allowedRoots) {
-  const linkPath = resolve(rawPath);
+  const linkPath = resolve(fromNativeInput(rawPath));
   const normalizedRoots = allowedRoots.map((root) => resolve(root));
 
   if (!isWithinRoots(linkPath, normalizedRoots)) {
@@ -185,7 +211,7 @@ async function resolveTarget(rawPath, allowedRoots) {
     return { error: 'Access denied', status: 403 };
   }
 
-  if (SENSITIVE_PATTERNS.some((p) => p.test(linkPath) || p.test(realPath))) {
+  if (SENSITIVE_PATTERNS.some((p) => p.test(pathKey(linkPath)) || p.test(pathKey(realPath)))) {
     return { error: 'Access denied', status: 403 };
   }
 
@@ -238,7 +264,7 @@ function parentWithinRoots(absPath, roots) {
   if (absPath === '/') return null;
   const parent = absPath.replace(/\/[^/]+$/, '') || '/';
   const inRoot = roots.some(
-    (root) => parent === root || parent.startsWith(root + '/')
+    (root) => pathKey(parent) === pathKey(root) || pathKey(parent).startsWith(pathKey(root) + '/')
   );
   return inRoot ? parent : null;
 }
@@ -250,6 +276,7 @@ async function resolveInputPath(rawPath, paneId) {
     }
     return rawPath;
   }
+  rawPath = fromNativeInput(rawPath);
   if (!rawPath.startsWith('/')) {
     const cwd = await getPaneCwd(paneId || '');
     return resolve(cwd, rawPath);
@@ -260,7 +287,7 @@ async function resolveInputPath(rawPath, paneId) {
 async function getPaneCwd(paneId) {
   if (!paneId || !/^%\d+$/.test(paneId)) return homedir();
   try {
-    const { stdout } = await execFileAsync('tmux', [
+    const { stdout } = await execFileAsync(TMUX_BIN, [
       'display-message', '-p', '-t', paneId, '#{pane_current_path}',
     ]);
     const cwd = stdout.trim();
@@ -272,7 +299,7 @@ async function getPaneCwd(paneId) {
 export function createFilesRouter(allowedRoots) {
   const router = Router();
   const roots = allowedRoots && allowedRoots.length > 0
-    ? allowedRoots
+    ? allowedRoots.map(fromNativeInput)
     : [homedir()];
 
   router.get('/info', async (req, res) => {
@@ -506,13 +533,14 @@ export function createFilesRouter(allowedRoots) {
   router.patch('/markdown-task', async (req, res) => {
     try {
       const {
-        path: rawPath,
+        path: requestPath,
         line,
         checked,
         expectedLine,
         expectedMtimeMs,
         expectedSize,
       } = req.body || {};
+      const rawPath = typeof requestPath === 'string' ? fromNativeInput(requestPath) : requestPath;
       if (
         typeof rawPath !== 'string' || !rawPath.startsWith('/')
         || !Number.isInteger(line) || line < 0
@@ -608,7 +636,7 @@ export function createFilesRouter(allowedRoots) {
         res.setHeader('Content-Security-Policy', 'sandbox');
       }
       // sendFile handles byte ranges, HEAD and aborted requests without buffering.
-      res.sendFile(result.realPath, { dotfiles: 'allow', cacheControl: false }, (err) => {
+      res.sendFile(fsPath(result.realPath), { dotfiles: 'allow', cacheControl: false }, (err) => {
         if (!err || res.headersSent || res.destroyed) return;
         res.status(err.status || 500).type('json').json({ success: false, data: null, error: err.message });
       });
@@ -620,7 +648,7 @@ export function createFilesRouter(allowedRoots) {
   // Read tmux paste buffer and clean it into a file path
   router.get('/tmux-buffer', async (_req, res) => {
     try {
-      const { stdout } = await execFileAsync('tmux', ['show-buffer'], { timeout: 3000 });
+      const { stdout } = await execFileAsync(TMUX_BIN, ['show-buffer'], { timeout: 3000 });
       const raw = stdout.trim();
       if (!raw) {
         return res.json({ success: true, data: { raw: '', path: '' }, error: null });

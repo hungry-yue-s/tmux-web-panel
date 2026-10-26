@@ -30,6 +30,8 @@ function pickRootDisk(disks) {
 function localPlatform() {
   if (process.platform === 'darwin') return 'darwin';
   if (process.platform === 'linux') return 'linux';
+  // Same spelling as a Windows host reached over SSH.
+  if (process.platform === 'win32') return 'windows';
   return process.platform;
 }
 
@@ -77,7 +79,7 @@ export async function collectLocalMetrics() {
       // Whether per-process detail can be served depends on a drilldown being
       // wired into the metrics service, so that verdict is not ours to make.
       processes: 'unsupported',
-      diskIo: process.platform === 'darwin' ? 'partial' : 'available',
+      diskIo: process.platform === 'darwin' ? 'partial' : process.platform === 'win32' ? 'unavailable' : 'available',
       swap: 'unsupported',
     },
   };
