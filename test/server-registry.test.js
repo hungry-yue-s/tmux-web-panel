@@ -91,8 +91,8 @@ describe('ServerRegistry', () => {
     expect(reloaded.writesBlocked).toBe(false);
   });
 
-  it('never stores secrets', async () => {
-    await expect(registry.create({ ...REMOTE, ssh: { password: 'hunter2' } })).rejects.toMatchObject({
+  it('rejects private key contents and top-level passwords', async () => {
+    await expect(registry.create({ ...REMOTE, password: 'hunter2' })).rejects.toMatchObject({
       code: ErrorCode.VALIDATION_ERROR,
     });
     await expect(registry.create({ ...REMOTE, ssh: { privateKey: '-----BEGIN' } })).rejects.toMatchObject({
@@ -108,8 +108,57 @@ describe('ServerRegistry', () => {
     const created = await registry.create(REMOTE);
     const publicView = registry.toPublic(created);
 
-    expect(publicView.ssh).toEqual({ configHost: null, usesIdentityFile: true, usesProxyJump: false });
+    expect(publicView.ssh).toEqual({ configHost: null, authMethod: 'agent', usesIdentityFile: true, usesProxyJump: false });
     expect(JSON.stringify(publicView)).not.toContain('id_ed25519');
+  });
+
+  it('encrypts passwords on disk, hides them from API views and restores exact bytes', async () => {
+    const password = '  密码 $()`\\" spaces  ';
+    const created = await registry.create({ ...REMOTE, ssh: { authMethod: 'password', password } });
+    expect(created.ssh.password).toBe(password);
+    const raw = await fs.readFile(registry.filePath, 'utf8');
+    expect(raw).not.toContain(password);
+    expect(JSON.parse(raw).servers[0].ssh.password).toBeUndefined();
+    expect(JSON.stringify(registry.toPublic(created))).not.toContain(password);
+    expect(registry.toPublic(created).ssh.authMethod).toBe('password');
+    expect((await fs.stat(path.join(dir, 'server-password.key'))).mode & 0o777).toBe(0o600);
+    const reloaded = await new ServerRegistry({ configDir: dir }).load();
+    expect(reloaded.loadErrors).toEqual([]);
+    expect(reloaded.get(created.id).ssh.password).toBe(password);
+    await reloaded.update(created.id, { name: 'Renamed', ssh: { password: '' } });
+    expect(reloaded.get(created.id).ssh.password).toBe(password);
+    await reloaded.update(created.id, { ssh: { password: 'replacement' } });
+    expect(reloaded.get(created.id).ssh.password).toBe('replacement');
+    await reloaded.update(created.id, { ssh: { authMethod: 'agent' } });
+    expect(reloaded.get(created.id).ssh.password).toBeUndefined();
+    expect(await fs.readFile(registry.filePath, 'utf8')).not.toContain('encryptedPassword');
+  });
+
+  it.each(['missing-key', 'tampered-password'])('blocks overwriting unreadable credentials: %s', async (fault) => {
+    const created = await registry.create({ ...REMOTE, ssh: { password: 'hunter2' } });
+    if (fault === 'missing-key') await fs.unlink(path.join(dir, 'server-password.key'));
+    else {
+      const saved = JSON.parse(await fs.readFile(registry.filePath, 'utf8'));
+      const data = Buffer.from(saved.servers[0].ssh.encryptedPassword, 'base64');
+      data[data.length - 1] ^= 1;
+      saved.servers[0].ssh.encryptedPassword = data.toString('base64');
+      await fs.writeFile(registry.filePath, JSON.stringify(saved));
+    }
+    const before = await fs.readFile(registry.filePath, 'utf8');
+    const reloaded = await new ServerRegistry({ configDir: dir }).load();
+    expect(reloaded.loadErrors).toContainEqual({ id: created.id, reason: 'ssh.password' });
+    expect(reloaded.writesBlocked).toBe(true);
+    await expect(reloaded.create(REMOTE)).rejects.toThrow(/refusing to overwrite/);
+    expect(await fs.readFile(registry.filePath, 'utf8')).toBe(before);
+  });
+
+  it('validates password credentials without echoing them', () => {
+    for (const password of [null, 123, 'x'.repeat(1025), 'a\nb', 'a\rb', 'a\0b', '']) {
+      expect(() => normalizeServerInput({ ...REMOTE, ssh: { authMethod: 'password', password } }))
+        .toThrow(expect.objectContaining({ code: ErrorCode.VALIDATION_ERROR, details: { field: 'ssh.password' } }));
+    }
+    expect(() => normalizeServerInput({ ...REMOTE, address: { host: 'h' }, ssh: { password: 'p' } }))
+      .toThrow(expect.objectContaining({ details: { field: 'address.user' } }));
   });
 
   describe('validation', () => {

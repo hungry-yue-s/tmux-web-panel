@@ -109,7 +109,7 @@ export class TerminalGateway {
       const executor = this.pool.get(resolved.serverId);
       const remoteCommand = buildTmuxAttachCommand(resolved.paneId, { nozoom });
       // Fixed template only: nothing from the client reaches this string.
-      options.spawn = { file: 'ssh', args: executor.ptyArgs(remoteCommand) };
+      options.spawn = { file: 'ssh', args: executor.ptyArgs(remoteCommand), env: executor.sshEnv() };
     }
 
     const connectionId = this.terminalManager.create(ws, resolved.paneId, cols, rows, nozoom, options);

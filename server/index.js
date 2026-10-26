@@ -335,6 +335,7 @@ const workspaceService = new WorkspaceService({
       rows: rows || 24,
       env: {
         ...process.env,
+        ...executor.sshEnv(),
         LANG: process.env.LANG || 'C.UTF-8',
         LC_CTYPE: process.env.LC_CTYPE || process.env.LANG || 'C.UTF-8',
       },

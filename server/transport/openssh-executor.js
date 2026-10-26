@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFile, chmod, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { AppError, ErrorCode } from '../servers/errors.js';
 
@@ -79,15 +80,19 @@ const POWERSHELL_PTY_SETUP = [
  * Builds the ssh option list shared by every invocation.
  * StrictHostKeyChecking stays on: an unknown or changed key must fail closed.
  */
-export function baseSshOptions({ knownHostsPath, controlPath, connectTimeout = 5, controlPersist = 60 }) {
+export function baseSshOptions({ knownHostsPath, controlPath, connectTimeout = 5, controlPersist = 60, passwordAuth = false }) {
   const options = [
-    'BatchMode=yes',
+    `BatchMode=${passwordAuth ? 'no' : 'yes'}`,
     `ConnectTimeout=${connectTimeout}`,
     'ServerAliveInterval=15',
     'ServerAliveCountMax=2',
     'StrictHostKeyChecking=yes',
     `UserKnownHostsFile=${knownHostsPath}`,
   ];
+  if (passwordAuth) {
+    options.push('PreferredAuthentications=password,keyboard-interactive', 'PasswordAuthentication=yes',
+      'KbdInteractiveAuthentication=yes', 'PubkeyAuthentication=no', 'NumberOfPasswordPrompts=1');
+  }
   if (controlPath) {
     options.push('ControlMaster=auto', `ControlPersist=${controlPersist}`, `ControlPath=${controlPath}`);
   }
@@ -120,6 +125,8 @@ export function controlSocketName(server) {
     ssh.identityFile || null,
     ssh.proxyJump || null,
     ssh.knownHostAlias || null,
+    ssh.authMethod || 'agent',
+    ssh.passwordRevision || null,
   ]);
   return createHash('sha256').update(identity).digest('hex').slice(0, 12);
 }
@@ -134,7 +141,7 @@ export function buildSshArgs(server, { knownHostsPath, controlPath, tty = false,
   if (tty) args.push('-tt');
   else args.push('-T'); // no pty for command execution: keeps stdout clean
 
-  for (const option of baseSshOptions({ knownHostsPath, controlPath, connectTimeout })) {
+  for (const option of baseSshOptions({ knownHostsPath, controlPath, connectTimeout, passwordAuth: server.ssh?.authMethod === 'password' })) {
     args.push('-o', option);
   }
 
@@ -148,6 +155,7 @@ export function buildSshArgs(server, { knownHostsPath, controlPath, tty = false,
   for (const option of extraOptions) args.push('-o', option);
 
   if (ssh.configHost) {
+    if (ssh.authMethod === 'password' && address.user) args.push('-l', address.user);
     if (ssh.identityFile) args.push('-i', ssh.identityFile);
     if (ssh.proxyJump) args.push('-J', ssh.proxyJump);
     // Terminates ssh's option parsing. It must come *before* the destination:
@@ -444,6 +452,20 @@ export class OpenSSHExecutor {
     });
   }
 
+  /** Askpass also works for node-pty: credentials never enter terminal input. */
+  sshEnv() {
+    if (this.server.ssh?.authMethod !== 'password') return {};
+    return {
+      SSH_ASKPASS: fileURLToPath(new URL('./ssh-askpass.sh', import.meta.url)),
+      SSH_ASKPASS_REQUIRE: 'force',
+      TMUX_PANEL_NODE: process.execPath,
+      TMUX_PANEL_SSH_ASKPASS: fileURLToPath(new URL('./ssh-askpass.js', import.meta.url)),
+      TMUX_PANEL_SSH_CONFIG_DIR: this.configDir,
+      TMUX_PANEL_SSH_SERVER_ID: this.server.id,
+      TMUX_PANEL_SSH_CONNECTION: controlSocketName(this.server),
+    };
+  }
+
   /**
    * Runs one command on the remote host. `command` and `args` are quoted
    * individually — the caller supplies a fixed template, never user prose.
@@ -475,6 +497,7 @@ export class OpenSSHExecutor {
             timeout: options.timeout || DEFAULT_TIMEOUT_MS,
             maxBuffer: options.maxBuffer || DEFAULT_MAX_BUFFER,
             killSignal: 'SIGTERM',
+            env: { ...process.env, ...this.sshEnv() },
           },
           async (err, stdout, stderr) => {
             if (err) {

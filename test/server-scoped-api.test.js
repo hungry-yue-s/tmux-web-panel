@@ -166,10 +166,19 @@ describe('server-scoped API', () => {
       });
     });
 
-    it('POST refuses a password outright', async () => {
+    it('POST accepts a password without returning it, including on GET and PATCH', async () => {
       const res = await request(port, 'POST', '/api/servers', { ...REMOTE, ssh: { password: 'hunter2' } });
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(201);
+      expect(res.body.data.ssh.authMethod).toBe('password');
       expect(JSON.stringify(res.body)).not.toContain('hunter2');
+      for (const url of ['/api/servers', '/api/servers/' + res.body.data.id]) {
+        const result = await request(port, 'GET', url);
+        expect(result.status).toBe(200);
+        expect(JSON.stringify(result.body)).not.toMatch(/hunter2|encryptedPassword/);
+      }
+      const updated = await request(port, 'PATCH', '/api/servers/' + res.body.data.id, { ssh: { password: 'replacement' } });
+      expect(updated.status).toBe(200);
+      expect(JSON.stringify(updated.body)).not.toMatch(/replacement|encryptedPassword/);
     });
 
     it('GET /api/servers/:id reports an unknown server', async () => {

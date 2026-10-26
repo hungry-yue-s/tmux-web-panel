@@ -201,6 +201,7 @@ export class TerminalManager {
         // before they ever reach xterm.js.
         env: {
           ...process.env,
+          ...spawnSpec.env,
           LANG: process.env.LANG || 'C.UTF-8',
           LC_CTYPE: process.env.LC_CTYPE || process.env.LANG || 'C.UTF-8',
         },

@@ -1,11 +1,12 @@
 /**
  * Server registry: declaration store for the panel's servers.
  *
- * Holds no live connection state and no secrets — identity material is kept as
- * a path reference so SSH agent / ~/.ssh/config keep owning authentication.
+ * Holds no live connection state. Passwords are encrypted on disk; private keys
+ * remain path references owned by SSH agent / ~/.ssh/config.
  */
 
 import { constants as fsConstants } from 'node:fs';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { chmod, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { isIPv6 } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -136,11 +137,30 @@ export function normalizeServerInput(input, { existing = null } = {}) {
     { max: 253, pattern: SSH_CONFIG_HOST_RE, required: false },
   );
 
-  for (const secretField of ['password', 'passphrase', 'privateKey', 'token']) {
+  for (const secretField of ['passphrase', 'privateKey', 'token']) {
     if (sshInput[secretField] !== undefined || input[secretField] !== undefined) {
       throw fieldError(`${secretField} is not accepted; use SSH agent or an identity file path`, secretField);
     }
   }
+
+  if (input.password !== undefined || sshInput.encryptedPassword !== undefined) {
+    throw fieldError('Use ssh.password to supply a password', 'ssh.password');
+  }
+  const authMethod = sshInput.authMethod ?? (sshInput.password ? 'password' : previousSsh.authMethod || 'agent');
+  if (!['agent', 'password'].includes(authMethod)) {
+    throw fieldError('Unsupported SSH authentication method', 'ssh.authMethod');
+  }
+  if (sshInput.password !== undefined && (typeof sshInput.password !== 'string'
+    || sshInput.password.length > 1024 || /[\x00\r\n]/.test(sshInput.password))) {
+    throw fieldError('Password must be a string of at most 1024 characters without NUL or newlines', 'ssh.password');
+  }
+  // Keep exact password bytes, including leading/trailing spaces. Blank edits
+  // retain the saved password; switching to agent explicitly clears it.
+  const password = authMethod === 'password' ? sshInput.password || previousSsh.password || null : null;
+  if (authMethod === 'password' && !user) throw fieldError('Username is required for password authentication', 'address.user');
+  if (authMethod === 'password' && !password) throw fieldError('Password is required', 'ssh.password');
+  const passwordRevision = password && password === previousSsh.password && previousSsh.passwordRevision
+    ? previousSsh.passwordRevision : password ? randomBytes(16).toString('hex') : null;
 
   let enabled = existing ? existing.enabled !== false : true;
   if (input.enabled !== undefined) {
@@ -152,7 +172,7 @@ export function normalizeServerInput(input, { existing = null } = {}) {
     name,
     kind: 'remote',
     address: { host, port: normalizePort(portSource), user },
-    ssh: { configHost, identityFile, proxyJump, knownHostAlias },
+    ssh: { configHost, identityFile, proxyJump, knownHostAlias, authMethod, ...(password ? { password, passwordRevision } : {}) },
     enabled,
   };
 }
@@ -183,6 +203,7 @@ export class ServerRegistry {
     this._servers = new Map();
     this._localName = null;
     this._writeQueue = Promise.resolve();
+    this._passwordKey = null;
     /** Entries that failed validation on load; kept so the UI can report them. */
     this.loadErrors = [];
     /** Latched when the on-disk file could not be understood; blocks writes. */
@@ -194,6 +215,7 @@ export class ServerRegistry {
     // A reload must reflect the file exactly: stale records from a previous
     // load would otherwise survive as phantom servers.
     this._servers = new Map();
+    this._passwordKey = null;
     this._localName = null;
     this.loadErrors = [];
     this.writesBlocked = false;
@@ -230,7 +252,30 @@ export class ServerRegistry {
         const id = requireCleanString(entry && entry.id, 'id', { max: 64, pattern: ID_RE });
         if (id === LOCAL_SERVER_ID) throw fieldError('id "local" is reserved', 'id');
         if (this._servers.has(id)) throw fieldError(`duplicate id ${id}`, 'id');
-        const normalized = normalizeServerInput(entry, { existing: null });
+        let input = entry;
+        if (entry.ssh?.encryptedPassword !== undefined) {
+          try {
+            this._passwordKey ||= await this._readPasswordKey();
+            const data = Buffer.from(entry.ssh.encryptedPassword, 'base64');
+            const decipher = createDecipheriv('aes-256-gcm', this._passwordKey, data.subarray(0, 12));
+            decipher.setAAD(Buffer.from(id));
+            decipher.setAuthTag(data.subarray(12, 28));
+            const password = Buffer.concat([decipher.update(data.subarray(28)), decipher.final()]).toString('utf8');
+            const { encryptedPassword, ...ssh } = entry.ssh;
+            input = { ...entry, ssh: { ...ssh, password } };
+          } catch {
+            // Never overwrite declarations if their credentials cannot be read.
+            this.writesBlocked = true;
+            this.writeBlockReason = 'password_unreadable';
+            throw fieldError('Saved password could not be decrypted', 'ssh.password');
+          }
+        }
+        const normalized = normalizeServerInput(input, { existing: null });
+        // Only disk records can restore a revision; API writes cannot choose a
+        // revision and accidentally reuse a connection authenticated earlier.
+        if (normalized.ssh.password && /^[a-f0-9]{32}$/.test(input.ssh?.passwordRevision || '')) {
+          normalized.ssh.passwordRevision = input.ssh.passwordRevision;
+        }
         this._servers.set(id, {
           id,
           ...normalized,
@@ -376,6 +421,7 @@ export class ServerRegistry {
       },
       ssh: {
         configHost: server.ssh ? server.ssh.configHost : null,
+        authMethod: server.ssh?.authMethod || 'agent',
         // Presence only: the path itself is a local filesystem detail.
         usesIdentityFile: Boolean(server.ssh && server.ssh.identityFile),
         usesProxyJump: Boolean(server.ssh && server.ssh.proxyJump),
@@ -392,7 +438,17 @@ export class ServerRegistry {
       {
         version: 1,
         localName: this._localName,
-        servers: [...this._servers.values()],
+        servers: [...this._servers.values()].map((server) => {
+          const { password, ...ssh } = server.ssh;
+          if (password) {
+            const iv = randomBytes(12);
+            const cipher = createCipheriv('aes-256-gcm', this._passwordKey, iv);
+            cipher.setAAD(Buffer.from(server.id));
+            const encrypted = Buffer.concat([cipher.update(password, 'utf8'), cipher.final()]);
+            ssh.encryptedPassword = Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64');
+          }
+          return { ...server, ssh };
+        }),
       },
       null,
       2,
@@ -418,6 +474,9 @@ export class ServerRegistry {
   async _writeUnsafe() {
     await mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 });
     await chmod(dirname(this.filePath), 0o700).catch(() => {});
+    if ([...this._servers.values()].some((server) => server.ssh.password) && !this._passwordKey) {
+      this._passwordKey = await this._readPasswordKey({ create: true });
+    }
     const tmpPath = `${this.filePath}.tmp`;
     const handle = await open(tmpPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC, 0o600);
     try {
@@ -434,5 +493,26 @@ export class ServerRegistry {
       throw err;
     }
     await chmod(this.filePath, 0o600).catch(() => {});
+  }
+
+  async _readPasswordKey({ create = false } = {}) {
+    const keyPath = join(this.configDir, 'server-password.key');
+    if (create) {
+      try {
+        const handle = await open(keyPath, 'wx', 0o600);
+        try {
+          await handle.writeFile(randomBytes(32));
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+      } catch (err) {
+        if (err.code !== 'EEXIST') throw err;
+      }
+    }
+    const key = await readFile(keyPath);
+    if (key.length !== 32) throw new Error('Invalid server password key');
+    await chmod(keyPath, 0o600);
+    return key;
   }
 }

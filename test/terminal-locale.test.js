@@ -35,10 +35,14 @@ describe('TerminalManager PTY locale', () => {
 
     try {
       const manager = new TerminalManager();
-      const id = manager.create(ws, '%1');
+      const id = manager.create(ws, '%1', 80, 24, false, {
+        spawn: { file: 'ssh', args: [], env: { SSH_ASKPASS_REQUIRE: 'force', TMUX_PANEL_SSH_SERVER_ID: 'remote' } },
+      });
       const options = spawn.mock.calls[0][2];
       expect(options.env.LANG).toBe('C.UTF-8');
       expect(options.env.LC_CTYPE).toBe('C.UTF-8');
+      expect(options.env.SSH_ASKPASS_REQUIRE).toBe('force');
+      expect(options.env.TMUX_PANEL_SSH_SERVER_ID).toBe('remote');
       manager.destroy(id);
     } finally {
       if (oldLang === undefined) delete process.env.LANG;

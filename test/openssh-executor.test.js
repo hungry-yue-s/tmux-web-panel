@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { execFile as execFileCallback } from 'node:child_process';
+import { promisify } from 'node:util';
+import { ServerRegistry } from '../server/servers/registry.js';
 
 import {
   OpenSSHExecutor,
@@ -431,6 +434,30 @@ describe('OpenSSHExecutor', () => {
     const argv = executor.ptyArgs('tmux attach-session -d -t %3');
     expect(argv[0]).toBe('-tt');
     expect(argv[argv.length - 1]).toBe('tmux attach-session -d -t %3');
+  });
+
+  it('uses password auth and local askpass for commands and PTYs without leaking the password', async () => {
+    const password = '  密码 $()`\\"  ';
+    const registry = await new ServerRegistry({ configDir: dir }).load();
+    const server = await registry.create({ ...REMOTE, ssh: { authMethod: 'password', password } });
+    const { executor, calls } = make(server, { ssh: { stdout: 'ok' } });
+    await executor.exec('tmux', ['-V']);
+    for (const argv of [calls[0].argv, executor.ptyArgs('exec sh -l')]) {
+      expect(argv).toContain('BatchMode=no');
+      expect(argv).toContain('PreferredAuthentications=password,keyboard-interactive');
+      expect(argv).toContain('NumberOfPasswordPrompts=1');
+      expect(argv).toContain('StrictHostKeyChecking=yes');
+      expect(argv.join(' ')).not.toContain(password);
+    }
+    expect(calls[0].options.env.SSH_ASKPASS_REQUIRE).toBe('force');
+    expect(JSON.stringify(executor.sshEnv())).not.toContain(password);
+    const env = { ...process.env, ...executor.sshEnv() };
+    const invoke = () => promisify(execFileCallback)(env.SSH_ASKPASS, [], { env });
+    expect((await invoke()).stdout).toBe(password + '\n');
+    await registry.update(server.id, { ssh: { password: 'replacement' } });
+    // An in-flight old connection cannot obtain credentials from a later edit.
+    await expect(invoke()).rejects.toMatchObject({ code: 1, stdout: '', stderr: '' });
+    expect(controlSocketName(registry.require(server.id))).not.toBe(controlSocketName(server));
   });
 
   describe('resolveTarget', () => {

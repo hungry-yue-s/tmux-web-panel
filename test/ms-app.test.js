@@ -560,6 +560,67 @@ function loadStatusShell({ perfPanel = null, agentHub = null, theme = null, auth
   return { win, MsApp: win.MsApp, Store: win.Store, Router: win.Router, document: win.document };
 }
 
+describe('server password forms', () => {
+  it('switches authentication fields and submits exact password bytes only in password mode', async () => {
+    const { win, MsApp, document: doc } = loadStatusShell();
+    win.Api.post = vi.fn(async () => ({ id: 'added' }));
+    MsApp.refreshServers = vi.fn(async () => {});
+    MsApp.openAddServer();
+    const auth = doc.getElementById('ms-auth');
+    expect(doc.querySelector('[data-ssh-password]').hidden).toBe(true);
+    auth.value = 'password';
+    auth.dispatchEvent(new win.Event('change'));
+    expect(doc.querySelector('[data-ssh-password]').hidden).toBe(false);
+    expect(doc.querySelector('[data-ssh-identity]').hidden).toBe(true);
+    doc.getElementById('ms-host').value = 'dev.test';
+    await MsApp._submitServer();
+    expect(win.Api.post).not.toHaveBeenCalled();
+    doc.getElementById('ms-user').value = 'dev';
+    const password = '  密码 $()`\\"  ';
+    doc.getElementById('ms-password').value = password;
+    doc.querySelector('[data-show-ssh-password]').click();
+    expect(doc.getElementById('ms-password').type).toBe('text');
+    doc.querySelector('[data-show-ssh-password]').click();
+    expect(doc.getElementById('ms-password').type).toBe('password');
+    await MsApp._submitServer();
+    expect(win.Api.post).toHaveBeenCalledWith('/api/servers', expect.objectContaining({
+      address: { host: 'dev.test', port: 22, user: 'dev' }, ssh: { authMethod: 'password', password },
+    }));
+    expect(doc.getElementById('ms-password')).toBeNull();
+    MsApp.openAddServer();
+    doc.getElementById('ms-password').value = password;
+    expect(MsApp._readSshAuth('ms')).toEqual({ authMethod: 'agent' });
+    win.close();
+  });
+
+  it('keeps saved passwords out of edit forms and retains blank passwords', async () => {
+    const { win, MsApp, Store, document: doc } = loadStatusShell();
+    Store.setServers([{ id: 'remote', name: 'Remote', kind: 'remote',
+      address: { host: 'dev.test', port: 22, user: 'dev' }, ssh: { authMethod: 'password' } }]);
+    win.Api.patch = vi.fn(async () => ({}));
+    MsApp.refreshServers = vi.fn(async () => {});
+    MsApp.openEditServer('remote');
+    const input = doc.getElementById('ms-edit-password');
+    expect(input.value).toBe('');
+    expect(input.placeholder).toContain('留空保持不变');
+    expect(doc.getElementById('ms-edit-auth').value).toBe('password');
+    doc.getElementById('ms-edit-name').value = 'Renamed';
+    await MsApp._submitEditServer('remote');
+    expect(win.Api.patch).toHaveBeenLastCalledWith('/api/servers/remote', { name: 'Renamed' });
+    MsApp.openEditServer('remote');
+    doc.getElementById('ms-edit-password').value = ' replacement ';
+    await MsApp._submitEditServer('remote');
+    expect(win.Api.patch).toHaveBeenLastCalledWith('/api/servers/remote', expect.objectContaining({
+      ssh: { authMethod: 'password', password: ' replacement ' },
+    }));
+    MsApp.openEditServer('remote');
+    doc.getElementById('ms-edit-auth').value = 'agent';
+    await MsApp._submitEditServer('remote');
+    expect(win.Api.patch).toHaveBeenLastCalledWith('/api/servers/remote', expect.objectContaining({ ssh: { authMethod: 'agent' } }));
+    win.close();
+  });
+});
+
 describe('MsApp standalone status page', () => {
   it('forwards the clicked notification control instead of the document delegation target', async () => {
     const ctx = loadStatusShell();

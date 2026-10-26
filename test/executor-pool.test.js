@@ -127,6 +127,15 @@ describe('ExecutorPool', () => {
     expect(() => pool.get('api-linux', { allowDisabled: true })).not.toThrow();
   });
 
+  it('replaces the executor and control socket when a password changes', async () => {
+    await registry.create({ ...REMOTE, ssh: { password: 'first' } });
+    const first = pool.get(REMOTE.id);
+    await registry.update(REMOTE.id, { ssh: { password: 'second' } });
+    const second = pool.get(REMOTE.id);
+    expect(second).not.toBe(first);
+    expect(second.sshEnv().TMUX_PANEL_SSH_CONNECTION).not.toBe(first.sshEnv().TMUX_PANEL_SSH_CONNECTION);
+  });
+
   it('reports an unknown server', () => {
     expect(() => pool.get('ghost')).toThrow(expect.objectContaining({ code: ErrorCode.SERVER_NOT_FOUND }));
   });

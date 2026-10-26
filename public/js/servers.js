@@ -259,7 +259,7 @@
         + detail('Host', address.host || ssh.configHost || '—')
         + detail('SSH Port', address.port || (ssh.configHost ? '来自 ssh config' : '未配置'))
         + detail('Username', address.user || (ssh.configHost ? '来自 ssh config' : '—'))
-        + detail('认证配置', ssh.usesIdentityFile ? '指定私钥文件' : 'SSH Agent / ssh config')
+        + detail('认证配置', ssh.authMethod === 'password' ? '用户名密码' : ssh.usesIdentityFile ? '指定私钥文件' : 'SSH Agent / ssh config')
         + detail('最近成功', relativeTime(health.lastOnlineAt))
         + '</div>'
         + (keyProblem
@@ -392,9 +392,9 @@
 
     _settingsSecurity: function () {
       return '<div class="intro"><h2>连接与安全</h2>'
-        + '<p>面板只保存连接引用，密码与私钥内容不会落盘。</p></div>'
+        + '<p>密码加密保存在面板所在机器，私钥只保存路径引用。</p></div>'
         + '<div class="grid two-col"><div class="ms-card detail-list">'
-        + detail('认证引用', 'SSH Agent 与 ~/.ssh/config')
+        + detail('认证方式', '用户名密码、SSH Agent 与 ~/.ssh/config')
         + detail('主机密钥', '需显式确认，变化后阻断连接')
         + detail('远端安装', '不安装、不升级、不启动远端 tmux')
         + '</div><div class="ms-card detail-list">'

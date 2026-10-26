@@ -1116,7 +1116,7 @@
       const address = server.address || {};
       const ssh = server.ssh || {};
       this.openModal('编辑服务器',
-        '<p>只保存连接引用。密码与私钥内容不会被保存。</p>'
+        '<p>支持 SSH Agent、私钥路径或用户名密码。密码加密保存在面板所在机器。</p>'
         + '<div class="form-grid">'
         + '<div class="field full"><label for="ms-edit-name">显示名称</label>'
         + '<input id="ms-edit-name" value="' + global.AppShell.escape(server.name) + '"></div>'
@@ -1125,10 +1125,8 @@
         + '<div class="field"><label for="ms-edit-port">SSH Port</label>'
         + '<input id="ms-edit-port" value="' + global.AppShell.escape(address.port || 22) + '"></div>'
         + '<div class="field full"><label for="ms-edit-user">Username</label>'
-        + '<input id="ms-edit-user" value="' + global.AppShell.escape(address.user || '') + '"></div>'
-        + '<div class="field full"><label for="ms-edit-identity">私钥路径（可选，仅保存路径）</label>'
-        + '<input id="ms-edit-identity" placeholder="'
-        + (ssh.usesIdentityFile ? '已配置，留空保持不变' : '~/.ssh/id_ed25519') + '"></div>'
+        + '<input id="ms-edit-user" autocomplete="username" value="' + global.AppShell.escape(address.user || '') + '"></div>'
+        + this._sshAuthFields('ms-edit', ssh)
         + '</div>',
         '<button class="ms-btn primary" data-action="submit-edit-server">保存并检测</button>');
     },
@@ -1157,7 +1155,8 @@
       const host = value('ms-edit-host');
       const user = value('ms-edit-user');
       const parsedPort = this._parsePort(value('ms-edit-port'));
-      const identityFile = value('ms-edit-identity');
+      const ssh = this._readSshAuth('ms-edit', server.ssh);
+      if (!ssh) return;
       if (!host) {
         global.AppShell.toast('Host 不能为空');
         return;
@@ -1172,12 +1171,13 @@
       const connectionChanged = host !== (address.host || '')
         || port !== Number(address.port || 22)
         || user !== (address.user || '')
-        || Boolean(identityFile);
+        || ssh.authMethod !== (server.ssh?.authMethod || 'agent')
+        || Boolean(ssh.password || ssh.identityFile);
 
       const body = { name };
       if (connectionChanged) {
-        body.address = { host, port, user: user || undefined };
-        if (identityFile) body.ssh = { identityFile };
+        body.address = { host, port, user: user || null };
+        body.ssh = ssh;
       }
 
       try {
@@ -1318,16 +1318,48 @@
 
     openAddServer() {
       this.openModal('添加服务器',
-        '<p>只保存连接引用。密码与私钥内容不会被保存，认证走 SSH Agent 或 ~/.ssh/config。</p>'
+        '<p>支持 SSH Agent、私钥路径或用户名密码。密码加密保存在面板所在机器。</p>'
         + '<div class="form-grid">'
         + '<div class="field full"><label for="ms-name">显示名称</label><input id="ms-name" value=""></div>'
         + '<div class="field"><label for="ms-host">Host</label><input id="ms-host" placeholder="10.0.0.21"></div>'
         + '<div class="field"><label for="ms-port">SSH Port</label><input id="ms-port" value="22"></div>'
-        + '<div class="field full"><label for="ms-user">Username</label><input id="ms-user" value=""></div>'
-        + '<div class="field full"><label for="ms-identity">私钥路径（可选，仅保存路径）</label>'
-        + '<input id="ms-identity" placeholder="~/.ssh/id_ed25519"></div>'
+        + '<div class="field full"><label for="ms-user">Username</label><input id="ms-user" autocomplete="username" value=""></div>'
+        + this._sshAuthFields('ms')
         + '</div>',
         '<button class="ms-btn primary" data-action="submit-server">保存并检测</button>');
+    },
+
+    _sshAuthFields(prefix, ssh = {}) {
+      const password = ssh.authMethod === 'password';
+      return '<div class="field full"><label for="' + prefix + '-auth">认证方式</label>'
+        + '<select id="' + prefix + '-auth" data-ssh-auth><option value="agent">SSH Agent / 私钥路径</option>'
+        + '<option value="password"' + (password ? ' selected' : '') + '>用户名密码</option></select></div>'
+        + '<div class="field full" data-ssh-password' + (password ? '' : ' hidden') + '>'
+        + '<label for="' + prefix + '-password">SSH 密码</label>'
+        + '<input id="' + prefix + '-password" type="password" autocomplete="current-password" maxlength="1024" placeholder="'
+        + (password ? '已保存，留空保持不变' : '输入 SSH 登录密码') + '">'
+        + '<button type="button" class="ms-btn ghost" data-show-ssh-password aria-pressed="false">显示密码</button></div>'
+        + '<div class="field full" data-ssh-identity' + (password ? ' hidden' : '') + '>'
+        + '<label for="' + prefix + '-identity">私钥路径（可选，仅保存路径）</label>'
+        + '<input id="' + prefix + '-identity" placeholder="'
+        + (ssh.usesIdentityFile ? '已配置，留空保持不变' : '~/.ssh/id_ed25519') + '"></div>';
+    },
+
+    _readSshAuth(prefix, previous = {}) {
+      const authMethod = global.document.getElementById(prefix + '-auth').value;
+      if (authMethod === 'password') {
+        const user = global.document.getElementById(prefix + '-user');
+        const input = global.document.getElementById(prefix + '-password');
+        if (!user.value.trim() || (!input.value && previous?.authMethod !== 'password')) {
+          global.AppShell.toast('用户名和 SSH 密码不能为空');
+          (!user.value.trim() ? user : input).focus();
+          return null;
+        }
+        // Passwords are not trimmed: whitespace may be part of the credential.
+        return { authMethod, ...(input.value ? { password: input.value } : {}) };
+      }
+      const identityFile = global.document.getElementById(prefix + '-identity').value.trim();
+      return { authMethod, ...(identityFile ? { identityFile } : {}) };
     },
 
     async _submitServer() {
@@ -1346,10 +1378,12 @@
         return;
       }
       const port = parsedPort.port;
+      const ssh = this._readSshAuth('ms');
+      if (!ssh) return;
       const body = {
         name: value('ms-name') || host,
         address: { host, port, user: value('ms-user') || undefined },
-        ssh: value('ms-identity') ? { identityFile: value('ms-identity') } : {},
+        ssh,
       };
       try {
         const created = await global.Api.post('/api/servers', body);
@@ -1371,6 +1405,20 @@
         + '<div class="ms-modal-actions"><button class="ms-btn ghost" data-action="close-modal">取消</button>'
         + (actionsHtml || '') + '</div></div>';
       backdrop.hidden = false;
+      const auth = backdrop.querySelector('[data-ssh-auth]');
+      if (auth) auth.addEventListener('change', () => {
+        const password = auth.value === 'password';
+        backdrop.querySelector('[data-ssh-password]').hidden = !password;
+        backdrop.querySelector('[data-ssh-identity]').hidden = password;
+      });
+      const showPassword = backdrop.querySelector('[data-show-ssh-password]');
+      if (showPassword) showPassword.addEventListener('click', () => {
+        const input = backdrop.querySelector('[data-ssh-password] input');
+        const visible = input.type === 'password';
+        input.type = visible ? 'text' : 'password';
+        showPassword.textContent = visible ? '隐藏密码' : '显示密码';
+        showPassword.setAttribute('aria-pressed', String(visible));
+      });
     },
 
     closeModal() {

@@ -209,7 +209,7 @@ describe('TerminalGateway', () => {
       resolvePane: vi.fn(async () => resolved),
       sshRuntime: vi.fn(() => runtime),
     };
-    pool = { get: vi.fn(() => ({ ptyArgs: (cmd) => ['-tt', '-o', 'BatchMode=yes', 'deploy@10.0.0.21', '--', cmd] })) };
+    pool = { get: vi.fn(() => ({ sshEnv: () => ({ SSH_ASKPASS_REQUIRE: 'force' }), ptyArgs: (cmd) => ['-tt', '-o', 'BatchMode=yes', 'deploy@10.0.0.21', '--', cmd] })) };
     terminalManager = { maxConnectionsPerPane: 5, create: vi.fn(() => 'conn-1') };
     gateway = new TerminalGateway({ registry, workspace, pool, terminalManager });
   });
@@ -305,6 +305,7 @@ describe('TerminalGateway', () => {
 
       const options = terminalManager.create.mock.calls[0][5];
       expect(options.spawn.file).toBe('ssh');
+      expect(options.spawn.env).toEqual({ SSH_ASKPASS_REQUIRE: 'force' });
       expect(options.spawn.args[0]).toBe('-tt');
       const remoteCommand = options.spawn.args[options.spawn.args.length - 1];
       expect(remoteCommand).toContain("attach-session -d -t '%12'");

@@ -15,22 +15,11 @@
 
 import { createTmuxApi, localExecutor } from '../tmux.js';
 import { AppError, ErrorCode } from '../servers/errors.js';
-import { OpenSSHExecutor } from './openssh-executor.js';
+import { OpenSSHExecutor, controlSocketName } from './openssh-executor.js';
 
 /** Fields that make a connection a different connection. */
 function connectionFingerprint(server) {
-  const address = server.address || {};
-  const ssh = server.ssh || {};
-  return JSON.stringify([
-    server.kind,
-    address.host || null,
-    address.port || null,
-    address.user || null,
-    ssh.configHost || null,
-    ssh.identityFile || null,
-    ssh.proxyJump || null,
-    ssh.knownHostAlias || null,
-  ]);
+  return JSON.stringify([server.kind, controlSocketName(server)]);
 }
 
 export class ExecutorPool {
