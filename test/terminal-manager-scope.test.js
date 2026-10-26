@@ -55,6 +55,23 @@ describe('TerminalManager pane quota', () => {
     expect(manager.paneConnectionCount.get('%1')).toBe(1);
   });
 
+  it('keeps a basic-mode host\'s pane ids in their own quota scope with its own spawn', () => {
+    const manager = new TerminalManager({ maxConnectionsPerPane: 1 });
+    expect(manager.create(fakeWs(), '%0')).toBeTruthy();
+    const remote = manager.create(fakeWs(), '%0', 80, 24, false, {
+      scope: 'box',
+      spawn: { file: 'ssh', args: ['-tt', 'box', '.cache/tmux-web-panel/attach-0-0'], env: { A: '1' } },
+    });
+    expect(remote).toBeTruthy();
+    expect(manager.paneConnectionCount.get('box:%0')).toBe(1);
+    const [file, args, options] = spawn.mock.calls[1];
+    expect(file).toBe('ssh');
+    expect(args.at(-1)).toBe('.cache/tmux-web-panel/attach-0-0');
+    expect(options.env.A).toBe('1');
+    manager.destroy(remote);
+    expect(manager.paneConnectionCount.has('box:%0')).toBe(false);
+  });
+
   it('releases the quota when a connection is destroyed', () => {
     const manager = new TerminalManager({ maxConnectionsPerPane: 1 });
     const id = manager.create(fakeWs(), '%7');

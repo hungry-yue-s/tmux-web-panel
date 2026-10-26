@@ -8,6 +8,7 @@ import {
   ServerState,
   IDLE_POLL_MS,
   VIEWED_POLL_MS,
+  statusFromBasic,
   statusFromNodeInfo,
 } from '../server/servers/health-service.js';
 import { ServerRegistry, LOCAL_SERVER_ID } from '../server/servers/registry.js';
@@ -77,6 +78,8 @@ describe('HealthService', () => {
   let localInfo;
   let remoteInfo;
   let links;
+  let mode;
+  let basicDetect;
 
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'server-health-'));
@@ -86,7 +89,9 @@ describe('HealthService', () => {
     statuses = [];
     localInfo = vi.fn(async () => nodeInfo({ hostname: 'panel-host' }));
     remoteInfo = vi.fn(async () => nodeInfo());
-    links = { link: vi.fn(() => ({ info: remoteInfo })) };
+    mode = vi.fn(async () => 'node');
+    basicDetect = vi.fn(async () => ({ posix: true, platform: 'linux', arch: 'x86_64', hostname: 'bare', tmux: { available: true, version: '3.4', reason: null } }));
+    links = { mode, link: vi.fn(() => ({ info: remoteInfo })), basic: vi.fn(() => ({ detect: basicDetect })) };
   });
 
   afterEach(async () => {
@@ -149,6 +154,27 @@ describe('HealthService', () => {
       expect(status.state).toBe(ServerState.ONLINE);
       expect(status.facts).toMatchObject({ hostname: 'api-01', platform: 'linux' });
       expect(status.workspace).toEqual({ provider: 'tmux', transport: 'ssh', persistence: 'tmux' });
+    });
+
+    it('reports a machine without the panel as online in basic mode', async () => {
+      mode.mockResolvedValue('basic');
+      const status = await makeService().probe('api-linux');
+
+      expect(remoteInfo).not.toHaveBeenCalled();
+      expect(basicDetect).toHaveBeenCalledWith({ force: true });
+      expect(status).toMatchObject({
+        state: ServerState.ONLINE,
+        facts: { hostname: 'bare', platform: 'linux' },
+        workspace: { provider: 'tmux', transport: 'ssh', persistence: 'tmux' },
+        node: { installed: false },
+      });
+      expect(status.capabilities.files).toEqual({ available: false, reason: 'node_not_installed' });
+    });
+
+    it('uses hub-hosted shells in basic mode when there is no tmux', () => {
+      const status = statusFromBasic('x', { posix: false, platform: null, tmux: { available: false, reason: 'no_posix_shell' } }, { latencyMs: 1, now: 0 });
+      expect(status.workspace).toEqual({ provider: 'ssh', transport: 'ssh', persistence: 'process-memory' });
+      expect(status.node).toMatchObject({ installed: false, posix: false });
     });
 
     it('reports a Windows node like any other', async () => {

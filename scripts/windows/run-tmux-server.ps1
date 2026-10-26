@@ -37,10 +37,13 @@ while ($true) {
 
   Add-Content -LiteralPath $log -Encoding UTF8 -Value "[$(Get-Date -Format s)] starting $tmux -D"
   # -D keeps the server in the foreground so the task owns it, and turns exit-empty off.
-  # Start-Process gives the server its own hidden console: a console Ctrl+C
-  # (the MSYS runtime raises one) would otherwise end this loop along with tmux.
+  # Its own hidden console keeps a console Ctrl+C away from this loop.
+  # WaitForExit, not Start-Process -Wait: -Wait also waits for every
+  # descendant, so a program left running from a pane would keep a dead tmux
+  # server from ever being restarted.
   $proc = Start-Process -FilePath cmd.exe -ArgumentList "/d /s /c `"`"$tmux`" -D >> `"$log`" 2>&1`"" `
-    -WindowStyle Hidden -Wait -PassThru
+    -WindowStyle Hidden -PassThru
+  $proc.WaitForExit()
   Add-Content -LiteralPath $log -Encoding UTF8 -Value "[$(Get-Date -Format s)] tmux server exited with code $($proc.ExitCode); restarting in 3s"
   Start-Sleep -Seconds 3
 }

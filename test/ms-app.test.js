@@ -1204,6 +1204,53 @@ describe('MsApp sidebar context menu', () => {
   });
 });
 
+describe('MsApp node installation', () => {
+  function installShell(statuses) {
+    const ctx = loadStatusShell();
+    // Polls run at once instead of every two seconds.
+    ctx.win.setTimeout = (fn) => { Promise.resolve().then(fn); return 1; };
+    ctx.win.showConfirm = vi.fn(async () => true);
+    ctx.win.showPrompt = vi.fn(async () => 'sudo-secret');
+    ctx.win.Api.post = vi.fn(async () => ({ state: 'running', log: [] }));
+    ctx.win.Api.get = vi.fn(async () => statuses.shift() || { state: 'running', log: [] });
+    ctx.MsApp.refreshServers = vi.fn(async () => {});
+    ctx.MsApp.refreshWorkspace = vi.fn(async () => null);
+    ctx.MsApp._onRoute = vi.fn(async () => {});
+    ctx.win.AppShell.toast = vi.fn();
+    return ctx;
+  }
+
+  it('starts after confirmation, follows the job and re-checks the server when done', async () => {
+    const ctx = installShell([{ state: 'running', step: 'npm ci', log: [] }, { state: 'succeeded', log: [] }]);
+
+    await ctx.MsApp._installNode('api-linux');
+
+    expect(ctx.win.showConfirm).toHaveBeenCalledOnce();
+    expect(ctx.win.Api.post).toHaveBeenCalledWith('/api/servers/api-linux/node/install', {});
+    await vi.waitFor(() => expect(ctx.MsApp.refreshServers).toHaveBeenCalled());
+    expect(ctx.MsApp.installJob('api-linux').state).toBe('succeeded');
+    expect(ctx.win.AppShell.toast).toHaveBeenCalledWith(expect.stringContaining('已安装'));
+  });
+
+  it('asks for the sudo password and resumes with it, without confirming twice', async () => {
+    const ctx = installShell([{ state: 'needs_password', log: [] }, { state: 'succeeded', log: [] }]);
+
+    await ctx.MsApp._installNode('api-linux');
+
+    await vi.waitFor(() => expect(ctx.win.Api.post).toHaveBeenCalledTimes(2));
+    expect(ctx.win.showPrompt).toHaveBeenCalledWith(expect.objectContaining({ type: 'password' }));
+    expect(ctx.win.Api.post).toHaveBeenLastCalledWith('/api/servers/api-linux/node/install', { sudoPassword: 'sudo-secret' });
+    expect(ctx.win.showConfirm).toHaveBeenCalledOnce();
+  });
+
+  it('does nothing when the user cancels', async () => {
+    const ctx = installShell([]);
+    ctx.win.showConfirm = vi.fn(async () => false);
+    await ctx.MsApp._installNode('api-linux');
+    expect(ctx.win.Api.post).not.toHaveBeenCalled();
+  });
+});
+
 describe('MsApp clears notification attention on window switch', () => {
   it('marks the routed window read so the breathing highlight stops', async () => {
     const ctx = loadStatusShell();

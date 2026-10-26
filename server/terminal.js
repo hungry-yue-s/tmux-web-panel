@@ -166,7 +166,10 @@ export class TerminalManager {
    * @param {number} [cols=80]
    * @param {number} [rows=24]
    * @param {boolean} [nozoom=false]
-   * @param {{onReject?: Function, onPtyExit?: Function}} [options] structured error reporting
+   * @param {{onReject?: Function, onPtyExit?: Function, spawn?: {file: string, args: string[], env?: object}, scope?: string}} [options]
+   *   onReject/onPtyExit report structured errors. spawn and scope exist for a
+   *   hub attaching to a basic-mode host over ssh: its pane ids are another
+   *   machine's, so they get their own quota scope.
    * @returns {string} connectionId
    */
   create(ws, paneId, cols = 80, rows = 24, nozoom = false, options = {}) {
@@ -190,14 +193,15 @@ export class TerminalManager {
     }
 
     // Check connection limit
-    const currentCount = this.paneConnectionCount.get(paneId) ?? 0;
+    const quotaKey = options.scope ? `${options.scope}:${paneId}` : paneId;
+    const currentCount = this.paneConnectionCount.get(quotaKey) ?? 0;
     if (currentCount >= this.maxConnectionsPerPane) {
       return reject('CONNECTION_LIMIT', 1013, `Connection limit reached for pane ${paneId}`);
     }
 
     const connectionId = randomUUID();
 
-    const spawnSpec = localAttachSpawnSpec(paneId, { nozoom });
+    const spawnSpec = options.spawn || localAttachSpawnSpec(paneId, { nozoom });
     let term;
     try {
       term = pty.spawn(spawnSpec.file, spawnSpec.args, {
@@ -209,6 +213,7 @@ export class TerminalManager {
         // before they ever reach xterm.js.
         env: {
           ...process.env,
+          ...spawnSpec.env,
           LANG: process.env.LANG || 'C.UTF-8',
           LC_CTYPE: process.env.LC_CTYPE || process.env.LANG || 'C.UTF-8',
         },
@@ -222,6 +227,7 @@ export class TerminalManager {
       ws,
       pty: term,
       paneId,
+      quotaKey,
       pingTimer: null,
       killTimer: null,
       dataDisposable: null,
@@ -229,7 +235,7 @@ export class TerminalManager {
       osc52Pending: '', // carry-over for OSC 52 split across PTY chunks
     };
     this.connections.set(connectionId, conn);
-    this.paneConnectionCount.set(paneId, currentCount + 1);
+    this.paneConnectionCount.set(quotaKey, currentCount + 1);
 
     // PTY → WebSocket
     // Also intercept OSC 52 clipboard sequences from tmux. Long selections can
@@ -418,11 +424,12 @@ export class TerminalManager {
       conn.dataDisposable = null;
     }
 
-    const count = this.paneConnectionCount.get(conn.paneId) ?? 0;
+    const key = conn.quotaKey || conn.paneId;
+    const count = this.paneConnectionCount.get(key) ?? 0;
     if (count <= 1) {
-      this.paneConnectionCount.delete(conn.paneId);
+      this.paneConnectionCount.delete(key);
     } else {
-      this.paneConnectionCount.set(conn.paneId, count - 1);
+      this.paneConnectionCount.set(key, count - 1);
     }
 
     this.connections.delete(connectionId);

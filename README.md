@@ -97,6 +97,9 @@ reaches it through a single SSH port forward over your existing OpenSSH setup �
 config, agent, ProxyJump, hardware keys — and relays the same API the browser
 uses. Nothing runs remotely as a shell command, so a remote machine gets
 everything the local one has: files, uploads, metrics, notifications, agents.
+A machine you can only SSH into still works in basic mode — its tmux sessions,
+or login shells hosted by the panel — and one click installs the panel there
+for the full feature set.
 
 <img src="docs/assets/readme/servers.png" alt="Server switcher" width="100%">
 

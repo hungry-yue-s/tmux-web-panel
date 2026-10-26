@@ -1,20 +1,25 @@
 /**
- * SSH as a pipe to another node.
+ * SSH to another machine, always through the system client so ~/.ssh/config,
+ * the SSH agent, ProxyJump and hardware keys keep working.
  *
- * The hub never runs commands on a remote host. SSH is used for exactly two
- * things, both through the system client so ~/.ssh/config, the SSH agent,
- * ProxyJump and hardware keys keep working:
- *
+ * With the panel installed there (a node), SSH is only a pipe:
  *   1. SFTP-read the node's pairing file (port, token, TLS fingerprint).
  *      SFTP is a subsystem, so it does not depend on the login shell.
  *   2. Hold one `ssh -N -L` port forward to the node's own HTTP(S) listener.
- *      Every API call and terminal then travels over that single connection.
  *
- * Local processes are always started with an argv array; nothing reaches a
- * shell on either side.
+ * Without it (basic mode) the hub also needs to drive tmux remotely. The login
+ * shell may be cmd, PowerShell, fish or bash, and Windows OpenSSH pastes a pty
+ * command into the shell's command line unquoted, so nothing here relies on how
+ * a login shell parses arguments:
+ *   - commands run as `sh -s` with a POSIX script on stdin (two plain words);
+ *   - an interactive command is a single word: the path of a script uploaded
+ *     over SFTP beforehand.
+ *
+ * Local processes are always started with an argv array.
  */
 
 import { execFile, spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { appendFile, chmod, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -25,6 +30,16 @@ import { AppError, ErrorCode } from '../servers/errors.js';
 import { PAIRING_RELATIVE_PATH, parsePairing } from '../node/identity.js';
 
 const SSH_BIN = 'ssh';
+
+/**
+ * The ssh binary for a pty. node-pty does not search PATH on Windows, so the
+ * system OpenSSH client is named explicitly there.
+ */
+export function sshPtyBinary({ platform = process.platform, env = process.env, exists = existsSync } = {}) {
+  if (platform !== 'win32') return SSH_BIN;
+  const system = join(env.SystemRoot || 'C:\\Windows', 'System32', 'OpenSSH', 'ssh.exe');
+  return exists(system) ? system : 'ssh.exe';
+}
 const SFTP_BIN = 'sftp';
 const KEYSCAN_BIN = 'ssh-keyscan';
 const DEFAULT_MAX_BUFFER = 1024 * 1024;
@@ -137,6 +152,18 @@ export function buildSshArgs(server, { knownHostsPath, tool = 'ssh', connectTime
   args.push(...trailing);
   args.push('--', address.user ? `${address.user}@${address.host}` : String(address.host));
   return args;
+}
+
+/** POSIX single-quoting for scripts that `sh` parses (never the login shell). */
+export function shellQuote(value) {
+  const str = String(value);
+  if (str === '') return "''";
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(str)) return str;
+  return `'${str.replace(/'/g, `'\\''`)}'`;
+}
+
+export function quoteArgv(argv) {
+  return argv.map(shellQuote).join(' ');
 }
 
 /** `-L` spec: an IPv6 remote host must be bracketed. */
@@ -334,6 +361,85 @@ export class SshConnection {
   async _classify(err) {
     const knownHostEntryExists = await this.hasKnownHostEntry().catch(() => false);
     return classifySshError(err, { knownHostEntryExists });
+  }
+
+  /**
+   * Runs a POSIX script on the host as `sh -s`, the script on stdin. ssh's own
+   * failures (exit 255) are classified; any other failure keeps its stderr so
+   * callers can tell "no such pane" from "no POSIX shell".
+   */
+  async runScript(script, { timeout = 15_000 } = {}) {
+    const argv = [...buildSshArgs(this.server, { knownHostsPath: this.knownHostsPath }), 'sh', '-s'];
+    try {
+      return await this._run(SSH_BIN, argv, { input: script, timeout });
+    } catch (err) {
+      if (err && err.code === 255) throw await this._classify(err);
+      if (err && err.killed) throw classifySshError(err);
+      throw err;
+    }
+  }
+
+  /**
+   * Uploads one file over SFTP to a path relative to the login directory,
+   * creating its parent directories and setting its mode.
+   */
+  async uploadFile(localPath, remotePath, { mode = '644', timeout = 120_000 } = {}) {
+    if (/["\n]/.test(localPath + remotePath)) throw new AppError(ErrorCode.VALIDATION_ERROR, 'Unsupported path');
+    const parts = remotePath.split('/').slice(0, -1);
+    const lines = [];
+    for (let i = 1; i <= parts.length; i += 1) lines.push(`-mkdir "${parts.slice(0, i).join('/')}"`);
+    lines.push(`put "${localPath.replace(/\\/g, '/')}" "${remotePath}"`, `chmod ${mode} "${remotePath}"`);
+    const argv = buildSshArgs(this.server, { knownHostsPath: this.knownHostsPath, tool: 'sftp', trailing: ['-b', '-'] });
+    try {
+      await this._run(SFTP_BIN, argv, { input: lines.join('\n') + '\n', timeout });
+    } catch (err) {
+      throw await this._classify(err);
+    }
+  }
+
+  /**
+   * Runs a long remote command and streams its output, for installation. The
+   * remote words must be plain (no quoting needed in any login shell); data the
+   * command needs goes on stdin. Resolves with the exit code.
+   */
+  stream(remoteWords, { input = '', onOutput = () => {}, timeout = 45 * 60_000 } = {}) {
+    for (const word of remoteWords) {
+      if (!/^[A-Za-z0-9_./=+-]+$/.test(word)) throw new AppError(ErrorCode.VALIDATION_ERROR, 'Remote words must be plain');
+    }
+    const argv = [...buildSshArgs(this.server, { knownHostsPath: this.knownHostsPath }), ...remoteWords];
+    return new Promise((resolve, reject) => {
+      const child = this._spawn(SSH_BIN, argv, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, ...this.sshEnv() },
+        windowsHide: true,
+      });
+      let stderrTail = '';
+      const timer = setTimeout(() => child.kill(), timeout);
+      child.stdout.on('data', (chunk) => onOutput(String(chunk)));
+      child.stderr.on('data', (chunk) => {
+        stderrTail = (stderrTail + chunk).slice(-STDERR_KEEP);
+        onOutput(String(chunk));
+      });
+      child.once('error', (err) => { clearTimeout(timer); reject(classifySshError(err)); });
+      child.once('close', async (code) => {
+        clearTimeout(timer);
+        if (code === 255) {
+          reject(await this._classify(Object.assign(new Error('ssh exited 255'), { stderr: stderrTail })));
+          return;
+        }
+        resolve(code);
+      });
+      child.stdin.end(input);
+    });
+  }
+
+  /** argv for an interactive pty; `command` must be one word (see top of file). */
+  ptyArgs(command = null) {
+    if (command !== null && !/^[A-Za-z0-9_./%-]+$/.test(command)) {
+      throw new AppError(ErrorCode.VALIDATION_ERROR, 'A pty command must be a single plain word');
+    }
+    const argv = buildSshArgs(this.server, { knownHostsPath: this.knownHostsPath, leading: ['-tt'] });
+    return command === null ? argv : [...argv, command];
   }
 
   /**

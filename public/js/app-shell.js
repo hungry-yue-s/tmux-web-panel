@@ -54,6 +54,7 @@
   function providerBadge(workspace) {
     if (!workspace) return '';
     if (workspace.provider === 'tmux') return '<span class="provider-badge">TMUX</span>';
+    if (workspace.provider === 'ssh') return '<span class="provider-badge">SSH</span>';
     return '';
   }
 

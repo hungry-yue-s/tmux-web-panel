@@ -110,9 +110,20 @@
       return url;
     },
 
-    /** Every server runs tmux behind its panel. */
+    /** tmux-native actions (split view, layouts) need tmux behind the pane. */
     supportsTmuxActions: function () {
       return this.provider === 'tmux';
+    },
+
+    /**
+     * False for a basic-mode server: reachable over SSH without the panel, so
+     * files, uploads, metrics and agents are not available there.
+     */
+    hasNode: function () {
+      if (!this.isRemote()) return true;
+      var shell = global.AppShell;
+      var health = shell && typeof shell.health === 'function' ? shell.health(this.serverId) : null;
+      return !(health && health.node && health.node.installed === false);
     },
   };
 

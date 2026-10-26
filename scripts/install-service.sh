@@ -31,6 +31,8 @@ Environment variables:
   PORT      Listen port                 (default: 7681)
   HOST      Listen host                 (default: 0.0.0.0)
   AUTH      Auth user:password          (default: none — NO auth!)
+  NODE_ONLY 1 = serve only the panel that manages this machine (node token
+            required for the API); set when a panel installs itself here
   TLS_CERT  Path to TLS certificate     (default: none — plain HTTP)
   TLS_KEY   Path to TLS private key     (default: none — plain HTTP)
   TLS_AUTO  Generate/reuse a local certificate (1/true/yes; default: 0)
@@ -239,6 +241,9 @@ install_systemd() {
   if [[ -n "${AUTH:-}" ]]; then
     env_lines+="\nEnvironment=AUTH=${AUTH}"
   fi
+  if is_true "${NODE_ONLY:-0}"; then
+    env_lines+="\nEnvironment=NODE_ONLY=1"
+  fi
   # TLS is optional but must be a matched cert+key pair. When set, also wire up the
   # HTTP->HTTPS redirect port (server/index.js only starts the redirect when TLS is on).
   if [[ -n "${TLS_CERT:-}" || -n "${TLS_KEY:-}" ]]; then
@@ -388,6 +393,9 @@ install_launchd() {
   env_keys+=("LC_CTYPE"); env_vals+=("C.UTF-8")
   if [[ -n "${AUTH:-}" ]]; then
     env_keys+=("AUTH"); env_vals+=("$AUTH")
+  fi
+  if is_true "${NODE_ONLY:-0}"; then
+    env_keys+=("NODE_ONLY"); env_vals+=("1")
   fi
   if [[ -n "${TLS_CERT:-}" || -n "${TLS_KEY:-}" ]]; then
     if [[ -z "${TLS_CERT:-}" || -z "${TLS_KEY:-}" ]]; then

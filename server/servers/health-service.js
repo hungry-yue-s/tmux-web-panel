@@ -1,10 +1,11 @@
 /**
  * Liveness and capability detection.
  *
- * Every server is a node running this same panel, so a probe is one call to
- * its /api/node/info — locally a function call, remotely a request over the
- * server's link (which opens the SSH forward on first use). Runtime status is
- * kept in memory only; it is an observation, never written to servers.json.
+ * A server running this same panel (a node) is probed with one call to its
+ * /api/node/info — locally a function call, remotely a request over the
+ * server's link (which opens the SSH forward on first use). A server reachable
+ * over SSH without the panel is in basic mode: one detection script says
+ * whether it has tmux. Runtime status is kept in memory only.
  */
 
 import { AppError, ErrorCode } from './errors.js';
@@ -76,6 +77,39 @@ export function statusFromNodeInfo(serverId, info, { transport, latencyMs, now }
     workspace: tmux.available
       ? { provider: 'tmux', transport, persistence: 'tmux' }
       : unavailableWorkspace(transport),
+    node: { installed: true, version: info?.version || null },
+  };
+}
+
+/**
+ * Basic mode: SSH works, the panel is not installed there. Workspace and
+ * terminals still work (remote tmux, or shells hosted by this hub); everything
+ * that needs the node is reported unavailable with the reason the UI turns
+ * into an "install" offer.
+ */
+export function statusFromBasic(serverId, facts, { latencyMs, now }) {
+  const at = new Date(now).toISOString();
+  const tmux = facts.tmux || { available: false, version: null, reason: null };
+  const missing = { available: false, reason: 'node_not_installed' };
+  return {
+    serverId,
+    state: ServerState.ONLINE,
+    latencyMs,
+    checkedAt: at,
+    lastOnlineAt: at,
+    error: null,
+    facts: { hostname: facts.hostname, platform: facts.platform, arch: facts.arch, version: null },
+    capabilities: {
+      ssh: { available: true },
+      tmux,
+      metrics: { ...missing, level: 'none' },
+      files: missing,
+      processStats: missing,
+    },
+    workspace: tmux.available
+      ? { provider: 'tmux', transport: 'ssh', persistence: 'tmux' }
+      : { provider: 'ssh', transport: 'ssh', persistence: 'process-memory' },
+    node: { installed: false, version: null, posix: facts.posix !== false, platform: facts.platform },
   };
 }
 
@@ -245,8 +279,12 @@ export class HealthService {
   }
 
   async _probeRemote(server, startedAt) {
-    const info = await this.links.link(server.id).info();
-    return statusFromNodeInfo(server.id, info, { transport: 'ssh', latencyMs: this._now() - startedAt, now: this._now() });
+    if (await this.links.mode(server.id) === 'node') {
+      const info = await this.links.link(server.id).info();
+      return statusFromNodeInfo(server.id, info, { transport: 'ssh', latencyMs: this._now() - startedAt, now: this._now() });
+    }
+    const facts = await this.links.basic(server.id).detect({ force: true });
+    return statusFromBasic(server.id, facts, { latencyMs: this._now() - startedAt, now: this._now() });
   }
 
   /** Applies a probe result unless a newer generation invalidated it. */
@@ -280,6 +318,7 @@ export class HealthService {
         capabilities: status.capabilities,
         workspace: status.workspace,
         facts: status.facts,
+        node: status.node,
       });
     }
   }

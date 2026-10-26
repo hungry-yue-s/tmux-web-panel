@@ -97,6 +97,10 @@ function _createFabPanel(container) {
   fileInput.addEventListener('change', function () {
     if (!fileInput.files || !fileInput.files[0]) return;
     var file = fileInput.files[0];
+    if (!TerminalTarget.hasNode()) {
+      _showToast('该服务器未安装面板服务，暂不支持上传');
+      return;
+    }
     var formData = new FormData();
     formData.append('file', file);
     fabEl.classList.add('uploading');
@@ -1109,9 +1113,9 @@ function _mountTerminal(termContainer, nozoom) {
   // URL + file-path links are both handled by FilePreview's unified provider
   // (public/js/link-detect.js), which merges soft-wrapped rows — something the
   // old WebLinksAddon (per display row) could not do. No web-links addon.
-  if (typeof FilePreview !== 'undefined') {
+  if (typeof FilePreview !== 'undefined' && TerminalTarget.hasNode()) {
     // Paths resolve on the pane's own machine: FilePreview calls go through the
-    // server in view (Api.activeUrl), like every other machine-scoped request.
+    // server in view (Api.activeUrl). A basic-mode host has no file API.
     FilePreview.registerLinkProvider(term, state.currentPane, _resolvePreviewPaneId);
   }
 

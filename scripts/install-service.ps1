@@ -46,7 +46,10 @@ param(
   # Add an inbound Windows Firewall rule for the panel ports (needs elevation).
   [switch]$OpenFirewall,
   # start/stop/restart/status/logs the tmux server task instead of the panel.
-  [switch]$Tmux
+  [switch]$Tmux,
+  # Serve only the panel that manages this machine over SSH (node token
+  # required for the API); set when another panel installs itself here.
+  [switch]$NodeOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -267,6 +270,7 @@ function Install-Service {
     tlsKey = $(if ($TlsKey) { $TlsKey } else { $null })
     httpPort = $HttpPort
     logDir = $LogDir
+    nodeOnly = [bool]$NodeOnly
   }
   # Replace the stored settings through a new owner-only file.
   Stop-TaskTree $PanelTask

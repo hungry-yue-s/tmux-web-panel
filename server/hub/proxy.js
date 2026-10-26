@@ -4,7 +4,9 @@
  * The browser addresses every machine the same way: the node API path, behind
  * a /n/:serverId prefix. `local` is this process, so its prefix is stripped and
  * the request continues through the normal routes. Any other id is streamed to
- * that node over its link.
+ * that node over its link — or, when the machine is reachable over SSH but does
+ * not run the panel (basic mode), answered by the hub itself for the workspace
+ * and terminals (hub/basic/).
  *
  * Only machine-scoped paths are relayed. Login, the server registry, plugins
  * and installation management belong to whichever panel the browser is using,
@@ -42,8 +44,9 @@ function sendError(res, err) {
  * @param {import('./link-pool.js').LinkPool} deps.links
  * @param {import('express').RequestHandler} deps.authorize hub login check
  * @param {import('express').RequestHandler} deps.sameOrigin cross-origin write guard
+ * @param {Function} [deps.basic] handler for basic-mode hosts (createBasicHttp)
  */
-export function createNodeProxy({ registry, links, authorize, sameOrigin }) {
+export function createNodeProxy({ registry, links, authorize, sameOrigin, basic = null }) {
   return (req, res, next) => {
     const target = parseNodePath(req.url);
     if (!target) return next();
@@ -61,14 +64,13 @@ export function createNodeProxy({ registry, links, authorize, sameOrigin }) {
         sendError(res, new AppError(ErrorCode.SERVER_NOT_FOUND, `Server ${target.serverId} is not registered`));
         return;
       }
-      let link;
-      try {
-        link = links.link(target.serverId);
-      } catch (err) {
-        sendError(res, err);
-        return;
-      }
-      link.proxy(req, res, target.path).catch((err) => sendError(res, err));
+      links.mode(target.serverId)
+        .then((mode) => {
+          if (mode === 'node') return links.link(target.serverId).proxy(req, res, target.path);
+          if (!basic) throw new AppError(ErrorCode.NODE_NOT_INSTALLED, 'tmux-web-panel is not running on that machine');
+          return basic(req, res, target.serverId, target);
+        })
+        .catch((err) => sendError(res, err));
     }));
   };
 }
@@ -78,7 +80,7 @@ export function createNodeProxy({ registry, links, authorize, sameOrigin }) {
  * caller can continue with its own routes; for `local` it rewrites req.url
  * and also returns false.
  */
-export function relayNodeUpgrade(req, socket, head, { registry, links, authorize }) {
+export function relayNodeUpgrade(req, socket, head, { registry, links, authorize, basic = null }) {
   const target = parseNodePath(req.url);
   if (!target) return false;
   if (target.serverId === LOCAL_SERVER_ID) {
@@ -91,13 +93,12 @@ export function relayNodeUpgrade(req, socket, head, { registry, links, authorize
   if (!isRelayable(target.pathname, { upgrade: true })) { reject('404 Not Found'); return true; }
   if (!authorize(req)) { reject('401 Unauthorized'); return true; }
   if (!registry.has(target.serverId)) { reject('404 Not Found'); return true; }
-  let link;
-  try {
-    link = links.link(target.serverId);
-  } catch {
-    reject('409 Conflict');
-    return true;
-  }
-  link.proxyUpgrade(req, socket, head, target.path).catch(() => socket.destroy());
+  links.mode(target.serverId)
+    .then((mode) => {
+      if (mode === 'node') return links.link(target.serverId).proxyUpgrade(req, socket, head, target.path);
+      if (!basic) { reject('503 Service Unavailable'); return undefined; }
+      return basic(req, socket, head, target.serverId, target);
+    })
+    .catch(() => reject('503 Service Unavailable'));
   return true;
 }

@@ -23,6 +23,11 @@
     return '<div class="detail-row"><span>' + esc(label) + '</span><strong class="mono">' + esc(value) + '</strong></div>';
   }
 
+  /** Reachable over SSH, panel not installed there. */
+  function isBasic(health) {
+    return Boolean(health && health.node && health.node.installed === false);
+  }
+
   function timeline(label, value, ok) {
     return '<div class="timeline-row"><span class="' + (ok ? 'check' : 'skip') + '">' + (ok ? '✓' : '△') + '</span>'
       + '<strong>' + esc(label) + '</strong><small>' + esc(value) + '</small></div>';
@@ -83,6 +88,8 @@
 
       var base = this._hero(server, health, openWorkspace, route) + this._tabs(server, section);
       if (section === 'connection') return base + this._connection(server, health, workspace);
+      // Basic mode: terminals work, the machine-level pages need the panel there.
+      if (isBasic(health)) return base + this._installCard(server, health);
       // Every server runs the full panel, so its status pages are the same ones.
       if (section === 'agents') return base + this._localAgents();
       return base + this._localPerformance();
@@ -152,6 +159,47 @@
       }).join('') + '</div>';
     },
 
+    /**
+     * Offer to install the panel on a basic-mode server, or show the running
+     * installation. The job itself lives in MsApp; this only renders it.
+     */
+    _installCard: function (server, health) {
+      var job = (global.MsApp && global.MsApp.installJob && global.MsApp.installJob(server.id)) || null;
+      var node = health.node || {};
+      var mode = (health.workspace && health.workspace.provider) === 'tmux'
+        ? '远端 tmux 会话（重启客户端后仍在）'
+        : '由客户端托管的 SSH 终端（客户端退出后结束）';
+      var body = '<p>这台机器可以通过 SSH 登录，但还没有安装面板服务。现在能用的是：' + esc(mode) + '。</p>'
+        + '<p>安装后可以获得全部功能：文件浏览与预览、上传、性能监控、通知、Agent 控制台，'
+        + '终端与会话也改为由那台机器上的面板直接提供。</p>'
+        + (node.posix === false && node.platform !== 'windows'
+          ? '<p class="muted">没有检测到 POSIX shell；安装程序会按 Windows 处理。</p>' : '');
+      var state = job ? job.state : 'idle';
+      var status = '';
+      if (state === 'running') {
+        status = '<div class="install-progress"><strong>正在安装：</strong>' + esc(job.step || '准备中') + '</div>';
+      } else if (state === 'failed') {
+        status = '<div class="install-progress error"><strong>安装失败</strong>'
+          + (job.error && job.error.message ? '：' + esc(job.error.message) : '') + '</div>';
+      } else if (state === 'needs_password') {
+        status = '<div class="install-progress"><strong>需要 sudo 密码</strong>来安装缺少的系统软件包。</div>';
+      } else if (state === 'succeeded') {
+        status = '<div class="install-progress ok"><strong>安装完成</strong>，正在重新连接…</div>';
+      }
+      var log = job && job.log && job.log.length
+        ? '<pre class="install-log mono">' + esc(job.log.slice(-14).join('\n')) + '</pre>' : '';
+      var button = state === 'running'
+        ? ''
+        : actionButton(state === 'failed' ? '重试安装' : state === 'needs_password' ? '输入 sudo 密码并继续' : '安装面板服务',
+          'install-node', true, '');
+      return '<div class="section"><div class="ms-card capability install-node-card">'
+        + '<div class="capability-head"><strong>基础模式</strong><span class="ms-badge yellow">未安装面板服务</span></div>'
+        + body + status + log
+        + '<p class="muted">安装会把本客户端的面板代码经 SFTP 传到那台机器，自动安装缺少的依赖（需要时使用 sudo）、'
+        + 'Node.js 和 tmux，再以只监听 127.0.0.1 的用户服务运行；只有本客户端能经 SSH 隧道访问它。</p>'
+        + button + '</div></div>';
+    },
+
     _localConnection: function (health) {
       var facts = health.facts || {}, capabilities = health.capabilities || {};
       var platforms = { darwin: 'macOS', linux: 'Linux', windows: 'Windows' };
@@ -192,6 +240,7 @@
         NODE_AUTH_FAILED: '该主机上的面板拒绝了本机的访问令牌，通常是重装后令牌已更换；稍后会自动重新配对。',
       })[errorCode];
       var facts = health.facts || {};
+      var basic = isBasic(health);
 
       return '<div class="grid two-col connection-remote"><section>'
         + '<div class="section-head"><h3>连接配置</h3></div>'
@@ -203,6 +252,7 @@
         + detail('最近成功', relativeTime(health.lastOnlineAt))
         + (facts.version ? detail('面板版本', facts.version) : '')
         + '</div>'
+        + (basic ? this._installCard(server, health) : '')
         + (nodeHint
           ? '<div class="section"><div class="ms-card capability">'
             + '<div class="capability-head"><strong>面板服务</strong><span class="ms-badge yellow">需要处理</span></div>'
@@ -221,7 +271,7 @@
         + '<div class="section-head"><h3>最近一次检测</h3><span>' + esc(relativeTime(health.checkedAt)) + '</span></div>'
         + '<div class="ms-card timeline">'
         + timeline('SSH 隧道', connection, verified)
-        + timeline('面板服务', verified ? '已连接' + (facts.version ? ' · ' + facts.version : '') : (nodeHint ? '未就绪' : connection), verified)
+        + timeline('面板服务', basic ? '未安装（基础模式）' : verified ? '已连接' + (facts.version ? ' · ' + facts.version : '') : (nodeHint ? '未就绪' : connection), verified && !basic)
         + timeline('tmux', tmux.text, tmux.ok)
         + timeline('指标采集能力', metrics.text, metrics.ok)
         + '</div>'

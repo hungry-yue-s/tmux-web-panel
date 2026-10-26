@@ -62,6 +62,21 @@ describe('TerminalTarget defaults', () => {
   });
 });
 
+describe('TerminalTarget.hasNode', () => {
+  it('is false only for a remote server reported in basic mode', () => {
+    const { TerminalTarget, win } = loadTarget();
+    expect(TerminalTarget.hasNode()).toBe(true);
+    const healths = { 'api-linux': { node: { installed: false } }, full: { node: { installed: true } } };
+    win.AppShell = { health: (id) => healths[id] || {} };
+    TerminalTarget.set({ serverId: 'api-linux' });
+    expect(TerminalTarget.hasNode()).toBe(false);
+    TerminalTarget.set({ serverId: 'full' });
+    expect(TerminalTarget.hasNode()).toBe(true);
+    TerminalTarget.set({ serverId: 'unknown' });
+    expect(TerminalTarget.hasNode()).toBe(true);
+  });
+});
+
 describe('local server', () => {
   it('uses the machine API directly with stable ids', async () => {
     const { TerminalTarget, legacy, scoped } = loadTarget();

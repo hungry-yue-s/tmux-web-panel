@@ -13,6 +13,9 @@
 
   var MsApp = {
     _pollTimer: null,
+    /** serverId -> latest install job status from the hub. */
+    _installJobs: {},
+    _installPolls: {},
     _resizing: false,
     _perfPanelMounted: false,
     _agentHubMounted: false,
@@ -429,6 +432,14 @@
         if (remote) {
           const popout = toolbar.querySelector('.terminal-popout-btn');
           if (popout) popout.remove();
+        }
+        // Shells hosted for a basic-mode server have no tmux behind them.
+        const workspace = global.AppShell.workspace(global.AppShell.activeServerId()) || {};
+        if (workspace.provider === 'ssh') {
+          for (const selector of ['.terminal-mode-toggle', '.terminal-open-buf-btn']) {
+            const node = toolbar.querySelector(selector);
+            if (node) node.remove();
+          }
         }
       }
 
@@ -948,6 +959,10 @@
         await this._createWindow(serverId, node.dataset.session, entityContext);
         return;
       }
+      if (action === 'install-node') {
+        await this._installNode(serverId);
+        return;
+      }
       if (action === 'scan-host-key') {
         await this._scanHostKey(serverId);
         return;
@@ -986,6 +1001,83 @@
       await global.Api.post(path, name ? { name } : {});
       await this.refreshWorkspace(serverId);
       await this._onRoute(global.Router.current());
+    },
+
+    installJob(serverId) {
+      return this._installJobs[serverId] || null;
+    },
+
+    /** Re-renders the server page if it is the one in view. */
+    _rerenderServer(serverId) {
+      const route = global.Router.current();
+      if (route && route.name === 'server' && route.params && route.params.serverId === serverId) {
+        this._onRoute(route).catch((err) => this._reportRouteFailure(err));
+      }
+    },
+
+    /**
+     * Installs the panel on a basic-mode server. The hub runs the job; this
+     * starts it, polls its log, asks for a sudo password when the remote side
+     * needs one, and re-checks the server when it is done.
+     */
+    async _installNode(serverId, { sudoPassword = null } = {}) {
+      const server = global.AppShell.server(serverId) || {};
+      const job = this._installJobs[serverId];
+      if (job && job.state === 'needs_password' && sudoPassword === null) {
+        const password = await promptDialog({
+          title: (server.name || serverId) + ' 的 sudo 密码（安装缺少的软件包用，不会保存）',
+          placeholder: 'sudo 密码',
+          type: 'password',
+          confirmText: '继续安装',
+        });
+        if (!password) return;
+        return this._installNode(serverId, { sudoPassword: password });
+      }
+      if (sudoPassword === null && !await confirmDialog({
+        title: '在 ' + (server.name || serverId) + ' 上安装面板服务',
+        message: '会把本客户端的面板代码经 SFTP 传到那台机器，安装缺少的依赖、Node.js 和 tmux，'
+          + '再以只监听 127.0.0.1 的用户服务运行。首次安装需要编译 tmux，可能需要几分钟。',
+        confirmText: '开始安装',
+      })) return;
+      try {
+        this._installJobs[serverId] = await global.Api.post(
+          global.Api.serverPath(serverId, '/node/install'),
+          sudoPassword ? { sudoPassword } : {},
+        );
+      } catch (err) {
+        global.AppShell.toast('无法开始安装：' + (err && err.message ? err.message : '未知错误'));
+        return;
+      }
+      this._rerenderServer(serverId);
+      this._pollInstall(serverId);
+    },
+
+    _pollInstall(serverId) {
+      if (this._installPolls[serverId]) return;
+      const tick = async () => {
+        let status;
+        try {
+          status = await global.Api.get(global.Api.serverPath(serverId, '/node/install'));
+        } catch (_err) {
+          status = null;
+        }
+        if (status) this._installJobs[serverId] = status;
+        this._rerenderServer(serverId);
+        if (status && status.state === 'running') {
+          this._installPolls[serverId] = global.setTimeout(tick, 2000);
+          return;
+        }
+        delete this._installPolls[serverId];
+        if (status && status.state === 'succeeded') {
+          global.AppShell.toast('面板服务已安装，正在切换到完整模式');
+          await this.refreshServers();
+          await this.refreshWorkspace(serverId);
+          this._rerenderServer(serverId);
+        } else if (status && status.state === 'needs_password') {
+          await this._installNode(serverId);
+        }
+      };
+      this._installPolls[serverId] = global.setTimeout(tick, 1000);
     },
 
     async _scanHostKey(serverId) {

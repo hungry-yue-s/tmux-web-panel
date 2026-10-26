@@ -81,5 +81,7 @@ export function resolveRuntimeConfig({ argv = process.argv, env = process.env, h
     httpPort: httpPortValue === null ? null : Number(httpPortValue),
     configDir, settingsPath, managedRuntime: !!settings, tokenFileName,
     runtimePath: settings?.runtimePath || null, relayPage,
+    // Installed by another panel: only that panel (node token) may use the API.
+    nodeOnly: env.NODE_ONLY === '1',
   });
 }

@@ -14,6 +14,7 @@ import {
   classifySshError,
   connectionKey,
   forwardSpec,
+  sshPtyBinary,
   fingerprintFromBase64Key,
   keyBlobAlgorithm,
   knownHostsEntryName,
@@ -376,6 +377,59 @@ describe('SshConnection', () => {
     const { connection } = makeWithStdin(REMOTE, sftpServing(JSON.stringify({ ...PAIRING, token: 'short' })));
 
     await expect(connection.fetchPairing()).rejects.toMatchObject({ code: ErrorCode.NODE_INCOMPATIBLE });
+  });
+
+  it('runs a script as `sh -s` with the script on stdin', async () => {
+    const { connection, calls } = makeWithStdin(REMOTE, () => ({ stdout: 'ok' }));
+    await expect(connection.runScript('echo "$HOME"\n')).resolves.toMatchObject({ stdout: 'ok' });
+    expect(calls[0].bin).toBe('ssh');
+    // Two plain words: nothing for cmd, PowerShell or fish to reinterpret.
+    expect(calls[0].argv.slice(-3)).toEqual(['deploy@10.0.0.21', 'sh', '-s']);
+    expect(calls[0].input).toBe('echo "$HOME"\n');
+  });
+
+  it('keeps stderr for a script failure but classifies an ssh failure', async () => {
+    const scriptFailure = Object.assign(new Error('exit 1'), { code: 1 });
+    const { connection } = makeWithStdin(REMOTE, () => ({ error: scriptFailure, stderr: "can't find pane: %9" }));
+    await expect(connection.runScript('x')).rejects.toMatchObject({ code: 1, stderr: "can't find pane: %9" });
+
+    const sshFailure = Object.assign(new Error('exit 255'), { code: 255 });
+    const second = makeWithStdin(REMOTE, () => ({ error: sshFailure, stderr: 'Permission denied (publickey).' }));
+    await expect(second.connection.runScript('x')).rejects.toMatchObject({ code: ErrorCode.SSH_AUTH_REQUIRED });
+  });
+
+  it('uploads a file with parent directories and a mode in one sftp batch', async () => {
+    const { connection, calls } = makeWithStdin(REMOTE, () => ({}));
+    await connection.uploadFile('C:\\tmp\\a.sh', '.cache/tmux-web-panel/attach-3-0', { mode: '755' });
+    expect(calls[0].bin).toBe('sftp');
+    expect(calls[0].input.split('\n')).toEqual([
+      '-mkdir ".cache"',
+      '-mkdir ".cache/tmux-web-panel"',
+      'put "C:/tmp/a.sh" ".cache/tmux-web-panel/attach-3-0"',
+      'chmod 755 ".cache/tmux-web-panel/attach-3-0"',
+      '',
+    ]);
+  });
+
+  it('builds a pty with no remote command, or exactly one plain word', () => {
+    const connection = new SshConnection({ server: REMOTE, configDir: dir });
+    expect(connection.ptyArgs()[0]).toBe('-tt');
+    expect(connection.ptyArgs().at(-1)).toBe('deploy@10.0.0.21');
+    expect(connection.ptyArgs('.cache/tmux-web-panel/attach-3-0').at(-1)).toBe('.cache/tmux-web-panel/attach-3-0');
+    for (const bad of ['sh -c x', 'a;b', "x'y", 'a"b']) expect(() => connection.ptyArgs(bad)).toThrow();
+  });
+
+  it('streams only plain remote words', () => {
+    const connection = new SshConnection({ server: REMOTE, configDir: dir, spawnImpl: vi.fn() });
+    expect(() => connection.stream(['sh', '-c', 'rm -rf ~'])).toThrow();
+    expect(() => connection.stream(['sh;id'])).toThrow();
+  });
+
+  it('names the system OpenSSH client for a pty on Windows', () => {
+    expect(sshPtyBinary({ platform: 'darwin' })).toBe('ssh');
+    expect(sshPtyBinary({ platform: 'win32', env: { SystemRoot: 'C:\\Windows' }, exists: () => true }))
+      .toBe(path.join('C:\\Windows', 'System32', 'OpenSSH', 'ssh.exe'));
+    expect(sshPtyBinary({ platform: 'win32', env: {}, exists: () => false })).toBe('ssh.exe');
   });
 
   it('starts the forward as ssh -N -L with ExitOnForwardFailure and no remote command', () => {

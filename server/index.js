@@ -60,6 +60,12 @@ import { initNodeIdentity } from './node/identity.js';
 import { collectNodeInfo } from './node/info.js';
 import { LinkPool } from './hub/link-pool.js';
 import { createNodeProxy, relayNodeUpgrade } from './hub/proxy.js';
+import { BasicHost } from './hub/basic/basic-host.js';
+import { createBasicHttp, createBasicUpgrade } from './hub/basic/basic-routes.js';
+import { NodeInstaller } from './hub/node-installer.js';
+import { createNodeInstallRouter } from './api/node-install.js';
+import pty from 'node-pty';
+import { sshPtyBinary } from './transport/ssh-connection.js';
 import { PluginManager } from './plugins.js';
 import { createPluginsRouter } from './api/plugins.js';
 import { ManagedResources } from './managed-resources.js';
@@ -91,15 +97,34 @@ const nodeIdentity = await initNodeIdentity({
 const serverRegistry = new ServerRegistry({ configDir });
 await serverRegistry.load();
 
-const links = new LinkPool({ registry: serverRegistry, configDir });
+// A machine without the panel (basic mode) still gets a workspace and
+// terminals: its remote tmux, or login shells this hub hosts over ssh -tt.
+const spawnBasicPty = (argv, env, { cols, rows }) => pty.spawn(sshPtyBinary(), argv, {
+  name: 'xterm-256color',
+  cols: cols || 80,
+  rows: rows || 24,
+  env: {
+    ...process.env,
+    ...env,
+    LANG: process.env.LANG || 'C.UTF-8',
+    LC_CTYPE: process.env.LC_CTYPE || process.env.LANG || 'C.UTF-8',
+  },
+});
+
+const links = new LinkPool({
+  registry: serverRegistry,
+  configDir,
+  createBasicHost: (connection) => new BasicHost({ connection, spawnPty: spawnBasicPty }),
+});
 
 // Must precede every body parser: relayed requests are streamed untouched.
 // Only a login token opens the relay — a node token must not chain hubs.
 app.use(createNodeProxy({
   registry: serverRegistry,
   links,
-  authorize: config.auth ? (req, res, next) => tokenAuth(tokenMap)(req, res, next) : (_req, _res, next) => next(),
+  authorize: config.auth || config.nodeOnly ? (req, res, next) => tokenAuth(tokenMap)(req, res, next) : (_req, _res, next) => next(),
   sameOrigin: requireSameOrigin,
+  basic: createBasicHttp({ links }),
 }));
 
 // Share snapshots can be several MB (inlined images) — give /api/share a large
@@ -192,7 +217,9 @@ app.use(express.static(join(__dirname, '..', 'public'), { etag: false, maxAge: 0
 
 // --- Token auth middleware (protects API routes below) ---
 
-if (config.auth) {
+// A node-only install has no login: only the managing panel's token opens the API.
+const apiGuarded = Boolean(config.auth || config.nodeOnly);
+if (apiGuarded) {
   app.use('/api', tokenAuth(tokenMap, { isServiceToken: nodeIdentity.isNodeToken }));
 }
 
@@ -339,6 +366,9 @@ const terminalManager = new TerminalManager({
   maxConnectionsPerPane: config.maxConnections,
 });
 
+// Terminal and status sockets of basic-mode hosts are answered here, not relayed.
+const basicUpgrade = createBasicUpgrade({ links, wss, terminalManager });
+
 // --- This machine's workspace, metrics and terminals; the hub's registry ---
 
 const workspaceService = new WorkspaceService({
@@ -361,6 +391,16 @@ const terminalGateway = new TerminalGateway({ workspace: workspaceService, termi
 
 app.use('/api/workspace', createWorkspaceRouter({ workspaceService }));
 app.use('/api/metrics', createMetricsRouter({ metricsService }));
+const nodeInstaller = new NodeInstaller({
+  links,
+  projectDir: join(__dirname, '..'),
+  onInstalled: (serverId) => {
+    healthService.invalidate(serverId);
+    healthService.probe(serverId, { force: true }).catch(() => {});
+  },
+});
+
+app.use('/api/servers', createNodeInstallRouter({ installer: nodeInstaller }));
 app.use('/api/servers', createServersRouter({ serverService }));
 
 const pluginManager = new PluginManager({
@@ -391,9 +431,10 @@ app.use('/api/managed-resources', createManagedResourcesRouter(managedResources)
 server.on('upgrade', (req, socket, head) => {
   // Another server's socket is relayed whole; /n/local/... is rewritten in place.
   const relayed = relayNodeUpgrade(req, socket, head, {
+    basic: basicUpgrade,
     registry: serverRegistry,
     links,
-    authorize: (upgradeReq) => !config.auth || wsTokenAuth(tokenMap, upgradeReq),
+    authorize: (upgradeReq) => !(config.auth || config.nodeOnly) || wsTokenAuth(tokenMap, upgradeReq),
   });
   if (relayed) return;
 
@@ -401,7 +442,7 @@ server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, `${proto}://${req.headers.host}`);
 
   // Enforce auth on WebSocket upgrade if configured
-  if (config.auth) {
+  if (apiGuarded) {
     if (!wsTokenAuth(tokenMap, req, { isServiceToken: nodeIdentity.isNodeToken })) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
@@ -503,6 +544,11 @@ agentHubService.startAutoWarmup();
 agentHubService.startEnterpriseRuntime().catch(() => console.error('集团模型中继恢复失败，请在 Agent 控制台重新启用'));
 // Server liveness and capability detection, with its own per-server backoff.
 healthService.start(5000);
+// End hub-hosted shells of basic-mode hosts whose detached TTL has passed.
+const basicReapTimer = setInterval(() => {
+  try { links.reapBasic(); } catch { /* the next tick retries */ }
+}, 60 * 1000);
+if (basicReapTimer.unref) basicReapTimer.unref();
 const tokenReapTimer = config.auth ? startTokenReaper(tokenMap) : null;
 // Sweep expired shares every 10 minutes.
 const shareSweepTimer = setInterval(() => { shareStore.sweep().catch(() => {}); }, 10 * 60 * 1000);

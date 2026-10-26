@@ -15,6 +15,7 @@ $env:MSYS2_ROOT = $cfg.msys2Root
 $env:LANG = 'C.UTF-8'
 $env:LC_CTYPE = 'C.UTF-8'
 if ($cfg.auth) { $env:AUTH = $cfg.auth }
+if ($cfg.PSObject.Properties['nodeOnly'] -and $cfg.nodeOnly) { $env:NODE_ONLY = '1' }
 if ($cfg.tlsCert -and $cfg.tlsKey) {
   $env:TLS_CERT = $cfg.tlsCert
   $env:TLS_KEY = $cfg.tlsKey
@@ -33,8 +34,10 @@ while ($true) {
   Add-Content -LiteralPath $log -Encoding UTF8 -Value "[$(Get-Date -Format s)] starting node server/index.js"
   # cmd keeps node's UTF-8 output byte-for-byte; PowerShell 5.1 redirection would re-encode it.
   # Its own hidden console keeps a console Ctrl+C in node's tree from ending this loop.
+  # WaitForExit, not -Wait: -Wait would also wait for every descendant.
   $proc = Start-Process -FilePath cmd.exe -ArgumentList "/d /s /c `"`"$($cfg.nodeBin)`" server\index.js >> `"$log`" 2>&1`"" `
-    -WindowStyle Hidden -Wait -PassThru
+    -WindowStyle Hidden -PassThru
+  $proc.WaitForExit()
   Add-Content -LiteralPath $log -Encoding UTF8 -Value "[$(Get-Date -Format s)] node exited with code $($proc.ExitCode); restarting in 3s"
   Start-Sleep -Seconds 3
 }

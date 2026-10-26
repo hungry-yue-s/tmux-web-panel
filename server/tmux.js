@@ -217,6 +217,43 @@ export function parsePaneAddress(output) {
   };
 }
 
+/**
+ * Assembles readTree output: tagged S/W/P lines become sessions holding their
+ * windows holding their panes, using the same field parsers as the single
+ * list commands.
+ */
+export function parseTree(output) {
+  const sessions = [];
+  const windowsBySession = new Map();
+  const panesByWindow = new Map();
+  for (const line of String(output || '').split('\n')) {
+    if (!line) continue;
+    const kind = line.slice(0, 1);
+    const rest = line.slice(1 + FIELD_SEP.length);
+    if (line.slice(1, 1 + FIELD_SEP.length) !== FIELD_SEP) continue;
+    if (kind === 'S') {
+      sessions.push(...parseSessions(rest));
+      continue;
+    }
+    const cut = rest.indexOf(FIELD_SEP);
+    if (cut < 0) continue;
+    const parent = rest.slice(0, cut);
+    const body = rest.slice(cut + FIELD_SEP.length);
+    const map = kind === 'W' ? windowsBySession : kind === 'P' ? panesByWindow : null;
+    if (!map) continue;
+    const parsed = (kind === 'W' ? parseWindows : parsePanes)(body);
+    if (!map.has(parent)) map.set(parent, []);
+    map.get(parent).push(...parsed);
+  }
+  return sessions.map((session) => ({
+    ...session,
+    windowList: (windowsBySession.get(session.id) || []).map((window) => ({
+      ...window,
+      panes: panesByWindow.get(window.id) || [],
+    })),
+  }));
+}
+
 // --- Exec Wrapper ---
 
 /**
@@ -601,6 +638,30 @@ export function createTmuxApi(executor) {
     await run(['move-window', '-s', windowId, '-t', '=' + dstSession + ':']);
   }
 
+  /**
+   * The whole session/window/pane tree in ONE tmux invocation, chained with
+   * `;`. Locally this is just fewer processes; for a host reached by plain
+   * SSH it turns a sidebar refresh into a single round trip. Each line is
+   * tagged with its kind and parent id, then fed to the usual parsers.
+   */
+  async function readTree() {
+    let stdout;
+    try {
+      stdout = await run([
+        'list-sessions', '-F', `S${FIELD_SEP}#{session_id}${FIELD_SEP}#{session_name}${FIELD_SEP}#{session_windows}${FIELD_SEP}#{session_attached}${FIELD_SEP}#{session_last_attached}`,
+        ';',
+        'list-windows', '-a', '-F', `W${FIELD_SEP}#{session_id}${FIELD_SEP}#{window_id}${FIELD_SEP}#{window_index}${FIELD_SEP}#{window_name}${FIELD_SEP}#{window_active}${FIELD_SEP}#{window_width}${FIELD_SEP}#{window_height}${FIELD_SEP}#{window_bell_flag}${FIELD_SEP}#{window_activity}`,
+        ';',
+        'list-panes', '-a', '-F', `P${FIELD_SEP}#{window_id}${FIELD_SEP}#{pane_id}${FIELD_SEP}#{pane_left}${FIELD_SEP}#{pane_top}${FIELD_SEP}#{pane_width}${FIELD_SEP}#{pane_height}${FIELD_SEP}#{pane_active}${FIELD_SEP}#{pane_current_command}${FIELD_SEP}#{@pane_label}`,
+      ]);
+    } catch (err) {
+      // No server, or a server with no sessions: -a has nothing to target.
+      if (typeof err?.stderr === 'string' && /no server running|no current target|no sessions/.test(err.stderr)) return [];
+      throw err;
+    }
+    return parseTree(stdout);
+  }
+
   /** Reads the tmux server version, e.g. "3.5a". Throws if tmux is unusable. */
   async function version() {
     const stdout = await run(['-V']);
@@ -611,6 +672,7 @@ export function createTmuxApi(executor) {
   return {
     executor,
     run,
+    readTree,
     listSessions,
     listWindows,
     listAllWindowIds,

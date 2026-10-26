@@ -44,13 +44,15 @@ describe('createNodeProxy', () => {
   let links;
   let link;
   let authorized;
+  let basic;
   let server;
   let port;
 
   beforeEach(async () => {
     authorized = true;
     link = { proxy: vi.fn(async (_req, res, path) => res.json({ relayed: path })) };
-    links = { link: vi.fn(() => link) };
+    basic = vi.fn((_req, res, serverId, target) => res.json({ basic: serverId, path: target.path }));
+    links = { link: vi.fn(() => link), mode: vi.fn(async () => 'node') };
     const registry = { has: (id) => id === 'api-linux' || id === 'local' };
     const app = express();
     app.use(createNodeProxy({
@@ -58,6 +60,7 @@ describe('createNodeProxy', () => {
       links,
       authorize: (_req, res, next) => (authorized ? next() : res.status(401).json({ error: 'Authentication required' })),
       sameOrigin: requireSameOrigin,
+      basic,
     }));
     // What /n/local/... must fall through to.
     app.get('/api/workspace', (req, res) => res.json({ local: true, url: req.url }));
@@ -76,6 +79,13 @@ describe('createNodeProxy', () => {
     const res = await request(port, 'GET', '/n/api-linux/api/files/list?path=%2Fhome');
     expect(res.body).toEqual({ relayed: '/api/files/list?path=%2Fhome' });
     expect(links.link).toHaveBeenCalledWith('api-linux');
+  });
+
+  it('hands a basic-mode server to the hub\'s own handler instead of a link', async () => {
+    links.mode.mockResolvedValue('basic');
+    const res = await request(port, 'GET', '/n/api-linux/api/workspace?x=1');
+    expect(res.body).toEqual({ basic: 'api-linux', path: '/api/workspace?x=1' });
+    expect(link.proxy).not.toHaveBeenCalled();
   });
 
   it('requires the hub login before relaying', async () => {
@@ -105,7 +115,7 @@ describe('createNodeProxy', () => {
   });
 
   it('surfaces a link failure such as a disabled server', async () => {
-    links.link.mockImplementation(() => { throw new AppError(ErrorCode.SERVER_DISABLED, 'disabled'); });
+    links.mode.mockRejectedValue(new AppError(ErrorCode.SERVER_DISABLED, 'disabled'));
     const res = await request(port, 'GET', '/n/api-linux/api/workspace');
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe(ErrorCode.SERVER_DISABLED);
@@ -133,14 +143,19 @@ describe('relayNodeUpgrade', () => {
     expect(links.link).not.toHaveBeenCalled();
   });
 
-  it('relays an authorized socket to the server\'s link', () => {
+  it('relays an authorized socket to the server\'s link, or to the basic handler', async () => {
     const proxyUpgrade = vi.fn(async () => {});
-    const links = { link: vi.fn(() => ({ proxyUpgrade })) };
+    const links = { link: vi.fn(() => ({ proxyUpgrade })), mode: vi.fn(async () => 'node') };
     const req = { url: '/n/api-linux/ws/terminal/%251' };
     const s = socket();
 
     expect(relayNodeUpgrade(req, s, Buffer.alloc(0), { registry, links, authorize: () => true })).toBe(true);
-    expect(proxyUpgrade).toHaveBeenCalledWith(req, s, expect.any(Buffer), '/ws/terminal/%251');
+    await vi.waitFor(() => expect(proxyUpgrade).toHaveBeenCalledWith(req, s, expect.any(Buffer), '/ws/terminal/%251'));
+
+    const basic = vi.fn();
+    links.mode.mockResolvedValue('basic');
+    relayNodeUpgrade(req, s, null, { registry, links, authorize: () => true, basic });
+    await vi.waitFor(() => expect(basic).toHaveBeenCalledWith(req, s, null, 'api-linux', expect.objectContaining({ pathname: '/ws/terminal/%251' })));
   });
 
   it('rejects an unauthorized, unknown or non-relayable socket without a link', () => {

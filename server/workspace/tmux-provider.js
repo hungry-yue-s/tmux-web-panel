@@ -74,13 +74,27 @@ function requireName(name, field, validator) {
   return name;
 }
 
+function paneView(pane) {
+  return {
+    id: pane.id,
+    name: pane.label || pane.command || 'shell',
+    command: pane.command,
+    label: pane.label || null,
+    active: pane.active,
+    geometry: { x: pane.x, y: pane.y, width: pane.width, height: pane.height },
+  };
+}
+
 export class TmuxProvider {
   /**
    * @param {object} options
    * @param {ReturnType<import('../tmux.js').createTmuxApi>} options.tmux
+   * @param {boolean} [options.batched] read the tree with one tmux call; for a
+   *   host reached over plain SSH, where every call is a round trip
    */
-  constructor({ tmux }) {
+  constructor({ tmux, batched = false }) {
     this.tmux = tmux;
+    this.batched = batched;
     this.provider = 'tmux';
     this.persistence = 'tmux';
     this.actions = TMUX_ACTIONS;
@@ -92,6 +106,24 @@ export class TmuxProvider {
    * broken session must not blank the sidebar.
    */
   async getTree() {
+    if (this.batched) {
+      return (await this.tmux.readTree()).map((session) => ({
+        id: session.id || session.name,
+        name: session.name,
+        active: Boolean(session.attached),
+        windowCount: Number.isFinite(session.windows) ? session.windows : 0,
+        lastActivity: session.lastActivity || null,
+        windows: session.windowList.map((window) => ({
+          id: window.id,
+          index: window.index,
+          name: window.name,
+          active: window.active,
+          bell: window.bell,
+          activity: window.activity,
+          panes: window.panes.map(paneView),
+        })),
+      }));
+    }
     const sessions = await this.tmux.listSessions();
     return Promise.all(sessions.map((session) => this._sessionFor(session)));
   }
@@ -128,15 +160,7 @@ export class TmuxProvider {
 
   async _panesFor(window) {
     try {
-      const panes = await this.tmux.listPanesByWindowId(window.id);
-      return panes.map((pane) => ({
-        id: pane.id,
-        name: pane.label || pane.command || 'shell',
-        command: pane.command,
-        label: pane.label || null,
-        active: pane.active,
-        geometry: { x: pane.x, y: pane.y, width: pane.width, height: pane.height },
-      }));
+      return (await this.tmux.listPanesByWindowId(window.id)).map(paneView);
     } catch {
       return [];
     }
@@ -149,14 +173,7 @@ export class TmuxProvider {
       () => this.tmux.listPanesByWindowId(windowId),
       ErrorCode.WINDOW_NOT_FOUND,
     );
-    return panes.map((pane) => ({
-      id: pane.id,
-      name: pane.label || pane.command || 'shell',
-      command: pane.command,
-      label: pane.label || null,
-      active: pane.active,
-      geometry: { x: pane.x, y: pane.y, width: pane.width, height: pane.height },
-    }));
+    return panes.map(paneView);
   }
 
   async createSession({ name }) {
