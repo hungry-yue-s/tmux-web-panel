@@ -62,7 +62,8 @@ describe('NodeInstaller', () => {
   function project({ tmux = true } = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'installer-project-'));
     mkdirSync(join(dir, 'scripts/remote'), { recursive: true });
-    writeFileSync(join(dir, 'scripts/remote/install-node.sh'), 'echo posix\n');
+    // CRLF, as a Windows checkout with core.autocrlf would have it.
+    writeFileSync(join(dir, 'scripts/remote/install-node.sh'), 'echo posix\r\n');
     writeFileSync(join(dir, 'scripts/remote/install-node.ps1'), 'Write-Output windows\n');
     if (tmux) {
       mkdirSync(join(dir, 'vendor/tmux'), { recursive: true });
@@ -104,6 +105,7 @@ describe('NodeInstaller', () => {
     expect(words).toEqual(['sh', '-s']);
     expect(options.input).toContain("TWP_SUDO_PASSWORD=pw");
     expect(options.input.endsWith('echo posix\n')).toBe(true);
+    expect(options.input).not.toContain('\r');
     expect(links.recheck).toHaveBeenCalledWith('box');
     expect(onInstalled).toHaveBeenCalledWith('box');
     // The password never reaches the status the browser reads.

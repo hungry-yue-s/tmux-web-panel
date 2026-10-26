@@ -172,7 +172,8 @@ export class NodeInstaller {
       const template = await readFile(join(this.projectDir, 'scripts/remote/install-node.ps1'), 'utf8');
       code = await connection.stream(windowsInstallWords(template), { onOutput });
     } else {
-      const template = await readFile(join(this.projectDir, 'scripts/remote/install-node.sh'), 'utf8');
+      // A Windows checkout may have CRLF endings, which sh would read as part of each line.
+      const template = (await readFile(join(this.projectDir, 'scripts/remote/install-node.sh'), 'utf8')).replace(/\r\n/g, '\n');
       code = await connection.stream(['sh', '-s'], { input: posixInstallScript(template, { sudoPassword }), onOutput });
     }
     job.log.end();
