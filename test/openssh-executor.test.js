@@ -436,6 +436,25 @@ describe('OpenSSHExecutor', () => {
     expect(argv[argv.length - 1]).toBe('tmux attach-session -d -t %3');
   });
 
+  it('groups the PTY command for MSYS fish without changing command execution', async () => {
+    const { executor, calls } = make(REMOTE, { ssh: { stdout: 'ok' } });
+    executor.remoteFacts = { kernel: 'MSYS_NT-10.0-26100', shell: '/usr/bin/fish.exe' };
+    const command = "tmux -u select-pane -t '%0' \\; attach-session -t '%0'";
+    expect(executor.ptyArgs(command).at(-1)).toBe('"' + command + '"');
+    expect(executor.ptyArgs('printf "%s" "two words"').at(-1)).toBe('"printf \\"%s\\" \\"two words\\""');
+    expect(executor.ptyArgs('echo trailing\\').at(-1)).toBe('"echo trailing\\\\"');
+    await executor.execRemoteCommand('tmux -V');
+    expect(calls[0].argv.at(-1)).toBe('tmux -V');
+    for (const facts of [
+      { kernel: 'Linux', shell: '/usr/bin/fish' },
+      { kernel: 'Darwin', shell: '/bin/zsh' },
+      { kernel: 'MSYS_NT-10.0-26100', shell: '/usr/bin/bash' },
+    ]) {
+      executor.remoteFacts = facts;
+      expect(executor.ptyArgs(command).at(-1)).toBe(command);
+    }
+  });
+
   it('uses password auth and local askpass for commands and PTYs without leaking the password', async () => {
     const password = '  密码 $()`\\"  ';
     const registry = await new ServerRegistry({ configDir: dir }).load();

@@ -34,6 +34,7 @@ export const FACTS_SCRIPT = [
   'printf "kernel=%s\\n" "$(uname -s 2>/dev/null || echo unknown)"',
   'printf "arch=%s\\n" "$(uname -m 2>/dev/null || echo unknown)"',
   'printf "hostname=%s\\n" "$(hostname 2>/dev/null || echo unknown)"',
+  'printf "shell=%s\\n" "$SHELL"',
   'if command -v tmux >/dev/null 2>&1; then',
   '  printf "tmux_found=1\\n"',
   '  printf "tmux_version=%s\\n" "$(tmux -V 2>&1 | head -n 1)"',
@@ -332,6 +333,8 @@ export class HealthService {
   async _probeRemote(server, startedAt) {
     const executor = this.pool.get(server.id);
     const facts = await this._collectFacts(executor);
+    // PTY command quoting depends on the remote login shell as well as its OS.
+    executor.remoteFacts = facts;
     const latencyMs = this._now() - startedAt;
 
     const platform = normalizePlatform(facts.kernel);

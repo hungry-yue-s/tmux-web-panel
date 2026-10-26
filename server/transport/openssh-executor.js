@@ -539,6 +539,13 @@ export class OpenSSHExecutor {
 
   /** argv for node-pty: an interactive remote command over a tty. */
   ptyArgs(remoteCommand) {
+    // Windows OpenSSH's ConPTY path does not group a custom MSYS fish shell's
+    // -c argument. Quote it as one Windows argv word, including embedded quotes
+    // and backslashes, or fish treats tmux's -u as its own option.
+    if (/^(?:MSYS|MINGW\d*|CYGWIN)_NT-/i.test(this.remoteFacts?.kernel || '')
+      && /(?:^|[/\\])fish(?:\.exe)?$/i.test(this.remoteFacts?.shell || '')) {
+      remoteCommand = '"' + remoteCommand.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"';
+    }
     return [...this.sshArgs({ tty: true }), remoteCommand];
   }
 

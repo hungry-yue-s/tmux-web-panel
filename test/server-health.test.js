@@ -176,6 +176,16 @@ describe('HealthService', () => {
       expect(status.workspace).toEqual({ provider: 'tmux', transport: 'ssh', persistence: 'tmux' });
     });
 
+    it('keeps the observed MSYS login shell on the executor for PTY quoting', async () => {
+      const executor = { runScript, execPowerShell };
+      pool.get.mockReturnValue(executor);
+      runScript.mockResolvedValue({ stdout: factsOutput({ kernel: 'MSYS_NT-10.0-26100' }) + 'shell=/usr/bin/fish.exe\n' });
+      const status = await makeService().probe('api-linux');
+      expect(status.state).toBe(ServerState.ONLINE);
+      expect(executor.remoteFacts).toMatchObject({ kernel: 'MSYS_NT-10.0-26100', shell: '/usr/bin/fish.exe' });
+      expect(FACTS_SCRIPT).toContain('"$SHELL"');
+    });
+
     it('falls back to the ssh provider when tmux is absent', async () => {
       runScript.mockResolvedValue({ stdout: factsOutput({ tmux: null }), stderr: '' });
 
