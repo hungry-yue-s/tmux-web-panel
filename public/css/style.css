@@ -7193,8 +7193,11 @@ button.list-row:hover {
 
 .hero-actions {
   display: flex;
-  gap: 7px;
+  align-items: center;
+  gap: 8px;
 }
+
+.hero-actions .ms-btn { white-space: nowrap; }
 
 .tabs {
   display: flex;
