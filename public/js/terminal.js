@@ -100,7 +100,7 @@ function _createFabPanel(container) {
     var formData = new FormData();
     formData.append('file', file);
     fabEl.classList.add('uploading');
-    fetch('/api/upload', {
+    fetch(Api.activeUrl('/api/upload'), {
       method: 'POST',
       headers: Auth.headers(),
       body: formData,
@@ -1109,9 +1109,9 @@ function _mountTerminal(termContainer, nozoom) {
   // URL + file-path links are both handled by FilePreview's unified provider
   // (public/js/link-detect.js), which merges soft-wrapped rows — something the
   // old WebLinksAddon (per display row) could not do. No web-links addon.
-  if (typeof FilePreview !== 'undefined' && !TerminalTarget.isRemote()) {
-    // File preview reads the panel host's filesystem, so a remote pane's paths
-    // must not be resolved through it.
+  if (typeof FilePreview !== 'undefined') {
+    // Paths resolve on the pane's own machine: FilePreview calls go through the
+    // server in view (Api.activeUrl), like every other machine-scoped request.
     FilePreview.registerLinkProvider(term, state.currentPane, _resolvePreviewPaneId);
   }
 

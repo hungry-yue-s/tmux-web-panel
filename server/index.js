@@ -44,18 +44,22 @@ import { PinStore } from './pins.js';
 import { createPinsRouter } from './api/pins.js';
 import { ShareStore } from './share-store.js';
 import { createShareRouter } from './api/share.js';
-import pty from 'node-pty';
 import { ServerRegistry } from './servers/registry.js';
 import { HealthService } from './servers/health-service.js';
 import { ServerService } from './servers/server-service.js';
-import { ExecutorPool } from './transport/executor-pool.js';
+import { handle } from './servers/errors.js';
 import { WorkspaceService } from './workspace/service.js';
 import { MetricsService } from './metrics/service.js';
 import { collectLocalMetrics } from './metrics/local-collector.js';
 import { TerminalGateway } from './terminal/gateway.js';
 import { createServersRouter } from './api/servers.js';
 import { createWorkspaceRouter } from './api/workspace.js';
-import { createServerMetricsRouter } from './api/metrics.js';
+import { createMetricsRouter } from './api/metrics.js';
+import { requireSameOrigin } from './api/same-origin.js';
+import { initNodeIdentity } from './node/identity.js';
+import { collectNodeInfo } from './node/info.js';
+import { LinkPool } from './hub/link-pool.js';
+import { createNodeProxy, relayNodeUpgrade } from './hub/proxy.js';
 import { PluginManager } from './plugins.js';
 import { createPluginsRouter } from './api/plugins.js';
 import { ManagedResources } from './managed-resources.js';
@@ -70,6 +74,33 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
+
+// --- Node identity and hub links ---
+//
+// Every installation is a node: it serves its own machine and writes a pairing
+// file so another panel (a hub) can reach this API over an SSH port forward.
+// It is also a hub for the servers in its registry, reached at /n/:serverId.
+
+const nodeIdentity = await initNodeIdentity({
+  configDir,
+  port: config.port,
+  listenHost: config.host,
+  tlsCertPath: config.tls ? config.tls.cert : null,
+});
+
+const serverRegistry = new ServerRegistry({ configDir });
+await serverRegistry.load();
+
+const links = new LinkPool({ registry: serverRegistry, configDir });
+
+// Must precede every body parser: relayed requests are streamed untouched.
+// Only a login token opens the relay — a node token must not chain hubs.
+app.use(createNodeProxy({
+  registry: serverRegistry,
+  links,
+  authorize: config.auth ? (req, res, next) => tokenAuth(tokenMap)(req, res, next) : (_req, _res, next) => next(),
+  sameOrigin: requireSameOrigin,
+}));
 
 // Share snapshots can be several MB (inlined images) — give /api/share a large
 // JSON limit BEFORE the global 100KB parser (which then no-ops on these requests).
@@ -162,8 +193,11 @@ app.use(express.static(join(__dirname, '..', 'public'), { etag: false, maxAge: 0
 // --- Token auth middleware (protects API routes below) ---
 
 if (config.auth) {
-  app.use('/api', tokenAuth(tokenMap));
+  app.use('/api', tokenAuth(tokenMap, { isServiceToken: nodeIdentity.isNodeToken }));
 }
+
+const localNodeInfo = () => collectNodeInfo({ tmuxVersion: tmux.tmuxVersion });
+app.get('/api/node/info', handle(async () => localNodeInfo()));
 
 // API status route
 app.get('/api/status', async (_req, res) => {
@@ -305,83 +339,46 @@ const terminalManager = new TerminalManager({
   maxConnectionsPerPane: config.maxConnections,
 });
 
-// --- Multi-server stack ---
-//
-// Built after the legacy pieces so existing routes keep their behavior. The
-// registry synthesizes the built-in `local` server, so a fresh install already
-// has one working entry with no configuration.
+// --- This machine's workspace, metrics and terminals; the hub's registry ---
 
-const serverRegistry = new ServerRegistry({ configDir });
-await serverRegistry.load();
-
-const executorPool = new ExecutorPool({ registry: serverRegistry, configDir });
+const workspaceService = new WorkspaceService({
+  tmux: tmux.localTmux,
+  onChange: (revision) => statusMonitor.broadcastWorkspaceChanged(revision),
+});
 
 const healthService = new HealthService({
   registry: serverRegistry,
-  pool: executorPool,
+  links,
+  localInfo: localNodeInfo,
   onStatus: (status) => statusMonitor.broadcastServerStatus(status),
 });
 
-const workspaceService = new WorkspaceService({
-  registry: serverRegistry,
-  pool: executorPool,
-  health: healthService,
-  onChange: (serverId, revision) => statusMonitor.broadcastWorkspaceChanged(serverId, revision),
-  // One `ssh -tt` PTY per SSH pane, running a login shell. The command is a
-  // fixed template; nothing from the client reaches this argv.
-  spawnSshPty: ({ serverId, cols, rows }) => {
-    const executor = executorPool.get(serverId);
-    // A Windows host answers with cmd.exe and has no POSIX shell, so the login
-    // shell template would fail; it gets an interactive UTF-8 PowerShell.
-    const isWindows = healthService.getStatus(serverId).facts.platform === 'windows';
-    const argv = isWindows
-      ? executor.powerShellPtyArgs()
-      : executor.ptyArgs('exec ${SHELL:-/bin/sh} -l');
-    return pty.spawn('ssh', argv, {
-      name: 'xterm-256color',
-      cols: cols || 80,
-      rows: rows || 24,
-      env: {
-        ...process.env,
-        ...executor.sshEnv(),
-        LANG: process.env.LANG || 'C.UTF-8',
-        LC_CTYPE: process.env.LC_CTYPE || process.env.LANG || 'C.UTF-8',
-      },
-    });
-  },
-});
+const metricsService = new MetricsService({ collector: collectLocalMetrics });
 
-const metricsService = new MetricsService({
-  registry: serverRegistry,
-  pool: executorPool,
-  health: healthService,
-  localCollector: collectLocalMetrics,
-});
+const serverService = new ServerService({ registry: serverRegistry, links, health: healthService });
 
-const serverService = new ServerService({
-  registry: serverRegistry,
-  pool: executorPool,
-  health: healthService,
-  workspace: workspaceService,
-  metrics: metricsService,
-});
+const terminalGateway = new TerminalGateway({ workspace: workspaceService, terminalManager });
 
-const terminalGateway = new TerminalGateway({
-  registry: serverRegistry,
-  workspace: workspaceService,
-  pool: executorPool,
-  terminalManager,
-});
-
-// Order matters: the metrics and workspace routers own the deeper paths and must
-// be consulted before `/:serverId` can swallow them.
-app.use('/api/servers', createServerMetricsRouter({ metricsService }));
-app.use('/api/servers', createWorkspaceRouter({ workspaceService }));
+app.use('/api/workspace', createWorkspaceRouter({ workspaceService }));
+app.use('/api/metrics', createMetricsRouter({ metricsService }));
 app.use('/api/servers', createServersRouter({ serverService }));
 
 const pluginManager = new PluginManager({
   configDir, catalogDir: join(__dirname, '..', 'plugins'),
-  dependencies: { workspaceService, executorPool, serverService },
+  dependencies: {
+    tmux: tmux.localTmux,
+    workspaceService,
+    servers: serverService,
+    // Tool calls for another server run in that server's own copy of the plugin.
+    remote: {
+      call: (serverId, pluginId, tool, args) => links.link(serverId).requestJson(
+        'POST',
+        '/api/plugins/' + encodeURIComponent(pluginId) + '/tools/' + encodeURIComponent(tool),
+        args,
+        { timeout: 30_000 },
+      ),
+    },
+  },
 });
 await pluginManager.load();
 app.use('/api/plugins', createPluginsRouter(pluginManager));
@@ -392,12 +389,20 @@ await managedResources.load();
 app.use('/api/managed-resources', createManagedResourcesRouter(managedResources));
 
 server.on('upgrade', (req, socket, head) => {
+  // Another server's socket is relayed whole; /n/local/... is rewritten in place.
+  const relayed = relayNodeUpgrade(req, socket, head, {
+    registry: serverRegistry,
+    links,
+    authorize: (upgradeReq) => !config.auth || wsTokenAuth(tokenMap, upgradeReq),
+  });
+  if (relayed) return;
+
   const proto = config.tls ? 'https' : 'http';
   const url = new URL(req.url, `${proto}://${req.headers.host}`);
 
   // Enforce auth on WebSocket upgrade if configured
   if (config.auth) {
-    if (!wsTokenAuth(tokenMap, req)) {
+    if (!wsTokenAuth(tokenMap, req, { isServiceToken: nodeIdentity.isNodeToken })) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
@@ -456,12 +461,9 @@ function shutdown(signal) {
   // Destroy all terminal PTY connections
   terminalManager.destroyAll();
 
-  // Stop server health polling and the SSH pane reaper
+  // Stop server health polling and close every port forward.
   healthService.stop();
-  if (typeof paneReapTimer !== 'undefined' && paneReapTimer) clearInterval(paneReapTimer);
-  // SSH workspaces live only in this process, so end their PTYs rather than
-  // orphaning the ssh clients.
-  workspaceService.destroyAll('server_shutdown');
+  links.closeAll();
 
   // Close all WebSocket connections
   for (const client of wss.clients) {
@@ -501,15 +503,6 @@ agentHubService.startAutoWarmup();
 agentHubService.startEnterpriseRuntime().catch(() => console.error('集团模型中继恢复失败，请在 Agent 控制台重新启用'));
 // Server liveness and capability detection, with its own per-server backoff.
 healthService.start(5000);
-// Reclaim SSH panes whose detached TTL has elapsed.
-const paneReapTimer = setInterval(() => {
-  try {
-    workspaceService.reapIdlePanes();
-  } catch {
-    // A reap failure must not stop the interval.
-  }
-}, 60 * 1000);
-if (paneReapTimer.unref) paneReapTimer.unref();
 const tokenReapTimer = config.auth ? startTokenReaper(tokenMap) : null;
 // Sweep expired shares every 10 minutes.
 const shareSweepTimer = setInterval(() => { shareStore.sweep().catch(() => {}); }, 10 * 60 * 1000);

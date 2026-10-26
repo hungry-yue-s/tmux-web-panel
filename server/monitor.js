@@ -67,9 +67,8 @@ export class StatusMonitor {
   }
 
   /** One server's workspace tree changed; clients refetch by revision. */
-  broadcastWorkspaceChanged(serverId, revision) {
-    if (!serverId) return;
-    this._broadcast(JSON.stringify({ type: 'workspace-changed', serverId, revision }));
+  broadcastWorkspaceChanged(revision) {
+    this._broadcast(JSON.stringify({ type: 'workspace-changed', revision }));
   }
 
   async poll() {

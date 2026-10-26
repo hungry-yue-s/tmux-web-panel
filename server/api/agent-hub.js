@@ -12,7 +12,7 @@ import { AppError, ErrorCode, handle } from '../servers/errors.js';
 import { createClaudeProviderSwitcher } from '../agent-providers/claude-provider-switch.js';
 import { createCodexProviderSwitcher } from '../agent-providers/codex-provider-switch.js';
 import { createEnterpriseAiService } from '../agent-providers/enterprise-ai.js';
-import { requireSameOrigin } from './servers.js';
+import { requireSameOrigin } from './same-origin.js';
 import { configDirectory } from '../runtime-config.js';
 
 const execFileAsync = promisify(execFile);

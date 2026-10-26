@@ -1,14 +1,14 @@
 /**
  * tmux workspace provider.
  *
- * Projects real tmux state onto the unified Session/Window/Pane model. Works
- * identically for the local host and a remote host, because the only difference
- * is which executor the tmux API was built with.
+ * Projects this machine's tmux state onto the Session/Window/Pane model. A
+ * hub sees another machine's tree by calling that node's API, never by running
+ * tmux remotely, so this provider is always local.
  *
  * Identity rules: sessions use #{session_id} ($N), windows #{window_id} (@N) and
  * panes #{pane_id} (%N). These are stable across renames; index is display only.
- * None of them are globally unique, so callers must always pair them with a
- * serverId.
+ * They are unique only within one machine; the hub's /n/:serverId prefix is
+ * what makes them globally addressable.
  */
 
 import { AppError, ErrorCode } from '../servers/errors.js';
@@ -77,14 +77,10 @@ function requireName(name, field, validator) {
 export class TmuxProvider {
   /**
    * @param {object} options
-   * @param {string} options.serverId
    * @param {ReturnType<import('../tmux.js').createTmuxApi>} options.tmux
-   * @param {'local'|'ssh'} options.transport
    */
-  constructor({ serverId, tmux, transport }) {
-    this.serverId = serverId;
+  constructor({ tmux }) {
     this.tmux = tmux;
-    this.transport = transport;
     this.provider = 'tmux';
     this.persistence = 'tmux';
     this.actions = TMUX_ACTIONS;
@@ -97,15 +93,10 @@ export class TmuxProvider {
    */
   async getTree() {
     const sessions = await this.tmux.listSessions();
-    if (this.transport === 'local') {
-      return Promise.all(sessions.map((session) => this._sessionFor(session, true)));
-    }
-    const out = [];
-    for (const session of sessions) out.push(await this._sessionFor(session, false));
-    return out;
+    return Promise.all(sessions.map((session) => this._sessionFor(session)));
   }
 
-  async _sessionFor(session, parallelPanes) {
+  async _sessionFor(session) {
     // Sessions from an older tmux without session_id cannot be addressed
     // stably; fall back to the name so they remain visible and usable.
     const sessionId = session.id || session.name;
@@ -128,8 +119,7 @@ export class TmuxProvider {
         activity: window.activity,
         panes: await this._panesFor(window),
       });
-      if (parallelPanes) entry.windows = await Promise.all(windows.map(render));
-      else for (const window of windows) entry.windows.push(await render(window));
+      entry.windows = await Promise.all(windows.map(render));
     } catch {
       // Keep the session visible with no windows.
     }
@@ -270,15 +260,9 @@ export class TmuxProvider {
       ErrorCode.PANE_NOT_FOUND,
     );
     if (!address || address.paneId !== paneId) {
-      throw new AppError(ErrorCode.PANE_NOT_FOUND, `Pane ${paneId} not found on ${this.serverId}`);
+      throw new AppError(ErrorCode.PANE_NOT_FOUND, `Pane ${paneId} not found`);
     }
-    return {
-      serverId: this.serverId,
-      provider: 'tmux',
-      transport: this.transport,
-      persistence: 'tmux',
-      ...address,
-    };
+    return { provider: 'tmux', persistence: 'tmux', ...address };
   }
 
   /** Turns "can't find" stderr from tmux into the right structured error. */

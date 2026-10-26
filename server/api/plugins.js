@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { handle, AppError, ErrorCode } from '../servers/errors.js';
-import { requireSameOrigin } from './servers.js';
+import { requireSameOrigin } from './same-origin.js';
 
 export function createPluginsRouter(manager) {
   const router = express.Router();
@@ -29,6 +29,19 @@ export function createPluginsRouter(manager) {
     res.on('close', () => { server.close().catch(() => {}); });
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
+  }));
+  // A hub relaying a tool call that targets this machine.
+  router.post('/:id/tools/:tool', handle(async (req) => {
+    const id = req.params.id;
+    const plugin = await manager.getRuntime(id);
+    if (typeof plugin.call !== 'function') throw new AppError(ErrorCode.UNSUPPORTED, 'Plugin has no remote tools');
+    try {
+      return await plugin.call(req.params.tool, req.body || {}, z, () => manager.requireEnabled(id));
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      // Tool errors are meant for the agent; keep the message across the relay.
+      throw new AppError(ErrorCode.VALIDATION_ERROR, err.message || 'Tool failed', { status: 422 });
+    }
   }));
   router.all('/:id/mcp', handle(async () => {
     throw new AppError(ErrorCode.UNSUPPORTED, 'Use MCP Streamable HTTP POST', { status: 405 });

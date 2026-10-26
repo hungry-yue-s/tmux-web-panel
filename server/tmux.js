@@ -235,13 +235,13 @@ export async function tmuxExec(args) {
 /**
  * Executor contract consumed by createTmuxApi:
  *   exec(command, args, options) -> Promise<{ stdout, stderr }>
- * The local executor runs execFile directly; the OpenSSH executor forwards the
- * same argv to a remote host. Both keep arguments as arrays — never a shell string.
+ * The local executor runs execFile directly; tests substitute a recording one.
+ * Arguments stay arrays — never a shell string.
  */
 export const localExecutor = Object.freeze({
   id: 'local',
   transport: 'local',
-  // Only this host's tmux may be a Windows path; remote hosts run plain `tmux`.
+  // MSYS2's tmux.exe on Windows, plain `tmux` elsewhere.
   tmuxBin: TMUX_BIN,
   async exec(command, args, options = {}) {
     const { stdout, stderr } = await execFileAsync(command, args, {
@@ -297,7 +297,7 @@ export function sessionTarget(idOrName) {
 // --- High-Level Functions ---
 
 /**
- * Binds every tmux operation to one executor so local and remote hosts share a
+ * Binds every tmux operation to one executor so every caller shares a
  * single set of format strings, parsers and validation rules.
  *
  * @param {{ exec: (command: string, args: string[], options?: object) => Promise<{stdout: string, stderr: string}> }} executor
@@ -651,9 +651,10 @@ export function createTmuxApi(executor) {
 export const PANE_BORDER_FORMAT =
   '#{?pane_active,#[fg=colour4]▸#[default]#[bold],#[fg=colour8]·#[default]} #{?#{@pane_label},[#{@pane_label}] ,}#{pane_index}:#{pane_current_command} #[default]';
 
-// The local tmux binding. Every pre-existing caller keeps importing these named
-// exports; remote hosts get their own instance from createTmuxApi(sshExecutor).
+// This machine's tmux. Most callers import the named exports below; services
+// that take a tmux API as a dependency get the object itself.
 const local = createTmuxApi(localExecutor);
+export const localTmux = local;
 
 export const listSessions = (...args) => local.listSessions(...args);
 export const listWindows = (...args) => local.listWindows(...args);

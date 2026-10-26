@@ -1,12 +1,11 @@
 /**
  * Terminal WebSocket protocol.
  *
- * The socket URL carries only a serverId and a paneId. Both are looked up
- * server-side; a client can never supply a host, user, key path or command.
+ * The socket URL carries only a paneId, which is verified against tmux before
+ * attaching; a client can never supply a host, user, key path or command.
  */
 
 const PANE_ID_MAX = 64;
-const SERVER_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 /** Above this a "terminal" size is a bug or an attack, not a window. */
 export const MAX_DIMENSION = 2000;
 export const DEFAULT_COLS = 80;
@@ -27,33 +26,21 @@ function safeDecode(segment) {
 }
 
 /**
- * Parses `/ws/terminal/:serverId/:paneId` and the legacy `/ws/terminal/:paneId`.
- * Returns null for anything unparseable rather than throwing, so a bad URL
- * closes one socket instead of taking down the upgrade listener.
+ * Parses `/ws/terminal/:paneId`. Returns null for anything unparseable rather
+ * than throwing, so a bad URL closes one socket instead of taking down the
+ * upgrade listener.
  */
 export function parseTerminalPath(pathname) {
   if (typeof pathname !== 'string') return null;
   const prefix = '/ws/terminal/';
   if (!pathname.startsWith(prefix)) return null;
-  const rest = pathname.slice(prefix.length);
-  if (!rest) return null;
-
-  const segments = rest.split('/').filter((part) => part !== '');
-  if (segments.length === 0 || segments.length > 2) return null;
-
-  const decoded = segments.map(safeDecode);
-  if (decoded.some((value) => value === null)) return null;
+  const segment = pathname.slice(prefix.length);
+  if (!segment || segment.includes('/')) return null;
+  const paneId = safeDecode(segment);
   // Control characters have no place in an id and would corrupt logs.
-  if (decoded.some((value) => /[\u0000-\u001f\u007f]/.test(value))) return null;
-  if (decoded.some((value) => value.length === 0 || value.length > PANE_ID_MAX)) return null;
-
-  if (decoded.length === 1) {
-    // Legacy address: the local server is implied.
-    return { serverId: 'local', paneId: decoded[0], legacy: true };
-  }
-  const [serverId, paneId] = decoded;
-  if (!SERVER_ID_RE.test(serverId)) return null;
-  return { serverId, paneId, legacy: false };
+  if (paneId === null || paneId.length === 0 || paneId.length > PANE_ID_MAX) return null;
+  if (/[\u0000-\u001f\u007f]/.test(paneId)) return null;
+  return { paneId };
 }
 
 export function clampDimension(value, fallback) {
@@ -106,17 +93,14 @@ export function parseClientMessage(raw) {
 }
 
 export const ServerMessage = {
-  ready({ serverId, paneId, provider, persistence, replayedBytes = 0 }) {
-    return JSON.stringify({ type: 'ready', serverId, paneId, provider, persistence, replayedBytes });
+  ready({ paneId, provider, persistence }) {
+    return JSON.stringify({ type: 'ready', paneId, provider, persistence });
   },
   output(data) {
     return JSON.stringify({ type: 'output', data });
   },
   clipboard(data) {
     return JSON.stringify({ type: 'clipboard', data });
-  },
-  provider({ provider, persistence }) {
-    return JSON.stringify({ type: 'provider', provider, persistence });
   },
   error({ code, message, retryable = false }) {
     return JSON.stringify({ type: 'error', code, message, retryable });

@@ -1,14 +1,20 @@
 /**
- * OpenSSH transport.
+ * SSH as a pipe to another node.
  *
- * Everything runs through the system ssh client so the user's existing
- * ~/.ssh/config, SSH agent, ProxyJump and hardware keys keep working, and the
- * panel never has to hold key material. Local processes are always started with
- * an argv array; the only place a shell is involved is the remote side, where
- * commands come from fixed templates with every argument POSIX-quoted.
+ * The hub never runs commands on a remote host. SSH is used for exactly two
+ * things, both through the system client so ~/.ssh/config, the SSH agent,
+ * ProxyJump and hardware keys keep working:
+ *
+ *   1. SFTP-read the node's pairing file (port, token, TLS fingerprint).
+ *      SFTP is a subsystem, so it does not depend on the login shell.
+ *   2. Hold one `ssh -N -L` port forward to the node's own HTTP(S) listener.
+ *      Every API call and terminal then travels over that single connection.
+ *
+ * Local processes are always started with an argv array; nothing reaches a
+ * shell on either side.
  */
 
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFile, chmod, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,18 +22,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { AppError, ErrorCode } from '../servers/errors.js';
+import { PAIRING_RELATIVE_PATH, parsePairing } from '../node/identity.js';
 
 const SSH_BIN = 'ssh';
+const SFTP_BIN = 'sftp';
 const KEYSCAN_BIN = 'ssh-keyscan';
-const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BUFFER = 1024 * 1024;
 const STDERR_KEEP = 2048;
-/**
- * Remote commands inherit no locale from ssh, and under the default C locale
- * tmux replaces every non-ASCII byte of its -F output with "_", which destroys
- * session and window names. Fixed constants, so nothing here is injectable.
- */
-const REMOTE_LOCALE = 'LC_ALL=C.UTF-8 LANG=C.UTF-8';
 /** A confirmed fingerprint only counts for the scan the user was shown. */
 const SCAN_TTL_MS = 10 * 60 * 1000;
 
@@ -41,47 +42,12 @@ const ALLOWED_KEY_ALGORITHMS = new Set([
   'sk-ecdsa-sha2-nistp256@openssh.com',
 ]);
 
-/** Wraps a value in POSIX single quotes so a remote shell treats it as one word. */
-export function shellQuote(value) {
-  const str = String(value);
-  if (str === '') return "''";
-  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(str)) return str;
-  return `'${str.replace(/'/g, `'\\''`)}'`;
-}
-
-/** Serializes an argv array into a single remote command string. */
-export function quoteArgv(argv) {
-  return argv.map(shellQuote).join(' ');
-}
-
-/**
- * Wraps a PowerShell script for a Windows host.
- *
- * A Windows host answers ssh with cmd.exe, whose quoting rules share nothing
- * with POSIX, so the script travels as base64 of UTF-16LE via -EncodedCommand.
- * That wire form is alphanumeric, leaving cmd.exe nothing to interpret.
- */
-export function powerShellCommand(script, { interactive = false } = {}) {
-  const encoded = Buffer.from(String(script), 'utf16le').toString('base64');
-  const flags = interactive ? '-NoLogo -NoExit' : '-NoLogo -NonInteractive';
-  return `pwsh ${flags} -EncodedCommand ${encoded}`;
-}
-
-/**
- * Pins UTF-8 on an interactive Windows shell. Without it the console keeps the
- * legacy code page — GBK on this machine — and the browser terminal, which
- * decodes UTF-8, renders every non-ASCII byte as garbage.
- */
-const POWERSHELL_PTY_SETUP = [
-  '[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new()',
-  '$OutputEncoding=[System.Text.UTF8Encoding]::new()',
-].join('; ');
-
 /**
  * Builds the ssh option list shared by every invocation.
  * StrictHostKeyChecking stays on: an unknown or changed key must fail closed.
+ * The keepalives bound how long a dead forward goes unnoticed (~30 s).
  */
-export function baseSshOptions({ knownHostsPath, controlPath, connectTimeout = 5, controlPersist = 60, passwordAuth = false }) {
+export function baseSshOptions({ knownHostsPath, connectTimeout = 5, passwordAuth = false }) {
   const options = [
     `BatchMode=${passwordAuth ? 'no' : 'yes'}`,
     `ConnectTimeout=${connectTimeout}`,
@@ -94,28 +60,15 @@ export function baseSshOptions({ knownHostsPath, controlPath, connectTimeout = 5
     options.push('PreferredAuthentications=password,keyboard-interactive', 'PasswordAuthentication=yes',
       'KbdInteractiveAuthentication=yes', 'PubkeyAuthentication=no', 'NumberOfPasswordPrompts=1');
   }
-  if (controlPath) {
-    options.push('ControlMaster=auto', `ControlPersist=${controlPersist}`, `ControlPath=${controlPath}`);
-  }
   return options;
 }
 
-/** sizeof(sun_path) on macOS; Linux allows 108. */
-const SUN_PATH_MAX = 104;
-/** ssh appends ".XXXXXXXXXXXXXXXX" to ControlPath while creating the master. */
-const CONTROL_TEMP_SUFFIX = 17;
-
 /**
- * Names the multiplexing socket for a connection.
- *
- * OpenSSH's own %C expands to 40 hex chars, which together with the temp suffix
- * ssh adds while creating the master overruns sun_path under a normal config dir
- * — every connection then dies with "too long for Unix domain socket". Hashing
- * the identity to 12 chars keeps it bindable. Like %C, the name must change
- * whenever the target changes, or a socket left over from a previous edit would
- * silently reroute to the old host.
+ * A short, stable identity for a connection's settings. It changes whenever
+ * the target or credentials change, so the askpass helper can refuse to hand
+ * a new password to a process started for the old settings.
  */
-export function controlSocketName(server) {
+export function connectionKey(server) {
   const address = server.address || {};
   const ssh = server.ssh || {};
   const identity = JSON.stringify([
@@ -133,16 +86,19 @@ export function controlSocketName(server) {
 }
 
 /**
- * Turns a registry record into ssh argv. When the record names a ~/.ssh/config
- * Host, only that alias is passed — the alias already carries hostname/user/port.
+ * Turns a registry record into ssh (or sftp) argv, ending with the
+ * destination. When the record names a ~/.ssh/config Host, only that alias is
+ * passed — the alias already carries hostname/user/port.
+ *
+ * sftp spells two flags differently (-P for the port, no -l), which is the
+ * only reason `tool` exists.
  */
-export function buildSshArgs(server, { knownHostsPath, controlPath, tty = false, connectTimeout = 5, extraOptions = [] } = {}) {
+export function buildSshArgs(server, { knownHostsPath, tool = 'ssh', connectTimeout = 5, extraOptions = [], leading = null } = {}) {
   if (!server || server.kind === 'local') throw new Error('buildSshArgs requires a remote server');
-  const args = [];
-  if (tty) args.push('-tt');
-  else args.push('-T'); // no pty for command execution: keeps stdout clean
+  const sftp = tool === 'sftp';
+  const args = leading ? [...leading] : (sftp ? [] : ['-T']);
 
-  for (const option of baseSshOptions({ knownHostsPath, controlPath, connectTimeout, passwordAuth: server.ssh?.authMethod === 'password' })) {
+  for (const option of baseSshOptions({ knownHostsPath, connectTimeout, passwordAuth: server.ssh?.authMethod === 'password' })) {
     args.push('-o', option);
   }
 
@@ -155,27 +111,35 @@ export function buildSshArgs(server, { knownHostsPath, controlPath, tty = false,
 
   for (const option of extraOptions) args.push('-o', option);
 
+  const user = (flagUser) => {
+    if (!flagUser) return;
+    if (sftp) args.push('-o', `User=${flagUser}`);
+    else args.push('-l', flagUser);
+  };
+
   if (ssh.configHost) {
-    if (ssh.authMethod === 'password' && address.user) args.push('-l', address.user);
+    if (ssh.authMethod === 'password') user(address.user);
     if (ssh.identityFile) args.push('-i', ssh.identityFile);
     if (ssh.proxyJump) args.push('-J', ssh.proxyJump);
-    // Terminates ssh's option parsing. It must come *before* the destination:
-    // anything after the destination is sent to the remote shell verbatim.
+    // Terminates option parsing. It must come *before* the destination.
     args.push('--', ssh.configHost);
     return args;
   }
 
-  if (address.port && Number(address.port) !== 22) args.push('-p', String(address.port));
+  if (address.port && Number(address.port) !== 22) args.push(sftp ? '-P' : '-p', String(address.port));
   if (ssh.identityFile) args.push('-i', ssh.identityFile);
   if (ssh.proxyJump) args.push('-J', ssh.proxyJump);
-  args.push('--', address.user ? `${address.user}@${address.host}` : String(address.host));
+  user(address.user);
+  args.push('--', String(address.host));
   return args;
 }
 
-/**
- * The name OpenSSH uses as the known_hosts key: HostKeyAlias verbatim when set,
- * otherwise the hostname, bracketed with the port when it is not 22.
- */
+/** `-L` spec: an IPv6 remote host must be bracketed. */
+export function forwardSpec(localPort, remoteHost, remotePort) {
+  const host = String(remoteHost).includes(':') ? `[${remoteHost}]` : String(remoteHost);
+  return `127.0.0.1:${localPort}:${host}:${remotePort}`;
+}
+
 export function knownHostsEntryName({ host, port, hostKeyAlias }) {
   if (hostKeyAlias) return hostKeyAlias;
   const bare = host && host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
@@ -307,62 +271,117 @@ export function parseSshConfigDump(output) {
   return config;
 }
 
-/** Bounds how many ssh processes one server may run at a time. */
-class Semaphore {
-  constructor(limit) {
-    this.limit = limit;
-    this.active = 0;
-    this.waiters = [];
-  }
 
-  async run(fn) {
-    if (this.active >= this.limit) {
-      await new Promise((resolve) => this.waiters.push(resolve));
-    }
-    this.active += 1;
-    try {
-      return await fn();
-    } finally {
-      this.active -= 1;
-      const next = this.waiters.shift();
-      if (next) next();
-    }
-  }
-}
-
-export class OpenSSHExecutor {
+export class SshConnection {
   /**
    * @param {object} options
    * @param {object} options.server registry record (kind: 'remote')
-   * @param {string} options.configDir panel config dir holding known_hosts and ssh-control
+   * @param {string} options.configDir panel config dir holding known_hosts
    */
-  constructor({ server, configDir, maxConcurrent = 4, execFileImpl = execFile, now = () => Date.now() } = {}) {
-    if (!server) throw new Error('OpenSSHExecutor requires a server');
-    if (!configDir) throw new Error('OpenSSHExecutor requires configDir');
+  constructor({ server, configDir, execFileImpl = execFile, spawnImpl = spawn, now = () => Date.now() } = {}) {
+    if (!server) throw new Error('SshConnection requires a server');
+    if (!configDir) throw new Error('SshConnection requires configDir');
     this.server = server;
     this.id = server.id;
-    this.transport = 'ssh';
     this.configDir = configDir;
     this.knownHostsPath = join(configDir, 'known_hosts');
-    this.controlDir = join(configDir, 'ssh-control');
-    const controlPath = join(this.controlDir, controlSocketName(server));
-    // Multiplexing is an optimization, so a path that cannot be bound degrades to
-    // plain connections rather than failing every one of them.
-    this.controlPath = controlPath.length + CONTROL_TEMP_SUFFIX <= SUN_PATH_MAX ? controlPath : null;
-    this._semaphore = new Semaphore(maxConcurrent);
     this._execFile = execFileImpl;
+    this._spawn = spawnImpl;
     this._now = now;
-    this._controlDirReady = false;
     /** Candidates from the most recent scan; the only keys trust() will accept. */
     this._pendingScan = null;
   }
 
-  async _ensureControlDir() {
-    if (this._controlDirReady) return;
-    await mkdir(this.controlDir, { recursive: true, mode: 0o700 });
-    // mkdir's mode only applies on creation, so tighten an existing directory too.
-    await chmod(this.controlDir, 0o700).catch(() => {});
-    this._controlDirReady = true;
+  /** Askpass delivers a stored password without it entering argv or env. */
+  sshEnv() {
+    if (this.server.ssh?.authMethod !== 'password') return {};
+    return {
+      SSH_ASKPASS: fileURLToPath(new URL('./ssh-askpass.sh', import.meta.url)),
+      SSH_ASKPASS_REQUIRE: 'force',
+      TMUX_PANEL_NODE: process.execPath,
+      TMUX_PANEL_SSH_ASKPASS: fileURLToPath(new URL('./ssh-askpass.js', import.meta.url)),
+      TMUX_PANEL_SSH_CONFIG_DIR: this.configDir,
+      TMUX_PANEL_SSH_SERVER_ID: this.server.id,
+      TMUX_PANEL_SSH_CONNECTION: connectionKey(this.server),
+    };
+  }
+
+  _run(bin, argv, { input = '', timeout = 15_000 } = {}) {
+    return new Promise((resolve, reject) => {
+      const child = this._execFile(bin, argv, {
+        timeout,
+        maxBuffer: DEFAULT_MAX_BUFFER,
+        killSignal: 'SIGTERM',
+        env: { ...process.env, ...this.sshEnv() },
+      }, (err, stdout, stderr) => {
+        if (err) {
+          err.stderr = typeof stderr === 'string' ? stderr : (err.stderr || '');
+          reject(err);
+          return;
+        }
+        resolve({ stdout: stdout || '', stderr: stderr || '' });
+      });
+      // Always close stdin: a client left waiting on input would hang until the timeout.
+      if (child && child.stdin) child.stdin.end(input);
+    });
+  }
+
+  async _classify(err) {
+    const knownHostEntryExists = await this.hasKnownHostEntry().catch(() => false);
+    return classifySshError(err, { knownHostEntryExists });
+  }
+
+  /**
+   * Reads and validates the node's pairing file over SFTP. A missing file means
+   * the panel service has never run on that host for this user.
+   */
+  async fetchPairing({ timeout = 20_000 } = {}) {
+    const dir = await mkdtemp(join(tmpdir(), 'tmux-pair-'));
+    const localPath = join(dir, 'node.json').replace(/\\/g, '/');
+    try {
+      if (localPath.includes('"')) throw new AppError(ErrorCode.INTERNAL, 'Unsupported temporary directory');
+      const argv = buildSshArgs(this.server, { knownHostsPath: this.knownHostsPath, tool: 'sftp', leading: ['-b', '-'] });
+      try {
+        await this._run(SFTP_BIN, argv, { input: `get "${PAIRING_RELATIVE_PATH}" "${localPath}"\n`, timeout });
+      } catch (err) {
+        if (/not found|No such file/i.test(String(err.stderr || ''))) {
+          throw new AppError(ErrorCode.NODE_NOT_INSTALLED, 'tmux-web-panel is not running on this host');
+        }
+        throw await this._classify(err);
+      }
+      const pairing = parsePairing(await readFile(localPath, 'utf8'));
+      if (!pairing) throw new AppError(ErrorCode.NODE_INCOMPATIBLE, 'The node pairing file is invalid');
+      return pairing;
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  /**
+   * Starts the long-lived port forward. The caller owns the child: it must
+   * watch for exit and kill it on close. Errors before the forward is usable
+   * are reported through `whenFailed`.
+   */
+  openForward({ localPort, remoteHost, remotePort }) {
+    const argv = buildSshArgs(this.server, {
+      knownHostsPath: this.knownHostsPath,
+      leading: ['-N', '-L', forwardSpec(localPort, remoteHost, remotePort)],
+      extraOptions: ['ExitOnForwardFailure=yes'],
+    });
+    const child = this._spawn(SSH_BIN, argv, {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: { ...process.env, ...this.sshEnv() },
+      windowsHide: true,
+    });
+    let stderr = '';
+    child.stderr?.on('data', (chunk) => { stderr = (stderr + chunk).slice(-STDERR_KEEP); });
+    const whenFailed = new Promise((resolve) => {
+      child.once('error', (err) => resolve(classifySshError(err)));
+      child.once('exit', (code, signal) => {
+        this._classify(Object.assign(new Error(`ssh exited (${code ?? signal})`), { stderr })).then(resolve);
+      });
+    });
+    return { child, whenFailed, stderr: () => stderr };
   }
 
   /**
@@ -441,117 +460,6 @@ export class OpenSSHExecutor {
     } catch {
       return false;
     }
-  }
-
-  sshArgs({ tty = false, connectTimeout = 5, extraOptions = [] } = {}) {
-    return buildSshArgs(this.server, {
-      knownHostsPath: this.knownHostsPath,
-      controlPath: this.controlPath,
-      tty,
-      connectTimeout,
-      extraOptions,
-    });
-  }
-
-  /** Askpass also works for node-pty: credentials never enter terminal input. */
-  sshEnv() {
-    if (this.server.ssh?.authMethod !== 'password') return {};
-    return {
-      SSH_ASKPASS: fileURLToPath(new URL('./ssh-askpass.sh', import.meta.url)),
-      SSH_ASKPASS_REQUIRE: 'force',
-      TMUX_PANEL_NODE: process.execPath,
-      TMUX_PANEL_SSH_ASKPASS: fileURLToPath(new URL('./ssh-askpass.js', import.meta.url)),
-      TMUX_PANEL_SSH_CONFIG_DIR: this.configDir,
-      TMUX_PANEL_SSH_SERVER_ID: this.server.id,
-      TMUX_PANEL_SSH_CONNECTION: controlSocketName(this.server),
-    };
-  }
-
-  /**
-   * Runs one command on the remote host. `command` and `args` are quoted
-   * individually — the caller supplies a fixed template, never user prose.
-   */
-  async exec(command, args = [], options = {}) {
-    const remoteCommand = quoteArgv([command, ...args]);
-    return this.execRemoteCommand(`${REMOTE_LOCALE} ${remoteCommand}`, options);
-  }
-
-  /**
-   * Sends a command to whatever shell the host answers ssh with. The caller owns
-   * the shell dialect — a POSIX locale prefix here would be a command name to
-   * cmd.exe — so nothing shell-specific is added.
-   */
-  async execRemoteCommand(remoteCommand, options = {}) {
-    await this._ensureControlDir();
-    // Everything after the destination is the remote command, so nothing else
-    // may be appended here.
-    const argv = [
-      ...this.sshArgs({ connectTimeout: options.connectTimeout }),
-      remoteCommand,
-    ];
-    return this._semaphore.run(
-      () => new Promise((resolve, reject) => {
-        const child = this._execFile(
-          SSH_BIN,
-          argv,
-          {
-            timeout: options.timeout || DEFAULT_TIMEOUT_MS,
-            maxBuffer: options.maxBuffer || DEFAULT_MAX_BUFFER,
-            killSignal: 'SIGTERM',
-            env: { ...process.env, ...this.sshEnv() },
-          },
-          async (err, stdout, stderr) => {
-            if (err) {
-              err.stderr = typeof stderr === 'string' ? stderr : (err.stderr || '');
-              const knownHostEntryExists = await this.hasKnownHostEntry().catch(() => false);
-              const appError = classifySshError(err, { knownHostEntryExists });
-              appError.exitCode = typeof err.code === 'number' ? err.code : null;
-              reject(appError);
-              return;
-            }
-            resolve({ stdout: stdout || '', stderr: stderr || '' });
-          },
-        );
-        if (child.stdin) {
-          // Always close stdin: a remote command left waiting on input would
-          // hang until the timeout fires.
-          child.stdin.end(options.input === undefined ? '' : options.input);
-        }
-      }),
-    );
-  }
-
-  /**
-   * Feeds a built-in read-only script to a remote POSIX shell over stdin.
-   * Nothing is written to the remote filesystem and no agent is installed.
-   */
-  async runScript(script, options = {}) {
-    return this.execRemoteCommand(`${REMOTE_LOCALE} /bin/sh -s`, { ...options, input: script });
-  }
-
-  /**
-   * Runs a built-in read-only PowerShell script on a Windows host. Nothing is
-   * written to the remote filesystem; the script only travels on the command line.
-   */
-  async execPowerShell(script, options = {}) {
-    return this.execRemoteCommand(powerShellCommand(script), options);
-  }
-
-  /** argv for node-pty: an interactive remote command over a tty. */
-  ptyArgs(remoteCommand) {
-    // Windows OpenSSH's ConPTY path does not group a custom MSYS fish shell's
-    // -c argument. Quote it as one Windows argv word, including embedded quotes
-    // and backslashes, or fish treats tmux's -u as its own option.
-    if (/^(?:MSYS|MINGW\d*|CYGWIN)_NT-/i.test(this.remoteFacts?.kernel || '')
-      && /(?:^|[/\\])fish(?:\.exe)?$/i.test(this.remoteFacts?.shell || '')) {
-      remoteCommand = '"' + remoteCommand.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"';
-    }
-    return [...this.sshArgs({ tty: true }), remoteCommand];
-  }
-
-  /** argv for node-pty on a Windows host: an interactive UTF-8 PowerShell. */
-  powerShellPtyArgs() {
-    return this.ptyArgs(powerShellCommand(POWERSHELL_PTY_SETUP, { interactive: true }));
   }
 
   /**

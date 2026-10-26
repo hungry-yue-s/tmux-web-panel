@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { handle } from '../servers/errors.js';
-import { requireSameOrigin } from './servers.js';
+import { requireSameOrigin } from './same-origin.js';
 
 export function createManagedResourcesRouter(resources) {
   const router = Router();

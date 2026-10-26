@@ -81,10 +81,7 @@ export function extractOsc52(buf) {
   return { clipboard, cleaned, pending: '' };
 }
 
-/**
- * Builds the tmux attach command. Runs verbatim under `sh -c` locally and as the
- * remote command of `ssh -tt`, so local and remote attach cannot drift apart.
- */
+/** Builds the tmux attach command line that runs under `sh -c` on Unix. */
 export function buildTmuxAttachCommand(paneId, { nozoom = false } = {}) {
   // xterm.js supports UTF-8 even when SSH does not forward a UTF-8 locale.
   // Without -u, tmux replaces Chinese and prompt icons with underscores.
@@ -161,11 +158,6 @@ export class TerminalManager {
     }
   }
 
-  /** Attached client count for one pane on one server. */
-  scopedCount(serverId, paneId) {
-    return this.paneConnectionCount.get(`${serverId || 'local'}:${paneId}`) ?? 0;
-  }
-
   /**
    * Create a new PTY ↔ WebSocket bridge for the given pane.
    *
@@ -174,13 +166,10 @@ export class TerminalManager {
    * @param {number} [cols=80]
    * @param {number} [rows=24]
    * @param {boolean} [nozoom=false]
-   * @param {{spawn?: {file: string, args: string[]}}} [options] remote spawn override
+   * @param {{onReject?: Function, onPtyExit?: Function}} [options] structured error reporting
    * @returns {string} connectionId
    */
   create(ws, paneId, cols = 80, rows = 24, nozoom = false, options = {}) {
-    // Pane ids are only unique within one host, so the quota is per server.
-    const serverId = options.serverId || 'local';
-    const connectionKey = `${serverId}:${paneId}`;
     const reject = (code, closeCode, message) => {
       // Reported before the close so a caller can send a structured frame; the
       // legacy caller passes nothing and just sees the close.
@@ -201,15 +190,14 @@ export class TerminalManager {
     }
 
     // Check connection limit
-    const currentCount = this.paneConnectionCount.get(connectionKey) ?? 0;
+    const currentCount = this.paneConnectionCount.get(paneId) ?? 0;
     if (currentCount >= this.maxConnectionsPerPane) {
       return reject('CONNECTION_LIMIT', 1013, `Connection limit reached for pane ${paneId}`);
     }
 
     const connectionId = randomUUID();
 
-    // A remote host runs the same template as the remote command of ssh -tt.
-    const spawnSpec = options.spawn || localAttachSpawnSpec(paneId, { nozoom });
+    const spawnSpec = localAttachSpawnSpec(paneId, { nozoom });
     let term;
     try {
       term = pty.spawn(spawnSpec.file, spawnSpec.args, {
@@ -221,7 +209,6 @@ export class TerminalManager {
         // before they ever reach xterm.js.
         env: {
           ...process.env,
-          ...spawnSpec.env,
           LANG: process.env.LANG || 'C.UTF-8',
           LC_CTYPE: process.env.LC_CTYPE || process.env.LANG || 'C.UTF-8',
         },
@@ -235,7 +222,6 @@ export class TerminalManager {
       ws,
       pty: term,
       paneId,
-      connectionKey,
       pingTimer: null,
       killTimer: null,
       dataDisposable: null,
@@ -243,7 +229,7 @@ export class TerminalManager {
       osc52Pending: '', // carry-over for OSC 52 split across PTY chunks
     };
     this.connections.set(connectionId, conn);
-    this.paneConnectionCount.set(connectionKey, currentCount + 1);
+    this.paneConnectionCount.set(paneId, currentCount + 1);
 
     // PTY → WebSocket
     // Also intercept OSC 52 clipboard sequences from tmux. Long selections can
@@ -432,13 +418,11 @@ export class TerminalManager {
       conn.dataDisposable = null;
     }
 
-    // Decrement pane connection count under the same server-scoped key
-    const key = conn.connectionKey || `local:${conn.paneId}`;
-    const count = this.paneConnectionCount.get(key) ?? 0;
+    const count = this.paneConnectionCount.get(conn.paneId) ?? 0;
     if (count <= 1) {
-      this.paneConnectionCount.delete(key);
+      this.paneConnectionCount.delete(conn.paneId);
     } else {
-      this.paneConnectionCount.set(key, count - 1);
+      this.paneConnectionCount.set(conn.paneId, count - 1);
     }
 
     this.connections.delete(connectionId);

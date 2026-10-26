@@ -70,7 +70,7 @@
     async refreshWorkspace(serverId) {
       const token = global.Store.beginRequest('workspace', serverId);
       try {
-        const workspace = await global.Api.get(global.Api.workspacePath(serverId));
+        const workspace = await global.Api.get(global.Api.workspaceUrl(serverId));
         if (!global.Store.isCurrentRequest('workspace', serverId, token)) return null;
         global.Store.setWorkspace(serverId, workspace);
         return workspace;
@@ -92,9 +92,9 @@
     async refreshMetrics(serverId) {
       const token = global.Store.beginRequest('metrics', serverId);
       try {
-        const current = await global.Api.get(global.Api.serverPath(serverId, '/metrics/current'));
+        const current = await global.Api.get(global.Api.nodeUrl(serverId, '/api/metrics/current'));
         if (!global.Store.isCurrentRequest('metrics', serverId, token)) return;
-        const history = await global.Api.get(global.Api.serverPath(serverId, '/metrics/history?window=300'));
+        const history = await global.Api.get(global.Api.nodeUrl(serverId, '/api/metrics/history?window=300'));
         if (!global.Store.isCurrentRequest('metrics', serverId, token)) return;
         global.Store.setMetrics(serverId, { ...current, historyPoints: (history && history.points) || [] });
       } catch (_err) {
@@ -162,6 +162,8 @@
           return;
         }
         global.Store.setUi({ lastStatusServerId: serverId });
+        // The performance and agent components address "the server in view".
+        if (global.TerminalTarget.serverId !== serverId) global.TerminalTarget.set({ serverId });
         view.classList.remove('terminal-mode');
         view.innerHTML = global.ServersPage.renderServer(route);
         this._mountPerfPanel(route);
@@ -182,13 +184,11 @@
       await this._renderTerminal(route, serverId, view);
     },
 
-    /** Returns the PerfPanel mode owned by this local status route. */
+    /** Returns the PerfPanel mode owned by this status route. */
     _localPerfMode(route) {
       if (!route || route.name !== 'server') return null;
       const section = (route.params || {}).section;
-      if (section !== 'performance') return null;
-      const server = global.AppShell.server((route.params || {}).serverId);
-      return server && server.kind === 'local' ? section : null;
+      return section === 'performance' ? section : null;
     },
 
     _mountPerfPanel(route) {
@@ -208,8 +208,6 @@
 
     _mountAgentHub(route) {
       if (!route || route.name !== 'server' || (route.params || {}).section !== 'agents') return;
-      const server = global.AppShell.server((route.params || {}).serverId);
-      if (!server || server.kind !== 'local') return;
       if (!global.AgentHub || typeof global.AgentHub.start !== 'function') return;
       if (!global.document.getElementById('agent-hub')) return;
       global.AgentHub.start();
@@ -416,9 +414,9 @@
         this._panePickerObserver = null;
       }
 
-      const workspace = global.AppShell.workspace(global.AppShell.activeServerId()) || {};
-      const remote = workspace.transport === 'ssh';
-      const isSsh = workspace.provider === 'ssh';
+      // Every server runs the full panel, so only the pop-out window (a page of
+      // this panel that addresses its own panes) is limited to the local server.
+      const remote = global.AppShell.activeServerId() !== 'local';
 
       // The shell's sidebar and Window Bar replace both of these.
       const back = header.querySelector('.terminal-back-btn');
@@ -428,18 +426,9 @@
 
       const toolbar = header.querySelector('.terminal-header-actions');
       if (toolbar) {
-        // Only tmux can read its own paste buffer, and pop-out addresses a
-        // local pane; the SSH provider does support panes and labels.
-        if (remote || isSsh) {
-          for (const selector of ['.terminal-open-buf-btn', '.terminal-popout-btn']) {
-            const node = toolbar.querySelector(selector);
-            if (node) node.remove();
-          }
-        }
-        if (isSsh) {
-          // tmux-native split rendering has no meaning without tmux.
-          const modeToggle = toolbar.querySelector('.terminal-mode-toggle');
-          if (modeToggle) modeToggle.remove();
+        if (remote) {
+          const popout = toolbar.querySelector('.terminal-popout-btn');
+          if (popout) popout.remove();
         }
       }
 
@@ -447,14 +436,6 @@
       // Crossing the breakpoint re-renders; without this the previous viewport's
       // bar would keep a stale copy of the toolbar.
       if (other && other !== actions) other.innerHTML = '';
-
-      if (isSsh) {
-        const badge = global.document.createElement('span');
-        badge.className = 'provider-badge';
-        badge.textContent = 'SSH';
-        badge.title = '由面板服务托管 · 面板重启后会话结束';
-        actions.appendChild(badge);
-      }
 
       // Move the live nodes so their bound listeners keep working. The renderer
       // keeps its own reference to the pills node, so relocating it is safe.
@@ -583,19 +564,14 @@
         + '">服务器详情</button></div></div></div>';
     },
 
-    _emptyWorkspace(serverId, workspace) {
-      const isSsh = workspace.provider === 'ssh';
+    _emptyWorkspace() {
       return '<div class="workspace-onboarding"><div class="workspace-onboarding-card">'
         + '<div class="workspace-onboarding-icon">' + global.AppShell.icon('terminal') + '</div>'
-        + '<div class="workspace-kicker">' + (isSsh ? 'SSH 工作区' : 'tmux 工作区') + '</div>'
+        + '<div class="workspace-kicker">tmux 工作区</div>'
         + '<h2>还没有 Session</h2>'
-        + '<p>' + (isSsh
-          ? '该服务器未检测到 tmux，面板会为你托管 SSH Session。面板重启后这些会话会结束。'
-          : '远端 tmux 可用。新建 Session 后即可进入终端。')
-        + '</p>'
+        + '<p>tmux 可用。新建 Session 后即可进入终端。</p>'
         + '<div class="workspace-onboarding-actions">'
-        + '<button class="ms-btn primary" data-action="new-session">新建 Session</button></div>'
-        + '<p class="workspace-footnote">面板不会在远端安装或启动 tmux。</p></div></div>';
+        + '<button class="ms-btn primary" data-action="new-session">新建 Session</button></div></div></div>';
     },
 
     _startPolling() {
@@ -879,7 +855,7 @@
         const route = global.Router.current();
         const server = global.AppShell.server(serverId);
         const paneId = global.AppShell.mobilePaneId(route);
-        if (route.name !== 'terminal' || !server || server.kind !== 'local' || !paneId) return;
+        if (route.name !== 'terminal' || !server || !paneId) return;
         if (global.FilePreview) global.FilePreview.openFile('.', paneId);
         return;
       }
@@ -972,12 +948,6 @@
         await this._createWindow(serverId, node.dataset.session, entityContext);
         return;
       }
-      if (action === 'adopt-provider') {
-        await global.Api.post(global.Api.serverPath(serverId, '/workspace/adopt-provider'));
-        await this.refreshWorkspace(serverId);
-        await this._onRoute(global.Router.current());
-        return;
-      }
       if (action === 'scan-host-key') {
         await this._scanHostKey(serverId);
         return;
@@ -991,12 +961,6 @@
       }
     },
 
-    _providerHeader(serverId, expectedProvider) {
-      const workspace = global.AppShell.workspace(serverId);
-      const provider = expectedProvider || (workspace && workspace.provider);
-      return provider ? { 'X-Workspace-Provider': provider } : {};
-    },
-
     async _createSession(serverId) {
       const server = global.AppShell.server(serverId) || {};
       const name = await promptDialog({
@@ -1005,9 +969,7 @@
         confirmText: '创建',
       });
       if (!name) return;
-      await global.Api.request('POST', global.Api.serverPath(serverId, '/sessions'), { name }, {
-        headers: this._providerHeader(serverId),
-      });
+      await global.Api.post(global.Api.workspaceUrl(serverId, '/sessions'), { name });
       await this.refreshWorkspace(serverId);
       await this._onRoute(global.Router.current());
     },
@@ -1020,10 +982,8 @@
         confirmText: '创建',
       });
       if (name === null) return;
-      const path = global.Api.serverPath(serverId, '/sessions/' + encodeURIComponent(sessionId) + '/windows');
-      await global.Api.request('POST', path, name ? { name } : {}, {
-        headers: this._providerHeader(serverId, context.provider),
-      });
+      const path = global.Api.workspaceUrl(serverId, '/sessions/' + encodeURIComponent(sessionId) + '/windows');
+      await global.Api.post(path, name ? { name } : {});
       await this.refreshWorkspace(serverId);
       await this._onRoute(global.Router.current());
     },
@@ -1063,22 +1023,7 @@
         confirmText: '删除',
         danger: true,
       })) return;
-      try {
-        await global.Api.del(global.Api.serverPath(serverId));
-      } catch (err) {
-        if (err && err.code === 'SERVER_IN_USE') {
-          const count = (err.details && err.details.activePanes) || '若干';
-          if (!await confirmDialog({
-            title: '结束活动 Shell 并删除',
-            message: '该服务器仍有 ' + count + ' 个活动 SSH Pane，删除会结束这些 Shell。',
-            confirmText: '继续删除',
-            danger: true,
-          })) return;
-          await global.Api.del(global.Api.serverPath(serverId) + '?force=1');
-        } else {
-          throw err;
-        }
-      }
+      await global.Api.del(global.Api.serverPath(serverId));
       global.Store.removeServer(serverId);
       await this.refreshServers();
       global.Router.go({ name: 'servers', params: {} });
@@ -1183,21 +1128,9 @@
       try {
         await global.Api.patch(global.Api.serverPath(serverId), body);
       } catch (err) {
-        if (err && err.code === 'SERVER_IN_USE') {
-          const count = (err.details && err.details.activePanes) || '若干';
-          const proceed = await confirmDialog({
-            title: '修改服务器连接',
-            message: '该服务器仍有 ' + count + ' 个活动 SSH Pane。修改连接会结束这些 Shell。',
-            confirmText: '继续修改',
-            danger: true,
-          });
-          if (!proceed) return;
-          await global.Api.patch(global.Api.serverPath(serverId) + '?force=1', body);
-        } else {
-          const field = err && err.details && err.details.field ? '（' + err.details.field + '）' : '';
-          global.AppShell.toast('保存失败' + field + '：' + (err.message || ''));
-          return;
-        }
+        const field = err && err.details && err.details.field ? '（' + err.details.field + '）' : '';
+        global.AppShell.toast('保存失败' + field + '：' + (err.message || ''));
+        return;
       }
 
       this.closeModal();
@@ -1218,12 +1151,7 @@
         confirmText: '保存',
       });
       if (!name) return;
-      await global.Api.request(
-        'PATCH',
-        global.Api.serverPath(serverId, '/sessions/' + encodeURIComponent(sessionId)),
-        { name },
-        { headers: this._providerHeader(serverId, context.provider) },
-      );
+      await global.Api.patch(global.Api.workspaceUrl(serverId, '/sessions/' + encodeURIComponent(sessionId)), { name });
       await this.refreshWorkspace(serverId);
       await this._onRoute(global.Router.current());
     },
@@ -1240,12 +1168,7 @@
         danger: true,
       })) return;
 
-      await global.Api.request(
-        'DELETE',
-        global.Api.serverPath(serverId, '/sessions/' + encodeURIComponent(sessionId)),
-        undefined,
-        { headers: this._providerHeader(serverId, context.provider) },
-      );
+      await global.Api.del(global.Api.workspaceUrl(serverId, '/sessions/' + encodeURIComponent(sessionId)));
       await this.refreshWorkspace(serverId);
       this._correctRouteAfterClose(serverId, { sessionId });
     },
@@ -1263,12 +1186,7 @@
         confirmText: '保存',
       });
       if (!name) return;
-      await global.Api.request(
-        'PATCH',
-        global.Api.serverPath(serverId, '/windows/' + encodeURIComponent(windowId)),
-        { name },
-        { headers: this._providerHeader(serverId, context.provider) },
-      );
+      await global.Api.patch(global.Api.workspaceUrl(serverId, '/windows/' + encodeURIComponent(windowId)), { name });
       await this.refreshWorkspace(serverId);
       await this._onRoute(global.Router.current());
     },
@@ -1282,12 +1200,7 @@
         confirmText: '关闭',
         danger: true,
       })) return;
-      await global.Api.request(
-        'DELETE',
-        global.Api.serverPath(serverId, '/windows/' + encodeURIComponent(windowId)),
-        undefined,
-        { headers: this._providerHeader(serverId, context.provider) },
-      );
+      await global.Api.del(global.Api.workspaceUrl(serverId, '/windows/' + encodeURIComponent(windowId)));
       await this.refreshWorkspace(serverId);
       this._correctRouteAfterClose(serverId, { windowId });
     },
