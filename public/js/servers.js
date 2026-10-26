@@ -221,7 +221,7 @@
         + '<div class="section-head"><h3>最近一次检测</h3><span>' + esc(relativeTime(health.checkedAt)) + '</span></div>'
         + '<div class="ms-card timeline">'
         + timeline('SSH 隧道', connection, verified)
-        + timeline('面板服务', verified ? '已连接' + (facts.version ? ' · ' + facts.version : '') : (nodeHint ? '未就绪' : '未取得结果'), verified)
+        + timeline('面板服务', verified ? '已连接' + (facts.version ? ' · ' + facts.version : '') : (nodeHint ? '未就绪' : connection), verified)
         + timeline('tmux', tmux.text, tmux.ok)
         + timeline('指标采集能力', metrics.text, metrics.ok)
         + '</div>'

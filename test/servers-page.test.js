@@ -135,7 +135,7 @@ describe('ServersPage real connection facts and actions', () => {
       ssh: { available: true }, tmux: { available: true, version: '3.5a' }, metrics: { available: true },
     } });
     ctx.win.eval(readFileSync('public/js/ms-app.js', 'utf8'));
-    ctx.win.Api = { workspacePath: () => '/stub', get: async () => {
+    ctx.win.Api = { workspaceUrl: () => '/stub', get: async () => {
       throw Object.assign(new Error('disabled'), { code: 'SERVER_DISABLED' });
     } };
     await ctx.win.MsApp.refreshWorkspace('remote');
@@ -146,7 +146,7 @@ describe('ServersPage real connection facts and actions', () => {
     const timeline = view.querySelector('.connection-remote .timeline');
     expect(timeline.querySelector('.check')).toBeNull();
     expect([...timeline.querySelectorAll('small')].map((row) => row.textContent))
-      .toEqual(['已停用', '已停用', '已停用']);
+      .toEqual(['已停用', '已停用', '已停用', '已停用']);
   });
 
   it('only marks SSH verified when the health response explicitly reports a checked connection', () => {
@@ -159,7 +159,8 @@ describe('ServersPage real connection facts and actions', () => {
     });
     expect(view.querySelector('.connection-remote').textContent).toContain('已验证');
     expect(view.querySelector('.connection-remote').textContent).toContain('3.5a');
-    expect(view.querySelectorAll('.connection-remote .check')).toHaveLength(2);
+    // SSH tunnel, panel service and tmux; metrics stays unchecked.
+    expect(view.querySelectorAll('.connection-remote .check')).toHaveLength(3);
   });
 
   it('leaves a missing SSH port unspecified instead of presenting 22 as an observed fact', () => {

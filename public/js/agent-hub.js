@@ -3,10 +3,13 @@
 var AgentHub = (function () {
   var POLL_MS = 30000;
   // Agent profiles and usage live on each machine; follow the server in view.
-  var machineApi = {
-    get: function (path, opts) { return window.Api.get(window.Api.activeUrl(path), opts); },
-    post: function (path, body, opts) { return window.Api.post(window.Api.activeUrl(path), body, opts); },
-  };
+  function onMachine(method) {
+    return function (path) {
+      var args = Array.prototype.slice.call(arguments, 1);
+      return window.Api[method].apply(window.Api, [window.Api.activeUrl(path)].concat(args));
+    };
+  }
+  var machineApi = { get: onMachine('get'), post: onMachine('post') };
   var timer = null;
   var root = null;
   var state = {

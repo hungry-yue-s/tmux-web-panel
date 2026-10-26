@@ -21,7 +21,17 @@
 
 **Windows** 上服务管理器是计划任务（`\tmux-web-panel\tmux-web-panel` 与 `\tmux-web-panel\tmux-server`），统一经 `scripts/install-service.ps1` 操作：`restart` / `status` / `logs`（加 `-Tmux` 针对 tmux server）。同样禁止手动 `node server/index.js` 或直接 `Stop-Process` 后自行启动——AUTH/TLS/端口配置在 `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`，只由 `scripts/windows/run-panel.ps1` 注入。
 
-Windows 作为被远程管理的 SSH 主机时，sshd 由 `install-service.ps1 ssh-enable` 配置：DefaultShell 设为 MSYS2 `bash.exe -lc`，`ForceCommand /usr/local/bin/tmux-web-panel-ssh`（源文件为 `scripts/windows/ssh-session.sh`）负责 `eval "$SSH_ORIGINAL_COMMAND"`。不要去掉这个 ForceCommand：Windows OpenSSH 在 pty 会话里会把远程命令不加引号地拼进命令行，bash 只会执行第一个词。比如 attach 命令只剩 `tmux`，结果会新建一个会话。
+## 多服务器：Hub 与 Node
+
+完整说明见 [docs/architecture.md](docs/architecture.md)。每份安装都是一个 Node，只管本机；浏览器所用的那份面板同时是 Hub，经 `/n/:serverId` 把机器相关的请求原样转给对应的 Node。
+
+不变量：
+
+- **Node 的 API 不带 serverId**（`/api/workspace`、`/api/metrics/*`、`/api/files/*`、`/ws/terminal/:paneId` 等）。要访问其它机器，一律走 Hub 的 `/n/:serverId`（`server/hub/proxy.js`）；前端统一用 `Api.nodeUrl` / `Api.activeUrl` 拼路径，不要再写死 `/api/servers/:id/...` 这种按服务器分的机器接口。
+- **Hub 永远不在远端执行命令**。SSH 只用来做两件事：sftp 读取配对文件 `~/.config/tmux-web-panel/node.json`，以及维持一条 `ssh -N -L` 端口转发（`server/transport/ssh-connection.js`、`server/hub/node-link.js`）。新功能只在 Node 上实现，远程服务器就会自动拥有；不要再加远程 shell 模板或探测脚本。
+- **只在 Hub 上处理、不转发的接口**：`/api/auth`、`/api/servers`、`/api/plugins`、`/api/managed-resources`、`/api/share`（`isRelayable` / `Api.isHubPath` 两处须一致）。
+- **node token**（配对文件里的令牌）只能用来访问那台 Node 自己的 API。`/n/` 转发入口只接受登录令牌，防止一个 Hub 经另一个 Hub 链式转发。
+- HTTPS Node 按配对文件里的证书指纹固定，升级请求（WebSocket）也走同样的固定证书 agent（`pinnedAgent`）；不要退回 `rejectUnauthorized: false` 却不校验指纹。
 
 ## tmux server 守护与会话持久化
 

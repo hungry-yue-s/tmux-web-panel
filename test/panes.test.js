@@ -8,8 +8,13 @@ const panesScript = readFileSync(
   'utf-8'
 );
 
-// panes.js addresses panes through the server-scoped adapter, so the real one is
-// loaded here rather than stubbed — that keeps the wiring under test.
+// panes.js addresses panes through the server-scoped adapter, so the real one
+// (and the Api path builders it uses) is loaded rather than stubbed — that keeps
+// the wiring under test.
+const apiScript = readFileSync(
+  resolve(import.meta.dirname, '../public/js/api.js'),
+  'utf-8'
+);
 const targetScript = readFileSync(
   resolve(import.meta.dirname, '../public/js/terminal-target.js'),
   'utf-8'
@@ -28,6 +33,7 @@ function createEnv() {
       return d.innerHTML;
     }
   `);
+  dom.window.eval(apiScript);
   dom.window.eval(targetScript);
   dom.window.eval(panesScript);
   return dom;

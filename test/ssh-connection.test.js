@@ -3,26 +3,25 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile as execFileCallback } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { promisify } from 'node:util';
 import { ServerRegistry } from '../server/servers/registry.js';
 
 import {
-  OpenSSHExecutor,
+  SshConnection,
   baseSshOptions,
   buildSshArgs,
   classifySshError,
-  controlSocketName,
+  connectionKey,
+  forwardSpec,
   fingerprintFromBase64Key,
   keyBlobAlgorithm,
   knownHostsEntryName,
   normalizeHostForCompare,
   parseKeyscanOutput,
   parseSshConfigDump,
-  powerShellCommand,
-  quoteArgv,
-  shellQuote,
   targetIdentity,
-} from '../server/transport/openssh-executor.js';
+} from '../server/transport/ssh-connection.js';
 import { ErrorCode } from '../server/servers/errors.js';
 
 const REMOTE = {
@@ -64,120 +63,39 @@ function stubExecFile(handlers = {}) {
   return { impl, calls };
 }
 
-describe('shellQuote / quoteArgv', () => {
-  it('leaves safe words alone', () => {
-    expect(shellQuote('tmux')).toBe('tmux');
-    expect(shellQuote('list-sessions')).toBe('list-sessions');
-    expect(shellQuote('%12')).toBe('%12');
-  });
-
-  it('quotes anything a remote shell could reinterpret', () => {
-    expect(shellQuote('')).toBe("''");
-    expect(shellQuote('a b')).toBe("'a b'");
-    expect(shellQuote('$(id)')).toBe("'$(id)'");
-    expect(shellQuote('a;rm -rf /')).toBe("'a;rm -rf /'");
-    expect(shellQuote('back`tick`')).toBe("'back`tick`'");
-    expect(shellQuote("it's")).toBe(`'it'\\''s'`);
-  });
-
-  it('keeps injected metacharacters inert once joined', () => {
-    expect(quoteArgv(['tmux', 'rename-session', '-t', 'a; rm -rf /'])).toBe(
-      "tmux rename-session -t 'a; rm -rf /'",
-    );
-  });
-});
-
 describe('baseSshOptions', () => {
   it('always fails closed on host keys and never prompts', () => {
-    const options = baseSshOptions({ knownHostsPath: '/cfg/known_hosts', controlPath: '/cfg/ssh-control/%C' });
+    const options = baseSshOptions({ knownHostsPath: '/cfg/known_hosts' });
     expect(options).toContain('BatchMode=yes');
     expect(options).toContain('StrictHostKeyChecking=yes');
     expect(options).toContain('UserKnownHostsFile=/cfg/known_hosts');
     expect(options).toContain('ConnectTimeout=5');
     expect(options).toContain('ServerAliveInterval=15');
     expect(options).toContain('ServerAliveCountMax=2');
-    expect(options).toContain('ControlMaster=auto');
-    expect(options).toContain('ControlPersist=60');
-    expect(options).toContain('ControlPath=/cfg/ssh-control/%C');
+    // One forward per server replaces multiplexing.
+    expect(options.join(' ')).not.toContain('ControlMaster');
     expect(options.join(' ')).not.toMatch(/StrictHostKeyChecking=(no|accept-new)/);
   });
 });
 
-describe('powerShellCommand', () => {
-  it('encodes the script as base64 of UTF-16LE', () => {
-    const command = powerShellCommand('Write-Output "hi"');
-    const encoded = command.split(' ').pop();
-
-    expect(Buffer.from(encoded, 'base64').toString('utf16le')).toBe('Write-Output "hi"');
-  });
-
-  it('leaves cmd.exe nothing to interpret', () => {
-    // The whole point of -EncodedCommand: a Windows host answers with cmd.exe,
-    // whose quoting rules share nothing with POSIX.
-    const command = powerShellCommand('Write-Output "a b"; $x = 1 | Out-Null & echo %PATH%');
-
-    expect(command).toMatch(/^pwsh (?:-[A-Za-z]+ )+-EncodedCommand [A-Za-z0-9+/=]+$/);
-    expect(command).not.toMatch(/["'&|<>%^]/);
-  });
-
-  it('keeps an interactive session open but a probe non-interactive', () => {
-    expect(powerShellCommand('x', { interactive: true })).toContain('-NoExit');
-    expect(powerShellCommand('x', { interactive: true })).not.toContain('-NonInteractive');
-    expect(powerShellCommand('x')).toContain('-NonInteractive');
-    expect(powerShellCommand('x')).not.toContain('-NoExit');
-  });
-
-  it('carries a UTF-8 encoding setup for interactive shells', () => {
-    const executor = new OpenSSHExecutor({ server: REMOTE, configDir: '/cfg' });
-    const argv = executor.powerShellPtyArgs();
-    const script = Buffer.from(argv[argv.length - 1].split(' ').pop(), 'base64').toString('utf16le');
-
-    expect(argv[0]).toBe('-tt');
-    // Without this the console keeps the legacy code page and the browser
-    // terminal, which decodes UTF-8, shows garbage.
-    expect(script).toContain('UTF8Encoding');
-  });
-});
-
-describe('control socket path', () => {
-  /** macOS sun_path limit, minus the temp suffix ssh adds while creating the master. */
-  const BINDABLE_MAX = 104 - 17;
-
-  it('stays bindable under a realistic config dir', () => {
-    const configDir = path.join(os.homedir(), '.config', 'tmux-web-panel');
-    const executor = new OpenSSHExecutor({ server: REMOTE, configDir });
-
-    expect(executor.controlPath).not.toBeNull();
-    expect(executor.controlPath.length).toBeLessThanOrEqual(BINDABLE_MAX);
-    // %C alone expands to 40 hex chars and was what overran the limit.
-    expect(executor.controlPath).not.toContain('%C');
-  });
-
+describe('connectionKey', () => {
   it('changes when the connection target changes', () => {
-    const base = controlSocketName(REMOTE);
-    const otherHost = controlSocketName({ ...REMOTE, address: { ...REMOTE.address, host: '10.0.0.22' } });
-    const otherPort = controlSocketName({ ...REMOTE, address: { ...REMOTE.address, port: 2222 } });
-    const otherUser = controlSocketName({ ...REMOTE, address: { ...REMOTE.address, user: 'root' } });
-    const otherJump = controlSocketName({ ...REMOTE, ssh: { ...REMOTE.ssh, proxyJump: 'bastion' } });
+    const base = connectionKey(REMOTE);
+    const otherHost = connectionKey({ ...REMOTE, address: { ...REMOTE.address, host: '10.0.0.22' } });
+    const otherPort = connectionKey({ ...REMOTE, address: { ...REMOTE.address, port: 2222 } });
+    const otherUser = connectionKey({ ...REMOTE, address: { ...REMOTE.address, user: 'root' } });
+    const otherJump = connectionKey({ ...REMOTE, ssh: { ...REMOTE.ssh, proxyJump: 'bastion' } });
 
     expect(new Set([base, otherHost, otherPort, otherUser, otherJump]).size).toBe(5);
   });
 
-  it('is unchanged by a rename, so multiplexing survives it', () => {
-    expect(controlSocketName({ ...REMOTE, name: 'Renamed', id: 'renamed' })).toBe(controlSocketName(REMOTE));
-  });
-
-  it('drops multiplexing rather than failing every connection when unbindable', () => {
-    const configDir = '/' + 'd'.repeat(120);
-    const executor = new OpenSSHExecutor({ server: REMOTE, configDir });
-
-    expect(executor.controlPath).toBeNull();
-    expect(executor.sshArgs().join(' ')).not.toContain('ControlMaster');
+  it('is unchanged by a rename, so an open forward survives it', () => {
+    expect(connectionKey({ ...REMOTE, name: 'Renamed', id: 'renamed' })).toBe(connectionKey(REMOTE));
   });
 });
 
 describe('buildSshArgs', () => {
-  const opts = { knownHostsPath: '/cfg/known_hosts', controlPath: '/cfg/ssh-control/%C' };
+  const opts = { knownHostsPath: '/cfg/known_hosts' };
 
   it('builds a user@host target with structured fields', () => {
     const args = buildSshArgs(REMOTE, opts);
@@ -209,13 +127,37 @@ describe('buildSshArgs', () => {
     expect(args).toEqual(expect.arrayContaining(['-o', 'HostKeyAlias=api-canonical']));
   });
 
-  it('requests a tty only when asked', () => {
-    expect(buildSshArgs(REMOTE, { ...opts, tty: true })[0]).toBe('-tt');
-    expect(buildSshArgs(REMOTE, opts)[0]).toBe('-T');
+  it('spells the port the sftp way and keeps the user in the destination', () => {
+    const server = { ...REMOTE, address: { ...REMOTE.address, port: 2222 } };
+    const args = buildSshArgs(server, { ...opts, tool: 'sftp', leading: ['-b', '-'] });
+    expect(args.slice(0, 2)).toEqual(['-b', '-']);
+    expect(args).toEqual(expect.arrayContaining(['-P', '2222']));
+    expect(args).not.toContain('-p');
+    expect(args).not.toContain('-T');
+    expect(args.at(-1)).toBe('deploy@10.0.0.21');
+  });
+
+  it('passes a password user for a config alias as -o User for sftp and -l for ssh', () => {
+    const server = { ...REMOTE, ssh: { ...REMOTE.ssh, configHost: 'win-box', authMethod: 'password' } };
+    expect(buildSshArgs(server, { ...opts, tool: 'sftp' })).toEqual(expect.arrayContaining(['-o', 'User=deploy']));
+    expect(buildSshArgs(server, opts)).toEqual(expect.arrayContaining(['-l', 'deploy']));
+  });
+
+  it('puts leading flags such as -N -L before every option', () => {
+    const args = buildSshArgs(REMOTE, { ...opts, leading: ['-N', '-L', forwardSpec(41000, '127.0.0.1', 7681)] });
+    expect(args.slice(0, 3)).toEqual(['-N', '-L', '127.0.0.1:41000:127.0.0.1:7681']);
+    expect(args.at(-1)).toBe('deploy@10.0.0.21');
   });
 
   it('refuses the local record', () => {
     expect(() => buildSshArgs({ kind: 'local' }, opts)).toThrow(/remote server/);
+  });
+});
+
+describe('forwardSpec', () => {
+  it('binds the local end to loopback and brackets an IPv6 target', () => {
+    expect(forwardSpec(41000, '127.0.0.1', 7681)).toBe('127.0.0.1:41000:127.0.0.1:7681');
+    expect(forwardSpec(41000, '::1', 7681)).toBe('127.0.0.1:41000:[::1]:7681');
   });
 });
 
@@ -338,7 +280,7 @@ describe('classifySshError', () => {
   });
 });
 
-describe('OpenSSHExecutor', () => {
+describe('SshConnection', () => {
   let dir;
 
   beforeEach(async () => {
@@ -351,117 +293,120 @@ describe('OpenSSHExecutor', () => {
 
   function make(server = REMOTE, handlers = {}, extra = {}) {
     const { impl, calls } = stubExecFile(handlers);
-    const executor = new OpenSSHExecutor({ server, configDir: dir, execFileImpl: impl, ...extra });
+    const executor = new SshConnection({ server, configDir: dir, execFileImpl: impl, ...extra });
     return { executor, calls };
   }
 
   it('requires a server and a configDir', () => {
-    expect(() => new OpenSSHExecutor({ configDir: dir })).toThrow(/requires a server/);
-    expect(() => new OpenSSHExecutor({ server: REMOTE })).toThrow(/configDir/);
+    expect(() => new SshConnection({ configDir: dir })).toThrow(/requires a server/);
+    expect(() => new SshConnection({ server: REMOTE })).toThrow(/configDir/);
   });
 
-  it('runs a remote tmux command with quoted argv and no local shell', async () => {
-    const { executor, calls } = make(REMOTE, { ssh: { stdout: 'ok' } });
+  const PAIRING = {
+    protocol: 1,
+    host: '127.0.0.1',
+    port: 7681,
+    tls: false,
+    tlsFingerprint: null,
+    token: 'a'.repeat(64),
+  };
 
-    const result = await executor.exec('tmux', ['list-sessions', '-F', '#{session_id}']);
-
-    expect(result.stdout).toBe('ok');
-    expect(calls).toHaveLength(1);
-    expect(calls[0].bin).toBe('ssh');
-    expect(Array.isArray(calls[0].argv)).toBe(true);
-    // The terminator belongs before the destination; the command is last.
-    const argv = calls[0].argv;
-    expect(argv[argv.indexOf('--') + 1]).toBe('deploy@10.0.0.21');
-    expect(argv[argv.length - 1]).toBe("LC_ALL=C.UTF-8 LANG=C.UTF-8 tmux list-sessions -F '#{session_id}'");
-  });
-
-  it('creates the control directory with 0700 and tightens an existing one', async () => {
-    const controlDir = path.join(dir, 'ssh-control');
-    await fs.mkdir(controlDir, { recursive: true, mode: 0o777 });
-    await fs.chmod(controlDir, 0o777);
-
-    const { executor } = make(REMOTE, { ssh: { stdout: '' } });
-    await executor.exec('tmux', ['-V']);
-
-    expect((await fs.stat(controlDir)).mode & 0o777).toBe(0o700);
-  });
-
-  it('classifies a failed command and keeps the exit code', async () => {
-    const err = Object.assign(new Error('exit 255'), { code: 255 });
-    const { executor } = make(REMOTE, { ssh: { error: err, stderr: 'Permission denied (publickey).' } });
-
-    await expect(executor.exec('tmux', ['-V'])).rejects.toMatchObject({
-      code: ErrorCode.SSH_AUTH_REQUIRED,
-      exitCode: 255,
-    });
-  });
-
-  it('feeds a probe script over stdin instead of writing remote files', async () => {
-    const { executor, calls } = make(REMOTE, { ssh: { stdout: '{"schema":1}' } });
-
-    await executor.runScript('echo hi');
-
-    expect(calls[0].argv[calls[0].argv.length - 1]).toBe('LC_ALL=C.UTF-8 LANG=C.UTF-8 /bin/sh -s');
-  });
-
-  it('sends a Windows probe without a POSIX locale prefix', async () => {
-    const { executor, calls } = make(REMOTE, { ssh: { stdout: 'kernel=Windows' } });
-
-    await executor.execPowerShell('Write-Output "hi"');
-
-    const remoteCommand = calls[0].argv[calls[0].argv.length - 1];
-    expect(remoteCommand.startsWith('pwsh ')).toBe(true);
-    // cmd.exe would treat LC_ALL=... as the name of a program to run.
-    expect(remoteCommand).not.toContain('LC_ALL');
-  });
-
-  it('closes stdin even when there is no input to send', async () => {
-    const ends = [];
-    const impl = (bin, argv, options, callback) => {
-      process.nextTick(() => callback(null, 'ok', ''));
-      return { stdin: { end: (data) => ends.push(data) } };
+  /** sftp stub: writes the pairing file to the local path named in the batch. */
+  function sftpServing(content) {
+    return (_argv, input) => {
+      const local = /get "[^"]+" "([^"]+)"/.exec(input)[1];
+      return { write: { path: local, content } };
     };
-    const executor = new OpenSSHExecutor({ server: REMOTE, configDir: dir, execFileImpl: impl });
+  }
 
-    await executor.exec('tmux', ['-V']);
+  /** execFile stub that answers once stdin is closed, like sftp -b - does. */
+  function makeWithStdin(server, handler) {
+    const calls = [];
+    const impl = (bin, argv, options, callback) => {
+      const call = { bin, argv, options, input: null };
+      calls.push(call);
+      return {
+        stdin: {
+          end: (input) => {
+            call.input = input;
+            const result = handler(argv, input) || {};
+            const done = () => callback(result.error || null, result.stdout || '', result.stderr || '');
+            if (result.write) fs.writeFile(result.write.path, result.write.content).then(done);
+            else process.nextTick(done);
+          },
+        },
+      };
+    };
+    return { connection: new SshConnection({ server, configDir: dir, execFileImpl: impl }), calls };
+  }
 
-    // Without an EOF a remote command reading stdin would wait for the timeout.
-    expect(ends).toEqual(['']);
+  it('reads the pairing file over sftp, never with a remote command', async () => {
+    const { connection, calls } = makeWithStdin(REMOTE, sftpServing(JSON.stringify(PAIRING)));
+
+    await expect(connection.fetchPairing()).resolves.toEqual(PAIRING);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].bin).toBe('sftp');
+    expect(calls[0].argv.slice(0, 2)).toEqual(['-b', '-']);
+    expect(calls[0].argv.at(-1)).toBe('deploy@10.0.0.21');
+    // The relative path resolves against the login directory on any shell or OS.
+    expect(calls[0].input).toMatch(/^get "\.config\/tmux-web-panel\/node\.json" "[^"]+"\n$/);
   });
 
-  it('builds pty argv with -tt for interactive attach', () => {
-    const { executor } = make();
-    const argv = executor.ptyArgs('tmux attach-session -d -t %3');
-    expect(argv[0]).toBe('-tt');
-    expect(argv[argv.length - 1]).toBe('tmux attach-session -d -t %3');
+  it('reports a host without the pairing file as not installed', async () => {
+    const missing = Object.assign(new Error('exit 1'), { code: 1 });
+    const { connection } = makeWithStdin(REMOTE, () => ({
+      error: missing,
+      stderr: 'File "/home/deploy/.config/tmux-web-panel/node.json" not found.',
+    }));
+
+    await expect(connection.fetchPairing()).rejects.toMatchObject({ code: ErrorCode.NODE_NOT_INSTALLED });
   });
 
-  it('groups the PTY command for MSYS fish without changing command execution', async () => {
-    const { executor, calls } = make(REMOTE, { ssh: { stdout: 'ok' } });
-    executor.remoteFacts = { kernel: 'MSYS_NT-10.0-26100', shell: '/usr/bin/fish.exe' };
-    const command = "tmux -u select-pane -t '%0' \\; attach-session -t '%0'";
-    expect(executor.ptyArgs(command).at(-1)).toBe('"' + command + '"');
-    expect(executor.ptyArgs('printf "%s" "two words"').at(-1)).toBe('"printf \\"%s\\" \\"two words\\""');
-    expect(executor.ptyArgs('echo trailing\\').at(-1)).toBe('"echo trailing\\\\"');
-    await executor.execRemoteCommand('tmux -V');
-    expect(calls[0].argv.at(-1)).toBe('tmux -V');
-    for (const facts of [
-      { kernel: 'Linux', shell: '/usr/bin/fish' },
-      { kernel: 'Darwin', shell: '/bin/zsh' },
-      { kernel: 'MSYS_NT-10.0-26100', shell: '/usr/bin/bash' },
-    ]) {
-      executor.remoteFacts = facts;
-      expect(executor.ptyArgs(command).at(-1)).toBe(command);
-    }
+  it('classifies an ssh failure during pairing', async () => {
+    const { connection } = makeWithStdin(REMOTE, () => ({
+      error: Object.assign(new Error('exit 255'), { code: 255 }),
+      stderr: 'Host key verification failed.',
+    }));
+
+    await expect(connection.fetchPairing()).rejects.toMatchObject({ code: ErrorCode.SSH_HOST_KEY_UNKNOWN });
   });
 
-  it('uses password auth and local askpass for commands and PTYs without leaking the password', async () => {
+  it('refuses a pairing file that does not validate', async () => {
+    const { connection } = makeWithStdin(REMOTE, sftpServing(JSON.stringify({ ...PAIRING, token: 'short' })));
+
+    await expect(connection.fetchPairing()).rejects.toMatchObject({ code: ErrorCode.NODE_INCOMPATIBLE });
+  });
+
+  it('starts the forward as ssh -N -L with ExitOnForwardFailure and no remote command', () => {
+    const spawned = [];
+    const connection = new SshConnection({
+      server: REMOTE,
+      configDir: dir,
+      spawnImpl: (bin, argv, options) => {
+        spawned.push({ bin, argv, options });
+        const child = new EventEmitter();
+        child.stderr = new EventEmitter();
+        return child;
+      },
+    });
+
+    connection.openForward({ localPort: 41000, remoteHost: '127.0.0.1', remotePort: 7681 });
+
+    expect(spawned[0].bin).toBe('ssh');
+    expect(spawned[0].argv.slice(0, 3)).toEqual(['-N', '-L', '127.0.0.1:41000:127.0.0.1:7681']);
+    expect(spawned[0].argv).toEqual(expect.arrayContaining(['ExitOnForwardFailure=yes', 'StrictHostKeyChecking=yes']));
+    expect(spawned[0].argv.at(-1)).toBe('deploy@10.0.0.21');
+  });
+
+  it('uses password auth and local askpass for pairing and the forward without leaking the password', async () => {
     const password = '  密码 $()`\\"  ';
     const registry = await new ServerRegistry({ configDir: dir }).load();
     const server = await registry.create({ ...REMOTE, ssh: { authMethod: 'password', password } });
-    const { executor, calls } = make(server, { ssh: { stdout: 'ok' } });
-    await executor.exec('tmux', ['-V']);
-    for (const argv of [calls[0].argv, executor.ptyArgs('exec sh -l')]) {
+    const { connection: executor, calls } = makeWithStdin(server, sftpServing(JSON.stringify(PAIRING)));
+    await executor.fetchPairing();
+    const forwardArgv = buildSshArgs(server, { knownHostsPath: executor.knownHostsPath, leading: ['-N'] });
+    for (const argv of [calls[0].argv, forwardArgv]) {
       expect(argv).toContain('BatchMode=no');
       expect(argv).toContain('PreferredAuthentications=password,keyboard-interactive');
       expect(argv).toContain('NumberOfPasswordPrompts=1');
@@ -476,7 +421,7 @@ describe('OpenSSHExecutor', () => {
     await registry.update(server.id, { ssh: { password: 'replacement' } });
     // An in-flight old connection cannot obtain credentials from a later edit.
     await expect(invoke()).rejects.toMatchObject({ code: 1, stdout: '', stderr: '' });
-    expect(controlSocketName(registry.require(server.id))).not.toBe(controlSocketName(server));
+    expect(connectionKey(registry.require(server.id))).not.toBe(connectionKey(server));
   });
 
   describe('resolveTarget', () => {
@@ -728,7 +673,7 @@ describe('OpenSSHExecutor', () => {
         ssh: () => ({ stdout: `hostname ${hostname}\nport 22\n` }),
         'ssh-keyscan': { stdout: `30.166.3.252 ssh-ed25519 ${blob}` },
       });
-      const executor = new OpenSSHExecutor({ server: viaConfig, configDir: dir, execFileImpl: impl });
+      const executor = new SshConnection({ server: viaConfig, configDir: dir, execFileImpl: impl });
       await executor.scanHostKeys();
 
       hostname = '10.9.9.9'; // ~/.ssh/config edited between the two requests
@@ -794,24 +739,5 @@ describe('OpenSSHExecutor', () => {
       const { executor } = make(REMOTE);
       await expect(executor.hasKnownHostEntry()).resolves.toBe(false);
     });
-  });
-
-  it('bounds concurrent ssh processes per server', async () => {
-    let active = 0;
-    let peak = 0;
-    const impl = (bin, argv, options, callback) => {
-      active += 1;
-      peak = Math.max(peak, active);
-      setTimeout(() => {
-        active -= 1;
-        callback(null, 'ok', '');
-      }, 5);
-      return { stdin: { end: () => {} } };
-    };
-    const executor = new OpenSSHExecutor({ server: REMOTE, configDir: dir, execFileImpl: impl, maxConcurrent: 2 });
-
-    await Promise.all(Array.from({ length: 8 }, () => executor.exec('tmux', ['-V'])));
-
-    expect(peak).toBeLessThanOrEqual(2);
   });
 });

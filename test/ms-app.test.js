@@ -130,7 +130,7 @@ describe('single Window Bar', () => {
   });
 
   /** Renders the real header markup, then runs the real embed hook over it. */
-  function embedFixture({ provider = 'tmux', transport = 'local', width = 1440, mobileSheet = false, beforeEmbed } = {}) {
+  function embedFixture({ serverId = 'local', width = 1440, mobileSheet = false, beforeEmbed } = {}) {
     const dom = new JSDOM(`<!DOCTYPE html><html><body>
       <header class="mobile-header"><div class="mobile-tools" id="ms-mobile-tools"></div></header>
       ${mobileSheet ? '<div id="ms-mobile-workspace-tools"></div>' : ''}
@@ -158,8 +158,8 @@ describe('single Window Bar', () => {
     const win = dom.window;
     Object.defineProperty(win, 'innerWidth', { value: width, configurable: true });
     win.AppShell = {
-      activeServerId: () => 'srv',
-      workspace: () => ({ provider, transport }),
+      activeServerId: () => serverId,
+      workspace: () => ({ provider: 'tmux' }),
       hideServerPicker: vi.fn(),
     };
     win.eval(MS_APP);
@@ -340,26 +340,18 @@ describe('single Window Bar', () => {
     expect(win.document.querySelectorAll('#ms-top-actions .terminal-header-pills')).toHaveLength(1);
   });
 
-  it('withholds only local-only actions on a remote tmux server', () => {
-    const actions = embedFixture({ provider: 'tmux', transport: 'ssh' })
+  it('keeps every tool on a remote server except the pop-out window', () => {
+    const actions = embedFixture({ serverId: 'api-linux' })
       .document.querySelector('#ms-top-actions');
 
-    expect(actions.querySelector('.terminal-open-buf-btn')).toBeNull();
+    // The pop-out page addresses this panel's own panes; everything else runs
+    // on the remote node, so the paste buffer and native split stay.
     expect(actions.querySelector('.terminal-popout-btn')).toBeNull();
-    // Remote tmux still supports native split and labels.
+    expect(actions.querySelector('.terminal-open-buf-btn')).toBeTruthy();
     expect(actions.querySelector('.terminal-mode-toggle')).toBeTruthy();
     expect(actions.querySelector('.terminal-split-btn')).toBeTruthy();
     expect(actions.querySelector('.terminal-label-btn')).toBeTruthy();
-  });
-
-  it('keeps split and label on an ssh workspace but drops the tmux mode toggle', () => {
-    const actions = embedFixture({ provider: 'ssh', transport: 'ssh' })
-      .document.querySelector('#ms-top-actions');
-
-    expect(actions.querySelector('.terminal-mode-toggle')).toBeNull();
-    expect(actions.querySelector('.terminal-split-btn')).toBeTruthy();
-    expect(actions.querySelector('.terminal-label-btn')).toBeTruthy();
-    expect(actions.querySelector('.provider-badge').textContent).toBe('SSH');
+    expect(actions.querySelector('.provider-badge')).toBeNull();
   });
 
   it('hoists into the mobile header on a phone, where the desktop bar is hidden', () => {
@@ -503,6 +495,8 @@ const SERVERS_SRC = readFileSync('public/js/servers.js', 'utf8');
 const SHELL_SRC = readFileSync('public/js/app-shell.js', 'utf8');
 const ROUTER_SRC = readFileSync('public/js/router.js', 'utf8');
 const STORE_SRC = readFileSync('public/js/store.js', 'utf8');
+const API_SRC = readFileSync('public/js/api.js', 'utf8');
+const TARGET_SRC = readFileSync('public/js/terminal-target.js', 'utf8');
 
 const STATUS_DOM = `<!DOCTYPE html><html><body>
   <div class="ms-app">
@@ -543,12 +537,13 @@ function loadStatusShell({ perfPanel = null, agentHub = null, theme = null, auth
   if (theme) win.Theme = theme;
   if (auth) win.Auth = auth;
 
-  win.Api = {
-    serverPath: (id, suffix) => '/api/servers/' + id + (suffix || ''),
-    workspacePath: (id) => '/api/servers/' + id + '/workspace',
-    get: async () => ({}),
-    post: async () => ({}),
-  };
+  // Real path builders and terminal target; only the network is stubbed.
+  win.eval(API_SRC);
+  win.eval(TARGET_SRC);
+  win.Api.get = async () => ({});
+  win.Api.post = async () => ({});
+  win.Api.patch = async () => ({});
+  win.Api.del = async () => null;
 
   win.Store.setServers([
     { id: 'local', name: '本机', kind: 'local', immutable: true, address: { host: '127.0.0.1' } },
@@ -746,11 +741,18 @@ describe('MsApp mobile workspace action', () => {
     const button = ctx.document.createElement('button');
     await ctx.MsApp._handleAction('mobile-files', button);
     expect(ctx.win.FilePreview.openFile).toHaveBeenCalledWith('.', '%1');
+    // A remote server's files are read on that machine, so the action works there too.
     route.params.serverId = 'api-linux';
+    ctx.Store.setWorkspace('api-linux', { sessions: [{ id: '$1', windows: [{ id: '@0', panes: [{ id: '%4' }] }] }] });
     await ctx.MsApp._handleAction('mobile-files', button);
-    expect(ctx.win.FilePreview.openFile).toHaveBeenCalledTimes(1);
+    expect(ctx.win.FilePreview.openFile).toHaveBeenLastCalledWith('.', '%4');
     ctx.win.close();
   });
+
+  /** The machine API of a server as the browser addresses it. */
+  function workspaceBase(serverId) {
+    return (serverId === 'local' ? '' : '/n/' + serverId) + '/api/workspace';
+  }
 
   function mobileWorkspace(serverId, provider) {
     const ctx = loadStatusShell();
@@ -770,7 +772,9 @@ describe('MsApp mobile workspace action', () => {
     ctx.win.AppShell.render();
     ctx.MsApp._bindEvents();
     ctx.win.AppShell.openMobileWorkspaceSheet();
-    ctx.win.Api.request = vi.fn(async () => ({}));
+    ctx.win.Api.post = vi.fn(async () => ({}));
+    ctx.win.Api.patch = vi.fn(async () => ({}));
+    ctx.win.Api.del = vi.fn(async () => null);
     ctx.MsApp.refreshWorkspace = vi.fn(async () => ctx.win.AppShell.workspace(serverId));
     ctx.MsApp._onRoute = vi.fn(async () => {});
     return { ...ctx, sheet: ctx.document.getElementById('ms-mobile-workspace-sheet') };
@@ -809,31 +813,30 @@ describe('MsApp mobile workspace action', () => {
     ctx.win.close();
   });
 
-  it.each([['local', 'tmux'], ['api-linux', 'ssh']])('creates sessions and windows on %s via visible buttons', async (serverId, provider) => {
+  it.each([['local', 'tmux'], ['api-linux', 'tmux']])('creates sessions and windows on %s via visible buttons', async (serverId, provider) => {
     const ctx = mobileWorkspace(serverId, provider);
     ctx.win.showPrompt = vi.fn().mockResolvedValueOnce('New work').mockResolvedValueOnce('');
+    const base = workspaceBase(serverId);
 
     ctx.sheet.querySelector('[data-action="new-session"]').click();
     await vi.waitFor(() => expect(ctx.MsApp.refreshWorkspace).toHaveBeenCalledOnce());
-    expect(ctx.win.Api.request).toHaveBeenNthCalledWith(1, 'POST', '/api/servers/' + serverId + '/sessions',
-      { name: 'New work' }, { headers: { 'X-Workspace-Provider': provider } });
+    expect(ctx.win.Api.post).toHaveBeenNthCalledWith(1, base + '/sessions', { name: 'New work' });
 
     ctx.sheet.querySelector('[data-session="$7"] [data-action="new-window"]').click();
     await vi.waitFor(() => expect(ctx.MsApp.refreshWorkspace).toHaveBeenCalledTimes(2));
-    expect(ctx.win.Api.request).toHaveBeenNthCalledWith(2, 'POST', '/api/servers/' + serverId + '/sessions/%247/windows',
-      {}, { headers: { 'X-Workspace-Provider': provider } });
+    expect(ctx.win.Api.post).toHaveBeenNthCalledWith(2, base + '/sessions/%247/windows', {});
     ctx.win.close();
   });
 
   it.each([
     ['local', 'tmux', 'session', 'close-session', '/sessions/%247', 'Other work'],
-    ['api-linux', 'ssh', 'session', 'close-session', '/sessions/%247', 'Other work'],
+    ['api-linux', 'tmux', 'session', 'close-session', '/sessions/%247', 'Other work'],
     ['local', 'tmux', 'window', 'close-window', '/windows/%409', 'Build logs'],
-    ['api-linux', 'ssh', 'window', 'close-window', '/windows/%409', 'Build logs'],
+    ['api-linux', 'tmux', 'window', 'close-window', '/windows/%409', 'Build logs'],
     ['local', 'tmux', 'session', 'close-session', '/sessions/%247', 'Other work', 1024],
-    ['api-linux', 'ssh', 'session', 'close-session', '/sessions/%247', 'Other work', 1024],
+    ['api-linux', 'tmux', 'session', 'close-session', '/sessions/%247', 'Other work', 1024],
     ['local', 'tmux', 'window', 'close-window', '/windows/%409', 'Build logs', 1024],
-    ['api-linux', 'ssh', 'window', 'close-window', '/windows/%409', 'Build logs', 1024],
+    ['api-linux', 'tmux', 'window', 'close-window', '/windows/%409', 'Build logs', 1024],
   ])('closes the chosen %s %s %s through its row menu', async (serverId, provider, entity, action, path, name, width = 375) => {
     const ctx = mobileWorkspace(serverId, provider);
     if (width >= 768) {
@@ -852,8 +855,7 @@ describe('MsApp mobile workspace action', () => {
 
     await vi.waitFor(() => expect(ctx.MsApp.refreshWorkspace).toHaveBeenCalledOnce());
     expect(ctx.win.showConfirm).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining(name), danger: true }));
-    expect(ctx.win.Api.request).toHaveBeenCalledWith('DELETE', '/api/servers/' + serverId + path, undefined,
-      { headers: { 'X-Workspace-Provider': provider } });
+    expect(ctx.win.Api.del).toHaveBeenCalledWith(workspaceBase(serverId) + path);
     expect(menu.hidden).toBe(true);
     expect(target.querySelector('.tree-menu-button').getAttribute('aria-expanded')).toBe('false');
     ctx.win.close();
@@ -861,9 +863,9 @@ describe('MsApp mobile workspace action', () => {
 
   it.each([375, 1024].flatMap(width => [
     ['local', 'tmux', 'session', '/sessions/%247', 'Other work', width],
-    ['api-linux', 'ssh', 'session', '/sessions/%247', 'Other work', width],
+    ['api-linux', 'tmux', 'session', '/sessions/%247', 'Other work', width],
     ['local', 'tmux', 'window', '/windows/%409', 'Build logs', width],
-    ['api-linux', 'ssh', 'window', '/windows/%409', 'Build logs', width],
+    ['api-linux', 'tmux', 'window', '/windows/%409', 'Build logs', width],
   ]))('renames the selected %s %s %s through its row menu', async (serverId, provider, entity, path, name, width) => {
     const ctx = mobileWorkspace(serverId, provider);
     if (width >= 768) {
@@ -880,8 +882,7 @@ describe('MsApp mobile workspace action', () => {
     menu.querySelector('[data-action="rename-' + entity + '"]').click();
     await vi.waitFor(() => expect(ctx.MsApp.refreshWorkspace).toHaveBeenCalledOnce());
     expect(ctx.win.showPrompt).toHaveBeenCalledWith(expect.objectContaining({ value: name }));
-    expect(ctx.win.Api.request).toHaveBeenCalledWith('PATCH', '/api/servers/' + serverId + path,
-      { name: 'Renamed work' }, { headers: { 'X-Workspace-Provider': provider } });
+    expect(ctx.win.Api.patch).toHaveBeenCalledWith(workspaceBase(serverId) + path, { name: 'Renamed work' });
     expect(menu.hidden).toBe(true);
     expect(target.querySelector('.tree-menu-button').getAttribute('aria-expanded')).toBe('false');
     ctx.win.close();
@@ -901,7 +902,7 @@ describe('MsApp mobile workspace action', () => {
     trigger.click();
     menu.querySelector('[data-action="close-window"]').click();
     await vi.waitFor(() => expect(ctx.win.showConfirm).toHaveBeenCalledOnce());
-    expect(ctx.win.Api.request).not.toHaveBeenCalled();
+    expect(ctx.win.Api.del).not.toHaveBeenCalled();
 
     trigger.click();
     ctx.win.AppShell.closeMobileWorkspaceSheet();
@@ -1040,17 +1041,15 @@ describe('MsApp status mode routing', () => {
     expect(MS_APP).not.toContain('data-filter');
   });
 
-  it('shows one unified Agent tab only for the local server', async () => {
+  it('shows the same tabs, Agent console included, for every server', async () => {
     const perf = fakePerfPanel();
     const ctx = loadStatusShell({ perfPanel: perf });
 
-    await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'local', section: 'performance' } });
-    expect([...ctx.document.querySelectorAll('.tabs .tab')].map((n) => n.textContent))
-      .toEqual(['性能', 'Agent 控制台', '连接']);
-
-    await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'api-linux', section: 'performance' } });
-    expect([...ctx.document.querySelectorAll('.tabs .tab')].map((n) => n.textContent))
-      .toEqual(['性能', '连接']);
+    for (const serverId of ['local', 'api-linux']) {
+      await ctx.MsApp._onRoute({ name: 'server', params: { serverId, section: 'performance' } });
+      expect([...ctx.document.querySelectorAll('.tabs .tab')].map((n) => n.textContent))
+        .toEqual(['性能', 'Agent 控制台', '连接']);
+    }
   });
 
   it('replaces a hidden local monitor route with the first enabled page', async () => {
@@ -1188,19 +1187,20 @@ describe('MsApp sidebar context menu', () => {
     expect(ctx.document.activeElement).toBe(session.querySelector('.tree-item'));
   });
 
-  it('passes captured remote server, provider, id and name into existing actions', async () => {
+  it('passes captured remote server, id and name into existing actions', async () => {
     const ctx = loadStatusShell();
     const calls = [];
     ctx.MsApp._renameWindow = async (...args) => calls.push(args);
     const action = ctx.document.createElement('button');
     Object.assign(action.dataset, {
-      action: 'rename-window', serverId: 'api-linux', provider: 'ssh',
+      action: 'rename-window', serverId: 'api-linux', provider: 'tmux',
       window: '@9', entityName: 'Build logs',
     });
 
     await ctx.MsApp._handleAction('rename-window', action);
-    expect(calls).toEqual([['api-linux', '@9', { provider: 'ssh', name: 'Build logs' }]]);
-    expect(ctx.MsApp._providerHeader('api-linux', 'ssh')).toEqual({ 'X-Workspace-Provider': 'ssh' });
+    expect(calls).toEqual([['api-linux', '@9', { provider: 'tmux', name: 'Build logs' }]]);
+    // There is no provider negotiation left to send.
+    expect(ctx.MsApp._providerHeader).toBeUndefined();
   });
 });
 
@@ -1282,32 +1282,31 @@ describe('MsApp PerfPanel lifecycle', () => {
     expect(ctx.MsApp._perfPanelMounted).toBe(false);
   });
 
-  it('keeps server-level metrics for a remote host instead of the local panel', async () => {
+  it('mounts the full performance panel for a remote server, pointed at that server', async () => {
     const perf = fakePerfPanel();
     const ctx = loadStatusShell({ perfPanel: perf });
 
     await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'api-linux', section: 'performance' } });
 
-    // PerfPanel polls the panel's own machine; it must not represent a remote host.
-    expect(ctx.document.querySelector('#perf-panel')).toBeNull();
-    expect(perf.calls.started).toHaveLength(0);
+    // PerfPanel addresses "the server in view", which is now api-linux.
+    expect(ctx.document.querySelector('#perf-panel')).toBeTruthy();
+    expect(perf.calls.started).toContain('performance');
+    expect(ctx.win.TerminalTarget.serverId).toBe('api-linux');
+    expect(ctx.win.Api.activeUrl('/api/perf/history')).toBe('/n/api-linux/api/perf/history');
   });
 
-  it('redirects remote Claude and Codex routes to that server performance page', async () => {
+  it('redirects remote Claude and Codex routes to that server\'s Agent console', async () => {
     for (const section of ['claude', 'codex']) {
-      const perf = fakePerfPanel();
-      const ctx = loadStatusShell({ perfPanel: perf });
+      const ctx = loadStatusShell({ agentHub: fakeAgentHub() });
       const goes = [];
       ctx.win.Router.go = (route, opts) => goes.push({ route, opts });
 
       await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'api-linux', section } });
 
       expect(goes).toEqual([{
-        route: { name: 'server', params: { serverId: 'api-linux', section: 'performance' } },
+        route: { name: 'server', params: { serverId: 'api-linux', section: 'agents' } },
         opts: { replace: true },
       }]);
-      expect(perf.calls.started).toHaveLength(0);
-      expect(ctx.document.getElementById('ms-view').innerHTML).toBe('');
     }
   });
 

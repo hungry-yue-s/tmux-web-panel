@@ -34,72 +34,36 @@ function fakeWs() {
   };
 }
 
-describe('TerminalManager server scoping', () => {
+describe('TerminalManager pane quota', () => {
   beforeEach(() => {
     spawn.mockReset();
     spawn.mockImplementation(() => fakeTerm());
   });
 
-  it('gives each server its own quota for the same pane id', () => {
+  it('limits attachments per pane id on this machine', () => {
     const manager = new TerminalManager({ maxConnectionsPerPane: 2 });
 
-    // Fill the quota for %0 on one remote server.
-    const a1 = manager.create(fakeWs(), '%0', 80, 24, false, { serverId: 'api-linux' });
-    const a2 = manager.create(fakeWs(), '%0', 80, 24, false, { serverId: 'api-linux' });
+    expect(manager.create(fakeWs(), '%0')).toBeTruthy();
+    expect(manager.create(fakeWs(), '%0')).toBeTruthy();
     const refused = fakeWs();
-    const a3 = manager.create(refused, '%0', 80, 24, false, { serverId: 'api-linux' });
-
-    expect(a1).toBeTruthy();
-    expect(a2).toBeTruthy();
-    expect(a3).toBeNull();
+    expect(manager.create(refused, '%0')).toBeNull();
     expect(refused.close).toHaveBeenCalledWith(1013, expect.stringContaining('%0'));
 
-    // The identical pane id on a different server must still be available.
-    const b1 = manager.create(fakeWs(), '%0', 80, 24, false, { serverId: 'build-mac' });
-    const b2 = manager.create(fakeWs(), '%0', 80, 24, false, { serverId: 'build-mac' });
-    expect(b1).toBeTruthy();
-    expect(b2).toBeTruthy();
-
-    // And so must the local one.
-    expect(manager.create(fakeWs(), '%0')).toBeTruthy();
-
-    expect(manager.paneConnectionCount.get('api-linux:%0')).toBe(2);
-    expect(manager.paneConnectionCount.get('build-mac:%0')).toBe(2);
-    expect(manager.paneConnectionCount.get('local:%0')).toBe(1);
+    // Another pane keeps its own quota.
+    expect(manager.create(fakeWs(), '%1')).toBeTruthy();
+    expect(manager.paneConnectionCount.get('%0')).toBe(2);
+    expect(manager.paneConnectionCount.get('%1')).toBe(1);
   });
 
-  it('treats the legacy entry point as the local server', () => {
+  it('releases the quota when a connection is destroyed', () => {
     const manager = new TerminalManager({ maxConnectionsPerPane: 1 });
-
-    expect(manager.create(fakeWs(), '%3')).toBeTruthy();
-    expect(manager.paneConnectionCount.get('local:%3')).toBe(1);
-
-    // A second legacy connection hits the same key.
-    expect(manager.create(fakeWs(), '%3')).toBeNull();
-    // An explicit local serverId shares that key too.
-    expect(manager.create(fakeWs(), '%3', 80, 24, false, { serverId: 'local' })).toBeNull();
-  });
-
-  it('releases the quota under the same scoped key', () => {
-    const manager = new TerminalManager({ maxConnectionsPerPane: 1 });
-    const id = manager.create(fakeWs(), '%7', 80, 24, false, { serverId: 'api-linux' });
-    expect(manager.paneConnectionCount.get('api-linux:%7')).toBe(1);
+    const id = manager.create(fakeWs(), '%7');
+    expect(manager.paneConnectionCount.get('%7')).toBe(1);
 
     manager.destroy(id);
 
-    expect(manager.paneConnectionCount.has('api-linux:%7')).toBe(false);
-    expect(manager.create(fakeWs(), '%7', 80, 24, false, { serverId: 'api-linux' })).toBeTruthy();
-  });
-
-  it('does not leak one server\'s cleanup into another', () => {
-    const manager = new TerminalManager({ maxConnectionsPerPane: 1 });
-    const remote = manager.create(fakeWs(), '%1', 80, 24, false, { serverId: 'api-linux' });
-    manager.create(fakeWs(), '%1', 80, 24, false, { serverId: 'build-mac' });
-
-    manager.destroy(remote);
-
-    expect(manager.paneConnectionCount.has('api-linux:%1')).toBe(false);
-    expect(manager.paneConnectionCount.get('build-mac:%1')).toBe(1);
+    expect(manager.paneConnectionCount.has('%7')).toBe(false);
+    expect(manager.create(fakeWs(), '%7')).toBeTruthy();
   });
 });
 
@@ -179,7 +143,7 @@ describe('TerminalManager PTY termination', () => {
   });
 });
 
-describe('TerminalManager spawn override', () => {
+describe('TerminalManager spawn', () => {
   beforeEach(() => {
     spawn.mockReset();
     spawn.mockImplementation(() => fakeTerm());
@@ -193,20 +157,15 @@ describe('TerminalManager spawn override', () => {
     expect({ file, args }).toEqual(localAttachSpawnSpec('%1', { nozoom: false }));
   });
 
-  it('honors a remote spawn spec while keeping env and locale behavior', () => {
+  it('keeps the attach client UTF-8 even when the service has no locale', () => {
     const oldLang = process.env.LANG;
     delete process.env.LANG;
     try {
       const manager = new TerminalManager();
-      const remoteCommand = buildTmuxAttachCommand('%1', { nozoom: true });
-      manager.create(fakeWs(), '%1', 100, 30, true, {
-        serverId: 'api-linux',
-        spawn: { file: 'ssh', args: ['-tt', 'deploy@host', '--', remoteCommand] },
-      });
+      manager.create(fakeWs(), '%1', 100, 30, true);
 
       const [file, args, options] = spawn.mock.calls[0];
-      expect(file).toBe('ssh');
-      expect(args[args.length - 1]).toBe(remoteCommand);
+      expect({ file, args }).toEqual(localAttachSpawnSpec('%1', { nozoom: true }));
       expect(options.cols).toBe(100);
       expect(options.rows).toBe(30);
       expect(options.name).toBe('xterm-256color');
@@ -328,17 +287,6 @@ describe('TerminalManager refusal reporting', () => {
     expect(manager.connections.size).toBe(0);
   });
 
-  it('scopedCount reports per-server attachment', () => {
-    const manager = new TerminalManager({ maxConnectionsPerPane: 3 });
-    manager.create(fakeWs(), '%0', 80, 24, false, { serverId: 'api-linux' });
-    manager.create(fakeWs(), '%0', 80, 24, false, { serverId: 'api-linux' });
-    manager.create(fakeWs(), '%0');
-
-    expect(manager.scopedCount('api-linux', '%0')).toBe(2);
-    expect(manager.scopedCount('local', '%0')).toBe(1);
-    expect(manager.scopedCount(null, '%0')).toBe(1);
-    expect(manager.scopedCount('build-mac', '%0')).toBe(0);
-  });
 });
 
 describe('localAttachSpawnSpec', () => {

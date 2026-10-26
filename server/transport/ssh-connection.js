@@ -129,8 +129,7 @@ export function buildSshArgs(server, { knownHostsPath, tool = 'ssh', connectTime
   if (address.port && Number(address.port) !== 22) args.push(sftp ? '-P' : '-p', String(address.port));
   if (ssh.identityFile) args.push('-i', ssh.identityFile);
   if (ssh.proxyJump) args.push('-J', ssh.proxyJump);
-  user(address.user);
-  args.push('--', String(address.host));
+  args.push('--', address.user ? `${address.user}@${address.host}` : String(address.host));
   return args;
 }
 

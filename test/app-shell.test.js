@@ -47,7 +47,6 @@ const TMUX_ACTIONS = {
   persistentAfterRestart: true,
 };
 
-const SSH_ACTIONS = { ...TMUX_ACTIONS, tmuxLayout: false, capturePane: false, persistentAfterRestart: false };
 
 function loadShell() {
   const dom = new JSDOM(SHELL_DOM, { url: 'http://localhost/', runScripts: 'outside-only' });
@@ -233,57 +232,6 @@ describe('AppShell sidebar tree', () => {
     const context = ctx.document.getElementById('ms-server-context');
     expect(context.querySelector('img')).toBeNull();
     expect(context.textContent).toContain('<img src=x onerror=alert(1)>');
-  });
-});
-
-describe('AppShell ssh workspace', () => {
-  let ctx;
-
-  beforeEach(() => {
-    ctx = loadShell();
-    ctx.Store.setServers([{ id: 'api-linux', name: 'API Linux', kind: 'remote', address: { host: '10.0.0.21' } }]);
-    ctx.Store.setHealth('api-linux', {
-      state: 'online',
-      latencyMs: 26,
-      checkedAt: new Date().toISOString(),
-      facts: { platform: 'linux', arch: 'x64' },
-      capabilities: { ssh: { available: true }, tmux: { available: false, reason: 'command_not_found' } },
-    });
-    ctx.Store.setWorkspace('api-linux', {
-      serverId: 'api-linux',
-      provider: 'ssh',
-      transport: 'ssh',
-      persistence: 'process-memory',
-      pendingProvider: null,
-      revision: 1,
-      actions: SSH_ACTIONS,
-      sessions: [{
-        id: 'ses_1',
-        name: 'main',
-        windows: [{ id: 'win_1', index: 0, name: 'shell', panes: [{ id: 'pane_1', command: 'bash' }] }],
-      }],
-    });
-    ctx.Store.setRoute({ name: 'terminal', params: { serverId: 'api-linux', sessionId: 'ses_1', windowId: 'win_1' } });
-    ctx.Shell.render();
-  });
-
-  it('labels the workspace SSH and explains the weaker persistence', () => {
-    const context = ctx.document.getElementById('ms-server-context');
-    expect(context.querySelector('.provider-badge').textContent).toBe('SSH');
-    expect(context.querySelector('.ssh-lifecycle').textContent).toContain('面板重启后会话结束');
-  });
-
-  it('still offers pane and window lifecycle, which the ssh provider supports', () => {
-    expect(ctx.document.querySelector('[data-action="new-session"]')).toBeTruthy();
-    const row = ctx.document.querySelector('[data-sidebar-entity="window"]');
-    expect(row.dataset).toMatchObject({ serverId: 'api-linux', provider: 'ssh', window: 'win_1' });
-    expect(row.querySelector('[data-action="workspace-entity-menu"]')).toBeTruthy();
-    expect(row.querySelector('[data-action="rename-window"],[data-action="close-window"]')).toBeNull();
-  });
-
-  it('routes ssh ids through the encoder', () => {
-    const route = ctx.document.querySelector('.tree-window-row .tree-item').dataset.route;
-    expect(route).toBe('#/terminal/api-linux/ses_1/win_1/pane_1');
   });
 });
 
@@ -635,11 +583,12 @@ describe('AppShell status server rail', () => {
     expect(routes).toEqual(['#/servers/local/performance', '#/servers/api-linux/performance']);
   });
 
-  it('keeps the Agent console only for the local row and falls remote rows back to performance', () => {
+  it('gives every server the same status sections, the Agent console included', () => {
     ctx.Store.setRoute({ name: 'server', params: { serverId: 'local', section: 'codex' } });
     ctx.Shell.render();
     const routes = [...ctx.document.querySelectorAll('.server-rail-item')].map((n) => n.dataset.route);
-    expect(routes).toEqual(['#/servers/local/agents', '#/servers/api-linux/performance']);
+    // Every server runs the full panel, so a remote row links like the local one.
+    expect(routes).toEqual(['#/servers/local/agents', '#/servers/api-linux/agents']);
     expect(ctx.Shell._titleFor({ name: 'server', params: { section: 'agents' } })).toBe('Agent 控制台');
   });
 
@@ -651,9 +600,9 @@ describe('AppShell status server rail', () => {
     expect(ctx.Shell.localStatusSections()).toEqual(['agents']);
     expect(ctx.Shell.defaultStatusSection('local')).toBe('agents');
     expect(ctx.Shell.resolveStatusSection('local', 'performance')).toBe('agents');
-    expect(ctx.Shell.resolveStatusSection('api-linux', 'claude')).toBe('performance');
+    expect(ctx.Shell.resolveStatusSection('api-linux', 'claude')).toBe('agents');
     expect([...ctx.document.querySelectorAll('.server-rail-item')].map((n) => n.dataset.route))
-      .toEqual(['#/servers/local/agents', '#/servers/api-linux/performance']);
+      .toEqual(['#/servers/local/agents', '#/servers/api-linux/agents']);
     expect(ctx.Shell._titleFor({ name: 'server', params: { section: 'agents' } })).toBe('Agent 控制台');
   });
 

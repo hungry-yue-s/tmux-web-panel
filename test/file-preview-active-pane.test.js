@@ -20,10 +20,14 @@ describe('file preview active pane wiring', () => {
     expect(appSource).toContain("typeof _openFilePreviewFromBuffer === 'function'");
   });
 
-  it('only registers the link provider for the local server', () => {
-    // File preview reads the panel host's filesystem; a remote pane's paths
-    // must never be fetched from it.
-    expect(terminalSource).toMatch(/FilePreview !== 'undefined' && !TerminalTarget\.isRemote\(\)/);
+  it('registers the link provider on every server and reads files on the pane\'s machine', () => {
+    // A remote pane's paths resolve through that machine's own /api/files,
+    // never through the panel host's filesystem.
+    expect(terminalSource).not.toMatch(/FilePreview !== 'undefined' && !TerminalTarget\.isRemote\(\)/);
+    expect(terminalSource).toContain('FilePreview.registerLinkProvider(term, state.currentPane, _resolvePreviewPaneId)');
+    const previewSource = readFileSync('public/js/file-preview.js', 'utf8');
+    expect(previewSource).not.toMatch(/fetch\('\/api\/files\//);
+    expect(previewSource).toContain("_machine() + '/api/files/");
   });
 
   it('keeps web-link opening synchronous to the click gesture', () => {

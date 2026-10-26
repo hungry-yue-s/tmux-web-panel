@@ -6,14 +6,9 @@ import path from 'node:path';
 import {
   HealthService,
   ServerState,
-  FACTS_SCRIPT,
-  WINDOWS_FACTS_SCRIPT,
   IDLE_POLL_MS,
   VIEWED_POLL_MS,
-  normalizeArch,
-  normalizePlatform,
-  parseFacts,
-  parseTmuxVersion,
+  statusFromNodeInfo,
 } from '../server/servers/health-service.js';
 import { ServerRegistry, LOCAL_SERVER_ID } from '../server/servers/registry.js';
 import { AppError, ErrorCode } from '../server/servers/errors.js';
@@ -25,15 +20,21 @@ const REMOTE = {
   ssh: {},
 };
 
-function factsOutput({ kernel = 'Linux', arch = 'x86_64', hostname = 'api-01', tmux = 'tmux 3.5a' } = {}) {
-  const lines = [`kernel=${kernel}`, `arch=${arch}`, `hostname=${hostname}`];
-  if (tmux === null) lines.push('tmux_found=0');
-  else lines.push('tmux_found=1', `tmux_version=${tmux}`);
-  return lines.join('\n') + '\n';
-}
-
-function windowsFactsOutput({ arch = 'AMD64', hostname = 'LAPTOP-01' } = {}) {
-  return ['kernel=Windows', `arch=${arch}`, `hostname=${hostname}`, 'tmux_found=0'].join('\r\n') + '\r\n';
+/** What a node's /api/node/info answers. */
+function nodeInfo({ hostname = 'api-01', platform = 'linux', tmux = '3.5a', reason = null, version = '1.0.0' } = {}) {
+  return {
+    protocol: 1,
+    version,
+    hostname,
+    platform,
+    arch: 'x64',
+    tmux: { available: Boolean(tmux), version: tmux, reason: tmux ? null : reason || 'command_not_found' },
+    capabilities: {
+      metrics: { available: true, level: 'full' },
+      files: { available: true },
+      processStats: { available: platform !== 'windows' },
+    },
+  };
 }
 
 function deferred() {
@@ -43,46 +44,28 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-describe('fact parsing', () => {
-  it('parses key=value probe output', () => {
-    expect(parseFacts('kernel=Linux\narch=x86_64\n\nhostname=api-01\n')).toEqual({
-      kernel: 'Linux',
-      arch: 'x86_64',
-      hostname: 'api-01',
+describe('statusFromNodeInfo', () => {
+  it('derives the whole status from one node self-description', () => {
+    const status = statusFromNodeInfo('api-linux', nodeInfo(), { transport: 'ssh', latencyMs: 12, now: 0 });
+    expect(status).toMatchObject({
+      serverId: 'api-linux',
+      state: ServerState.ONLINE,
+      latencyMs: 12,
+      facts: { hostname: 'api-01', platform: 'linux', arch: 'x64', version: '1.0.0' },
+      workspace: { provider: 'tmux', transport: 'ssh', persistence: 'tmux' },
+    });
+    expect(status.capabilities).toMatchObject({
+      ssh: { available: true },
+      tmux: { available: true, version: '3.5a' },
+      files: { available: true },
     });
   });
 
-  it('keeps values containing = intact', () => {
-    expect(parseFacts('tmux_version=tmux 3.5a=beta')).toEqual({ tmux_version: 'tmux 3.5a=beta' });
-  });
-
-  it('normalizes platform and arch', () => {
-    expect(normalizePlatform('Darwin')).toBe('darwin');
-    expect(normalizePlatform('Linux')).toBe('linux');
-    expect(normalizePlatform('unknown')).toBeNull();
-    expect(normalizePlatform('MSYS_NT-10.0-26100')).toBe('msys');
-    expect(normalizePlatform('MINGW64_NT-10.0-26100')).toBe('msys');
-    expect(normalizePlatform('CYGWIN_NT-10.0')).toBe('msys');
-    expect(normalizePlatform('Windows')).toBe('windows');
-    expect(normalizeArch('x86_64')).toBe('x64');
-    expect(normalizeArch('aarch64')).toBe('arm64');
-    expect(normalizeArch('arm64')).toBe('arm64');
-    expect(normalizeArch('unknown')).toBeNull();
-  });
-
-  it('parses tmux versions and rejects error text', () => {
-    expect(parseTmuxVersion('tmux 3.5a')).toBe('3.5a');
-    expect(parseTmuxVersion('tmux next-3.6')).toBe('3.6');
-    expect(parseTmuxVersion('sh: tmux: command not found')).toBeNull();
-    expect(parseTmuxVersion('')).toBeNull();
-  });
-});
-
-describe('FACTS_SCRIPT', () => {
-  it('only reads — it never installs, upgrades or starts tmux', () => {
-    expect(FACTS_SCRIPT).toContain('command -v tmux');
-    expect(FACTS_SCRIPT).toContain('tmux -V');
-    expect(FACTS_SCRIPT).not.toMatch(/apt|yum|brew|dnf|pacman|install|start-server|new-session/);
+  it('is degraded with no workspace when the node has no usable tmux', () => {
+    const status = statusFromNodeInfo('x', nodeInfo({ tmux: null }), { transport: 'local', latencyMs: 1, now: 0 });
+    expect(status.state).toBe(ServerState.DEGRADED);
+    expect(status.capabilities.tmux).toMatchObject({ available: false, reason: 'command_not_found' });
+    expect(status.workspace.provider).toBe('unavailable');
   });
 });
 
@@ -91,10 +74,9 @@ describe('HealthService', () => {
   let registry;
   let now;
   let statuses;
-  let runScript;
-  let execPowerShell;
-  let tmuxVersion;
-  let pool;
+  let localInfo;
+  let remoteInfo;
+  let links;
 
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'server-health-'));
@@ -102,13 +84,9 @@ describe('HealthService', () => {
     await registry.load();
     now = 1_000_000;
     statuses = [];
-    runScript = vi.fn(async () => ({ stdout: factsOutput(), stderr: '' }));
-    execPowerShell = vi.fn(async () => ({ stdout: windowsFactsOutput(), stderr: '' }));
-    tmuxVersion = vi.fn(async () => '3.5a');
-    pool = {
-      get: vi.fn(() => ({ runScript, execPowerShell })),
-      tmuxFor: vi.fn(() => ({ version: tmuxVersion })),
-    };
+    localInfo = vi.fn(async () => nodeInfo({ hostname: 'panel-host' }));
+    remoteInfo = vi.fn(async () => nodeInfo());
+    links = { link: vi.fn(() => ({ info: remoteInfo })) };
   });
 
   afterEach(async () => {
@@ -118,15 +96,17 @@ describe('HealthService', () => {
   function makeService() {
     return new HealthService({
       registry,
-      pool,
+      links,
+      localInfo,
       now: () => now,
       onStatus: (status) => statuses.push(status),
     });
   }
 
-  it('requires a registry and a pool', () => {
-    expect(() => new HealthService({ pool })).toThrow(/registry/);
-    expect(() => new HealthService({ registry })).toThrow(/pool/);
+  it('requires a registry, a link pool and local info', () => {
+    expect(() => new HealthService({ links, localInfo })).toThrow(/registry/);
+    expect(() => new HealthService({ registry, localInfo })).toThrow(/link pool/);
+    expect(() => new HealthService({ registry, links })).toThrow(/localInfo/);
   });
 
   it('starts unknown rather than pretending to be online', () => {
@@ -139,29 +119,20 @@ describe('HealthService', () => {
   });
 
   describe('local server', () => {
-    it('reports online with a tmux provider when tmux is usable', async () => {
+    it('reports this node in-process, without a link', async () => {
       const status = await makeService().probe(LOCAL_SERVER_ID);
 
+      expect(links.link).not.toHaveBeenCalled();
       expect(status.state).toBe(ServerState.ONLINE);
-      expect(status.capabilities.tmux).toMatchObject({ available: true, version: '3.5a' });
+      expect(status.facts.hostname).toBe('panel-host');
       expect(status.workspace).toEqual({ provider: 'tmux', transport: 'local', persistence: 'tmux' });
     });
 
-    it('degrades when the tmux binary is missing', async () => {
-      tmuxVersion.mockRejectedValue(Object.assign(new Error('spawn tmux ENOENT'), { code: 'ENOENT' }));
-
+    it('degrades when tmux is missing', async () => {
+      localInfo.mockResolvedValue(nodeInfo({ tmux: null }));
       const status = await makeService().probe(LOCAL_SERVER_ID);
-
       expect(status.state).toBe(ServerState.DEGRADED);
-      expect(status.capabilities.tmux).toMatchObject({ available: false, reason: 'command_not_found' });
       expect(status.workspace.provider).toBe('unavailable');
-    });
-
-    it('degrades when the version output is unusable', async () => {
-      tmuxVersion.mockResolvedValue(null);
-      const status = await makeService().probe(LOCAL_SERVER_ID);
-      expect(status.state).toBe(ServerState.DEGRADED);
-      expect(status.capabilities.tmux.reason).toBe('version_unparseable');
     });
   });
 
@@ -170,110 +141,22 @@ describe('HealthService', () => {
       await registry.create(REMOTE);
     });
 
-    it('selects the tmux provider when tmux exists', async () => {
+    it('asks the node over its link', async () => {
       const status = await makeService().probe('api-linux');
 
-      expect(runScript).toHaveBeenCalledWith(FACTS_SCRIPT, expect.objectContaining({ timeout: expect.any(Number) }));
+      expect(links.link).toHaveBeenCalledWith('api-linux');
+      expect(remoteInfo).toHaveBeenCalledTimes(1);
       expect(status.state).toBe(ServerState.ONLINE);
-      expect(status.facts).toEqual({ hostname: 'api-01', platform: 'linux', arch: 'x64' });
-      expect(status.capabilities.tmux).toMatchObject({ available: true, version: '3.5a' });
+      expect(status.facts).toMatchObject({ hostname: 'api-01', platform: 'linux' });
       expect(status.workspace).toEqual({ provider: 'tmux', transport: 'ssh', persistence: 'tmux' });
     });
 
-    it('keeps the observed MSYS login shell on the executor for PTY quoting', async () => {
-      const executor = { runScript, execPowerShell };
-      pool.get.mockReturnValue(executor);
-      runScript.mockResolvedValue({ stdout: factsOutput({ kernel: 'MSYS_NT-10.0-26100' }) + 'shell=/usr/bin/fish.exe\n' });
+    it('reports a Windows node like any other', async () => {
+      remoteInfo.mockResolvedValue(nodeInfo({ platform: 'windows', tmux: '3.8' }));
       const status = await makeService().probe('api-linux');
       expect(status.state).toBe(ServerState.ONLINE);
-      expect(executor.remoteFacts).toMatchObject({ kernel: 'MSYS_NT-10.0-26100', shell: '/usr/bin/fish.exe' });
-      expect(FACTS_SCRIPT).toContain('"$SHELL"');
-    });
-
-    it('falls back to the ssh provider when tmux is absent', async () => {
-      runScript.mockResolvedValue({ stdout: factsOutput({ tmux: null }), stderr: '' });
-
-      const status = await makeService().probe('api-linux');
-
-      expect(status.state).toBe(ServerState.ONLINE);
-      expect(status.capabilities.tmux).toMatchObject({ available: false, reason: 'command_not_found' });
-      expect(status.workspace).toEqual({ provider: 'ssh', transport: 'ssh', persistence: 'process-memory' });
-    });
-
-    it('treats an unusable tmux as degraded but still usable over ssh', async () => {
-      runScript.mockResolvedValue({
-        stdout: factsOutput({ tmux: 'tmux: error while loading shared libraries' }),
-        stderr: '',
-      });
-
-      const status = await makeService().probe('api-linux');
-
-      expect(status.state).toBe(ServerState.DEGRADED);
-      expect(status.capabilities.tmux).toMatchObject({ available: false, reason: 'version_unparseable' });
-      expect(status.workspace.provider).toBe('ssh');
-    });
-
-    it('marks remote file browsing unsupported rather than reusing local results', async () => {
-      const status = await makeService().probe('api-linux');
-      expect(status.capabilities.files).toEqual({ available: false, reason: 'unsupported' });
-    });
-
-    it('reports no metrics capability for an unknown platform', async () => {
-      runScript.mockResolvedValue({ stdout: factsOutput({ kernel: 'SunOS' }), stderr: '' });
-      const status = await makeService().probe('api-linux');
-      expect(status.capabilities.metrics).toEqual({ available: false, level: 'none' });
-    });
-
-    describe('windows host', () => {
-      /** cmd.exe rejects `/bin/sh` with its own exit code; ssh uses 255 for its failures. */
-      function shellRejected() {
-        return Object.assign(new AppError(ErrorCode.SERVER_OFFLINE, 'not found'), { exitCode: 1 });
-      }
-
-      it('falls back to PowerShell when the remote shell has no /bin/sh', async () => {
-        runScript.mockRejectedValue(shellRejected());
-
-        const status = await makeService().probe('api-linux');
-
-        expect(execPowerShell).toHaveBeenCalledWith(
-          WINDOWS_FACTS_SCRIPT,
-          expect.objectContaining({ timeout: expect.any(Number) }),
-        );
-        expect(status.state).toBe(ServerState.ONLINE);
-        expect(status.facts).toEqual({ hostname: 'LAPTOP-01', platform: 'windows', arch: 'x64' });
-      });
-
-      it('offers an ssh workspace and calls tmux unsupported, not missing', async () => {
-        runScript.mockRejectedValue(shellRejected());
-
-        const status = await makeService().probe('api-linux');
-
-        expect(status.capabilities.tmux).toMatchObject({ available: false, reason: 'unsupported_platform' });
-        expect(status.capabilities.metrics).toEqual({ available: false, level: 'none' });
-        expect(status.workspace).toEqual({ provider: 'ssh', transport: 'ssh', persistence: 'process-memory' });
-      });
-
-      it('does not retry when ssh itself failed, so an offline host pays one timeout', async () => {
-        runScript.mockRejectedValue(
-          Object.assign(new AppError(ErrorCode.SSH_TIMEOUT, 'timed out'), { exitCode: 255 }),
-        );
-
-        const status = await makeService().probe('api-linux');
-
-        expect(execPowerShell).not.toHaveBeenCalled();
-        expect(status.state).toBe(ServerState.OFFLINE);
-      });
-
-      it('surfaces the original failure when the fallback reports nothing useful', async () => {
-        runScript.mockRejectedValue(shellRejected());
-        execPowerShell.mockResolvedValue({ stdout: '', stderr: '' });
-
-        const status = await makeService().probe('api-linux');
-
-        expect(status.state).toBe(ServerState.OFFLINE);
-        expect(status.error.code).toBe(ErrorCode.SERVER_OFFLINE);
-        expect(status.workspace.provider).toBe('unavailable');
-      });
+      expect(status.facts.platform).toBe('windows');
+      expect(status.capabilities.tmux.version).toBe('3.8');
     });
 
     const errorCases = [
@@ -282,11 +165,14 @@ describe('HealthService', () => {
       [ErrorCode.SSH_HOST_KEY_CHANGED, ServerState.HOST_KEY_ERROR],
       [ErrorCode.SSH_TIMEOUT, ServerState.OFFLINE],
       [ErrorCode.SERVER_OFFLINE, ServerState.OFFLINE],
+      [ErrorCode.NODE_NOT_INSTALLED, ServerState.OFFLINE],
+      [ErrorCode.NODE_NOT_RUNNING, ServerState.OFFLINE],
+      [ErrorCode.NODE_INCOMPATIBLE, ServerState.OFFLINE],
     ];
 
     for (const [code, expected] of errorCases) {
-      it(`maps ${code} to ${expected} without collapsing into a boolean`, async () => {
-        runScript.mockRejectedValue(new AppError(code, 'nope'));
+      it(`maps ${code} to ${expected} and keeps the code for the repair hint`, async () => {
+        remoteInfo.mockRejectedValue(new AppError(code, 'nope'));
 
         const status = await makeService().probe('api-linux');
 
@@ -302,7 +188,7 @@ describe('HealthService', () => {
       const firstOnline = health.getStatus('api-linux').lastOnlineAt;
 
       now += 60_000;
-      runScript.mockRejectedValue(new AppError(ErrorCode.SERVER_OFFLINE, 'gone'));
+      remoteInfo.mockRejectedValue(new AppError(ErrorCode.SERVER_OFFLINE, 'gone'));
       const status = await health.probe('api-linux');
 
       expect(status.state).toBe(ServerState.OFFLINE);
@@ -312,7 +198,7 @@ describe('HealthService', () => {
 
     it('backs off on consecutive failures up to five minutes', async () => {
       const health = makeService();
-      runScript.mockRejectedValue(new AppError(ErrorCode.SERVER_OFFLINE, 'gone'));
+      remoteInfo.mockRejectedValue(new AppError(ErrorCode.SERVER_OFFLINE, 'gone'));
 
       const observed = [];
       for (let i = 0; i < 5; i += 1) {
@@ -338,13 +224,13 @@ describe('HealthService', () => {
     it('collapses concurrent probes onto one in-flight request', async () => {
       const health = makeService();
       const gate = deferred();
-      runScript.mockImplementation(() => gate.promise);
+      remoteInfo.mockImplementation(() => gate.promise);
 
       const all = Promise.all([health.probe('api-linux'), health.probe('api-linux'), health.probe('api-linux')]);
-      gate.resolve({ stdout: factsOutput(), stderr: '' });
+      gate.resolve(nodeInfo());
       await all;
 
-      expect(runScript).toHaveBeenCalledTimes(1);
+      expect(remoteInfo).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -356,11 +242,11 @@ describe('HealthService', () => {
     it('discards a probe that finishes after the server was edited', async () => {
       const health = makeService();
       const gate = deferred();
-      runScript.mockImplementation(() => gate.promise);
+      remoteInfo.mockImplementation(() => gate.promise);
 
       const inFlight = health.probe('api-linux');
       health.invalidate('api-linux'); // stands in for an edit
-      gate.resolve({ stdout: factsOutput({ hostname: 'stale-host' }), stderr: '' });
+      gate.resolve(nodeInfo({ hostname: 'stale-host' }));
       await inFlight;
 
       expect(health.getStatus('api-linux').state).toBe(ServerState.UNKNOWN);
@@ -371,37 +257,36 @@ describe('HealthService', () => {
       const health = makeService();
       const slow = deferred();
       const fast = deferred();
-      runScript
+      remoteInfo
         .mockImplementationOnce(() => slow.promise)
         .mockImplementationOnce(() => fast.promise);
 
       const slowProbe = health.probe('api-linux');
       const forcedProbe = health.probe('api-linux', { force: true });
 
-      // The forced probe answers first, then the orphaned one completes.
-      fast.resolve({ stdout: factsOutput({ hostname: 'fresh-host' }), stderr: '' });
+      fast.resolve(nodeInfo({ hostname: 'fresh-host' }));
       await forcedProbe;
       expect(health.getStatus('api-linux').facts.hostname).toBe('fresh-host');
 
-      slow.resolve({ stdout: factsOutput({ hostname: 'stale-host' }), stderr: '' });
+      slow.resolve(nodeInfo({ hostname: 'stale-host' }));
       await slowProbe;
 
       expect(health.getStatus('api-linux').facts.hostname).toBe('fresh-host');
-      expect(runScript).toHaveBeenCalledTimes(2);
+      expect(remoteInfo).toHaveBeenCalledTimes(2);
     });
 
     it('a stale failure cannot overwrite a forced success', async () => {
       const health = makeService();
       const slow = deferred();
       const fast = deferred();
-      runScript
+      remoteInfo
         .mockImplementationOnce(() => slow.promise)
         .mockImplementationOnce(() => fast.promise);
 
       const slowProbe = health.probe('api-linux');
       const forcedProbe = health.probe('api-linux', { force: true });
 
-      fast.resolve({ stdout: factsOutput(), stderr: '' });
+      fast.resolve(nodeInfo());
       await forcedProbe;
       slow.reject(new AppError(ErrorCode.SERVER_OFFLINE, 'late failure'));
       await slowProbe;
@@ -413,11 +298,11 @@ describe('HealthService', () => {
     it('forget stops a late result from resurrecting a deleted server', async () => {
       const health = makeService();
       const gate = deferred();
-      runScript.mockImplementation(() => gate.promise);
+      remoteInfo.mockImplementation(() => gate.promise);
 
       const inFlight = health.probe('api-linux');
       health.forget('api-linux');
-      gate.resolve({ stdout: factsOutput(), stderr: '' });
+      gate.resolve(nodeInfo());
       await inFlight;
 
       expect(health._entries.has('api-linux')).toBe(false);
@@ -430,13 +315,11 @@ describe('HealthService', () => {
       await registry.update('api-linux', { enabled: false });
     });
 
-    it('reports disabled without opening a connection', async () => {
-      const health = makeService();
-      const status = await health.probe('api-linux');
+    it('reports disabled without opening a link', async () => {
+      const status = await makeService().probe('api-linux');
 
       expect(status.state).toBe(ServerState.DISABLED);
-      expect(runScript).not.toHaveBeenCalled();
-      expect(pool.get).not.toHaveBeenCalled();
+      expect(links.link).not.toHaveBeenCalled();
     });
 
     it('publishes the disabled transition once, not on every tick', async () => {
@@ -462,7 +345,7 @@ describe('HealthService', () => {
       const health = makeService();
       await health.tick();
 
-      expect(pool.get).not.toHaveBeenCalled();
+      expect(links.link).not.toHaveBeenCalled();
       expect(statuses.some((s) => s.serverId === 'api-linux')).toBe(false);
       expect(statuses.some((s) => s.serverId === LOCAL_SERVER_ID)).toBe(true);
     });
@@ -484,14 +367,14 @@ describe('HealthService', () => {
       const health = makeService();
 
       await health.tick();
-      expect(runScript).toHaveBeenCalledTimes(1);
+      expect(remoteInfo).toHaveBeenCalledTimes(1);
 
       await health.tick(); // nothing is due yet
-      expect(runScript).toHaveBeenCalledTimes(1);
+      expect(remoteInfo).toHaveBeenCalledTimes(1);
 
       now += IDLE_POLL_MS + 1;
       await health.tick();
-      expect(runScript).toHaveBeenCalledTimes(2);
+      expect(remoteInfo).toHaveBeenCalledTimes(2);
     });
 
     it('surfaces every server in the status map', async () => {
@@ -504,7 +387,7 @@ describe('HealthService', () => {
 
     it('never lets one failing server block the others', async () => {
       await registry.create(REMOTE);
-      runScript.mockRejectedValue(new AppError(ErrorCode.SERVER_OFFLINE, 'gone'));
+      remoteInfo.mockRejectedValue(new AppError(ErrorCode.SERVER_OFFLINE, 'gone'));
       const health = makeService();
 
       await expect(health.tick()).resolves.toBeUndefined();
