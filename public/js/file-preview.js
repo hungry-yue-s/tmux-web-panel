@@ -1432,6 +1432,9 @@ var FilePreview = (function () {
         });
         element.style.setProperty(property, replacement, 'important');
       });
+      // Apply glass styling only after repairing solid fills; authored
+      // translucency and gradients keep their own appearance.
+      shape.setAttribute('data-fp-surface', group.classList.contains('cluster') ? 'group' : 'node');
     });
   }
 
@@ -1523,6 +1526,10 @@ var FilePreview = (function () {
           if (error) reject(error); else resolve(blob);
         }
         var copy = svg.cloneNode(true);
+        var surfaces = copy.querySelectorAll('[data-fp-surface]');
+        svg.querySelectorAll('[data-fp-surface]').forEach(function (surface, index) {
+          surfaces[index].style.fillOpacity = win.getComputedStyle(surface).fillOpacity || '1';
+        });
         copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
         copy.setAttribute('width', String(size.width));
         copy.setAttribute('height', String(size.height));
@@ -1956,7 +1963,7 @@ var FilePreview = (function () {
       ':fullscreen .fp-md-wrap,:fullscreen .fp-code-wrap{min-height:100vh;}',
       // Palette overrides mirror file-preview-workspace.css for portable snapshots.
       "html,body{background:var(--fp-panel);color:var(--fp-text);}",
-      ".fp-md-wrap{background:color-mix(in srgb,var(--fp-panel) 92%,transparent);color:var(--fp-text);}",
+      ".fp-md-wrap{background:transparent;color:var(--fp-text);}",
       ".fp-md-wrap :is(h1,h2,h3,h4,h5,h6){color:var(--fp-text);}",
       ".fp-md-wrap a{color:var(--fp-accent);}",
       ".fp-md-wrap pre{background:color-mix(in srgb,var(--fp-bg) 80%,var(--fp-panel));box-shadow:inset 0 0 0 1px var(--fp-line);}",
@@ -2056,6 +2063,10 @@ var FilePreview = (function () {
     // Always clone: we strip interactive bits and inline images without
     // mutating what's on screen.
     var capture = rendered.cloneNode(true);
+    var surfaces = capture.querySelectorAll('[data-fp-surface]');
+    rendered.querySelectorAll('[data-fp-surface]').forEach(function (surface, index) {
+      surfaces[index].style.fillOpacity = window.getComputedStyle(surface).fillOpacity || '1';
+    });
     // Local video streams need live authentication and can be very large.
     // Keep their label in snapshots without exposing a token or local path.
     capture.querySelectorAll('video[src^="/api/files/raw?"]').forEach(function (video) {

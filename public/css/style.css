@@ -4887,6 +4887,9 @@ html[data-native-transparency] .fp-dock .fp-dock-tabs,
 html[data-native-transparency] .fp-dock .fp-header,
 html[data-native-transparency] .fp-dock .fp-body,
 html[data-native-transparency] .fp-dock .fp-dir-crumb,
+html[data-native-transparency] .fp-dock .fp-md-wrap,
+html[data-native-transparency] .fp-dock .fp-code-wrap,
+html[data-native-transparency] .fp-dock .fp-mermaid-embed,
 html[data-native-transparency] .fp-dock .fp-code-wrap code.hljs {
   background: transparent !important;
   -webkit-backdrop-filter: none;

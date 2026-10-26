@@ -364,6 +364,10 @@ describe('file preview dock tabs', () => {
 
   it('keeps wide Mermaid diagrams readable and opens the pan and zoom viewer', () => {
     const { dom, preview } = createPreview();
+    dom.window.document.documentElement.setAttribute('data-native-transparency', '');
+    const glassStyle = dom.window.document.createElement('style');
+    glassStyle.textContent = fs.readFileSync('public/css/file-preview-workspace.css', 'utf8');
+    dom.window.document.head.appendChild(glassStyle);
     const embed = dom.window.document.createElement('div');
     embed.className = 'mermaid';
     embed.innerHTML = '<svg viewBox="0 0 2000 600" width="100%" style="max-width: 2000px"></svg>';
@@ -384,6 +388,8 @@ describe('file preview dock tabs', () => {
     const dialog = dom.window.document.querySelector('.fp-mermaid-dialog');
     expect(dialog).not.toBeNull();
     expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(dom.window.getComputedStyle(embed).visibility).toBe('hidden');
+    expect(dom.window.getComputedStyle(dialog).visibility).toBe('visible');
     expect(dialog.querySelector('.fp-mermaid-percent').textContent).toBe('75%');
 
     dialog.querySelector('.fp-mermaid-zoom-in').click();
@@ -412,6 +418,7 @@ describe('file preview dock tabs', () => {
       key: 'Escape', bubbles: true, cancelable: true,
     }));
     expect(dom.window.document.querySelector('.fp-mermaid-dialog')).toBeNull();
+    expect(dom.window.getComputedStyle(embed).visibility).toBe('visible');
   });
 
   it('exports a Mermaid diagram as a high-resolution PNG', async () => {
@@ -2002,6 +2009,9 @@ describe('video previews', () => {
       + '<svg viewBox="0 0 300 200"><g class="cluster"><rect fill="#ffffff"/><g class="cluster-label"><text style="fill:#eeeeee">Title</text></g></g></svg>'
       + '</div></div>';
     preview._test.prepareMermaid(body.querySelector('.mermaid'));
+    const glassStyle = dom.window.document.createElement('style');
+    glassStyle.textContent = '[data-fp-surface="group"]{fill-opacity:.12}';
+    dom.window.document.head.appendChild(glassStyle);
     const snapshot = await preview._test.buildStandaloneDoc();
     expect(snapshot.html).toContain('--fp-panel:#24332a;');
     expect(snapshot.html).toContain('--accent-purple:#c2acd0;');
@@ -2009,6 +2019,8 @@ describe('video previews', () => {
     const exportedShape = new JSDOM(snapshot.html).window.document.querySelector('.cluster rect');
     expect(exportedShape.style.fill).toBe('rgb(26, 27, 38)');
     expect(exportedShape.style.getPropertyPriority('fill')).toBe('important');
+    expect(exportedShape.style.fillOpacity).toBe('0.12');
+    expect(body.querySelector('.cluster rect').style.fillOpacity).toBe('');
     preview.close();
   });
 });
