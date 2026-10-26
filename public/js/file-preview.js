@@ -1347,6 +1347,54 @@ var FilePreview = (function () {
     window.mermaid.initialize(_mermaidThemeConfig());
   }
 
+  function _mermaidContrast(first, second) {
+    function luminance(color) {
+      var channels = [1, 3, 5].map(function (offset) {
+        var value = parseInt(color.slice(offset, offset + 2), 16) / 255;
+        return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+      });
+      return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+    }
+    var a = luminance(first), b = luminance(second);
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  }
+
+  // A diagram can override a node/subgraph fill without overriding its label.
+  // Correct only unreadable labels on solid flowchart shapes, keeping authored
+  // colors intact. Inline SVG styles also survive the viewer and image export.
+  function _repairMermaidContrast(svg) {
+    var preferred = _mermaidThemeValue(window.getComputedStyle(document.documentElement), '--text-primary', '#c0caf5');
+    function solidColor(value) {
+      var color = String(value || '').trim();
+      var alpha = /^rgba\([^)]*,\s*([\d.]+)\s*\)$/i.exec(color);
+      if (alpha && Number(alpha[1]) !== 1) return null;
+      return _mermaidHex(color, null);
+    }
+    svg.querySelectorAll('g.cluster, g.node').forEach(function (group) {
+      var shape = Array.prototype.find.call(group.children, function (child) {
+        return child.matches('rect,circle,ellipse,polygon,path');
+      });
+      var label = group.querySelector(':scope > .cluster-label, :scope > .label');
+      if (!shape || !label) return;
+      var shapeStyle = window.getComputedStyle(shape);
+      if ((shapeStyle.opacity && Number(shapeStyle.opacity) < 1)
+        || (shapeStyle.fillOpacity && Number(shapeStyle.fillOpacity) < 1)) return;
+      var background = solidColor(shapeStyle.fill || shape.getAttribute('fill'));
+      if (!background) return;
+      label.querySelectorAll('*').forEach(function (element) {
+        var isSvg = element.namespaceURI === 'http://www.w3.org/2000/svg';
+        if (isSvg && !element.matches('text,tspan')) return;
+        var property = isSvg ? 'fill' : 'color';
+        var current = solidColor(window.getComputedStyle(element)[property]);
+        if (!current || _mermaidContrast(current, background) >= 4.5) return;
+        var replacement = [preferred, _contrastText(background), '#000000', '#ffffff'].find(function (color) {
+          return _mermaidContrast(color, background) >= 4.5;
+        });
+        element.style.setProperty(property, replacement, 'important');
+      });
+    });
+  }
+
   // Turn Mermaid's responsive SVG into a readable, scrollable embed. Mermaid
   // emits width="100%" plus a max-width, which is useful for small diagrams but
   // makes a wide flowchart's labels unreadably tiny. Keep at least 75% of the
@@ -1354,6 +1402,7 @@ var FilePreview = (function () {
   function _prepareMermaid(container) {
     var svg = container.querySelector('svg');
     if (!svg) return false;
+    _repairMermaidContrast(svg);
     var viewBox = (svg.getAttribute('viewBox') || '').trim().split(/[ ,]+/).map(Number);
     var width = viewBox.length === 4 && viewBox[2] > 0 ? viewBox[2]
       : parseFloat(svg.getAttribute('width')) || 800;
@@ -1779,11 +1828,13 @@ var FilePreview = (function () {
   // theme — including light themes — the user has switched to.
   function _rootVars() {
     var keys = ['--bg-primary', '--bg-secondary', '--bg-card', '--bg-deep', '--bg-hover', '--border-subtle',
-      '--text-primary', '--text-secondary', '--text-muted', '--accent-blue', '--accent-red'];
-    var cs = window.getComputedStyle(document.documentElement);
+      '--text-primary', '--text-secondary', '--text-muted', '--accent-blue', '--accent-red', '--accent-green', '--accent-purple',
+      '--fp-panel', '--fp-bg', '--fp-hover', '--fp-text', '--fp-muted', '--fp-accent', '--fp-line'];
+    var rootStyles = window.getComputedStyle(document.documentElement);
+    var cs = _overlay ? window.getComputedStyle(_overlay) : rootStyles;
     var out = ':root{';
     keys.forEach(function (k) {
-      var v = (cs.getPropertyValue(k) || '').trim();
+      var v = (cs.getPropertyValue(k) || rootStyles.getPropertyValue(k) || '').trim();
       if (v) out += k + ':' + v + ';';
     });
     return out + '}';
@@ -1794,6 +1845,7 @@ var FilePreview = (function () {
   // public/css/style.css; keep them in sync.
   function _standaloneCss() {
     return [
+      ':root{--fp-panel:var(--bg-card);--fp-bg:var(--bg-primary);--fp-hover:var(--bg-hover);--fp-text:var(--text-primary);--fp-muted:var(--text-secondary);--fp-accent:var(--accent-blue);--fp-line:var(--border-subtle);}',
       _rootVars(),
       'html,body{margin:0;background:var(--bg-card);color:var(--text-primary);',
       "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}",
@@ -1862,6 +1914,38 @@ var FilePreview = (function () {
       'border-radius:6px;cursor:pointer;opacity:0.5;transition:opacity 0.15s;}',
       '.fp-fs-btn:hover{opacity:1;}',
       ':fullscreen .fp-md-wrap,:fullscreen .fp-code-wrap{min-height:100vh;}',
+      // Palette overrides mirror file-preview-workspace.css for portable snapshots.
+      "html,body{background:var(--fp-panel);color:var(--fp-text);}",
+      ".fp-md-wrap{background:color-mix(in srgb,var(--fp-panel) 92%,transparent);color:var(--fp-text);}",
+      ".fp-md-wrap :is(h1,h2,h3,h4,h5,h6){color:var(--fp-text);}",
+      ".fp-md-wrap a{color:var(--fp-accent);}",
+      ".fp-md-wrap pre{background:color-mix(in srgb,var(--fp-bg) 80%,var(--fp-panel));box-shadow:inset 0 0 0 1px var(--fp-line);}",
+      ".fp-md-wrap :not(pre)>code{background:color-mix(in srgb,var(--fp-bg) 65%,var(--fp-panel));color:var(--fp-text);box-shadow:inset 0 0 0 1px var(--fp-line);}",
+      ".fp-md-wrap th,.fp-md-wrap td{border-color:var(--fp-line);}",
+      ".fp-md-wrap th{background:color-mix(in srgb,var(--fp-bg) 72%,var(--fp-panel));color:var(--fp-text);}",
+      ".fp-md-wrap tbody tr:hover{background:color-mix(in srgb,var(--fp-hover) 35%,var(--fp-panel));}",
+      ".fp-md-wrap blockquote{border-color:var(--fp-accent);color:color-mix(in srgb,var(--fp-text) 78%,var(--fp-muted));}",
+      ".fp-code-wrap{background:var(--fp-panel);color:var(--fp-text);}",
+      ".fp-code-wrap .fp-line-numbers{color:var(--fp-muted);border-color:var(--fp-line);}",
+      ".fp-mermaid-dialog,",
+      ":is(.fp-md-wrap, .fp-code-wrap) .hljs { background: transparent; color: var(--fp-text); }",
+      ":is(.fp-md-wrap, .fp-code-wrap) pre :is(.hljs-comment, .hljs-quote, .hljs-code, .hljs-formula) { color: var(--fp-muted); }",
+      ":is(.fp-md-wrap, .fp-code-wrap) pre :is(.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-type, .hljs-built_in, .hljs-doctag) { color: var(--accent-purple, var(--fp-accent)); }",
+      ":is(.fp-md-wrap, .fp-code-wrap) pre :is(.hljs-string, .hljs-regexp, .hljs-symbol, .hljs-bullet, .hljs-template-tag, .hljs-template-variable) { color: var(--accent-green, var(--fp-accent)); }",
+      ":is(.fp-md-wrap, .fp-code-wrap) pre :is(.hljs-title, .hljs-section, .hljs-selector-id, .hljs-selector-class, .hljs-selector-pseudo, .hljs-name, .hljs-link, .hljs-meta) { color: var(--fp-accent); }",
+      ":is(.fp-md-wrap, .fp-code-wrap) pre :is(.hljs-number, .hljs-attr, .hljs-attribute, .hljs-selector-attr, .hljs-variable, .hljs-params, .hljs-subst, .hljs-operator) { color: var(--fp-text); }",
+      ":is(.fp-md-wrap, .fp-code-wrap) pre .hljs-addition { color: var(--accent-green, var(--fp-text)); background: color-mix(in srgb, var(--accent-green, var(--fp-text)) 12%, transparent); }",
+      ":is(.fp-md-wrap, .fp-code-wrap) pre .hljs-deletion { color: var(--accent-red, var(--fp-text)); background: color-mix(in srgb, var(--accent-red, var(--fp-text)) 12%, transparent); }",
+      ".fp-mermaid-embed { background: color-mix(in srgb, var(--fp-panel) 94%, var(--fp-bg)); border-color: var(--fp-line); }",
+      ".fp-mermaid-dialog { background: color-mix(in srgb, var(--fp-bg) 70%, transparent); }",
+      ".fp-mermaid-dialog-panel, .fp-mermaid-dialog-header { background: var(--fp-panel); border-color: var(--fp-line); }",
+      ".fp-mermaid-dialog-viewport { background: color-mix(in srgb, var(--fp-panel) 88%, var(--fp-bg)); }",
+      ".fp-mermaid-open, .fp-mermaid-tool { background: var(--fp-panel); color: var(--fp-muted); border-color: var(--fp-line); }",
+      ".fp-mermaid-dialog-title, .fp-mermaid-percent, .fp-mermaid-close { color: var(--fp-text); }",
+      ".fp-mermaid-open:hover, .fp-mermaid-tool:hover { background: var(--fp-hover); color: var(--fp-text); border-color: var(--fp-line); }",
+      ".fp-mermaid-open:focus-visible, .fp-mermaid-tool:focus-visible { outline-color: var(--fp-accent); }",
+      ".fp-mermaid-dialog-viewport:focus-visible { box-shadow: inset 0 0 0 2px var(--fp-accent); }",
+      ".fp-mermaid-close:hover { color: var(--accent-red); }",
     ].join('');
   }
 

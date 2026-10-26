@@ -1,6 +1,7 @@
 /* One reading surface for the workspace. Existing renderers and file state stay intact. */
 .fp-overlay,
 .fp-menu,
+.fp-mermaid-dialog,
 .fp-dock-restore {
   --fp-panel: var(--workspace-panel, var(--bg-primary));
   --fp-bg: var(--workspace-bg, var(--bg-secondary));
@@ -93,25 +94,46 @@ body.fp-side-resizing .fp-side-resizer::after { width: 1px; background: var(--fp
   min-height: 32px;
   padding: 6px 12px;
 }
-.fp-md-wrap { width: 100%; margin: 0; padding: 28px 30px 40px; color: var(--fp-text); font-size: 14px; line-height: 1.8; }
+.fp-md-wrap { width: 100%; margin: 0; padding: 28px 30px 40px; background: color-mix(in srgb, var(--fp-panel) 92%, transparent); color: var(--fp-text); font-size: 14px; line-height: 1.8; }
 .fp-md-wrap > :first-child { margin-top: 0; }
+.fp-md-wrap :is(h1, h2, h3, h4, h5, h6) { color: var(--fp-text); }
 .fp-md-wrap h1 { font-size: 24px; font-weight: 600; line-height: 1.4; letter-spacing: -.02em; border: 0; padding: 0; }
 .fp-md-wrap h2 { font-size: 18px; font-weight: 600; line-height: 1.5; margin-top: 1.6em; }
 .fp-md-wrap h3 { font-size: 15px; font-weight: 600; }
 .fp-md-wrap a { color: var(--fp-accent); }
-.fp-md-wrap pre,
-.fp-md-wrap :not(pre) > code { background: var(--fp-bg); }
+.fp-md-wrap pre { background: color-mix(in srgb, var(--fp-bg) 80%, var(--fp-panel)); box-shadow: inset 0 0 0 1px var(--fp-line); }
+.fp-md-wrap :not(pre) > code { background: color-mix(in srgb, var(--fp-bg) 65%, var(--fp-panel)); color: var(--fp-text); box-shadow: inset 0 0 0 1px var(--fp-line); }
 .fp-md-wrap code,
 .fp-code-wrap pre { font-family: 'Tmux Panel Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
 .fp-md-wrap th,
 .fp-md-wrap td { border-color: var(--fp-line); padding: 8px 10px; }
-.fp-md-wrap th { background: var(--fp-bg); font-weight: 500; }
-.fp-md-wrap blockquote { border-color: var(--fp-accent); color: var(--fp-muted); }
+.fp-md-wrap th { background: color-mix(in srgb, var(--fp-bg) 72%, var(--fp-panel)); color: var(--fp-text); font-weight: 500; }
+.fp-md-wrap tbody tr:hover { background: color-mix(in srgb, var(--fp-hover) 35%, var(--fp-panel)); }
+.fp-md-wrap blockquote { border-color: var(--fp-accent); color: color-mix(in srgb, var(--fp-text) 78%, var(--fp-muted)); }
 .fp-md-wrap .fp-frontmatter { border: 0; border-bottom: 1px solid var(--fp-line); border-radius: 0; background: transparent; padding: 0 0 16px; }
 .fp-md-wrap .fp-fm-key { color: var(--fp-muted); font-weight: 400; flex-basis: 90px; }
 .fp-code-wrap { background: var(--fp-panel); color: var(--fp-text); }
 .fp-code-wrap pre { padding: 20px 18px; font-size: 13px; line-height: 1.7; }
 .fp-code-wrap .fp-line-numbers { color: var(--fp-muted); border-color: var(--fp-line); }
+/* The shared highlight.js stylesheet is dark; preview tokens follow either theme. */
+:is(.fp-md-wrap, .fp-code-wrap) .hljs { background: transparent; color: var(--fp-text); }
+:is(.fp-md-wrap, .fp-code-wrap) pre :is(.hljs-comment, .hljs-quote, .hljs-code, .hljs-formula) { color: var(--fp-muted); }
+:is(.fp-md-wrap, .fp-code-wrap) pre :is(.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-type, .hljs-built_in, .hljs-doctag) { color: var(--accent-purple, var(--fp-accent)); }
+:is(.fp-md-wrap, .fp-code-wrap) pre :is(.hljs-string, .hljs-regexp, .hljs-symbol, .hljs-bullet, .hljs-template-tag, .hljs-template-variable) { color: var(--accent-green, var(--fp-accent)); }
+:is(.fp-md-wrap, .fp-code-wrap) pre :is(.hljs-title, .hljs-section, .hljs-selector-id, .hljs-selector-class, .hljs-selector-pseudo, .hljs-name, .hljs-link, .hljs-meta) { color: var(--fp-accent); }
+:is(.fp-md-wrap, .fp-code-wrap) pre :is(.hljs-number, .hljs-attr, .hljs-attribute, .hljs-selector-attr, .hljs-variable, .hljs-params, .hljs-subst, .hljs-operator) { color: var(--fp-text); }
+:is(.fp-md-wrap, .fp-code-wrap) pre .hljs-addition { color: var(--accent-green, var(--fp-text)); background: color-mix(in srgb, var(--accent-green, var(--fp-text)) 12%, transparent); }
+:is(.fp-md-wrap, .fp-code-wrap) pre .hljs-deletion { color: var(--accent-red, var(--fp-text)); background: color-mix(in srgb, var(--accent-red, var(--fp-text)) 12%, transparent); }
+.fp-mermaid-embed { background: color-mix(in srgb, var(--fp-panel) 94%, var(--fp-bg)); border-color: var(--fp-line); }
+.fp-mermaid-dialog { background: color-mix(in srgb, var(--fp-bg) 70%, transparent); }
+.fp-mermaid-dialog-panel, .fp-mermaid-dialog-header { background: var(--fp-panel); border-color: var(--fp-line); }
+.fp-mermaid-dialog-viewport { background: color-mix(in srgb, var(--fp-panel) 88%, var(--fp-bg)); }
+.fp-mermaid-open, .fp-mermaid-tool { background: var(--fp-panel); color: var(--fp-muted); border-color: var(--fp-line); }
+.fp-mermaid-dialog-title, .fp-mermaid-percent, .fp-mermaid-close { color: var(--fp-text); }
+.fp-mermaid-open:hover, .fp-mermaid-tool:hover { background: var(--fp-hover); color: var(--fp-text); border-color: var(--fp-line); }
+.fp-mermaid-open:focus-visible, .fp-mermaid-tool:focus-visible { outline-color: var(--fp-accent); }
+.fp-mermaid-dialog-viewport:focus-visible { box-shadow: inset 0 0 0 2px var(--fp-accent); }
+.fp-mermaid-close:hover { color: var(--accent-red); }
 .fp-dir-wrap { padding: 0; }
 .fp-dir-crumb { padding: 12px 16px; border-color: var(--fp-line); background: var(--fp-panel); }
 .fp-dir-crumb-seg { color: var(--fp-muted); }

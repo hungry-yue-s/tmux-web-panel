@@ -253,6 +253,44 @@ describe('file preview dock tabs', () => {
     });
   });
 
+  it('repairs unreadable custom Mermaid labels without replacing authored fills or readable text', () => {
+    const { dom, preview } = createPreview();
+    dom.window.document.documentElement.style.setProperty('--text-primary', '#e2ebde');
+    const embed = dom.window.document.createElement('div');
+    embed.innerHTML = '<svg viewBox="0 0 600 300">'
+      + '<g class="cluster"><rect style="fill:#fff9f7"/><g class="cluster-label"><foreignObject><div xmlns="http://www.w3.org/1999/xhtml"><span style="color:#e2ebde">故障链</span></div></foreignObject></g></g>'
+      + '<g class="node"><rect style="fill:#eaf2fb"/><g class="label"><foreignObject><div xmlns="http://www.w3.org/1999/xhtml"><span style="color:#172536">升级触发</span></div></foreignObject></g></g>'
+      + '<g class="cluster"><rect fill="#f5f8fc"/><g class="cluster-label"><text style="fill:#e2ebde"><tspan style="fill:#e2ebde">升级路径</tspan></text></g></g>'
+      + '<g class="node"><rect style="fill:#173b40"/><g class="label"><text style="fill:#111111">暗色节点</text></g></g>'
+      + '</svg>';
+    dom.window.document.body.appendChild(embed);
+    preview._test.prepareMermaid(embed);
+    const labels = embed.querySelectorAll('.cluster-label span,.node span,.cluster-label text,.cluster-label tspan,.node text');
+    expect(labels[0].style.color).toBe('rgb(31, 35, 40)');
+    expect(labels[0].style.getPropertyPriority('color')).toBe('important');
+    expect(labels[1].style.color).toBe('rgb(23, 37, 54)');
+    expect(labels[1].style.getPropertyPriority('color')).toBe('');
+    expect(labels[2].style.fill).toBe('rgb(31, 35, 40)');
+    expect(labels[3].style.fill).toBe('rgb(31, 35, 40)');
+    expect(labels[4].style.fill).toBe('rgb(226, 235, 222)');
+    expect(embed.querySelector('.cluster rect').style.fill).toBe('rgb(255, 249, 247)');
+    expect(embed.querySelector('.node rect').style.fill).toBe('rgb(234, 242, 251)');
+    expect(new dom.window.XMLSerializer().serializeToString(embed.querySelector('svg'))).toContain('color: rgb(31, 35, 40) !important');
+  });
+
+  it('leaves gradients, translucent fills and non-flowchart diagrams authored', () => {
+    const { dom, preview } = createPreview();
+    const embed = dom.window.document.createElement('div');
+    embed.innerHTML = '<svg viewBox="0 0 600 300">'
+      + '<g class="node"><rect style="fill:rgba(255,255,255,.5)"/><g class="label"><text style="fill:#eeeeee">transparent</text></g></g>'
+      + '<g class="node"><rect style="fill:url(#gradient)"/><g class="label"><text style="fill:#eeeeee">gradient</text></g></g>'
+      + '<g class="actor"><rect style="fill:#ffffff"/><text style="fill:#eeeeee">sequence</text></g>'
+      + '</svg>';
+    dom.window.document.body.appendChild(embed);
+    preview._test.prepareMermaid(embed);
+    embed.querySelectorAll('text').forEach(label => expect(label.style.fill).toBe('rgb(238, 238, 238)'));
+  });
+
   it('rerenders open Mermaid diagrams when the panel theme changes', async () => {
     const { dom, preview } = createPreview();
     const embed = dom.window.document.createElement('div');
@@ -1905,6 +1943,25 @@ describe('video previews', () => {
     expect(snapshot.html).toContain('https://cdn.test/clip.mp4');
     expect(body.querySelector('video').getAttribute('src')).toContain('token=secret');
     vi.spyOn(dom.window.HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    preview.close();
+  });
+
+  it('keeps reading and syntax palettes plus repaired SVG labels in standalone snapshots', async () => {
+    const { dom, preview } = createLivePreview();
+    dom.window.document.documentElement.style.setProperty('--accent-purple', '#c2acd0');
+    await preview.openFile('/tmp/live.csv', '%1');
+    const overlay = dom.window.document.querySelector('.fp-overlay');
+    overlay.style.setProperty('--fp-panel', '#24332a');
+    const body = overlay.querySelector('.fp-body');
+    body.innerHTML = '<div class="fp-md-wrap"><pre><code><span class="hljs-keyword">const</span> value</code></pre><div class="mermaid">'
+      + '<svg viewBox="0 0 300 200"><g class="cluster"><rect fill="#ffffff"/><g class="cluster-label"><text style="fill:#eeeeee">Title</text></g></g></svg>'
+      + '</div></div>';
+    preview._test.prepareMermaid(body.querySelector('.mermaid'));
+    const snapshot = await preview._test.buildStandaloneDoc();
+    expect(snapshot.html).toContain('--fp-panel:#24332a;');
+    expect(snapshot.html).toContain('--accent-purple:#c2acd0;');
+    expect(snapshot.html).toContain('pre :is(.hljs-keyword');
+    expect(snapshot.html).toContain('fill: rgb(31, 35, 40) !important');
     preview.close();
   });
 });
