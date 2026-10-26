@@ -1,6 +1,7 @@
 /* Mobile is a work surface with a thumb rail, not a compressed sidebar. */
 .mobile-dock,.mobile-settings-nav,.mobile-header-action { display:none; }
-.mobile-server-operations,.mobile-server-operations>div { display:contents; }
+.mobile-server-operations { display:block; }
+.mobile-server-operations>div { display:flex; align-items:center; gap:8px; }
 .mobile-server-operations>summary { display:none; }
 
 @media (max-width:767px), (pointer:coarse) and (max-height:560px) and (max-width:1023px) {
@@ -137,7 +138,7 @@
   .ms-app .server-icon svg { width:20px; height:20px; }
   .ms-app .server-hero h2 { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0; font-size:24px; letter-spacing:-.03em; }
   .ms-app .server-hero p { margin-top:6px; font-size:11px; line-height:1.6; overflow-wrap:anywhere; }
-  .ms-app .hero-actions { grid-column:1/-1; display:flex; gap:8px; align-items:start; }
+  .ms-app .hero-actions { grid-column:1/-1; display:flex; gap:8px; align-items:start; padding:0; }
   .ms-app .hero-actions>.ms-btn { flex:1; }
   .mobile-server-operations { display:block; position:relative; flex:1; }
   .mobile-server-operations summary { display:flex; align-items:center; justify-content:center; min-height:44px; padding:8px; border:1px solid var(--workspace-line); border-radius:10px; color:var(--workspace-muted); list-style:none; cursor:pointer; }
