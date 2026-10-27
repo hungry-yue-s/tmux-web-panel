@@ -8,6 +8,8 @@
 import express from 'express';
 
 import { AppError, ErrorCode, handle } from '../servers/errors.js';
+import { requireSameOrigin } from './same-origin.js';
+
 
 const SERVER_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
@@ -17,35 +19,6 @@ function requireServerId(req) {
     throw new AppError(ErrorCode.VALIDATION_ERROR, 'Invalid server id', { details: { field: 'serverId' } });
   }
   return serverId;
-}
-
-/**
- * Rejects credentialed cross-origin writes. The panel authenticates with a
- * bearer token, so this is defence in depth rather than the only control.
- */
-export function requireSameOrigin(req, res, next) {
-  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
-  const origin = req.get('origin');
-  if (!origin) return next();
-  let originHost;
-  try {
-    originHost = new URL(origin).host;
-  } catch {
-    originHost = null;
-  }
-  if (originHost && originHost === req.get('host')) return next();
-  res.status(403).json({
-    success: false,
-    data: null,
-    error: {
-      code: 'FORBIDDEN_ORIGIN',
-      message: 'Cross-origin request rejected',
-      retryable: false,
-      action: 'none',
-    },
-    meta: { requestId: null },
-  });
-  return undefined;
 }
 
 export function createServersRouter({ serverService }) {
@@ -63,14 +36,10 @@ export function createServersRouter({ serverService }) {
 
   router.get('/:serverId', handle(async (req) => serverService.get(requireServerId(req))));
 
-  router.patch('/:serverId', handle(async (req) => {
-    const force = req.query.force === '1' || req.query.force === 'true';
-    return serverService.update(requireServerId(req), req.body || {}, { force });
-  }));
+  router.patch('/:serverId', handle(async (req) => serverService.update(requireServerId(req), req.body || {})));
 
   router.delete('/:serverId', handle(async (req, res) => {
-    const force = req.query.force === '1' || req.query.force === 'true';
-    await serverService.remove(requireServerId(req), { force });
+    await serverService.remove(requireServerId(req));
     res.status(204).end();
   }));
 

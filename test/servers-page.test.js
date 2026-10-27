@@ -135,7 +135,7 @@ describe('ServersPage real connection facts and actions', () => {
       ssh: { available: true }, tmux: { available: true, version: '3.5a' }, metrics: { available: true },
     } });
     ctx.win.eval(readFileSync('public/js/ms-app.js', 'utf8'));
-    ctx.win.Api = { workspacePath: () => '/stub', get: async () => {
+    ctx.win.Api = { workspaceUrl: () => '/stub', get: async () => {
       throw Object.assign(new Error('disabled'), { code: 'SERVER_DISABLED' });
     } };
     await ctx.win.MsApp.refreshWorkspace('remote');
@@ -146,7 +146,7 @@ describe('ServersPage real connection facts and actions', () => {
     const timeline = view.querySelector('.connection-remote .timeline');
     expect(timeline.querySelector('.check')).toBeNull();
     expect([...timeline.querySelectorAll('small')].map((row) => row.textContent))
-      .toEqual(['已停用', '已停用', '已停用']);
+      .toEqual(['已停用', '已停用', '已停用', '已停用']);
   });
 
   it('only marks SSH verified when the health response explicitly reports a checked connection', () => {
@@ -159,7 +159,8 @@ describe('ServersPage real connection facts and actions', () => {
     });
     expect(view.querySelector('.connection-remote').textContent).toContain('已验证');
     expect(view.querySelector('.connection-remote').textContent).toContain('3.5a');
-    expect(view.querySelectorAll('.connection-remote .check')).toHaveLength(2);
+    // SSH tunnel, panel service and tmux; metrics stays unchecked.
+    expect(view.querySelectorAll('.connection-remote .check')).toHaveLength(3);
   });
 
   it('leaves a missing SSH port unspecified instead of presenting 22 as an observed fact', () => {
@@ -180,5 +181,67 @@ describe('ServersPage real connection facts and actions', () => {
     expect(card.querySelector('.theme-card-bar').style.background).toBe(toRGB(colors['--workspace-sidebar']));
     expect(card.querySelectorAll('.theme-card-bar span')[2].style.background).toBe(toRGB(colors['--workspace-accent']));
     expect(card.querySelector('.theme-card-name').textContent).toBe('Deep Current');
+  });
+});
+
+describe('ServersPage basic mode', () => {
+  const basicHealth = {
+    state: 'online',
+    checkedAt,
+    capabilities: { ssh: { available: true }, tmux: { available: true, version: '3.4' }, files: { available: false, reason: 'node_not_installed' } },
+    workspace: { provider: 'tmux', transport: 'ssh', persistence: 'tmux' },
+    node: { installed: false, posix: true, platform: 'linux' },
+  };
+
+  it('offers to install the panel instead of the machine pages', () => {
+    const ctx = setup();
+    for (const section of ['performance', 'agents']) {
+      const view = render(ctx, 'remote', basicHealth, section);
+      const card = view.querySelector('.install-node-card');
+      expect(card).toBeTruthy();
+      expect(card.textContent).toContain('远端 tmux 会话');
+      expect(card.querySelector('[data-action="install-node"]').textContent).toContain('安装面板服务');
+      expect(view.textContent).not.toContain('本机性能');
+    }
+  });
+
+  it('says hosted shells end with the client when there is no remote tmux', () => {
+    const ctx = setup();
+    const view = render(ctx, 'remote', { ...basicHealth, workspace: { provider: 'ssh', transport: 'ssh', persistence: 'process-memory' } }, 'performance');
+    expect(view.querySelector('.install-node-card').textContent).toContain('客户端退出后结束');
+  });
+
+  it('shows the install offer and the panel state on the connection page', () => {
+    const ctx = setup();
+    const view = render(ctx, 'remote', basicHealth, 'connection');
+    expect(view.querySelector('.install-node-card')).toBeTruthy();
+    expect(view.textContent).toContain('未安装（基础模式）');
+  });
+
+  it('renders a running installation with its step and log tail, and no button', () => {
+    const ctx = setup();
+    ctx.win.MsApp = { installJob: () => ({ state: 'running', step: 'npm ci', log: ['>> unpack panel', '>> npm ci', 'added 120 packages'] }) };
+    const card = render(ctx, 'remote', basicHealth, 'performance').querySelector('.install-node-card');
+    expect(card.querySelector('.install-progress').textContent).toContain('npm ci');
+    expect(card.querySelector('.install-log').textContent).toContain('added 120 packages');
+    expect(card.querySelector('[data-action="install-node"]')).toBeNull();
+  });
+
+  it('asks to continue with a sudo password, or to retry after a failure', () => {
+    const ctx = setup();
+    ctx.win.MsApp = { installJob: () => ({ state: 'needs_password', log: [] }) };
+    expect(render(ctx, 'remote', basicHealth, 'performance').querySelector('[data-action="install-node"]').textContent)
+      .toContain('sudo 密码');
+    ctx.win.MsApp = { installJob: () => ({ state: 'failed', error: { message: 'npm ci failed' }, log: [] }) };
+    const card = render(ctx, 'remote', basicHealth, 'performance').querySelector('.install-node-card');
+    expect(card.textContent).toContain('npm ci failed');
+    expect(card.querySelector('[data-action="install-node"]').textContent).toContain('重试');
+  });
+
+  it('keeps the full pages for a server whose panel answers', () => {
+    const ctx = setup();
+    const view = render(ctx, 'remote', { ...basicHealth, node: { installed: true } }, 'performance');
+    expect(view.querySelector('.install-node-card')).toBeNull();
+    expect(view.textContent).toContain('本机性能');
   });
 });

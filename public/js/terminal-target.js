@@ -2,13 +2,13 @@
   var LOCAL = 'local';
 
   /**
-   * Server-scoped addressing for the terminal renderer.
+   * The server and window the terminal renderer is showing.
    *
-   * The legacy renderer addresses panes through /api/sessions/... and
-   * /ws/terminal/:paneId, which always mean the panel's own machine. Sending a
-   * remote server's action down those paths would read and mutate the local
-   * host instead — so every call site funnels through here, and only the local
-   * server keeps the legacy paths.
+   * Every machine runs the same panel, so a pane is addressed by the same path
+   * everywhere; only the /n/:serverId prefix (Api.nodeUrl) says which machine.
+   * Call sites funnel through here so a remote window can never act on the
+   * panel's own host. Switching servers fires `terminal-target-server`, which
+   * the status socket uses to follow the server in view.
    */
   var TerminalTarget = {
     serverId: LOCAL,
@@ -18,10 +18,14 @@
 
     set: function (target) {
       var next = target || {};
+      var previous = this.serverId;
       this.serverId = next.serverId || LOCAL;
       this.provider = next.provider || 'tmux';
       this.sessionId = next.sessionId || null;
       this.windowId = next.windowId || null;
+      if (previous !== this.serverId && typeof global.dispatchEvent === 'function' && typeof global.CustomEvent === 'function') {
+        global.dispatchEvent(new global.CustomEvent('terminal-target-server', { detail: { serverId: this.serverId } }));
+      }
       return this;
     },
 
@@ -33,31 +37,23 @@
       return this.serverId !== LOCAL;
     },
 
-    /** Header that lets the backend reject a stale provider assumption. */
-    headers: function () {
-      return { 'X-Workspace-Provider': this.provider };
+    url: function (path) {
+      return global.Api.nodeUrl(this.serverId, path);
     },
 
-    _serverBase: function () {
-      return '/api/servers/' + encodeURIComponent(this.serverId);
+    _legacyPanes: function (sessionName, windowIndex) {
+      return '/api/sessions/' + encodeURIComponent(sessionName)
+        + '/windows/' + encodeURIComponent(windowIndex) + '/panes';
     },
 
-    /** Pane list for the current window. */
+    /** Pane list for the current window: stable window id when known. */
     panesPath: function (sessionName, windowIndex) {
-      if (!this.windowId) {
-        return '/api/sessions/' + encodeURIComponent(sessionName)
-          + '/windows/' + encodeURIComponent(windowIndex) + '/panes';
-      }
-      return this._serverBase() + '/windows/' + encodeURIComponent(this.windowId) + '/panes';
+      if (!this.windowId) return this.url(this._legacyPanes(sessionName, windowIndex));
+      return global.Api.workspaceUrl(this.serverId, '/windows/' + encodeURIComponent(this.windowId) + '/panes');
     },
 
-    /**
-     * New-shell routes use a stable window id on local and remote servers. The
-     * legacy name/index endpoint remains only for the hidden compatibility UI.
-     */
     listPanes: function (sessionName, windowIndex) {
       if (!this.windowId) {
-        if (this.isRemote()) return Promise.reject(new Error('No stable window id'));
         return global.api.get(this.panesPath(sessionName, windowIndex)).then(function (result) {
           return (result && result.data) || [];
         });
@@ -69,59 +65,41 @@
 
     splitPane: function (sessionName, windowIndex, paneId, direction) {
       if (!this.windowId) {
-        if (this.isRemote()) return Promise.reject(new Error('No window id for a remote split'));
         return global.api.post(this.panesPath(sessionName, windowIndex), {
           paneId: paneId,
           direction: direction,
         });
       }
-      return global.Api.request(
-        'POST',
-        this._serverBase() + '/windows/' + encodeURIComponent(this.windowId) + '/panes',
-        // paneId matters for tmux: it splits the pane in view, not just the active one.
-        { direction: direction, paneId: paneId || undefined },
-        { headers: this.headers() },
-      );
+      // paneId matters for tmux: it splits the pane in view, not just the active one.
+      return global.Api.post(this.panesPath(sessionName, windowIndex), {
+        direction: direction,
+        paneId: paneId || undefined,
+      });
     },
 
     setPaneLabel: function (paneId, label) {
-      if (!this.windowId && !this.isRemote()) {
-        return global.api.put('/api/panes/' + encodeURIComponent(paneId) + '/label', { label: label });
+      if (!this.windowId) {
+        return global.api.put(this.url('/api/panes/' + encodeURIComponent(paneId) + '/label'), { label: label });
       }
-      return global.Api.request(
-        'PATCH',
-        this._serverBase() + '/panes/' + encodeURIComponent(paneId),
-        { label: label },
-        { headers: this.headers() },
-      );
+      return global.Api.patch(global.Api.workspaceUrl(this.serverId, '/panes/' + encodeURIComponent(paneId)), { label: label });
     },
 
     closePane: function (sessionName, windowIndex, paneId) {
       // Callers distinguish "cancelled" from "closed" by the resolved value, and
-      // a server-scoped delete answers 204 with an empty body.
-      if (!this.windowId && !this.isRemote()) {
+      // the workspace delete answers 204 with an empty body.
+      if (!this.windowId) {
         return global.api
           .delete(this.panesPath(sessionName, windowIndex) + '/' + encodeURIComponent(paneId))
           .then(function () { return { ok: true }; });
       }
-      return global.Api.request(
-        'DELETE',
-        this._serverBase() + '/panes/' + encodeURIComponent(paneId),
-        undefined,
-        { headers: this.headers() },
-      ).then(function () { return { ok: true }; });
+      return global.Api.del(global.Api.workspaceUrl(this.serverId, '/panes/' + encodeURIComponent(paneId)))
+        .then(function () { return { ok: true }; });
     },
 
-    /**
-     * Terminal socket address. The server-scoped form is required for a remote
-     * host; the single-segment legacy form still means the local server.
-     */
+    /** Terminal socket address on the machine that owns the pane. */
     wsUrl: function (paneId, nozoom, cols, rows) {
       var proto = global.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      var path = this.isRemote()
-        ? '/ws/terminal/' + encodeURIComponent(this.serverId) + '/' + encodeURIComponent(paneId)
-        : '/ws/terminal/' + encodeURIComponent(paneId);
-      var url = proto + '//' + global.location.host + path;
+      var url = proto + '//' + global.location.host + this.url('/ws/terminal/' + encodeURIComponent(paneId));
       var query = [];
       if (nozoom) query.push('nozoom=1');
       if (cols) query.push('cols=' + encodeURIComponent(cols));
@@ -132,9 +110,20 @@
       return url;
     },
 
-    /** tmux-only capabilities are hidden rather than failing at click time. */
+    /** tmux-native actions (split view, layouts) need tmux behind the pane. */
     supportsTmuxActions: function () {
       return this.provider === 'tmux';
+    },
+
+    /**
+     * False for a basic-mode server: reachable over SSH without the panel, so
+     * files, uploads, metrics and agents are not available there.
+     */
+    hasNode: function () {
+      if (!this.isRemote()) return true;
+      var shell = global.AppShell;
+      var health = shell && typeof shell.health === 'function' ? shell.health(this.serverId) : null;
+      return !(health && health.node && health.node.installed === false);
     },
   };
 

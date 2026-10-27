@@ -19,15 +19,13 @@
       + (iconName ? shell().icon(iconName) : '') + esc(label) + '</button>';
   }
 
-  function kpi(label, value, toneName, note) {
-    return '<div class="ms-card kpi"><div class="kpi-top"><span>' + esc(label) + '</span>'
-      + '<span class="dot ' + (toneName === 'red' ? 'offline' : toneName === 'yellow' ? 'warn' : 'online') + '"></span></div>'
-      + '<div class="kpi-value ' + toneName + '">' + esc(value) + '</div>'
-      + '<div class="kpi-note">' + esc(note) + '</div></div>';
-  }
-
   function detail(label, value) {
     return '<div class="detail-row"><span>' + esc(label) + '</span><strong class="mono">' + esc(value) + '</strong></div>';
+  }
+
+  /** Reachable over SSH, panel not installed there. */
+  function isBasic(health) {
+    return Boolean(health && health.node && health.node.installed === false);
   }
 
   function timeline(label, value, ok) {
@@ -49,13 +47,6 @@
       version_unparseable: '版本无法识别', command_failed: '检测失败' };
     if (reason) return { text: reasons[reason] || '不可用', ok: false };
     return { text: '不可用', ok: false };
-  }
-
-  /** Percent for display: unknown stays an em dash rather than becoming 0. */
-  function pct(value) {
-    return value === null || value === undefined || !Number.isFinite(Number(value))
-      ? '—'
-      : Math.round(Number(value)) + '%';
   }
 
   function relativeTime(iso) {
@@ -97,10 +88,11 @@
 
       var base = this._hero(server, health, openWorkspace, route) + this._tabs(server, section);
       if (section === 'connection') return base + this._connection(server, health, workspace);
-      if (section === 'agents' && server.kind === 'local') return base + this._localAgents();
-      return base + (server.kind === 'local'
-        ? this._localPerformance()
-        : this._performance(serverId, health));
+      // Basic mode: terminals work, the machine-level pages need the panel there.
+      if (isBasic(health)) return base + this._installCard(server, health);
+      // Every server runs the full panel, so its status pages are the same ones.
+      if (section === 'agents') return base + this._localAgents();
+      return base + this._localPerformance();
     },
 
     /**
@@ -158,9 +150,7 @@
 
     _tabs: function (server, section) {
       var labels = { performance: '性能', agents: 'Agent 控制台', claude: 'Claude 用量', codex: 'Codex 用量', connection: '连接' };
-      var entries = server.kind === 'local'
-        ? shell().localStatusSections().map(function (name) { return [name, labels[name]]; })
-        : [['performance', labels.performance]];
+      var entries = shell().localStatusSections().map(function (name) { return [name, labels[name]]; });
       entries.push(['connection', labels.connection]);
       return '<div class="tabs">' + entries.map(function (entry) {
         var route = { name: 'server', params: { serverId: server.id, section: entry[0] } };
@@ -169,61 +159,50 @@
       }).join('') + '</div>';
     },
 
-    _performance: function (serverId, health) {
-      var metrics = global.Store.getState().entities.metricsByServerId[serverId] || {};
-      if (!metrics.sampledAt) {
-        var unsupported = metrics.availability && metrics.availability.cpu === 'unsupported';
-        return '<div class="ms-card empty"><div class="empty-icon">' + shell().icon('gauge') + '</div>'
-          + '<h3>' + (unsupported ? '该平台暂不支持性能采集' : '暂时没有性能数据') + '</h3>'
-          + '<p>' + (unsupported
-            ? '面板只为 Linux 与 macOS 提供只读探针，未知值不会用 0 代替。'
-            : '最后一次采集未成功。恢复连接后会继续采样，当前不会用 0 代替未知值。')
-          + '</p>'
-          + (metrics.last
-            ? '<p class="muted">最后一次成功样本：CPU ' + esc(pct(metrics.last.cpuPercent))
-              + ' · ' + esc(relativeTime(metrics.last.sampledAt)) + '</p>'
-            : '')
-          + '</div>';
+    /**
+     * Offer to install the panel on a basic-mode server, or show the running
+     * installation. The job itself lives in MsApp; this only renders it.
+     */
+    _installCard: function (server, health) {
+      var job = (global.MsApp && global.MsApp.installJob && global.MsApp.installJob(server.id)) || null;
+      var node = health.node || {};
+      var mode = (health.workspace && health.workspace.provider) === 'tmux'
+        ? '远端 tmux 会话（重启客户端后仍在）'
+        : '由客户端托管的 SSH 终端（客户端退出后结束）';
+      var body = '<p>这台机器可以通过 SSH 登录，但还没有安装面板服务。现在能用的是：' + esc(mode) + '。</p>'
+        + '<p>安装后可以获得全部功能：文件浏览与预览、上传、性能监控、通知、Agent 控制台，'
+        + '终端与会话也改为由那台机器上的面板直接提供。</p>'
+        + (node.posix === false && node.platform !== 'windows'
+          ? '<p class="muted">没有检测到 POSIX shell；安装程序会按 Windows 处理。</p>' : '');
+      var state = job ? job.state : 'idle';
+      var status = '';
+      if (state === 'running') {
+        status = '<div class="install-progress"><strong>正在安装：</strong>' + esc(job.step || '准备中') + '</div>';
+      } else if (state === 'failed') {
+        status = '<div class="install-progress error"><strong>安装失败</strong>'
+          + (job.error && job.error.message ? '：' + esc(job.error.message) : '') + '</div>';
+      } else if (state === 'needs_password') {
+        status = '<div class="install-progress"><strong>需要 sudo 密码</strong>来安装缺少的系统软件包。</div>';
+      } else if (state === 'succeeded') {
+        status = '<div class="install-progress ok"><strong>安装完成</strong>，正在重新连接…</div>';
       }
-
-      return '<div class="grid kpi-grid">'
-        + kpi('CPU', pct(metrics.cpuPercent), Number(metrics.cpuPercent) >= 70 ? 'yellow' : 'blue', '整机口径')
-        + kpi('内存', pct(metrics.memPercent), Number(metrics.memPercent) >= 85 ? 'red' : 'purple',
-          metrics.memMetric || '整机口径')
-        + kpi('磁盘', pct(metrics.diskPercent), Number(metrics.diskPercent) >= 80 ? 'yellow' : 'green', '根卷')
-        + kpi('负载', metrics.load1 === null || metrics.load1 === undefined ? '—' : String(metrics.load1), 'green',
-          'load 1 分钟')
-        + kpi('延迟', shell()._latencyOf(health), 'blue', 'SSH 往返')
-        + '</div>'
-        + '<div class="section"><div class="section-head"><h3>采样历史</h3>'
-        + '<span>内存态，面板重启后重新开始</span></div>'
-        + '<div class="ms-card chart-card"><div class="chart-title"><strong>CPU 趋势</strong>'
-        + '<span>' + esc(relativeTime(metrics.sampledAt)) + '</span></div>'
-        + this._sparkline(serverId) + '</div></div>';
-    },
-
-    _sparkline: function (serverId) {
-      var history = global.Store.getState().entities.metricsByServerId[serverId];
-      var points = (history && history.historyPoints) || [];
-      if (points.length < 2) {
-        return '<p class="muted" style="margin-top:14px">正在积累采样点…</p>';
-      }
-      var width = 700;
-      var height = 180;
-      var step = width / (points.length - 1);
-      var path = points.map(function (point, index) {
-        var value = Number.isFinite(Number(point.cpuPercent)) ? Number(point.cpuPercent) : 0;
-        var y = height - (value / 100) * height;
-        return (index === 0 ? 'M' : 'L') + Math.round(index * step) + ' ' + Math.round(y);
-      }).join('');
-      return '<svg class="chart" viewBox="0 0 700 190" preserveAspectRatio="none">'
-        + '<path class="chart-grid" d="M0 25H700M0 75H700M0 125H700M0 175H700"/>'
-        + '<path class="chart-line" d="' + path + '"/></svg>';
+      var log = job && job.log && job.log.length
+        ? '<pre class="install-log mono">' + esc(job.log.slice(-14).join('\n')) + '</pre>' : '';
+      var button = state === 'running'
+        ? ''
+        : actionButton(state === 'failed' ? '重试安装' : state === 'needs_password' ? '输入 sudo 密码并继续' : '安装面板服务',
+          'install-node', true, '');
+      return '<div class="section"><div class="ms-card capability install-node-card">'
+        + '<div class="capability-head"><strong>基础模式</strong><span class="ms-badge yellow">未安装面板服务</span></div>'
+        + body + status + log
+        + '<p class="muted">安装会把本客户端的面板代码经 SFTP 传到那台机器，自动安装缺少的依赖（需要时使用 sudo）、'
+        + 'Node.js 和 tmux，再以只监听 127.0.0.1 的用户服务运行；只有本客户端能经 SSH 隧道访问它。</p>'
+        + button + '</div></div>';
     },
 
     _localConnection: function (health) {
       var facts = health.facts || {}, capabilities = health.capabilities || {};
-      var platforms = { darwin: 'macOS', linux: 'Linux', windows: 'Windows', msys: 'Windows (MSYS2)' };
+      var platforms = { darwin: 'macOS', linux: 'Linux', windows: 'Windows' };
       var tmux = capabilityStatus(capabilities.tmux, health, true);
       var metrics = capabilityStatus(capabilities.metrics, health, false);
       return '<div class="grid two-col connection-local"><section>'
@@ -252,6 +231,16 @@
         host_key_error: '主机指纹需要确认', checking: '检测中', disabled: '已停用' })[health.state] || '未检测';
       var tmux = capabilityStatus(capabilities.tmux, health, true);
       var metrics = capabilityStatus(capabilities.metrics, health, false);
+      var errorCode = health.error && health.error.code;
+      // The node link has failure modes of its own beyond SSH reachability.
+      var nodeHint = ({
+        NODE_NOT_INSTALLED: '该主机上还没有运行 tmux-web-panel。在那台机器上安装并启动面板服务后会自动接入（scripts/install-service.sh install 或 Windows 上的 install-service.ps1 install）。',
+        NODE_NOT_RUNNING: '已通过 SSH 连上，但面板服务没有在运行。请在那台机器上启动面板服务。',
+        NODE_INCOMPATIBLE: '该主机上的面板版本与本机不兼容，请把两边更新到同一版本。',
+        NODE_AUTH_FAILED: '该主机上的面板拒绝了本机的访问令牌，通常是重装后令牌已更换；稍后会自动重新配对。',
+      })[errorCode];
+      var facts = health.facts || {};
+      var basic = isBasic(health);
 
       return '<div class="grid two-col connection-remote"><section>'
         + '<div class="section-head"><h3>连接配置</h3></div>'
@@ -261,7 +250,14 @@
         + detail('Username', address.user || (ssh.configHost ? '来自 ssh config' : '—'))
         + detail('认证配置', ssh.authMethod === 'password' ? '用户名密码' : ssh.usesIdentityFile ? '指定私钥文件' : 'SSH Agent / ssh config')
         + detail('最近成功', relativeTime(health.lastOnlineAt))
+        + (facts.version ? detail('面板版本', facts.version) : '')
         + '</div>'
+        + (basic ? this._installCard(server, health) : '')
+        + (nodeHint
+          ? '<div class="section"><div class="ms-card capability">'
+            + '<div class="capability-head"><strong>面板服务</strong><span class="ms-badge yellow">需要处理</span></div>'
+            + '<p>' + esc(nodeHint) + '</p></div></div>'
+          : '')
         + (keyProblem
           ? '<div class="section"><div class="ms-card capability">'
             + '<div class="capability-head"><strong>主机指纹需要确认</strong>'
@@ -269,23 +265,17 @@
             + '<p>面板不会自动信任或覆盖主机密钥。请通过可信渠道核对指纹后再确认。</p>'
             + actionButton('获取指纹', 'scan-host-key', true, '') + '</div></div>'
           : '')
-        + (workspace && workspace.pendingProvider === 'tmux'
-          ? '<div class="section"><div class="ms-card capability">'
-            + '<div class="capability-head"><strong>tmux 已可用</strong>'
-            + '<span class="ms-badge yellow">待切换</span></div>'
-            + '<p>当前 SSH Session 仍在运行，关闭后自动切换到 tmux；也可以立即切换并结束这些 Session。</p>'
-            + actionButton('立即切换到 tmux', 'adopt-provider', false, '') + '</div></div>'
-          : '')
         + (server.immutable ? '' : '<div class="section">'
           + actionButton('删除服务器', 'delete-server', false, '') + '</div>')
         + '</section><section>'
         + '<div class="section-head"><h3>最近一次检测</h3><span>' + esc(relativeTime(health.checkedAt)) + '</span></div>'
         + '<div class="ms-card timeline">'
-        + timeline('SSH 连接', connection, verified)
-        + timeline('指标采集能力', metrics.text, metrics.ok)
+        + timeline('SSH 隧道', connection, verified)
+        + timeline('面板服务', basic ? '未安装（基础模式）' : verified ? '已连接' + (facts.version ? ' · ' + facts.version : '') : (nodeHint ? '未就绪' : connection), verified && !basic)
         + timeline('tmux', tmux.text, tmux.ok)
+        + timeline('指标采集能力', metrics.text, metrics.ok)
         + '</div>'
-        + '<p class="muted" style="margin-top:10px">面板不会在远端安装、升级或启动 tmux。</p>'
+        + '<p class="muted" style="margin-top:10px">面板只通过 SSH 端口转发访问那台机器上运行的同一套面板服务，不在远端执行命令。</p>'
         + '</section></div>';
     },
 

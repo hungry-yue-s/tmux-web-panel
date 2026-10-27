@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-import { OutputRing, PaneRuntime, utf8Tail, DEFAULT_BUFFER_BYTES } from '../server/terminal/pane-runtime.js';
+import { OutputRing, PaneRuntime, utf8Tail, DEFAULT_BUFFER_BYTES } from '../server/hub/basic/pane-runtime.js';
 import { ErrorCode } from '../server/servers/errors.js';
 
 /** Minimal node-pty stand-in. */

@@ -84,7 +84,7 @@ session、window、pane 都在，文档渲染、性能看板、还有追到手�
 
 ### 14:00 一个标签页管所有机器
 
-登记一台主机之后，面板走你现有的 OpenSSH 那一套，config、agent、ProxyJump、硬件密钥都认，远端不装任何东西，也不存任何密钥。没有 tmux 的机器也能用，面板自己用持久 SSH PTY 托管一套 session 树，只是会明确告诉你这条路的持久性弱一些。
+每台机器跑的都是同一套面板。登记一台之后，你正在用的面板会沿用你现有的 OpenSSH 配置（config、agent、ProxyJump、硬件密钥都认），对那台机器只开一条 SSH 端口转发，然后转发浏览器用的同一套 API。远端不执行任何 shell 命令，所以本机有的功能远程机器全都有：文件、上传、监控、通知、Agent。只能 SSH 登录、没装面板的机器也能直接用（基础模式），能用到它的 tmux 会话，没有 tmux 时由面板托管登录 shell；在服务器页面上点一下就能把面板装过去，获得全部功能。
 
 其实吧，多机器管理做到后面拼的不是功能列表，是地址栏。这里任何视图细到单个 pane 都是一个 URL，能收藏能分享能贴给同事，很多团队会遇到的「我屏幕上这个画面你怎么看到」的问题就不存在了。
 
@@ -108,7 +108,7 @@ session、window、pane 都在，文档渲染、性能看板、还有追到手�
 
 展开一点说。终端这条线做的是真 attach，zoom 和分屏两种模式，布局预设加拖拽改大小，重连带退避，而且分得清「会话被别人接走」和「网络断了」这两种完全不同的情况，提示语也不一样。输入这条线在手机上做得最重，场景感知按键抽屉的按键按使用率排序，首次运行会从你自己的 shell 历史、slash commands、vim 映射里种子化，长按选字带一个可编辑的复制预览，还能从手机往主机传文件。
 
-链接识别这条线坦率的讲是用了之后回不去的那种，路径、file://、localhost 带端口、:line 引用、中文文件名全都可点，预览覆盖代码、Markdown 加 Obsidian 语法、Mermaid、图片、PDF、CSV 和 XLSX、目录、压缩包，文件一变自动刷新，渲染结果还能生成带过期时间的分享快照。多机这条线有 8 种显式健康状态，主机密钥首次信任要给指纹确认，远端指标用只读探针采集，不在远端装 agent。
+链接识别这条线坦率的讲是用了之后回不去的那种，路径、file://、localhost 带端口、:line 引用、中文文件名全都可点，预览覆盖代码、Markdown 加 Obsidian 语法、Mermaid、图片、PDF、CSV 和 XLSX、目录、压缩包，文件一变自动刷新，渲染结果还能生成带过期时间的分享快照。多机这条线有 8 种显式健康状态，主机密钥首次信任要给指纹确认；每台机器只走一条固定证书、带令牌认证的 SSH 隧道，而不是每次请求开一条命令。
 
 运维侧也没裸着。可选的 token 认证，可选的自签 TLS 覆盖 localhost 加局域网 IP，systemd 和 launchd 安装器从 pinned 子模块构建 tmux，重启后会话恢复有伴随服务兜底。重启丢会话这个坑大家也都知道，安装器把 tmux-resurrect 和 continuum 的接线一起做了。
 
@@ -155,8 +155,7 @@ flowchart LR
     end
 
     subgraph remoteMachines["另外登记的主机"]
-        remoteTmux["远端 tmux"]
-        sshFallback["远端没有 tmux 时<br/>由面板托管 SSH 会话"]
+        remoteNode["同一套面板（Node）<br/>自己的 tmux、文件、监控"]
     end
 
     clients -->|HTTPS：打开页面、查工作区、看文件| panel
@@ -167,8 +166,7 @@ flowchart LR
     codexPane <-->|可接 tmux-agent MCP| panel
     claudePane <-->|可接 tmux-agent MCP| panel
     panel -->|读取文件和本机指标| hostResources
-    panel <-->|走 OpenSSH，远端不装 agent| remoteTmux
-    panel <-->|走 OpenSSH| sshFallback
+    panel <-->|/n/:serverId 转发，走一条 ssh -N -L 隧道| remoteNode
 ```
 
 侧栏、页面地址和终端连接共用这棵树：**服务器 → Session → Window → Pane**。
@@ -213,7 +211,7 @@ npm ci
 
 在管理员 PowerShell 里安装，任务开机即启动、无需登录（S4U）；否则在你登录时启动（`-Trigger Logon`）。配置写在仅本人可读的 `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`，日志在同目录 `logs\`。文件预览用的是 pane 里显示的 MSYS 路径（`/home/me`、`/c/Users/me`），原生程序打印的 `C:\...` 路径也能点开。Windows 上暂不提供按进程的 CPU/内存/IO 统计和 pane 端口探测。
 
-想让另一台机器（比如 Mac）上的面板经 SSH 管理这台 Windows，在管理员 PowerShell 里运行 `.\scripts\install-service.ps1 ssh-enable`。它会启用 OpenSSH Server，让 sshd 改用 MSYS2 登录 bash 应答，这样这台机器在面板里就和普通 Linux tmux 主机一样（会话、终端、监控）。Windows OpenSSH 在 `ssh -tt` 时会把远程命令不加引号地拼进 shell 命令行，所以还会装一个 `ForceCommand` 包装脚本，从 `SSH_ORIGINAL_COMMAND` 原样执行命令。交互式 `ssh` 登录仍使用原先的 MSYS2 shell，sftp 照常可用。`ssh-disable` 恢复原设置。
+想让另一台机器（比如 Mac）上的面板管理这台 Windows：开启 OpenSSH Server（很多云镜像默认已开），然后在那边添加这台机器即可。对方只用到 SFTP 和端口转发，所以 sshd 的登录 shell 是什么都没关系。详见[架构说明](docs/architecture.md)。
 
 ### 局域网 IP 经常变？中继跳转 + 双因素
 
@@ -242,7 +240,8 @@ Duck DNS 和 GitHub Pages 都是免费服务；账号与 token 只存在 `~/.con
 | [文件预览与链接识别](docs/file-preview.md) | 停靠标签、渲染器、分享、敏感路径策略 |
 | [移动端交互指南](docs/mobile-gestures.md) | 选择手势、滚动、按键抽屉、上传 |
 | [多服务器设计](docs/多服务器管理-UIUX设计.md) | 工作台背后的 UX 模型，附可点击 demo |
-| [多服务器实现](docs/多服务器管理-前后端实现文档.md) | provider、SSH 传输、API 和 WS 契约、安全边界 |
+| [架构：Hub 与 Node](docs/architecture.md) | 一份面板如何接入所有机器：`/n/:serverId` 转发、SFTP 配对、SSH 隧道、固定证书 |
+| [多服务器实现（已被取代）](docs/多服务器管理-前后端实现文档.md) | 早期的 SSH 命令模板方案，留作历史参考 |
 | [macOS 原生 App](macos/README.md) | Swift 外壳加了什么、怎么构建 |
 | [已知问题与修复清单](docs/known-issues.md) | 我们已经知道哪里还糙 |
 

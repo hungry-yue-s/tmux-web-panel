@@ -31,7 +31,7 @@ describe('global UI system', () => {
     expect(styles).toMatch(/#topbar[\s\S]*?min-height:\s*52px/);
     expect(indexSource).toMatch(/href="\/css\/style\.css\?v=\d+"/);
     expect(indexSource).toContain('/js/app-fullscreen.js?v=2');
-    expect(indexSource).toContain('/js/app.js?v=15');
+    expect(indexSource).toMatch(/src="\/js\/app\.js\?v=\d+"/);
   });
 
   it('keeps the mobile terminal header compact while exposing a workspace sheet', () => {

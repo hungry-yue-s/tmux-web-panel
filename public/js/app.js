@@ -209,7 +209,7 @@ class ApiClient {
   }
 
   async get(path) {
-    const res = await fetch(path, { headers: Auth.headers() });
+    const res = await fetch(Api.activeUrl(path), { headers: Auth.headers() });
     this._handleAuth(res);
     if (!res.ok) {
       await this._throwWithBody('GET', path, res);
@@ -218,7 +218,7 @@ class ApiClient {
   }
 
   async post(path, body) {
-    const res = await fetch(path, {
+    const res = await fetch(Api.activeUrl(path), {
       method: 'POST',
       headers: Object.assign({ 'Content-Type': 'application/json' }, Auth.headers()),
       body: JSON.stringify(body),
@@ -231,7 +231,7 @@ class ApiClient {
   }
 
   async put(path, body) {
-    const res = await fetch(path, {
+    const res = await fetch(Api.activeUrl(path), {
       method: 'PUT',
       headers: Object.assign({ 'Content-Type': 'application/json' }, Auth.headers()),
       body: JSON.stringify(body),
@@ -244,7 +244,7 @@ class ApiClient {
   }
 
   async delete(path) {
-    const res = await fetch(path, {
+    const res = await fetch(Api.activeUrl(path), {
       method: 'DELETE',
       headers: Auth.headers(),
     });
@@ -1628,8 +1628,10 @@ class StatusSocket {
   }
 
   connect() {
+    this._started = true;
     var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    var url = protocol + '//' + location.host + '/ws/status';
+    // The status socket follows the server in view (see TerminalTarget).
+    var url = protocol + '//' + location.host + Api.activeUrl('/ws/status');
     var tokenParam = Auth.wsTokenParam();
     if (tokenParam) url += '?' + tokenParam;
 
@@ -1831,13 +1833,34 @@ class StatusSocket {
 
   _scheduleReconnect() {
     var self = this;
-    setTimeout(function () {
+    this._reconnectTimer = setTimeout(function () {
+      self._reconnectTimer = null;
       self._currentDelay = Math.min(
         self._currentDelay * 2,
         self._maxReconnectDelay
       );
       self.connect();
     }, this._currentDelay);
+  }
+
+  /** Reconnects at once to the server now in view (fired by TerminalTarget). */
+  retarget() {
+    if (!this._started) return;
+    var old = this._ws;
+    this._ws = null;
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+    if (old) {
+      old.onopen = null;
+      old.onclose = null;
+      old.onerror = null;
+      old.onmessage = null;
+      try { old.close(); } catch (_e) { /* already closed */ }
+    }
+    this._currentDelay = this._reconnectDelay;
+    this.connect();
   }
 }
 
@@ -2031,10 +2054,11 @@ function initTopbar() {
 // === Init ===
 
 var statusSocket = new StatusSocket();
+window.addEventListener('terminal-target-server', function () { statusSocket.retarget(); });
 
 function init() {
   // Auth check: verify token (or detect if auth is enabled)
-  fetch('/api/status', { headers: Auth.headers() })
+  fetch(Api.activeUrl('/api/status'), { headers: Auth.headers() })
     .then(function (res) {
       if (res.status === 401) {
         Auth.clearToken();

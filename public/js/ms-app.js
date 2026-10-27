@@ -13,6 +13,9 @@
 
   var MsApp = {
     _pollTimer: null,
+    /** serverId -> latest install job status from the hub. */
+    _installJobs: {},
+    _installPolls: {},
     _resizing: false,
     _perfPanelMounted: false,
     _agentHubMounted: false,
@@ -70,7 +73,7 @@
     async refreshWorkspace(serverId) {
       const token = global.Store.beginRequest('workspace', serverId);
       try {
-        const workspace = await global.Api.get(global.Api.workspacePath(serverId));
+        const workspace = await global.Api.get(global.Api.workspaceUrl(serverId));
         if (!global.Store.isCurrentRequest('workspace', serverId, token)) return null;
         global.Store.setWorkspace(serverId, workspace);
         return workspace;
@@ -92,9 +95,9 @@
     async refreshMetrics(serverId) {
       const token = global.Store.beginRequest('metrics', serverId);
       try {
-        const current = await global.Api.get(global.Api.serverPath(serverId, '/metrics/current'));
+        const current = await global.Api.get(global.Api.nodeUrl(serverId, '/api/metrics/current'));
         if (!global.Store.isCurrentRequest('metrics', serverId, token)) return;
-        const history = await global.Api.get(global.Api.serverPath(serverId, '/metrics/history?window=300'));
+        const history = await global.Api.get(global.Api.nodeUrl(serverId, '/api/metrics/history?window=300'));
         if (!global.Store.isCurrentRequest('metrics', serverId, token)) return;
         global.Store.setMetrics(serverId, { ...current, historyPoints: (history && history.points) || [] });
       } catch (_err) {
@@ -162,6 +165,8 @@
           return;
         }
         global.Store.setUi({ lastStatusServerId: serverId });
+        // The performance and agent components address "the server in view".
+        if (global.TerminalTarget.serverId !== serverId) global.TerminalTarget.set({ serverId });
         view.classList.remove('terminal-mode');
         view.innerHTML = global.ServersPage.renderServer(route);
         this._mountPerfPanel(route);
@@ -182,13 +187,11 @@
       await this._renderTerminal(route, serverId, view);
     },
 
-    /** Returns the PerfPanel mode owned by this local status route. */
+    /** Returns the PerfPanel mode owned by this status route. */
     _localPerfMode(route) {
       if (!route || route.name !== 'server') return null;
       const section = (route.params || {}).section;
-      if (section !== 'performance') return null;
-      const server = global.AppShell.server((route.params || {}).serverId);
-      return server && server.kind === 'local' ? section : null;
+      return section === 'performance' ? section : null;
     },
 
     _mountPerfPanel(route) {
@@ -208,8 +211,6 @@
 
     _mountAgentHub(route) {
       if (!route || route.name !== 'server' || (route.params || {}).section !== 'agents') return;
-      const server = global.AppShell.server((route.params || {}).serverId);
-      if (!server || server.kind !== 'local') return;
       if (!global.AgentHub || typeof global.AgentHub.start !== 'function') return;
       if (!global.document.getElementById('agent-hub')) return;
       global.AgentHub.start();
@@ -416,9 +417,9 @@
         this._panePickerObserver = null;
       }
 
-      const workspace = global.AppShell.workspace(global.AppShell.activeServerId()) || {};
-      const remote = workspace.transport === 'ssh';
-      const isSsh = workspace.provider === 'ssh';
+      // Every server runs the full panel, so only the pop-out window (a page of
+      // this panel that addresses its own panes) is limited to the local server.
+      const remote = global.AppShell.activeServerId() !== 'local';
 
       // The shell's sidebar and Window Bar replace both of these.
       const back = header.querySelector('.terminal-back-btn');
@@ -428,18 +429,17 @@
 
       const toolbar = header.querySelector('.terminal-header-actions');
       if (toolbar) {
-        // Only tmux can read its own paste buffer, and pop-out addresses a
-        // local pane; the SSH provider does support panes and labels.
-        if (remote || isSsh) {
-          for (const selector of ['.terminal-open-buf-btn', '.terminal-popout-btn']) {
+        if (remote) {
+          const popout = toolbar.querySelector('.terminal-popout-btn');
+          if (popout) popout.remove();
+        }
+        // Shells hosted for a basic-mode server have no tmux behind them.
+        const workspace = global.AppShell.workspace(global.AppShell.activeServerId()) || {};
+        if (workspace.provider === 'ssh') {
+          for (const selector of ['.terminal-mode-toggle', '.terminal-open-buf-btn']) {
             const node = toolbar.querySelector(selector);
             if (node) node.remove();
           }
-        }
-        if (isSsh) {
-          // tmux-native split rendering has no meaning without tmux.
-          const modeToggle = toolbar.querySelector('.terminal-mode-toggle');
-          if (modeToggle) modeToggle.remove();
         }
       }
 
@@ -447,14 +447,6 @@
       // Crossing the breakpoint re-renders; without this the previous viewport's
       // bar would keep a stale copy of the toolbar.
       if (other && other !== actions) other.innerHTML = '';
-
-      if (isSsh) {
-        const badge = global.document.createElement('span');
-        badge.className = 'provider-badge';
-        badge.textContent = 'SSH';
-        badge.title = '由面板服务托管 · 面板重启后会话结束';
-        actions.appendChild(badge);
-      }
 
       // Move the live nodes so their bound listeners keep working. The renderer
       // keeps its own reference to the pills node, so relocating it is safe.
@@ -583,19 +575,14 @@
         + '">服务器详情</button></div></div></div>';
     },
 
-    _emptyWorkspace(serverId, workspace) {
-      const isSsh = workspace.provider === 'ssh';
+    _emptyWorkspace() {
       return '<div class="workspace-onboarding"><div class="workspace-onboarding-card">'
         + '<div class="workspace-onboarding-icon">' + global.AppShell.icon('terminal') + '</div>'
-        + '<div class="workspace-kicker">' + (isSsh ? 'SSH 工作区' : 'tmux 工作区') + '</div>'
+        + '<div class="workspace-kicker">tmux 工作区</div>'
         + '<h2>还没有 Session</h2>'
-        + '<p>' + (isSsh
-          ? '该服务器未检测到 tmux，面板会为你托管 SSH Session。面板重启后这些会话会结束。'
-          : '远端 tmux 可用。新建 Session 后即可进入终端。')
-        + '</p>'
+        + '<p>tmux 可用。新建 Session 后即可进入终端。</p>'
         + '<div class="workspace-onboarding-actions">'
-        + '<button class="ms-btn primary" data-action="new-session">新建 Session</button></div>'
-        + '<p class="workspace-footnote">面板不会在远端安装或启动 tmux。</p></div></div>';
+        + '<button class="ms-btn primary" data-action="new-session">新建 Session</button></div></div></div>';
     },
 
     _startPolling() {
@@ -879,7 +866,7 @@
         const route = global.Router.current();
         const server = global.AppShell.server(serverId);
         const paneId = global.AppShell.mobilePaneId(route);
-        if (route.name !== 'terminal' || !server || server.kind !== 'local' || !paneId) return;
+        if (route.name !== 'terminal' || !server || !paneId) return;
         if (global.FilePreview) global.FilePreview.openFile('.', paneId);
         return;
       }
@@ -972,10 +959,8 @@
         await this._createWindow(serverId, node.dataset.session, entityContext);
         return;
       }
-      if (action === 'adopt-provider') {
-        await global.Api.post(global.Api.serverPath(serverId, '/workspace/adopt-provider'));
-        await this.refreshWorkspace(serverId);
-        await this._onRoute(global.Router.current());
+      if (action === 'install-node') {
+        await this._installNode(serverId);
         return;
       }
       if (action === 'scan-host-key') {
@@ -991,12 +976,6 @@
       }
     },
 
-    _providerHeader(serverId, expectedProvider) {
-      const workspace = global.AppShell.workspace(serverId);
-      const provider = expectedProvider || (workspace && workspace.provider);
-      return provider ? { 'X-Workspace-Provider': provider } : {};
-    },
-
     async _createSession(serverId) {
       const server = global.AppShell.server(serverId) || {};
       const name = await promptDialog({
@@ -1005,9 +984,7 @@
         confirmText: '创建',
       });
       if (!name) return;
-      await global.Api.request('POST', global.Api.serverPath(serverId, '/sessions'), { name }, {
-        headers: this._providerHeader(serverId),
-      });
+      await global.Api.post(global.Api.workspaceUrl(serverId, '/sessions'), { name });
       await this.refreshWorkspace(serverId);
       await this._onRoute(global.Router.current());
     },
@@ -1020,12 +997,87 @@
         confirmText: '创建',
       });
       if (name === null) return;
-      const path = global.Api.serverPath(serverId, '/sessions/' + encodeURIComponent(sessionId) + '/windows');
-      await global.Api.request('POST', path, name ? { name } : {}, {
-        headers: this._providerHeader(serverId, context.provider),
-      });
+      const path = global.Api.workspaceUrl(serverId, '/sessions/' + encodeURIComponent(sessionId) + '/windows');
+      await global.Api.post(path, name ? { name } : {});
       await this.refreshWorkspace(serverId);
       await this._onRoute(global.Router.current());
+    },
+
+    installJob(serverId) {
+      return this._installJobs[serverId] || null;
+    },
+
+    /** Re-renders the server page if it is the one in view. */
+    _rerenderServer(serverId) {
+      const route = global.Router.current();
+      if (route && route.name === 'server' && route.params && route.params.serverId === serverId) {
+        this._onRoute(route).catch((err) => this._reportRouteFailure(err));
+      }
+    },
+
+    /**
+     * Installs the panel on a basic-mode server. The hub runs the job; this
+     * starts it, polls its log, asks for a sudo password when the remote side
+     * needs one, and re-checks the server when it is done.
+     */
+    async _installNode(serverId, { sudoPassword = null } = {}) {
+      const server = global.AppShell.server(serverId) || {};
+      const job = this._installJobs[serverId];
+      if (job && job.state === 'needs_password' && sudoPassword === null) {
+        const password = await promptDialog({
+          title: (server.name || serverId) + ' 的 sudo 密码（安装缺少的软件包用，不会保存）',
+          placeholder: 'sudo 密码',
+          type: 'password',
+          confirmText: '继续安装',
+        });
+        if (!password) return;
+        return this._installNode(serverId, { sudoPassword: password });
+      }
+      if (sudoPassword === null && !await confirmDialog({
+        title: '在 ' + (server.name || serverId) + ' 上安装面板服务',
+        message: '会把本客户端的面板代码经 SFTP 传到那台机器，安装缺少的依赖、Node.js 和 tmux，'
+          + '再以只监听 127.0.0.1 的用户服务运行。首次安装需要编译 tmux，可能需要几分钟。',
+        confirmText: '开始安装',
+      })) return;
+      try {
+        this._installJobs[serverId] = await global.Api.post(
+          global.Api.serverPath(serverId, '/node/install'),
+          sudoPassword ? { sudoPassword } : {},
+        );
+      } catch (err) {
+        global.AppShell.toast('无法开始安装：' + (err && err.message ? err.message : '未知错误'));
+        return;
+      }
+      this._rerenderServer(serverId);
+      this._pollInstall(serverId);
+    },
+
+    _pollInstall(serverId) {
+      if (this._installPolls[serverId]) return;
+      const tick = async () => {
+        let status;
+        try {
+          status = await global.Api.get(global.Api.serverPath(serverId, '/node/install'));
+        } catch (_err) {
+          status = null;
+        }
+        if (status) this._installJobs[serverId] = status;
+        this._rerenderServer(serverId);
+        if (status && status.state === 'running') {
+          this._installPolls[serverId] = global.setTimeout(tick, 2000);
+          return;
+        }
+        delete this._installPolls[serverId];
+        if (status && status.state === 'succeeded') {
+          global.AppShell.toast('面板服务已安装，正在切换到完整模式');
+          await this.refreshServers();
+          await this.refreshWorkspace(serverId);
+          this._rerenderServer(serverId);
+        } else if (status && status.state === 'needs_password') {
+          await this._installNode(serverId);
+        }
+      };
+      this._installPolls[serverId] = global.setTimeout(tick, 1000);
     },
 
     async _scanHostKey(serverId) {
@@ -1063,22 +1115,7 @@
         confirmText: '删除',
         danger: true,
       })) return;
-      try {
-        await global.Api.del(global.Api.serverPath(serverId));
-      } catch (err) {
-        if (err && err.code === 'SERVER_IN_USE') {
-          const count = (err.details && err.details.activePanes) || '若干';
-          if (!await confirmDialog({
-            title: '结束活动 Shell 并删除',
-            message: '该服务器仍有 ' + count + ' 个活动 SSH Pane，删除会结束这些 Shell。',
-            confirmText: '继续删除',
-            danger: true,
-          })) return;
-          await global.Api.del(global.Api.serverPath(serverId) + '?force=1');
-        } else {
-          throw err;
-        }
-      }
+      await global.Api.del(global.Api.serverPath(serverId));
       global.Store.removeServer(serverId);
       await this.refreshServers();
       global.Router.go({ name: 'servers', params: {} });
@@ -1183,21 +1220,9 @@
       try {
         await global.Api.patch(global.Api.serverPath(serverId), body);
       } catch (err) {
-        if (err && err.code === 'SERVER_IN_USE') {
-          const count = (err.details && err.details.activePanes) || '若干';
-          const proceed = await confirmDialog({
-            title: '修改服务器连接',
-            message: '该服务器仍有 ' + count + ' 个活动 SSH Pane。修改连接会结束这些 Shell。',
-            confirmText: '继续修改',
-            danger: true,
-          });
-          if (!proceed) return;
-          await global.Api.patch(global.Api.serverPath(serverId) + '?force=1', body);
-        } else {
-          const field = err && err.details && err.details.field ? '（' + err.details.field + '）' : '';
-          global.AppShell.toast('保存失败' + field + '：' + (err.message || ''));
-          return;
-        }
+        const field = err && err.details && err.details.field ? '（' + err.details.field + '）' : '';
+        global.AppShell.toast('保存失败' + field + '：' + (err.message || ''));
+        return;
       }
 
       this.closeModal();
@@ -1218,12 +1243,7 @@
         confirmText: '保存',
       });
       if (!name) return;
-      await global.Api.request(
-        'PATCH',
-        global.Api.serverPath(serverId, '/sessions/' + encodeURIComponent(sessionId)),
-        { name },
-        { headers: this._providerHeader(serverId, context.provider) },
-      );
+      await global.Api.patch(global.Api.workspaceUrl(serverId, '/sessions/' + encodeURIComponent(sessionId)), { name });
       await this.refreshWorkspace(serverId);
       await this._onRoute(global.Router.current());
     },
@@ -1240,12 +1260,7 @@
         danger: true,
       })) return;
 
-      await global.Api.request(
-        'DELETE',
-        global.Api.serverPath(serverId, '/sessions/' + encodeURIComponent(sessionId)),
-        undefined,
-        { headers: this._providerHeader(serverId, context.provider) },
-      );
+      await global.Api.del(global.Api.workspaceUrl(serverId, '/sessions/' + encodeURIComponent(sessionId)));
       await this.refreshWorkspace(serverId);
       this._correctRouteAfterClose(serverId, { sessionId });
     },
@@ -1263,12 +1278,7 @@
         confirmText: '保存',
       });
       if (!name) return;
-      await global.Api.request(
-        'PATCH',
-        global.Api.serverPath(serverId, '/windows/' + encodeURIComponent(windowId)),
-        { name },
-        { headers: this._providerHeader(serverId, context.provider) },
-      );
+      await global.Api.patch(global.Api.workspaceUrl(serverId, '/windows/' + encodeURIComponent(windowId)), { name });
       await this.refreshWorkspace(serverId);
       await this._onRoute(global.Router.current());
     },
@@ -1282,12 +1292,7 @@
         confirmText: '关闭',
         danger: true,
       })) return;
-      await global.Api.request(
-        'DELETE',
-        global.Api.serverPath(serverId, '/windows/' + encodeURIComponent(windowId)),
-        undefined,
-        { headers: this._providerHeader(serverId, context.provider) },
-      );
+      await global.Api.del(global.Api.workspaceUrl(serverId, '/windows/' + encodeURIComponent(windowId)));
       await this.refreshWorkspace(serverId);
       this._correctRouteAfterClose(serverId, { windowId });
     },

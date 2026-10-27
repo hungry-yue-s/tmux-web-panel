@@ -103,9 +103,11 @@ function parseBearerToken(header) {
  * For API requests, returns 401 JSON.
  *
  * @param {Map} tokenMap
+ * @param {{ isServiceToken?: (token: string) => boolean }} [options]
+ *   isServiceToken accepts a hub's node token alongside login tokens.
  * @returns {import('express').RequestHandler}
  */
-export function tokenAuth(tokenMap) {
+export function tokenAuth(tokenMap, { isServiceToken = null } = {}) {
   return (req, res, next) => {
     const accept = req.headers.accept || '';
     // ?token= exists for <img>/<iframe> src and other subresource loads that
@@ -115,7 +117,7 @@ export function tokenAuth(tokenMap) {
       || (accept.includes('text/html') ? null : req.query.token)
       || null;
 
-    if (isValidToken(tokenMap, token)) {
+    if (isValidToken(tokenMap, token) || (token && isServiceToken && isServiceToken(token))) {
       next();
       return;
     }
@@ -134,13 +136,17 @@ export function tokenAuth(tokenMap) {
 }
 
 /**
- * Validate a WebSocket upgrade request by checking the ?token= query param.
+ * Validate a WebSocket upgrade request. Browsers can only pass ?token=; a hub
+ * relaying the socket sends its node token as a Bearer header instead.
  *
  * @param {Map} tokenMap
  * @param {import('http').IncomingMessage} req
+ * @param {{ isServiceToken?: (token: string) => boolean }} [options]
  * @returns {boolean}
  */
-export function wsTokenAuth(tokenMap, req) {
+export function wsTokenAuth(tokenMap, req, { isServiceToken = null } = {}) {
+  const bearer = parseBearerToken(req.headers.authorization);
+  if (bearer && isServiceToken && isServiceToken(bearer)) return true;
   const url = new URL(req.url, `http://${req.headers.host}`);
   const token = url.searchParams.get('token');
   return isValidToken(tokenMap, token);

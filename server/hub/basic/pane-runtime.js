@@ -13,7 +13,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { AppError, ErrorCode } from '../servers/errors.js';
+import { AppError, ErrorCode } from '../../servers/errors.js';
 
 /** Replay buffer per pane. Bounded so a runaway remote process cannot eat RAM. */
 export const DEFAULT_BUFFER_BYTES = 256 * 1024;

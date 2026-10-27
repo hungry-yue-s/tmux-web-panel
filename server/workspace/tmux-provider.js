@@ -1,14 +1,14 @@
 /**
  * tmux workspace provider.
  *
- * Projects real tmux state onto the unified Session/Window/Pane model. Works
- * identically for the local host and a remote host, because the only difference
- * is which executor the tmux API was built with.
+ * Projects this machine's tmux state onto the Session/Window/Pane model. A
+ * hub sees another machine's tree by calling that node's API, never by running
+ * tmux remotely, so this provider is always local.
  *
  * Identity rules: sessions use #{session_id} ($N), windows #{window_id} (@N) and
  * panes #{pane_id} (%N). These are stable across renames; index is display only.
- * None of them are globally unique, so callers must always pair them with a
- * serverId.
+ * They are unique only within one machine; the hub's /n/:serverId prefix is
+ * what makes them globally addressable.
  */
 
 import { AppError, ErrorCode } from '../servers/errors.js';
@@ -74,17 +74,27 @@ function requireName(name, field, validator) {
   return name;
 }
 
+function paneView(pane) {
+  return {
+    id: pane.id,
+    name: pane.label || pane.command || 'shell',
+    command: pane.command,
+    label: pane.label || null,
+    active: pane.active,
+    geometry: { x: pane.x, y: pane.y, width: pane.width, height: pane.height },
+  };
+}
+
 export class TmuxProvider {
   /**
    * @param {object} options
-   * @param {string} options.serverId
    * @param {ReturnType<import('../tmux.js').createTmuxApi>} options.tmux
-   * @param {'local'|'ssh'} options.transport
+   * @param {boolean} [options.batched] read the tree with one tmux call; for a
+   *   host reached over plain SSH, where every call is a round trip
    */
-  constructor({ serverId, tmux, transport }) {
-    this.serverId = serverId;
+  constructor({ tmux, batched = false }) {
     this.tmux = tmux;
-    this.transport = transport;
+    this.batched = batched;
     this.provider = 'tmux';
     this.persistence = 'tmux';
     this.actions = TMUX_ACTIONS;
@@ -96,16 +106,29 @@ export class TmuxProvider {
    * broken session must not blank the sidebar.
    */
   async getTree() {
-    const sessions = await this.tmux.listSessions();
-    if (this.transport === 'local') {
-      return Promise.all(sessions.map((session) => this._sessionFor(session, true)));
+    if (this.batched) {
+      return (await this.tmux.readTree()).map((session) => ({
+        id: session.id || session.name,
+        name: session.name,
+        active: Boolean(session.attached),
+        windowCount: Number.isFinite(session.windows) ? session.windows : 0,
+        lastActivity: session.lastActivity || null,
+        windows: session.windowList.map((window) => ({
+          id: window.id,
+          index: window.index,
+          name: window.name,
+          active: window.active,
+          bell: window.bell,
+          activity: window.activity,
+          panes: window.panes.map(paneView),
+        })),
+      }));
     }
-    const out = [];
-    for (const session of sessions) out.push(await this._sessionFor(session, false));
-    return out;
+    const sessions = await this.tmux.listSessions();
+    return Promise.all(sessions.map((session) => this._sessionFor(session)));
   }
 
-  async _sessionFor(session, parallelPanes) {
+  async _sessionFor(session) {
     // Sessions from an older tmux without session_id cannot be addressed
     // stably; fall back to the name so they remain visible and usable.
     const sessionId = session.id || session.name;
@@ -128,8 +151,7 @@ export class TmuxProvider {
         activity: window.activity,
         panes: await this._panesFor(window),
       });
-      if (parallelPanes) entry.windows = await Promise.all(windows.map(render));
-      else for (const window of windows) entry.windows.push(await render(window));
+      entry.windows = await Promise.all(windows.map(render));
     } catch {
       // Keep the session visible with no windows.
     }
@@ -138,15 +160,7 @@ export class TmuxProvider {
 
   async _panesFor(window) {
     try {
-      const panes = await this.tmux.listPanesByWindowId(window.id);
-      return panes.map((pane) => ({
-        id: pane.id,
-        name: pane.label || pane.command || 'shell',
-        command: pane.command,
-        label: pane.label || null,
-        active: pane.active,
-        geometry: { x: pane.x, y: pane.y, width: pane.width, height: pane.height },
-      }));
+      return (await this.tmux.listPanesByWindowId(window.id)).map(paneView);
     } catch {
       return [];
     }
@@ -159,14 +173,7 @@ export class TmuxProvider {
       () => this.tmux.listPanesByWindowId(windowId),
       ErrorCode.WINDOW_NOT_FOUND,
     );
-    return panes.map((pane) => ({
-      id: pane.id,
-      name: pane.label || pane.command || 'shell',
-      command: pane.command,
-      label: pane.label || null,
-      active: pane.active,
-      geometry: { x: pane.x, y: pane.y, width: pane.width, height: pane.height },
-    }));
+    return panes.map(paneView);
   }
 
   async createSession({ name }) {
@@ -270,15 +277,9 @@ export class TmuxProvider {
       ErrorCode.PANE_NOT_FOUND,
     );
     if (!address || address.paneId !== paneId) {
-      throw new AppError(ErrorCode.PANE_NOT_FOUND, `Pane ${paneId} not found on ${this.serverId}`);
+      throw new AppError(ErrorCode.PANE_NOT_FOUND, `Pane ${paneId} not found`);
     }
-    return {
-      serverId: this.serverId,
-      provider: 'tmux',
-      transport: this.transport,
-      persistence: 'tmux',
-      ...address,
-    };
+    return { provider: 'tmux', persistence: 'tmux', ...address };
   }
 
   /** Turns "can't find" stderr from tmux into the right structured error. */

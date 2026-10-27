@@ -18,7 +18,7 @@ it.skipIf(process.env.TMUX_AGENT_INTEGRATION !== '1')('runs real persistent tmux
     session = (await invoke(['-f', '/dev/null', 'new-session', '-d', '-s', 'test', '-P', '-F', '#{session_id}', 'sh'])).stdout.trim();
     const executor = { exec: (command, args, options) => exec(command, command === 'tmux' ? ['-S', socket, ...args] : args, { timeout: 5000, ...options }) };
     const tmux = createTmuxApi(executor);
-    const deps = { executorPool: { tmuxFor: () => tmux }, workspaceService: { getProvider: async () => ({ provider: 'tmux' }) }, jobDirectory: join(dir, 'jobs') };
+    const deps = { tmux, workspaceService: {}, jobDirectory: join(dir, 'jobs') };
     let plugin = createPlugin(deps);
     const result = await plugin.startCommand({ serverId: 'local', sessionId: session, command: "sleep 0.2; printf '%s\\n' 'hello 世界'; exit 7", cwd: dir });
     expect(result.id).toMatch(/^[a-f0-9-]{36}$/);

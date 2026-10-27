@@ -197,13 +197,57 @@
     return request('DELETE', path, null, opts);
   }
 
+  /** This panel's registry entry for a server (hub-level, never relayed). */
   function serverPath(serverId, suffix) {
     var id = serverId === undefined || serverId === null ? '' : String(serverId);
     return '/api/servers/' + encodeURIComponent(id) + (suffix || '');
   }
 
-  function workspacePath(serverId) {
-    return serverPath(serverId, '/workspace');
+  /**
+   * A path on one machine's API. Every machine runs the same panel, so the
+   * path is the same everywhere; another server is reached through this
+   * panel's /n/:serverId relay, and `local` is this panel itself.
+   */
+  function nodeUrl(serverId, path) {
+    if (!serverId || serverId === 'local') return path;
+    return '/n/' + encodeURIComponent(String(serverId)) + path;
+  }
+
+  function workspaceUrl(serverId, suffix) {
+    return nodeUrl(serverId, '/api/workspace' + (suffix || ''));
+  }
+
+  /**
+   * Paths that belong to the panel the browser is using rather than to a
+   * machine: login, the server registry, plugins, installation management and
+   * share links. They are never relayed.
+   */
+  var HUB_ONLY = /^\/api\/(auth|servers|plugins|managed-resources|share)(\/|$|\?)/;
+
+  function isHubPath(path) {
+    return HUB_ONLY.test(String(path || ''));
+  }
+
+  /** The server the terminal view is showing; `local` outside a server context. */
+  function activeServerId() {
+    var target = global && global.TerminalTarget;
+    return (target && target.serverId) || 'local';
+  }
+
+  /**
+   * Machine-scoped path for the server in view. Legacy renderer code calls
+   * this for every /api and /ws path so it follows the server switcher.
+   */
+  function activeUrl(path) {
+    if (isHubPath(path)) return path;
+    if (!/^\/(api|ws)\//.test(String(path || ''))) return path;
+    return nodeUrl(activeServerId(), path);
+  }
+
+  /** ws(s):// URL for a machine-scoped socket path on the server in view. */
+  function activeWsUrl(path) {
+    var proto = global.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return proto + '//' + global.location.host + activeUrl(path);
   }
 
   global.Api = {
@@ -216,6 +260,11 @@
     put: put,
     del: del,
     serverPath: serverPath,
-    workspacePath: workspacePath,
+    nodeUrl: nodeUrl,
+    workspaceUrl: workspaceUrl,
+    isHubPath: isHubPath,
+    activeServerId: activeServerId,
+    activeUrl: activeUrl,
+    activeWsUrl: activeWsUrl,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

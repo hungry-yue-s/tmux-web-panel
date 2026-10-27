@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-import { SshProvider, SSH_ACTIONS } from '../server/workspace/ssh-provider.js';
+import { SshProvider, SSH_ACTIONS } from '../server/hub/basic/ssh-provider.js';
 import { ErrorCode } from '../server/servers/errors.js';
 
 function fakePty() {

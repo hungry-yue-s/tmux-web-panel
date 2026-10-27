@@ -7249,6 +7249,39 @@ button.list-row:hover {
   font-size: 10px;
 }
 
+/* Basic-mode server: installing the panel there. */
+.install-node-card .ms-btn {
+  margin-top: 12px;
+}
+
+.install-progress {
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+.install-progress.error {
+  color: var(--accent-red);
+}
+
+.install-progress.ok {
+  color: var(--accent-green);
+}
+
+.install-log {
+  margin: 8px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 /* --- Charts --- */
 
 .chart-card {

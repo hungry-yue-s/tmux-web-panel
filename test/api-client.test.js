@@ -302,9 +302,33 @@ describe('Api path builders', () => {
     expect(Api.serverPath('prod')).toBe('/api/servers/prod');
   });
 
-  it('builds the workspace path', () => {
+  it('addresses another machine through the /n/:serverId relay and keeps local paths', () => {
     const { Api } = loadApi();
-    expect(Api.workspacePath('prod')).toBe('/api/servers/prod/workspace');
-    expect(Api.workspacePath('%12')).toBe('/api/servers/%2512/workspace');
+    expect(Api.nodeUrl('local', '/api/files/list')).toBe('/api/files/list');
+    expect(Api.nodeUrl(null, '/api/status')).toBe('/api/status');
+    expect(Api.nodeUrl('win box', '/ws/status')).toBe('/n/win%20box/ws/status');
+    expect(Api.workspaceUrl('prod')).toBe('/n/prod/api/workspace');
+    expect(Api.workspaceUrl('local', '/windows/%405/panes')).toBe('/api/workspace/windows/%405/panes');
+  });
+
+  it('routes machine paths to the server in view but never hub paths', () => {
+    const { Api, win } = loadApi();
+    win.TerminalTarget = { serverId: 'prod' };
+    expect(Api.activeServerId()).toBe('prod');
+    expect(Api.activeUrl('/api/files/raw?path=%2Ftmp')).toBe('/n/prod/api/files/raw?path=%2Ftmp');
+    expect(Api.activeUrl('/ws/status')).toBe('/n/prod/ws/status');
+    for (const hub of ['/api/auth/logout', '/api/servers', '/api/servers/prod/probe', '/api/plugins', '/api/managed-resources', '/api/share?x=1']) {
+      expect(Api.activeUrl(hub)).toBe(hub);
+    }
+    // Already relayed or not an API path: untouched.
+    expect(Api.activeUrl('/n/prod/api/workspace')).toBe('/n/prod/api/workspace');
+    expect(Api.activeUrl('/login.html')).toBe('/login.html');
+    win.TerminalTarget = { serverId: 'local' };
+    expect(Api.activeUrl('/api/files/list')).toBe('/api/files/list');
+  });
+
+  it('has no server-scoped workspace path any more', () => {
+    const { Api } = loadApi();
+    expect(Api.workspacePath).toBeUndefined();
   });
 });

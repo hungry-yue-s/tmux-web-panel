@@ -22,6 +22,8 @@ function loadHub(data = {}) {
       return {};
     }),
     post: vi.fn(async () => ({})),
+    // The local server: machine paths stay unprefixed.
+    activeUrl: (path) => path,
   };
   win.AppShell = { toast: vi.fn() };
   if (data.ui) win.Store = { getState: () => ({ ui: data.ui }) };

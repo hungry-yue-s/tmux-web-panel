@@ -128,16 +128,13 @@
       return LOCAL_MONITOR_SECTIONS.filter(function (section) { return visibility[section]; });
     },
 
-    defaultStatusSection: function (serverId) {
-      var server = this.server(serverId);
-      if (server && server.kind === 'local') return this.localStatusSections()[0] || 'performance';
-      return 'performance';
+    defaultStatusSection: function () {
+      return this.localStatusSections()[0] || 'performance';
     },
 
     resolveStatusSection: function (serverId, section) {
       if (section === 'connection') return 'connection';
-      var server = this.server(serverId);
-      if (!server || server.kind !== 'local') return 'performance';
+      if (!this.server(serverId)) return 'performance';
       if ((section === 'claude' || section === 'codex') && this.localStatusSections().indexOf('agents') >= 0) {
         return 'agents';
       }
@@ -324,10 +321,7 @@
 
       if (sessions.length === 0) {
         return head + '<div class="workspace-missing"><strong>还没有会话</strong>'
-          + '<p>' + (workspace.provider === 'ssh'
-            ? '由面板服务托管 SSH 连接，面板重启后会话结束。'
-            : '远端 tmux 可用，新建会话 后即可进入。')
-          + '</p></div>';
+          + '<p>tmux 可用，新建会话后即可进入。</p></div>';
       }
 
       var self = this;
@@ -362,11 +356,7 @@
           + '</div>';
       }).join('');
 
-      var lifecycle = workspace.provider === 'ssh'
-        ? '<div class="ssh-lifecycle">面板服务托管 · 面板重启后会话结束</div>'
-        : '';
-
-      return head + '<div class="tree">' + tree + '</div>' + lifecycle;
+      return head + '<div class="tree">' + tree + '</div>';
     },
 
     _renderWindows: function (serverId, session, params, mobile) {
@@ -452,9 +442,8 @@
       });
       var files = global.document.querySelector('.mobile-dock [data-action="mobile-files"]');
       if (files) {
-        var local = server && server.kind === 'local';
-        files.disabled = !isTerminal || !local || !this.mobilePaneId(route);
-        files.title = files.disabled ? '进入本机终端后浏览文件' : '浏览当前窗格目录';
+        files.disabled = !isTerminal || !this.mobilePaneId(route);
+        files.title = files.disabled ? '进入终端后浏览文件' : '浏览当前窗格目录';
       }
       this._syncMobileTriggers();
     },
@@ -796,9 +785,7 @@
           var stateTone = tone(health.state);
           var workspace = self.workspace(server.id);
           var provider = workspace ? workspace.provider : null;
-          var summary = provider === 'tmux' ? 'tmux 工作区'
-            : provider === 'ssh' ? 'SSH Session'
-              : stateTone.label;
+          var summary = provider === 'tmux' ? 'tmux 工作区' : stateTone.label;
           var route = health.state === 'offline' || health.state === 'auth_required' || health.state === 'host_key_error'
             ? { name: 'server', params: { serverId: server.id, section: 'connection' } }
             : { name: 'terminal', params: { serverId: server.id } };

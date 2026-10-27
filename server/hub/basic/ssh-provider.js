@@ -10,20 +10,20 @@
  * disconnect for a TTL, but not a panel restart. The UI must label this.
  */
 
-import { AppError, ErrorCode } from '../servers/errors.js';
+import { AppError, ErrorCode } from '../../servers/errors.js';
 import {
   PaneRuntime,
   newPaneId,
   newSessionId,
   newWindowId,
-} from '../terminal/pane-runtime.js';
+} from './pane-runtime.js';
 import {
   LABEL_MAX,
   requireDirection,
   requireDisplayName,
   requireGeometryValue,
   requireKnownFields,
-} from './validators.js';
+} from '../../workspace/validators.js';
 
 export const SSH_ACTIONS = Object.freeze({
   createSession: true,

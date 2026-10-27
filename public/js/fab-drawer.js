@@ -671,7 +671,7 @@
   function runDiscoveryIfNeeded() {
     if (localStorage.getItem(DISCOVER_MARK_KEY)) return;
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '/api/scene/discover', true);
+    xhr.open('GET', Api.activeUrl('/api/scene/discover'), true);
     xhr.onload = function () {
       if (xhr.status !== 200) return;
       try {

@@ -2,6 +2,16 @@
 var FilePreview = (function () {
   'use strict';
 
+  /**
+   * '' for the panel's own machine, '/n/:serverId' for another server: files
+   * are always read on the machine whose pane printed the path.
+   */
+  function _machine() {
+    var api = typeof window !== 'undefined' ? window.Api : null;
+    if (!api || typeof api.nodeUrl !== 'function') return '';
+    return api.nodeUrl(api.activeServerId(), '');
+  }
+
   var _overlay = null;
   var _modalReturnFocus = null;
   var _dockReturnFocus = null;
@@ -438,7 +448,7 @@ var FilePreview = (function () {
 
     _clearRefreshError(button);
     _setRefreshBusy(button, body, true);
-    _refreshPromise = fetch('/api/files/info' + qs, {
+    _refreshPromise = fetch(_machine() + '/api/files/info' + qs, {
       headers: headers, cache: 'no-store',
     })
       .then(function (r) {
@@ -2069,7 +2079,7 @@ var FilePreview = (function () {
     });
     // Local video streams need live authentication and can be very large.
     // Keep their label in snapshots without exposing a token or local path.
-    capture.querySelectorAll('video[src^="/api/files/raw?"]').forEach(function (video) {
+    capture.querySelectorAll('video[src*="/api/files/raw?"]').forEach(function (video) {
       var label = document.createElement('span');
       label.textContent = (video.getAttribute('aria-label') || '视频') + '（请在文件预览中播放）';
       video.replaceWith(label);
@@ -2506,7 +2516,7 @@ var FilePreview = (function () {
       btn.textContent = '下载原文件';
       btn.addEventListener('click', function () {
         var _tp = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
-        var url = '/api/files/raw?path=' + encodeURIComponent(absPath)
+        var url = _machine() + '/api/files/raw?path=' + encodeURIComponent(absPath)
           + (_tp ? '&' + _tp : '');
         var filename = absPath.split('/').pop();
         _blobDownload(url, filename).catch(function (err) {
@@ -3472,7 +3482,7 @@ var FilePreview = (function () {
       item.classList.add('fp-task-saving');
       var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
       headers['Content-Type'] = 'application/json';
-      fetch('/api/files/markdown-task', {
+      fetch(_machine() + '/api/files/markdown-task', {
         method: 'PATCH', headers: headers, cache: 'no-store',
         body: JSON.stringify({
           path: current.absPath,
@@ -3533,7 +3543,7 @@ var FilePreview = (function () {
         return;
       }
       var url = target.kind === 'web' ? target.href
-        : '/api/files/raw?path=' + encodeURIComponent(target.path) + (tokenQs ? '&' + tokenQs : '');
+        : _machine() + '/api/files/raw?path=' + encodeURIComponent(target.path) + (tokenQs ? '&' + tokenQs : '');
       // Preserve media fragments such as #t=5,10 on local video URLs.
       var hashAt = src.indexOf('#');
       if (target.kind === 'file' && hashAt >= 0) url += src.slice(hashAt);
@@ -3837,7 +3847,7 @@ var FilePreview = (function () {
     // No usable path → open the pane's cwd. '.' is resolved server-side against
     // #{pane_current_path} (resolveInputPath).
     var openCwd = function () { openFile('.', paneId); };
-    fetch('/api/files/tmux-buffer', { headers: _authHeaders })
+    fetch(_machine() + '/api/files/tmux-buffer', { headers: _authHeaders })
       .then(function (r) { return r.json(); })
       .then(function (res) {
         var p = (res && res.success && res.data && res.data.path) ? res.data.path : '';
@@ -3848,7 +3858,7 @@ var FilePreview = (function () {
         var probe = (typeof LinkDetect !== 'undefined') ? LinkDetect.parseLineRef(p).path : p;
         var qs = '?path=' + encodeURIComponent(probe)
           + (paneId ? '&paneId=' + encodeURIComponent(paneId) : '');
-        fetch('/api/files/info' + qs, { headers: _authHeaders })
+        fetch(_machine() + '/api/files/info' + qs, { headers: _authHeaders })
           .then(function (r) { return r.json(); })
           .then(function (info) {
             if (info && info.success) { openFile(p, paneId); } else { openCwd(); }
@@ -4024,7 +4034,7 @@ var FilePreview = (function () {
     }
 
     var revision = info.mtimeMs != null ? String(Math.round(info.mtimeMs)) : '';
-    var rawUrl = '/api/files/raw?path=' + encodeURIComponent(info.absPath)
+    var rawUrl = _machine() + '/api/files/raw?path=' + encodeURIComponent(info.absPath)
       + (tokenQs ? '&' + tokenQs : '')
       + (revision ? '&v=' + encodeURIComponent(revision) : '');
     var filename = info.absPath.split('/').pop();
@@ -4059,7 +4069,7 @@ var FilePreview = (function () {
     } else if (info.isArchive) {
       renderPromise = _renderArchive(renderedBody, info);
     } else {
-      renderPromise = fetch('/api/files/content?path=' + encodeURIComponent(info.absPath), {
+      renderPromise = fetch(_machine() + '/api/files/content?path=' + encodeURIComponent(info.absPath), {
         headers: headers, cache: 'no-store',
       })
         .then(function (r) { return r.json(); })
@@ -4120,7 +4130,7 @@ var FilePreview = (function () {
 
     var _authHeaders = typeof Auth !== 'undefined' ? Auth.headers() : {};
 
-    return fetch('/api/files/info' + qs, { headers: _authHeaders, cache: 'no-store' })
+    return fetch(_machine() + '/api/files/info' + qs, { headers: _authHeaders, cache: 'no-store' })
       .then(function (r) {
         if (!_isPreviewRequestCurrent(requestId, body)) return null;
         if (r.status === 401) { close(); return null; }
@@ -4300,7 +4310,7 @@ var FilePreview = (function () {
   function _renderArchive(body, info) {
     body.innerHTML = '<div class="fp-loading" role="status">正在读取压缩包…</div>';
     var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
-    return fetch('/api/files/archive?path=' + encodeURIComponent(info.absPath), {
+    return fetch(_machine() + '/api/files/archive?path=' + encodeURIComponent(info.absPath), {
       headers: headers, cache: 'no-store',
     })
       .then(function (r) { return r.json(); })
@@ -4337,7 +4347,7 @@ var FilePreview = (function () {
     var qs = '?path=' + encodeURIComponent(dirPath);
     if (_currentPaneId) qs += '&paneId=' + encodeURIComponent(_currentPaneId);
 
-    return fetch('/api/files/list' + qs, { headers: _authHeaders, cache: 'no-store' })
+    return fetch(_machine() + '/api/files/list' + qs, { headers: _authHeaders, cache: 'no-store' })
       .then(function (r) {
         if (r.status === 401) {
           if (options.requestId == null || _isPreviewRequestCurrent(

@@ -92,10 +92,14 @@ keep working — tabs persist per window.
 
 ### 14:00 — one tab for every machine you own
 
-Register a host and the panel speaks to it over your existing OpenSSH setup —
-config, agent, ProxyJump, hardware keys; it installs nothing remotely and stores
-no secrets. Machines without tmux still work: the panel hosts the session tree
-itself over persistent SSH PTYs.
+Every machine runs the same panel. Register one and the panel you are looking at
+reaches it through a single SSH port forward over your existing OpenSSH setup —
+config, agent, ProxyJump, hardware keys — and relays the same API the browser
+uses. Nothing runs remotely as a shell command, so a remote machine gets
+everything the local one has: files, uploads, metrics, notifications, agents.
+A machine you can only SSH into still works in basic mode — its tmux sessions,
+or login shells hosted by the panel — and one click installs the panel there
+for the full feature set.
 
 <img src="docs/assets/readme/servers.png" alt="Server switcher" width="100%">
 
@@ -122,7 +126,7 @@ The terminal line is a real attach: `node-pty` plus xterm.js 6 on WebGL, zoom an
 
 Input is where the mobile work went. The key drawer detects whether the pane runs Claude Code, vim or lazygit and swaps its own layout accordingly, ranks keys by how often you actually press them, and seeds itself on first run from your shell history, slash commands and vim maps. Long-press selection comes with an editable copy preview, and you can push a file from the phone straight to the host.
 
-Link detection is the feature people stop noticing they rely on: paths, `file://`, `localhost:port`, `:line` refs and CJK filenames are all clickable, and previews cover code, Markdown with Obsidian syntax, Mermaid, images, PDF, CSV/XLSX, directories and archive trees, refreshing when the file changes and exportable as a shared snapshot with a TTL. The multi-machine line adds eight explicit health states, host-key first-trust with fingerprint confirmation, and remote metrics collected by a read-only stdin probe with nothing installed on the far side. Notifications ride along: completion and bell edges per pane, breathing sidebar rows, a persisted notification center, and native macOS notifications that deep-link to the window.
+Link detection is the feature people stop noticing they rely on: paths, `file://`, `localhost:port`, `:line` refs and CJK filenames are all clickable, and previews cover code, Markdown with Obsidian syntax, Mermaid, images, PDF, CSV/XLSX, directories and archive trees, refreshing when the file changes and exportable as a shared snapshot with a TTL. The multi-machine line adds eight explicit health states, host-key first-trust with fingerprint confirmation, and one pinned, token-authenticated SSH tunnel per machine instead of a command per request. Notifications ride along: completion and bell edges per pane, breathing sidebar rows, a persisted notification center, and native macOS notifications that deep-link to the window.
 
 Ops is not an afterthought. Optional token auth, optional self-signed TLS covering localhost and the LAN IP, a systemd/launchd installer that builds tmux from a pinned submodule, and a companion service that brings sessions back after a reboot. The frontend has no build step, and there are roughly 1,400 automated tests across frontend, backend, SSH transport and the native bridges.
 
@@ -167,8 +171,7 @@ flowchart LR
     end
 
     subgraph remoteMachines["Optional registered machines"]
-        remoteTmux["Remote tmux"]
-        sshFallback["Persistent SSH PTY sessions<br/>when tmux is unavailable"]
+        remoteNode["The same panel (a node)<br/>its own tmux, files, metrics"]
     end
 
     clients -->|HTTPS: pages, workspace API, files| panel
@@ -179,8 +182,7 @@ flowchart LR
     codexPane <-->|optional tmux-agent HTTP MCP| panel
     claudePane <-->|optional tmux-agent HTTP MCP| panel
     panel -->|local collectors and files| hostResources
-    panel <-->|OpenSSH · no remote agent| remoteTmux
-    panel <-->|OpenSSH| sshFallback
+    panel <-->|/n/:serverId relay over one ssh -N -L forward| remoteNode
 ```
 
 The same workspace tree—server → session → window → pane—is what the sidebar, routes, and terminal WebSocket addresses use.
@@ -237,15 +239,10 @@ next to it in `logs\`. Paths in the file preview are the MSYS paths panes show
 (`/home/me`, `/c/Users/me`); `C:\...` paths printed by native programs work too.
 Per-process CPU/memory/IO and pane port detection are not available on Windows.
 
-To manage this Windows machine from a panel on another computer (a Mac, say)
-over SSH, run `.\scripts\install-service.ps1 ssh-enable` from an elevated
-PowerShell. It enables OpenSSH Server and makes sshd answer with an MSYS2 login
-bash, so the host behaves like any Linux tmux server in the panel (sessions,
-terminals, metrics). Windows OpenSSH pastes the remote command unquoted into the
-shell's command line for `ssh -tt`, so a `ForceCommand` wrapper also runs the
-untouched command from `SSH_ORIGINAL_COMMAND`. Interactive `ssh` logins keep the
-MSYS2 shell sshd used before, and sftp keeps working. `ssh-disable` restores the
-previous settings.
+To manage this Windows machine from a panel on another computer, enable OpenSSH
+Server (on by default on many cloud images) and add the machine there. The
+other panel only uses SFTP and port forwarding, so the sshd login shell does not
+matter. See [Architecture](docs/architecture.md).
 
 ### Roaming LAN IP? Relay hop + two-factor
 
@@ -282,7 +279,8 @@ under `~/.config/tmux-web-panel/` and never enter the repository.
 | [File preview & link detection](docs/file-preview.md) | dock tabs, renderers, sharing, sensitive-path policy |
 | [Mobile interaction guide](docs/mobile-gestures.md) | selection gestures, scrolling, key drawer, uploads |
 | [Multi-server design](docs/多服务器管理-UIUX设计.md) | the UX model behind the workbench, with a clickable demo |
-| [Multi-server implementation](docs/多服务器管理-前后端实现文档.md) | providers, SSH transport, API/WS contracts, security boundaries |
+| [Architecture: hub and nodes](docs/architecture.md) | how one panel reaches every machine: `/n/:serverId` relay, SFTP pairing, SSH tunnel, pinned TLS |
+| [Multi-server implementation (superseded)](docs/多服务器管理-前后端实现文档.md) | the earlier SSH command-template design, kept for history |
 | [macOS native app](macos/README.md) | what the Swift shell adds and how to build it |
 | [Known issues & fix list](docs/known-issues.md) | what we already know is rough |
 

@@ -16,33 +16,22 @@ const REMOTE = {
 describe('ServerService', () => {
   let dir;
   let registry;
-  let pool;
+  let links;
   let health;
-  let workspace;
-  let metrics;
   let service;
-  let activePanes;
 
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'server-service-'));
     registry = new ServerRegistry({ configDir: dir });
     await registry.load();
-    activePanes = 0;
-    pool = { invalidate: vi.fn(), requireRemote: vi.fn(() => ({})) };
+    links = { invalidate: vi.fn(), connection: vi.fn(() => ({})) };
     health = {
       invalidate: vi.fn(),
       forget: vi.fn(),
       probe: vi.fn(async () => ({ state: 'online' })),
       getStatus: vi.fn(() => ({ state: 'online' })),
     };
-    workspace = {
-      releaseServer: vi.fn(),
-      hasActiveRuntimes: vi.fn(() => activePanes > 0),
-      activeRuntimeCount: vi.fn(() => activePanes),
-      pendingProvider: vi.fn(() => null),
-    };
-    metrics = { forget: vi.fn() };
-    service = new ServerService({ registry, pool, health, workspace, metrics });
+    service = new ServerService({ registry, links, health });
   });
 
   afterEach(async () => {
@@ -50,13 +39,13 @@ describe('ServerService', () => {
   });
 
   it('requires its dependencies', () => {
-    expect(() => new ServerService({ pool, health })).toThrow(/registry/);
-    expect(() => new ServerService({ registry, health })).toThrow(/pool/);
-    expect(() => new ServerService({ registry, pool })).toThrow(/health/);
+    expect(() => new ServerService({ links, health })).toThrow(/registry/);
+    expect(() => new ServerService({ registry, health })).toThrow(/link pool/);
+    expect(() => new ServerService({ registry, links })).toThrow(/health/);
   });
 
   describe('list and get', () => {
-    it('includes the local server and surfaces registry load problems', async () => {
+    it('includes the local server and surfaces registry load problems', () => {
       const result = service.list();
       expect(result.servers.map((s) => s.id)).toEqual([LOCAL_SERVER_ID]);
       expect(result.writable).toBe(true);
@@ -74,14 +63,6 @@ describe('ServerService', () => {
       expect(JSON.stringify(service.list())).not.toContain('secret_key');
       expect(JSON.stringify(service.get('api-linux'))).not.toContain('secret_key');
     });
-
-    it('reports active panes and any pending provider switch', async () => {
-      await service.create(REMOTE);
-      activePanes = 2;
-      workspace.pendingProvider.mockReturnValue('tmux');
-
-      expect(service.get('api-linux').workspace).toEqual({ activePanes: 2, pendingProvider: 'tmux' });
-    });
   });
 
   describe('create', () => {
@@ -93,81 +74,36 @@ describe('ServerService', () => {
       expect(health.probe).toHaveBeenCalledWith('api-linux', { force: true });
     });
 
-    it('clears stale metrics so a recycled id starts clean', async () => {
+    it('drops any link left under a recycled id', async () => {
       await service.create(REMOTE);
-      expect(metrics.forget).toHaveBeenCalledWith('api-linux');
-    });
-
-    it('does not resurrect a deleted server\'s metrics under the same id', async () => {
-      await service.create({ ...REMOTE, id: 'reused' });
-      metrics.forget.mockClear();
-      await service.remove('reused');
-      metrics.forget.mockClear();
-
-      await service.create({ ...REMOTE, id: 'reused', address: { host: '10.9.9.9', user: 'other' } });
-
-      expect(metrics.forget).toHaveBeenCalledWith('reused');
+      expect(links.invalidate).toHaveBeenCalledWith('api-linux');
     });
   });
 
   describe('update', () => {
     beforeEach(async () => {
       await service.create(REMOTE);
-      pool.invalidate.mockClear();
+      links.invalidate.mockClear();
       health.invalidate.mockClear();
-      metrics.forget.mockClear();
-      workspace.releaseServer.mockClear();
     });
 
-    it('a rename keeps the workspace and metrics', async () => {
+    it('a rename keeps the open forward', async () => {
       await service.update('api-linux', { name: 'Renamed' });
-
-      expect(workspace.releaseServer).not.toHaveBeenCalled();
-      expect(metrics.forget).not.toHaveBeenCalled();
-      // The executor still needs the fresh record.
-      expect(pool.invalidate).toHaveBeenCalledWith('api-linux');
+      expect(links.invalidate).not.toHaveBeenCalled();
+      expect(registry.get('api-linux').name).toBe('Renamed');
     });
 
-    it('a host change drops the workspace and metrics', async () => {
+    it('a connection change closes the forward and re-checks', async () => {
       await service.update('api-linux', { address: { host: '10.9.9.9', user: 'deploy' } });
 
-      expect(workspace.releaseServer).toHaveBeenCalledWith('api-linux', 'server_reconfigured');
-      expect(metrics.forget).toHaveBeenCalledWith('api-linux');
+      expect(links.invalidate).toHaveBeenCalledWith('api-linux');
       expect(health.invalidate).toHaveBeenCalledWith('api-linux');
+      expect(health.probe).toHaveBeenCalled();
     });
 
-    it('does not carry the old host\'s samples to a new host', async () => {
-      await service.update('api-linux', { address: { host: '10.9.9.9', user: 'deploy' } });
-      expect(metrics.forget).toHaveBeenCalledTimes(1);
-
-      metrics.forget.mockClear();
-      await service.update('api-linux', { ssh: { identityFile: '~/.ssh/other' } });
-      expect(metrics.forget).toHaveBeenCalledWith('api-linux');
-    });
-
-    it('refuses to rewire a server with live panes unless forced', async () => {
-      activePanes = 1;
-
-      await expect(service.update('api-linux', { address: { host: '10.9.9.9' } })).rejects.toMatchObject({
-        code: ErrorCode.SERVER_IN_USE,
-        details: { activePanes: 1 },
-      });
-      expect(workspace.releaseServer).not.toHaveBeenCalled();
-      expect(registry.get('api-linux').address.host).toBe('10.0.0.21');
-    });
-
-    it('rewires when explicitly forced', async () => {
-      activePanes = 1;
-
-      await service.update('api-linux', { address: { host: '10.9.9.9', user: 'deploy' } }, { force: true });
-
-      expect(workspace.releaseServer).toHaveBeenCalled();
+    it('never needs confirmation: panes live in tmux on the node, not in the link', async () => {
+      await expect(service.update('api-linux', { address: { host: '10.9.9.9', user: 'deploy' } })).resolves.toBeTruthy();
       expect(registry.get('api-linux').address.host).toBe('10.9.9.9');
-    });
-
-    it('allows a rename even with live panes', async () => {
-      activePanes = 1;
-      await expect(service.update('api-linux', { name: 'Still Fine' })).resolves.toBeTruthy();
     });
   });
 
@@ -176,46 +112,27 @@ describe('ServerService', () => {
       await service.create(REMOTE);
     });
 
-    it('refuses while panes are live, without touching anything', async () => {
-      activePanes = 1;
-
-      await expect(service.remove('api-linux')).rejects.toMatchObject({
-        code: ErrorCode.SERVER_IN_USE,
-        details: { activePanes: 1 },
-      });
-      expect(workspace.releaseServer).not.toHaveBeenCalled();
-      expect(registry.get('api-linux')).toBeTruthy();
-    });
-
-    it('removes and cleans every derived cache when forced', async () => {
-      activePanes = 1;
-
-      await service.remove('api-linux', { force: true });
+    it('removes and cleans every derived cache', async () => {
+      await service.remove('api-linux');
 
       expect(registry.get('api-linux')).toBeNull();
-      expect(workspace.releaseServer).toHaveBeenCalledWith('api-linux', 'server_removed');
-      expect(pool.invalidate).toHaveBeenCalledWith('api-linux');
+      expect(links.invalidate).toHaveBeenCalledWith('api-linux');
       expect(health.forget).toHaveBeenCalledWith('api-linux');
-      expect(metrics.forget).toHaveBeenCalledWith('api-linux');
     });
 
-    it('keeps the runtimes when the durable delete fails', async () => {
+    it('keeps the link when the durable delete fails', async () => {
       registry._writeUnsafe = async () => { throw new Error('EIO'); };
-      workspace.releaseServer.mockClear();
+      links.invalidate.mockClear();
 
       await expect(service.remove('api-linux')).rejects.toThrow('EIO');
 
-      // Destroying the user's shells for a delete that did not happen would be
-      // unrecoverable data loss.
-      expect(workspace.releaseServer).not.toHaveBeenCalled();
+      expect(links.invalidate).not.toHaveBeenCalled();
       expect(health.forget).not.toHaveBeenCalled();
       expect(registry.get('api-linux')).toBeTruthy();
     });
 
     it('refuses to remove the local server', async () => {
-      await expect(service.remove(LOCAL_SERVER_ID)).rejects.toMatchObject({
-        code: ErrorCode.SERVER_IMMUTABLE,
-      });
+      await expect(service.remove(LOCAL_SERVER_ID)).rejects.toMatchObject({ code: ErrorCode.SERVER_IMMUTABLE });
     });
 
     it('reports an unknown server', async () => {
@@ -228,19 +145,19 @@ describe('ServerService', () => {
       await service.create(REMOTE);
     });
 
-    it('scans through the pooled executor so trust can find the candidates', async () => {
+    it('scans through the pooled connection so trust can find the candidates', async () => {
       const scanHostKeys = vi.fn(async () => ({ keys: [{ algorithm: 'ssh-ed25519', fingerprint: 'SHA256:x' }] }));
-      pool.requireRemote.mockReturnValue({ scanHostKeys });
+      links.connection.mockReturnValue({ scanHostKeys });
 
       await service.scanHostKey('api-linux');
 
-      expect(pool.requireRemote).toHaveBeenCalledWith('api-linux', { allowDisabled: true });
+      expect(links.connection).toHaveBeenCalledWith('api-linux', { allowDisabled: true });
       expect(scanHostKeys).toHaveBeenCalled();
     });
 
     it('re-probes immediately after a key is trusted', async () => {
       const trustHostKey = vi.fn(async () => ({ fingerprint: 'SHA256:x' }));
-      pool.requireRemote.mockReturnValue({ trustHostKey });
+      links.connection.mockReturnValue({ trustHostKey });
       health.probe.mockClear();
 
       await service.trustHostKey('api-linux', 'SHA256:x');
@@ -252,17 +169,11 @@ describe('ServerService', () => {
 
     it('works on a disabled server so the user can repair it', async () => {
       await service.update('api-linux', { enabled: false });
-      pool.requireRemote.mockReturnValue({ scanHostKeys: vi.fn(async () => ({ keys: [] })) });
+      links.connection.mockReturnValue({ scanHostKeys: vi.fn(async () => ({ keys: [] })) });
 
       await service.scanHostKey('api-linux');
 
-      expect(pool.requireRemote).toHaveBeenCalledWith('api-linux', { allowDisabled: true });
+      expect(links.connection).toHaveBeenCalledWith('api-linux', { allowDisabled: true });
     });
-  });
-
-  it('works without optional dependencies', async () => {
-    const minimal = new ServerService({ registry, pool, health });
-    await expect(minimal.create({ ...REMOTE, id: 'minimal' })).resolves.toBeTruthy();
-    await expect(minimal.remove('minimal')).resolves.toBeUndefined();
   });
 });

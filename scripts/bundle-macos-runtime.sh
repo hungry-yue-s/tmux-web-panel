@@ -151,6 +151,11 @@ done
 mkdir -p "$RUNTIME/app/plugins/tmux-agent" "$RUNTIME/app/skills/tmux-panel"
 rsync -a --delete "$PROJECT_DIR/plugins/tmux-agent/" "$RUNTIME/app/plugins/tmux-agent/"
 rsync -a --delete "$PROJECT_DIR/skills/tmux-panel/" "$RUNTIME/app/skills/tmux-panel/"
+# tmux source, so the app can install the panel on a Linux or macOS machine it
+# manages (the remote installer builds tmux from it). Source only, no build output.
+mkdir -p "$RUNTIME/app/vendor/tmux"
+rsync -a --delete --exclude='.git' --exclude='*.o' --exclude='tmux' --exclude='config.log' --exclude='config.status' --exclude='Makefile' \
+  "$PROJECT_DIR/vendor/tmux/" "$RUNTIME/app/vendor/tmux/"
 cat > "$RUNTIME/licenses/THIRD-PARTY-NOTICES.md" <<'NOTICES'
 # Bundled components
 

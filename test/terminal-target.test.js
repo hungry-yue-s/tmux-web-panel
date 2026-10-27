@@ -1,13 +1,14 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
 const SRC = readFileSync('public/js/terminal-target.js', 'utf8');
+const API_SRC = readFileSync('public/js/api.js', 'utf8');
 
 /**
- * The terminal renderer originally addressed panes through /api/sessions/... and
- * /ws/terminal/:paneId, which always mean the panel's own machine. These tests
- * pin the rule that a remote server never reaches those legacy paths.
+ * Every machine runs the same panel, so a pane is addressed by the same path
+ * everywhere and only the /n/:serverId prefix says which machine. These tests
+ * pin that rule: a remote window never reaches the panel host's own paths.
  */
 function loadTarget() {
   const dom = new JSDOM('', { url: 'https://panel.example:7681/' });
@@ -18,13 +19,16 @@ function loadTarget() {
     put: vi.fn(async () => ({ success: true })),
     delete: vi.fn(async () => ({ success: true })),
   };
-  const scoped = {
-    get: vi.fn(async () => ({ panes: [] })),
-    request: vi.fn(async () => ({})),
-  };
   win.api = legacy;
-  win.Api = scoped;
   win.Auth = { wsTokenParam: () => 'token=abc' };
+  // eslint-disable-next-line no-new-func
+  new Function('window', API_SRC)(win);
+  const scoped = {
+    get: vi.spyOn(win.Api, 'get').mockImplementation(async () => ({ panes: [] })),
+    post: vi.spyOn(win.Api, 'post').mockImplementation(async () => ({})),
+    patch: vi.spyOn(win.Api, 'patch').mockImplementation(async () => ({})),
+    del: vi.spyOn(win.Api, 'del').mockImplementation(async () => null),
+  };
   // eslint-disable-next-line no-new-func
   new Function('window', SRC)(win);
   return { TerminalTarget: win.TerminalTarget, legacy, scoped, win };
@@ -40,178 +44,109 @@ describe('TerminalTarget defaults', () => {
 
   it('reset returns to local', () => {
     const { TerminalTarget } = loadTarget();
-    TerminalTarget.set({ serverId: 'api-linux', provider: 'ssh' });
+    TerminalTarget.set({ serverId: 'api-linux' });
     TerminalTarget.reset();
     expect(TerminalTarget.isRemote()).toBe(false);
   });
+
+  it('announces a server switch so the status socket can follow it', () => {
+    const { TerminalTarget, win } = loadTarget();
+    const seen = [];
+    win.addEventListener('terminal-target-server', (event) => seen.push(event.detail.serverId));
+
+    TerminalTarget.set({ serverId: 'api-linux', windowId: '@1' });
+    TerminalTarget.set({ serverId: 'api-linux', windowId: '@2' });
+    TerminalTarget.reset();
+
+    expect(seen).toEqual(['api-linux', 'local']);
+  });
 });
 
-describe('local server uses stable ids in the new shell', () => {
-  it('lists panes through the server-scoped window endpoint', async () => {
+describe('TerminalTarget.hasNode', () => {
+  it('is false only for a remote server reported in basic mode', () => {
+    const { TerminalTarget, win } = loadTarget();
+    expect(TerminalTarget.hasNode()).toBe(true);
+    const healths = { 'api-linux': { node: { installed: false } }, full: { node: { installed: true } } };
+    win.AppShell = { health: (id) => healths[id] || {} };
+    TerminalTarget.set({ serverId: 'api-linux' });
+    expect(TerminalTarget.hasNode()).toBe(false);
+    TerminalTarget.set({ serverId: 'full' });
+    expect(TerminalTarget.hasNode()).toBe(true);
+    TerminalTarget.set({ serverId: 'unknown' });
+    expect(TerminalTarget.hasNode()).toBe(true);
+  });
+});
+
+describe('local server', () => {
+  it('uses the machine API directly with stable ids', async () => {
     const { TerminalTarget, legacy, scoped } = loadTarget();
-    TerminalTarget.set({ serverId: 'local', provider: 'tmux', sessionId: '$1', windowId: '@5' });
+    TerminalTarget.set({ serverId: 'local', sessionId: '$1', windowId: '@5' });
 
     await TerminalTarget.listPanes('DataAnt', '2');
+    await TerminalTarget.splitPane('DataAnt', '2', '%12', 'horizontal');
+    await TerminalTarget.setPaneLabel('%12', 'build');
+    await expect(TerminalTarget.closePane('DataAnt', '2', '%12')).resolves.toEqual({ ok: true });
 
-    expect(scoped.get).toHaveBeenCalledWith('/api/servers/local/windows/%405/panes');
+    expect(scoped.get).toHaveBeenCalledWith('/api/workspace/windows/%405/panes');
+    expect(scoped.post).toHaveBeenCalledWith('/api/workspace/windows/%405/panes', { direction: 'horizontal', paneId: '%12' });
+    expect(scoped.patch).toHaveBeenCalledWith('/api/workspace/panes/%2512', { label: 'build' });
+    expect(scoped.del).toHaveBeenCalledWith('/api/workspace/panes/%2512');
     expect(legacy.get).not.toHaveBeenCalled();
   });
 
-  it('builds the single-segment socket address', () => {
+  it('builds the socket address without a relay prefix', () => {
     const { TerminalTarget } = loadTarget();
-    const url = TerminalTarget.wsUrl('%12', false);
-    expect(url).toBe('wss://panel.example:7681/ws/terminal/%2512?token=abc');
+    expect(TerminalTarget.wsUrl('%12', false)).toBe('wss://panel.example:7681/ws/terminal/%2512?token=abc');
   });
 
-  it('splits, labels and closes through stable server-scoped endpoints', async () => {
-    const { TerminalTarget, legacy, scoped } = loadTarget();
-    TerminalTarget.set({ serverId: 'local', provider: 'tmux', sessionId: '$1', windowId: '@5' });
-
-    await TerminalTarget.splitPane('DataAnt', '2', '%12', 'horizontal');
-    await TerminalTarget.setPaneLabel('%12', 'build');
-    await TerminalTarget.closePane('DataAnt', '2', '%12');
-
-    expect(scoped.request.mock.calls.map((call) => [call[0], call[1]])).toEqual([
-      ['POST', '/api/servers/local/windows/%405/panes'],
-      ['PATCH', '/api/servers/local/panes/%2512'],
-      ['DELETE', '/api/servers/local/panes/%2512'],
-    ]);
-    expect(legacy.post).not.toHaveBeenCalled();
-    expect(legacy.put).not.toHaveBeenCalled();
-    expect(legacy.delete).not.toHaveBeenCalled();
+  it('falls back to the name/index API only when no stable window id is known', async () => {
+    const { TerminalTarget, legacy } = loadTarget();
+    await TerminalTarget.listPanes('DataAnt', '2');
+    expect(legacy.get).toHaveBeenCalledWith('/api/sessions/DataAnt/windows/2/panes');
   });
 });
 
-describe('remote server never touches the legacy local API', () => {
-  function remote(provider = 'tmux') {
-    const loaded = loadTarget();
-    loaded.TerminalTarget.set({
-      serverId: 'api-linux',
-      provider,
-      sessionId: '$1',
-      windowId: '@5',
-    });
-    return loaded;
-  }
+describe('remote server', () => {
+  it('reaches the same machine API through the /n/:serverId relay', async () => {
+    const { TerminalTarget, legacy, scoped } = loadTarget();
+    TerminalTarget.set({ serverId: 'api-linux', sessionId: '$1', windowId: '@5' });
 
-  it('reads panes from the stable window endpoint', async () => {
-    const { TerminalTarget, legacy, scoped } = remote();
-    scoped.get.mockResolvedValue({ panes: [{ id: '%12' }, { id: '%13' }] });
+    await TerminalTarget.listPanes('DataAnt', '2');
+    await TerminalTarget.splitPane('DataAnt', '2', '%12', 'vertical');
+    await TerminalTarget.setPaneLabel('%12', 'build');
+    await expect(TerminalTarget.closePane('DataAnt', '2', '%12')).resolves.toEqual({ ok: true });
 
-    const panes = await TerminalTarget.listPanes('DataAnt', '2');
-
-    expect(scoped.get).toHaveBeenCalledWith('/api/servers/api-linux/windows/%405/panes');
-    expect(panes.map((p) => p.id)).toEqual(['%12', '%13']);
-    // The whole point: no legacy call happened.
+    expect(scoped.get).toHaveBeenCalledWith('/n/api-linux/api/workspace/windows/%405/panes');
+    expect(scoped.post).toHaveBeenCalledWith('/n/api-linux/api/workspace/windows/%405/panes', { direction: 'vertical', paneId: '%12' });
+    expect(scoped.patch).toHaveBeenCalledWith('/n/api-linux/api/workspace/panes/%2512', { label: 'build' });
+    expect(scoped.del).toHaveBeenCalledWith('/n/api-linux/api/workspace/panes/%2512');
     expect(legacy.get).not.toHaveBeenCalled();
   });
 
-  it('ignores a stale display index when a stable window id exists', async () => {
-    const { TerminalTarget, scoped } = remote();
-    scoped.get.mockResolvedValue({ panes: [{ id: '%12' }] });
+  it('builds the relayed socket address', () => {
+    const { TerminalTarget } = loadTarget();
+    TerminalTarget.set({ serverId: 'api-linux' });
+    expect(TerminalTarget.wsUrl('%12', true, 120, 40)).toBe(
+      'wss://panel.example:7681/n/api-linux/ws/terminal/%2512?nozoom=1&cols=120&rows=40&token=abc',
+    );
+  });
 
-    // The passed index (2) belongs to @9, but the target's stable id is @5.
-    const panes = await TerminalTarget.listPanes('DataAnt', '2');
+  it('prefixes the name/index fallback too, so it can never hit the panel host', async () => {
+    const { TerminalTarget, legacy } = loadTarget();
+    TerminalTarget.set({ serverId: 'api-linux' });
 
-    expect(panes.map((p) => p.id)).toEqual(['%12']);
-    expect(scoped.get).toHaveBeenCalledWith('/api/servers/api-linux/windows/%405/panes');
+    await TerminalTarget.listPanes('DataAnt', '2');
+    await TerminalTarget.setPaneLabel('%3', 'x');
+
+    expect(legacy.get).toHaveBeenCalledWith('/n/api-linux/api/sessions/DataAnt/windows/2/panes');
+    expect(legacy.put).toHaveBeenCalledWith('/n/api-linux/api/panes/%253/label', { label: 'x' });
   });
 
   it('returns an empty list when the window is gone', async () => {
-    const { TerminalTarget, scoped } = remote();
-    scoped.get.mockResolvedValue({ panes: [] });
+    const { TerminalTarget, scoped } = loadTarget();
+    scoped.get.mockResolvedValue(null);
+    TerminalTarget.set({ serverId: 'api-linux', windowId: '@5' });
     await expect(TerminalTarget.listPanes('DataAnt', '2')).resolves.toEqual([]);
-  });
-
-  it('builds the server-scoped socket address', () => {
-    const { TerminalTarget } = remote();
-    const url = TerminalTarget.wsUrl('%12', true, 120, 34);
-
-    expect(url).toContain('/ws/terminal/api-linux/%2512');
-    expect(url).toContain('nozoom=1');
-    expect(url).toContain('cols=120');
-    expect(url).toContain('rows=34');
-    expect(url).not.toMatch(/\/ws\/terminal\/%2512/);
-  });
-
-  it('splits through the server-scoped window endpoint, carrying the pane id', async () => {
-    const { TerminalTarget, legacy, scoped } = remote();
-
-    await TerminalTarget.splitPane('DataAnt', '2', '%12', 'horizontal');
-
-    expect(scoped.request).toHaveBeenCalledWith(
-      'POST',
-      '/api/servers/api-linux/windows/%405/panes',
-      { direction: 'horizontal', paneId: '%12' },
-      { headers: { 'X-Workspace-Provider': 'tmux' } },
-    );
-    expect(legacy.post).not.toHaveBeenCalled();
-  });
-
-  it('refuses a split with no window id rather than guessing', async () => {
-    const { TerminalTarget, legacy } = remote();
-    TerminalTarget.set({ serverId: 'api-linux', provider: 'tmux', sessionId: '$1' });
-
-    await expect(TerminalTarget.splitPane('DataAnt', '2', '%12', 'vertical')).rejects.toThrow(/window id/);
-    expect(legacy.post).not.toHaveBeenCalled();
-  });
-
-  it('labels through the server-scoped pane endpoint', async () => {
-    const { TerminalTarget, legacy, scoped } = remote();
-
-    await TerminalTarget.setPaneLabel('%12', 'build');
-
-    expect(scoped.request).toHaveBeenCalledWith(
-      'PATCH',
-      '/api/servers/api-linux/panes/%2512',
-      { label: 'build' },
-      { headers: { 'X-Workspace-Provider': 'tmux' } },
-    );
-    expect(legacy.put).not.toHaveBeenCalled();
-  });
-
-  it('closes through the server-scoped pane endpoint and resolves truthy', async () => {
-    const { TerminalTarget, legacy, scoped } = remote();
-    // A 204 answers with an empty body; callers use the value to detect cancel.
-    scoped.request.mockResolvedValue('');
-
-    const result = await TerminalTarget.closePane('DataAnt', '2', '%12');
-
-    expect(result).toEqual({ ok: true });
-    expect(scoped.request).toHaveBeenCalledWith(
-      'DELETE',
-      '/api/servers/api-linux/panes/%2512',
-      undefined,
-      { headers: { 'X-Workspace-Provider': 'tmux' } },
-    );
-    expect(legacy.delete).not.toHaveBeenCalled();
-  });
-
-  it('sends the provider header so a stale page is rejected', async () => {
-    const { TerminalTarget } = remote('ssh');
-    await TerminalTarget.setPaneLabel('pane_1', 'x');
-    expect(TerminalTarget.headers()).toEqual({ 'X-Workspace-Provider': 'ssh' });
-  });
-
-  it('reports that an ssh workspace has no tmux-native split', () => {
-    const { TerminalTarget } = remote('ssh');
-    expect(TerminalTarget.supportsTmuxActions()).toBe(false);
-  });
-
-  it('still allows ssh panes to be created, labelled and closed', async () => {
-    const { TerminalTarget, scoped } = remote('ssh');
-
-    await TerminalTarget.splitPane('main', '0', 'pane_1', 'vertical');
-    await TerminalTarget.setPaneLabel('pane_1', 'logs');
-    await TerminalTarget.closePane('main', '0', 'pane_1');
-
-    const methods = scoped.request.mock.calls.map((call) => call[0]);
-    expect(methods).toEqual(['POST', 'PATCH', 'DELETE']);
-  });
-
-  it('local close also resolves truthy so the re-render still happens', async () => {
-    const { TerminalTarget } = loadTarget();
-    await expect(TerminalTarget.closePane('DataAnt', '2', '%12')).resolves.toEqual({ ok: true });
   });
 });
 
@@ -255,8 +190,8 @@ describe('terminal renderer wiring', () => {
     expect(terminalSrc).toContain('MsApp.refreshCurrentTerminal');
   });
 
-  it('gates native split mode and file preview on the provider', () => {
+  it('gates native split mode on the provider and uploads to the server in view', () => {
     expect(terminalSrc).toContain('TerminalTarget.supportsTmuxActions()');
-    expect(terminalSrc).toMatch(/FilePreview !== 'undefined' && !TerminalTarget\.isRemote\(\)/);
+    expect(terminalSrc).toContain("fetch(Api.activeUrl('/api/upload')");
   });
 });

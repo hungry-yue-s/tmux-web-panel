@@ -2,6 +2,14 @@
 // uses its own Agent -> runtime profile -> quota/session model.
 var AgentHub = (function () {
   var POLL_MS = 30000;
+  // Agent profiles and usage live on each machine; follow the server in view.
+  function onMachine(method) {
+    return function (path) {
+      var args = Array.prototype.slice.call(arguments, 1);
+      return window.Api[method].apply(window.Api, [window.Api.activeUrl(path)].concat(args));
+    };
+  }
+  var machineApi = { get: onMachine('get'), post: onMachine('post') };
   var timer = null;
   var root = null;
   var state = {
@@ -490,9 +498,9 @@ var AgentHub = (function () {
     if (!visible.claude) query.push('claude=0');
     if (!visible.codex) query.push('codex=0');
     return Promise.allSettled([
-      window.Api.get('/api/agent-hub' + (query.length ? '?' + query.join('&') : '')),
-      visible.claude ? window.Api.get('/api/claude-usage') : Promise.resolve({}),
-      visible.codex ? window.Api.get('/api/codex-usage') : Promise.resolve({}),
+      machineApi.get('/api/agent-hub' + (query.length ? '?' + query.join('&') : '')),
+      visible.claude ? machineApi.get('/api/claude-usage') : Promise.resolve({}),
+      visible.codex ? machineApi.get('/api/codex-usage') : Promise.resolve({}),
     ]).then(function (results) {
       state.loading = false;
       if (results[0].status === 'fulfilled') state.hub = results[0].value;
@@ -526,7 +534,7 @@ var AgentHub = (function () {
     }
     if (action === 'open-enterprise-app') {
       button.disabled = true;
-      window.Api.post('/api/agent-hub/enterprise/apps/' + encodeURIComponent(button.dataset.app) + '/open')
+      machineApi.post('/api/agent-hub/enterprise/apps/' + encodeURIComponent(button.dataset.app) + '/open')
         .then(function () { window.AppShell.toast('已打开应用，请在应用内查看额度或切换模型'); })
         .catch(function (error) { window.AppShell.toast(error.message || '无法打开应用'); })
         .finally(function () { button.disabled = false; });
@@ -536,7 +544,7 @@ var AgentHub = (function () {
       button.disabled = true;
       var refreshLabel = button.textContent;
       button.textContent = '正在读取…';
-      window.Api.post('/api/agent-hub/enterprise/quota/refresh').then(function (result) {
+      machineApi.post('/api/agent-hub/enterprise/quota/refresh').then(function (result) {
         var alilang = result && result.alilang;
         if (alilang && alilang.status !== 'available' && alilang.reason) window.AppShell.toast(alilang.reason);
         return load();
@@ -555,7 +563,7 @@ var AgentHub = (function () {
       prompt.then(function (cookieHeader) {
         if (!cookieHeader) return;
         button.disabled = true;
-        return window.Api.post('/api/agent-hub/qoder/session', { cookieHeader: cookieHeader, site: 'international' })
+        return machineApi.post('/api/agent-hub/qoder/session', { cookieHeader: cookieHeader, site: 'international' })
           .then(function () { window.AppShell.toast('Qoder 额度配置已保存'); return load(); })
           .catch(function (error) { button.disabled = false; window.AppShell.toast(error.message || '配置失败'); });
       });
@@ -578,7 +586,7 @@ var AgentHub = (function () {
         state.warmingProfileKey = warmupKey;
         paint();
         var endpoint = warmupProvider ? '/api/agent-hub/providers/' : '/api/agent-hub/codex-switcher/';
-        return window.Api.post(endpoint + encodeURIComponent(warmupProfileId) + '/warmup')
+        return machineApi.post(endpoint + encodeURIComponent(warmupProfileId) + '/warmup')
           .then(function () {
             window.AppShell.toast('已完成 ' + warmupName + ' 的暖号请求');
             state.warmingProfileKey = null;
@@ -602,7 +610,7 @@ var AgentHub = (function () {
         state.updatingAutoProfileKey = autoKey;
         paint();
         var endpoint = autoProvider ? '/api/agent-hub/providers/' : '/api/agent-hub/codex-switcher/';
-        return window.Api.post(endpoint + encodeURIComponent(autoProfileId) + '/auto-warmup', { enabled: enableAuto })
+        return machineApi.post(endpoint + encodeURIComponent(autoProfileId) + '/auto-warmup', { enabled: enableAuto })
           .then(function () {
             window.AppShell.toast(autoName + '自动暖号已' + (enableAuto ? '开启' : '关闭'));
             state.updatingAutoProfileKey = null;
@@ -646,7 +654,7 @@ var AgentHub = (function () {
           : isAccount
           ? '/api/agent-hub/codex-switcher/' + encodeURIComponent(button.dataset.accountId) + '/activate'
           : '/api/agent-hub/providers/' + encodeURIComponent(button.dataset.providerId) + '/activate';
-        return window.Api.post(endpoint, action === 'activate-dsh' ? JSON.parse(button.dataset.providerId) : isAccount ? undefined : { agent: agentId })
+        return machineApi.post(endpoint, action === 'activate-dsh' ? JSON.parse(button.dataset.providerId) : isAccount ? undefined : { agent: agentId })
           .then(function () { window.AppShell.toast('已切换到 ' + targetName + '，新会话生效'); return load(); })
           .catch(function (error) { button.disabled = false; window.AppShell.toast(error.message || '切换失败'); });
       });
