@@ -160,7 +160,7 @@ export class NodeInstaller {
       const archive = join(dir, 'panel.tgz');
       await this._pack(this.projectDir, archive, { includeTmux });
       say('upload over sftp');
-      await connection.uploadFile(archive, REMOTE_ARCHIVE, { mode: '600' });
+      await connection.uploadFile(archive, REMOTE_ARCHIVE, { mode: '600', timeout: 10 * 60_000 });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

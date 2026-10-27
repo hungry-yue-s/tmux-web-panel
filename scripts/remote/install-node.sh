@@ -106,6 +106,9 @@ ensure_node() {
   fi
   NODE_BIN="$dir/bin/node"
   NPM="$NODE_BIN $dir/lib/node_modules/npm/bin/npm-cli.js"
+  # npm lifecycle scripts invoke node by name, including node-pty's installer.
+  PATH="$dir/bin:$PATH"
+  export PATH
 }
 
 port_in_use() {

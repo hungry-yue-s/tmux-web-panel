@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,6 +37,33 @@ describe('install scripts', () => {
   it('keeps the shipped installers readable for both platforms', () => {
     expect(readFileSync('scripts/remote/install-node.sh', 'utf8')).toContain('NODE_ONLY=1 bash scripts/install-service.sh install');
     expect(readFileSync('scripts/remote/install-node.ps1', 'utf8')).toContain('-ListenHost 127.0.0.1');
+  });
+
+  it.skipIf(process.platform === 'win32')('makes cached private Node available to npm lifecycle shells without a system Node', () => {
+    const source = readFileSync('scripts/remote/install-node.sh', 'utf8');
+    const version = source.match(/^NODE_VERSION="([^"]+)"$/m)[1];
+    const definitions = source.slice(0, source.indexOf('\nport_in_use() {'));
+    const dir = mkdtempSync(join(tmpdir(), 'installer-node-path-'));
+    try {
+      const home = join(dir, 'home');
+      const fakebin = join(dir, 'bin');
+      const nodebin = join(home, `.local/share/tmux-web-panel/node-v${version}-linux-x64/bin`);
+      mkdirSync(fakebin);
+      mkdirSync(nodebin, { recursive: true });
+      writeFileSync(join(fakebin, 'uname'), '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; *) exit 1 ;; esac\n', { mode: 0o755 });
+      writeFileSync(join(nodebin, 'node'), '#!/bin/sh\nprintf "cached-private-node\\n"\n', { mode: 0o755 });
+      const result = spawnSync('/bin/sh', ['-c', `${definitions}
+PATH="$TWP_TEST_PATH"
+export PATH
+if command -v node >/dev/null 2>&1; then exit 99; fi
+ensure_node
+/bin/sh -c 'node -v'
+`], { env: { ...process.env, HOME: home, PATH: fakebin, TWP_TEST_PATH: fakebin }, encoding: 'utf8', timeout: 5000 });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe('cached-private-node\n');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -100,7 +128,7 @@ describe('NodeInstaller', () => {
     const status = await finish(installer);
     expect(status.state).toBe('succeeded');
     expect(pack).toHaveBeenCalledWith(expect.any(String), expect.stringMatching(/panel\.tgz$/), { includeTmux: true });
-    expect(connection.uploadFile).toHaveBeenCalledWith(expect.any(String), REMOTE_ARCHIVE, { mode: '600' });
+    expect(connection.uploadFile).toHaveBeenCalledWith(expect.any(String), REMOTE_ARCHIVE, { mode: '600', timeout: 10 * 60_000 });
     const [words, options] = connection.stream.mock.calls[0];
     expect(words).toEqual(['sh', '-s']);
     expect(options.input).toContain("TWP_SUDO_PASSWORD=pw");
