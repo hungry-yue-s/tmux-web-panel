@@ -13,7 +13,10 @@ $ErrorActionPreference = 'Continue'
 # up, CHERE_INVOKING keeps `tmux -c <dir>` instead of jumping to $HOME, and the
 # MSYS2 bin directory comes first so plugins and run-shell find tmux and bash.
 # noglob stops MSYS from brace-expanding tmux formats passed as arguments.
+# MSYS2_PATH_TYPE=inherit keeps the Windows PATH through /etc/profile, whose
+# default ("minimal") would drop Git, Node, claude and the rest from panes.
 $env:MSYSTEM = $cfg.msystem
+$env:MSYS2_PATH_TYPE = 'inherit'
 $env:CHERE_INVOKING = '1'
 $env:SHELL = '/usr/bin/bash'
 $env:MSYS = 'noglob'
