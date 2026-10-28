@@ -66,6 +66,12 @@ export class StatusMonitor {
     this._broadcast(JSON.stringify({ type: 'notifications', data: notifications }));
   }
 
+  /** A request from a pane (e.g. `twp open`) for the browsers watching this machine. */
+  broadcastEvent(event) {
+    if (!event || typeof event.type !== 'string') return;
+    this._broadcast(JSON.stringify(event));
+  }
+
   /** One server's workspace tree changed; clients refetch by revision. */
   broadcastWorkspaceChanged(revision) {
     this._broadcast(JSON.stringify({ type: 'workspace-changed', revision }));

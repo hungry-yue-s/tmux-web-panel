@@ -64,7 +64,18 @@ var CommandPalette = (function () {
         serverId: current, route: { name: 'server', params: { serverId: current, section: 'performance' } } });
       add({ display: '设置', meta: '外观与偏好', keywords: 'settings 主题', icon: 'settings', route: { name: 'settings', params: {} } });
     }
+    // Blocks (git, board, browser…) run in place instead of routing.
+    if (typeof Blocks !== 'undefined') {
+      Blocks.commands().forEach(function (command) {
+        command.key = 'command:' + command.display;
+        command.search = normalized(command.display + ' ' + command.meta + ' ' + command.keywords);
+        command.recent = -1;
+        items.push(command);
+      });
+    }
     return items.sort(function (a, b) {
+      var commandOrder = Number(!!a.run) - Number(!!b.run);
+      if (commandOrder) return commandOrder;
       var serverOrder = Number(b.serverId === current) - Number(a.serverId === current);
       if (serverOrder) return serverOrder;
       var recentOrder = (a.recent < 0 ? 100 : a.recent) - (b.recent < 0 ? 100 : b.recent);
@@ -72,7 +83,7 @@ var CommandPalette = (function () {
     });
   }
 
-  function open(opener) {
+  function open(opener, query) {
     if (_overlay) { _input.focus(); return; }
     _opener = opener && typeof opener.focus === 'function' ? opener : document.activeElement;
     _all = destinations();
@@ -115,7 +126,8 @@ var CommandPalette = (function () {
       }
     });
     document.addEventListener('focusin', trapFocus);
-    search('');
+    _input.value = query || '';
+    search(_input.value);
     _input.focus();
   }
 
@@ -160,7 +172,7 @@ var CommandPalette = (function () {
       meta.textContent = item.context && _overlay.classList.contains('cmd-palette-is-mobile') ? item.context + ' · ' + item.meta : item.meta;
       body.append(name, meta);
       var kind = document.createElement('span'); kind.className = 'cmd-palette-item-kind';
-      kind.textContent = item.windowId ? '窗口' : item.icon === 'server' ? '服务器' : '功能';
+      kind.textContent = item.kind || (item.windowId ? '窗口' : item.icon === 'server' ? '服务器' : '功能');
       row.append(icon, body, kind);
       row.onclick = function () { select(item); };
       _results.appendChild(row);
@@ -187,6 +199,7 @@ var CommandPalette = (function () {
 
   function select(item) {
     close(false);
+    if (item.run) { item.run(); return; }
     // A route selection dismisses a transient file modal, including when the
     // selected destination is the current route and Router.go is a no-op.
     // A docked inspector is separate workspace state and must be retained.

@@ -441,6 +441,8 @@ var FilePreview = (function () {
     var requestId = _previewGeneration;
     var body = _overlay.querySelector('.fp-body');
     if (!body) return Promise.resolve(false);
+    // An open editor or board owns the body until it saves or closes.
+    if (!force && body.querySelector('[data-fp-hold-refresh]')) return Promise.resolve(false);
     var button = _refreshButton;
     var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
     var qs = '?path=' + encodeURIComponent(fileAtStart.absPath);
@@ -1071,6 +1073,14 @@ var FilePreview = (function () {
     }
     var btnMore = _menuBtn('更多文件操作', '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>', function () {
       var items = _isMobileReader() ? [] : [buttonAction(btnMaximize)];
+      if (window.Blocks && _currentFile) {
+        var blockBody = _overlay && _overlay.querySelector('.fp-body');
+        items = items.concat(window.Blocks.previewActions(_currentFile, {
+          body: blockBody,
+          paneId: _currentPaneId,
+          refresh: function () { return _refreshCurrent(true); },
+        }));
+      }
       if (_currentFile && !_currentFile.isDirectory) {
         items.push(buttonAction(btnNewTab));
         items = items.concat(copyItems, [buttonAction(btnShare)], downloadItems);
@@ -4068,6 +4078,8 @@ var FilePreview = (function () {
       renderPromise = _renderXlsx(renderedBody, rawUrl);
     } else if (info.isArchive) {
       renderPromise = _renderArchive(renderedBody, info);
+    } else if (info.isSqlite && window.Blocks) {
+      renderPromise = window.Blocks.renderSqlite(renderedBody, info);
     } else {
       renderPromise = fetch(_machine() + '/api/files/content?path=' + encodeURIComponent(info.absPath), {
         headers: headers, cache: 'no-store',
@@ -4077,6 +4089,9 @@ var FilePreview = (function () {
           if (!cr.success) throw new Error(cr.error || '加载文件失败');
           if (!isCurrent()) return false;
           current.rawContent = cr.data.content;
+          // Notebooks, patches and TODO.md boards have their own blocks.
+          var block = window.Blocks && window.Blocks.rendererFor(info.absPath);
+          if (block) return block(renderedBody, cr.data.content, info);
           if (info.isMarkdown) {
             return _renderMarkdown(renderedBody, cr.data.content, info.absPath, options.paneId);
           }
@@ -4084,6 +4099,8 @@ var FilePreview = (function () {
             _renderCsv(renderedBody, cr.data.content, info.absPath);
           } else {
             _renderCode(renderedBody, cr.data.content, cr.data.language, targetLine);
+            // Git changes in the gutter, like an editor.
+            if (window.Blocks) window.Blocks.decorateGitGutter(renderedBody, info.absPath);
           }
           return true;
         });

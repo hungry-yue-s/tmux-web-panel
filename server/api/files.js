@@ -145,6 +145,8 @@ const MIME_MAP = {
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.xlsm': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.md': 'text/markdown', '.markdown': 'text/markdown',
+  '.sqlite': 'application/vnd.sqlite3', '.sqlite3': 'application/vnd.sqlite3',
+  '.db': 'application/vnd.sqlite3', '.db3': 'application/vnd.sqlite3',
 };
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -158,11 +160,12 @@ function getFileInfo(filePath) {
   const isPdf = mimeType === 'application/pdf';
   const isXlsx = mimeType === XLSX_MIME;
   const isMarkdown = mimeType === 'text/markdown';
+  const isSqlite = mimeType === 'application/vnd.sqlite3';
   const archiveType = getArchiveType(filePath) || null;
   const isArchive = archiveType !== null;
-  const isText = !isImage && !isVideo && !isPdf && !isXlsx && !isArchive;
+  const isText = !isImage && !isVideo && !isPdf && !isXlsx && !isArchive && !isSqlite;
   const language = LANG_MAP[ext] || BASENAME_MAP[base] || null;
-  return { mimeType, isText, isImage, isVideo, isPdf, isXlsx, isMarkdown, isArchive, archiveType, language };
+  return { mimeType, isText, isImage, isVideo, isPdf, isXlsx, isMarkdown, isSqlite, isArchive, archiveType, language };
 }
 
 // Detect language from shebang line (e.g. #!/usr/bin/env python3)
@@ -179,6 +182,7 @@ function detectShebangLanguage(content) {
 
 function getSizeLimit(info) {
   if (info.isVideo) return Infinity; // Videos are streamed; /content rejects binary files.
+  if (info.isSqlite) return Infinity; // Queried in place by /api/sqlite, never buffered.
   if (info.isImage) return SIZE_LIMITS.image;
   if (info.isPdf) return SIZE_LIMITS.pdf;
   if (info.isXlsx) return SIZE_LIMITS.xlsx;
@@ -294,6 +298,27 @@ async function getPaneCwd(paneId) {
     if (cwd) return cwd;
   } catch { /* ignore */ }
   return homedir();
+}
+
+/**
+ * Path checks shared with the routers that act on files the preview opened
+ * (git, sqlite, notebooks): the same roots, sensitive patterns and MSYS
+ * translation as /api/files.
+ */
+export function createPathGuard(allowedRoots) {
+  const roots = allowedRoots && allowedRoots.length > 0
+    ? allowedRoots.map(fromNativeInput)
+    : [homedir()];
+  return {
+    /** Resolves `path` (relative to the pane's cwd when not absolute). */
+    async resolve(rawPath, paneId) {
+      if (typeof rawPath !== 'string' || !rawPath) return { error: 'Missing path parameter', status: 400 };
+      const target = await resolveTarget(await resolveInputPath(rawPath, paneId), roots);
+      if (target.error) return target;
+      return { ...target, nativePath: fsPath(target.realPath) };
+    },
+    toNative: fsPath,
+  };
 }
 
 export function createFilesRouter(allowedRoots) {
@@ -603,6 +628,63 @@ export function createFilesRouter(allowedRoots) {
       return res.json({
         success: true,
         data: { absPath: result.absPath, line, checked, mtimeMs: outcome.mtimeMs, size: outcome.size },
+        error: null,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, data: null, error: err.message });
+    }
+  });
+
+  // Saves an edited text file. Like the task toggle, the write only happens
+  // when the file is still exactly what the editor loaded.
+  router.put('/content', async (req, res) => {
+    try {
+      const { path: requestPath, content, expectedMtimeMs, expectedSize } = req.body || {};
+      const rawPath = typeof requestPath === 'string' ? fromNativeInput(requestPath) : requestPath;
+      if (
+        typeof rawPath !== 'string' || !rawPath.startsWith('/')
+        || typeof content !== 'string'
+        || typeof expectedMtimeMs !== 'number' || !Number.isFinite(expectedMtimeMs)
+        || !Number.isInteger(expectedSize) || expectedSize < 0
+      ) {
+        return res.status(400).json({ success: false, data: null, error: 'invalid_save_request' });
+      }
+      if (Buffer.byteLength(content, 'utf8') > SIZE_LIMITS.text) {
+        return res.status(413).json({ success: false, data: null, error: 'File too large' });
+      }
+
+      const result = await validateFilePath(rawPath, roots);
+      if (result.error) {
+        return res.status(result.status).json({ success: false, data: null, error: result.error });
+      }
+      if (!result.info.isText) {
+        return res.status(400).json({ success: false, data: null, error: 'not_text' });
+      }
+
+      const outcome = await queueTaskWrite(result.realPath, async () => {
+        let handle;
+        try {
+          handle = await open(result.realPath, 'r+');
+          const current = await handle.stat();
+          if (current.mtimeMs !== expectedMtimeMs || current.size !== expectedSize) return { conflict: true };
+          const buffer = Buffer.from(content, 'utf8');
+          await handle.truncate(0);
+          const { bytesWritten } = await handle.write(buffer, 0, buffer.length, 0);
+          if (bytesWritten !== buffer.length) throw new Error('short_file_write');
+          await handle.sync();
+          const updated = await handle.stat();
+          return { mtimeMs: updated.mtimeMs, size: updated.size };
+        } finally {
+          if (handle) await handle.close();
+        }
+      });
+
+      if (outcome.conflict) {
+        return res.status(409).json({ success: false, data: null, error: 'file_changed_on_disk' });
+      }
+      return res.json({
+        success: true,
+        data: { absPath: result.absPath, mtimeMs: outcome.mtimeMs, size: outcome.size },
         error: null,
       });
     } catch (err) {

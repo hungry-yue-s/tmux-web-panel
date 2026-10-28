@@ -1661,6 +1661,11 @@ class StatusSocket {
           }
           return;
         }
+        if (data && (data.type === 'open-file' || data.type === 'open-url')) {
+          // `twp open` from a pane; only a visible tab acts so background tabs stay quiet.
+          if (typeof Blocks !== 'undefined' && document.visibilityState === 'visible') Blocks.handleOpenEvent(data);
+          return;
+        }
         if (data && data.type === 'pane-cmd') {
           if (typeof FabScene !== 'undefined') {
             var scenes = FabScene.loadScenes();

@@ -27,7 +27,10 @@ import sessionsRouter from './api/sessions.js';
 import windowsRouter from './api/windows.js';
 import { nestedPanesRouter, flatPanesRouter } from './api/panes.js';
 import { createUploadRouter } from './api/upload.js';
-import { createFilesRouter } from './api/files.js';
+import { createFilesRouter, createPathGuard } from './api/files.js';
+import { createGitRouter } from './api/git.js';
+import { createSqliteRouter } from './api/sqlite.js';
+import { createOpenRouter, createNotebookRouter } from './api/open.js';
 import systemStatsRouter from './api/system-stats.js';
 import windowStatsRouter from './api/window-stats.js';
 import perfHistoryRouter, { startSampler as startPerfHistorySampler } from './api/perf-history.js';
@@ -332,15 +335,21 @@ app.use('/api/pins', createPinsRouter(pinStore));
 app.use('/api/share', createShareRouter(shareStore));
 
 // Desktop uploads stay in this installation's data directory.
+const fileRoots = IS_WINDOWS ? [...msysHomeRoots(), '/tmp'] : [homedir(), '/tmp'];
 if (IS_WINDOWS) {
   // Panes run MSYS2 shells, so uploads land in MSYS's /tmp and are reported
   // (and previewed) by their MSYS path.
   app.use('/api/upload', createUploadRouter(toNativePath('/tmp/tmux-web-panel-uploads'), { displayPath: toPosixPath }));
-  app.use('/api/files', createFilesRouter([...msysHomeRoots(), '/tmp']));
 } else {
   app.use('/api/upload', createUploadRouter(config.managedRuntime ? join(configDir, 'uploads') : '/tmp/tmux-web-panel-uploads'));
-  app.use('/api/files', createFilesRouter([homedir(), '/tmp']));
 }
+app.use('/api/files', createFilesRouter(fileRoots));
+// Blocks that act on previewable files: git, SQLite, notebooks, `twp open`.
+const pathGuard = createPathGuard(fileRoots);
+app.use('/api/git', createGitRouter({ pathGuard }));
+app.use('/api/sqlite', createSqliteRouter({ pathGuard }));
+app.use('/api/notebook', createNotebookRouter({ pathGuard }));
+app.use('/api/open', createOpenRouter({ pathGuard, broadcast: (event) => statusMonitor.broadcastEvent(event) }));
 app.use('/api/claude-usage', createClaudeUsageRouter());
 app.use('/api/codex-usage', createCodexUsageRouter({ configDir }));
 const agentHubService = createAgentHubService({ configDir });
