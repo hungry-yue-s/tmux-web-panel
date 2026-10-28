@@ -62,6 +62,16 @@ if [[ "$ARCH" == x64 ]]; then
   # on the Node helper only; the app and native addons retain normal policy.
   /usr/libexec/PlistBuddy -c 'Add :com.apple.security.cs.allow-unsigned-executable-memory bool true' "$WORK/node-entitlements.plist"
 fi
+# Runtime checks have already executed these files. Install the signed bytes
+# into new inodes before executing them again, avoiding macOS's old code cache.
+sign_runtime_binary() {
+  local binary="$1"
+  shift
+  codesign "${SIGN_FLAGS[@]}" "$@" "$binary"
+  local signed_copy="${binary}.signed.$$"
+  cp -p "$binary" "$signed_copy"
+  mv -f "$signed_copy" "$binary"
+}
 if [[ "$BUNDLE_RUNTIME" == 1 ]]; then
   RUNTIME="$APP_PATH/Contents/Resources/runtime"
   # Sign nested executable code explicitly. All addons share the app's team.
@@ -70,8 +80,8 @@ import fs from 'node:fs'; import path from 'node:path';
 const root=process.argv[2], manifest=JSON.parse(fs.readFileSync(path.join(root,'manifest.json'),'utf8'));
 for(const name of manifest.machO) if(name!=='bin/node') console.log(path.join(root,name));
 JS
-  while IFS= read -r binary; do codesign "${SIGN_FLAGS[@]}" "$binary"; done < "$WORK/macho-paths.txt"
-  codesign "${SIGN_FLAGS[@]}" --entitlements "$WORK/node-entitlements.plist" "$RUNTIME/bin/node"
+  while IFS= read -r binary; do sign_runtime_binary "$binary"; done < "$WORK/macho-paths.txt"
+  sign_runtime_binary "$RUNTIME/bin/node" --entitlements "$WORK/node-entitlements.plist"
   TMUX_PANEL_ARCH="$ARCH" TMUX_PANEL_MINIMUM_MACOS="$MINIMUM_MACOS" \
     "$RUNTIME/bin/node" "$SCRIPT_DIR/verify-macos-runtime.mjs" "$RUNTIME" --write-manifest
 fi

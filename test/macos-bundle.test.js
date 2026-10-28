@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -29,6 +29,39 @@ describe('macOS distribution build guards', () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('Unsupported macOS architecture');
       expect(existsSync(output)).toBe(false);
+    } finally { rmSync(temp, { recursive: true, force: true }); }
+  });
+
+  it.skipIf(process.platform === 'win32')('replaces signed runtime code with a fresh inode while preserving signing arguments and permissions', () => {
+    const source = readFileSync('scripts/build-macos-app.sh', 'utf8');
+    const helper = source.match(/^sign_runtime_binary\(\) \{[\s\S]*?^\}/m);
+    expect(helper, 'The builder must define sign_runtime_binary').not.toBeNull();
+    const temp = mkdtempSync(join(tmpdir(), 'tmux-sign-runtime-'));
+    try {
+      const binary = join(temp, 'helper binary');
+      const entitlements = join(temp, 'node entitlements.plist');
+      const argv = join(temp, 'signing-arguments');
+      writeFileSync(binary, 'unsigned fixture\n', { mode: 0o751 });
+      writeFileSync(entitlements, '<plist/>');
+      const originalInode = statSync(binary).ino;
+      const result = spawnSync('bash', ['-c', `set -euo pipefail
+SIGN_FLAGS=(--force --sign 'Test Signing Identity' --timestamp --options runtime)
+codesign() {
+  printf '%s\\n' "$@" > "$TWP_TEST_SIGN_ARGS"
+  printf 'signed fixture\\n' > "\${!#}"
+}
+${helper[0]}
+sign_runtime_binary "$1" --entitlements "$2"
+`, 'runtime-signing-test', binary, entitlements], {
+        encoding: 'utf8', env: { ...process.env, TWP_TEST_SIGN_ARGS: argv }, timeout: 5000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(binary, 'utf8')).toBe('signed fixture\n');
+      expect(statSync(binary).ino).not.toBe(originalInode);
+      expect(statSync(binary).mode & 0o777).toBe(0o751);
+      expect(readFileSync(argv, 'utf8').trimEnd().split('\n')).toEqual([
+        '--force', '--sign', 'Test Signing Identity', '--timestamp', '--options', 'runtime', '--entitlements', entitlements, binary,
+      ]);
     } finally { rmSync(temp, { recursive: true, force: true }); }
   });
 
