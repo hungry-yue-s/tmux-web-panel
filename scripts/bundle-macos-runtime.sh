@@ -19,7 +19,7 @@ fi
   echo "Build $ARCH on a native $MACHINE macOS runner; cross-architecture npm/native builds are not supported." >&2; exit 1;
 }
 [[ "$NODE_VERSION" =~ ^24\.[0-9]+\.[0-9]+$ ]] || { echo 'Use a pinned Node 24 LTS version.' >&2; exit 1; }
-for command_name in curl shasum tar make cmake autoconf automake pkg-config rsync xcrun git; do
+for command_name in curl shasum tar make cmake autoconf automake patch pkg-config rsync xcrun git; do
   command -v "$command_name" >/dev/null || { echo "Build tool missing: $command_name" >&2; exit 1; }
 done
 [[ -f "$PROJECT_DIR/vendor/tmux/tmux.c" ]] || { echo 'Initialize the vendor/tmux Git submodule before building.' >&2; exit 1; }
@@ -118,6 +118,7 @@ done
 echo 'Building the bundled project tmux (not the installed service binary)...'
 mkdir "$WORK/tmux"
 (cd "$PROJECT_DIR/vendor/tmux" && git ls-files -z | tar --null -T - -cf -) | tar -xf - -C "$WORK/tmux"
+bash "$SCRIPT_DIR/apply-tmux-patches.sh" "$WORK/tmux"
 mkdir "$WORK/pkgconfig"
 for name in libevent_core.pc libutf8proc.pc; do cp "$PREFIX/lib/pkgconfig/$name" "$WORK/pkgconfig/"; done
 (

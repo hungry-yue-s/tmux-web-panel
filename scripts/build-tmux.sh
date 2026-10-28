@@ -17,7 +17,7 @@ if [[ ! -f "$TMUX_SOURCE_DIR/tmux.c" ]]; then
   exit 1
 fi
 
-for command_name in autoconf automake bison git install make pkg-config tar; do
+for command_name in autoconf automake bison git install make patch pkg-config tar; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Error: required build command not found: $command_name" >&2
     exit 1
@@ -86,6 +86,7 @@ build_source="$build_root/source"
 build_prefix="$build_root/install"
 mkdir -p "$build_source"
 (cd "$TMUX_SOURCE_DIR" && tar --exclude=.git -cf - .) | tar -xf - -C "$build_source"
+bash "$SCRIPT_DIR/apply-tmux-patches.sh" "$build_source"
 
 echo "Building tmux from $TMUX_SOURCE_DIR"
 echo "Source commit: $(git -C "$TMUX_SOURCE_DIR" rev-parse HEAD 2>/dev/null || echo working-tree)"

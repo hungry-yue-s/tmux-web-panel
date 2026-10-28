@@ -3,3 +3,5 @@
 *.sh text eol=lf
 # Vendored tmux plugins are bash scripts with other extensions too (*.tmux).
 vendor/tmux-plugins/** text eol=lf
+# Unified patches contain blank context lines and space-prefixed C tabs.
+scripts/tmux-patches/*.patch text eol=lf whitespace=-blank-at-eol,-space-before-tab
