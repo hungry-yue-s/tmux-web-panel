@@ -21,7 +21,7 @@
 | `/n/local/...` | 本进程：去掉前缀后照常路由 |
 | `/n/<其它 id>/api/...`、`/n/<其它 id>/ws/status`、`/n/<其它 id>/ws/terminal/:paneId` | 经该服务器的链路转发到那台机器的 Node |
 
-Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`、`/api/files/*`、`/api/upload`、`/api/sessions/*`、`/ws/terminal/:paneId` 等。前端只有一个入口：`Api.nodeUrl(serverId, path)`；终端视图里的旧代码统一调用 `Api.activeUrl(path)`，它会跟随当前查看的服务器（`TerminalTarget.serverId`）。切换服务器时 `TerminalTarget` 会发出 `terminal-target-server` 事件，状态 WebSocket 收到后会重连到新服务器。
+Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`、`/api/files/*`、`/api/upload`、`/api/sessions/*`、`/api/session-protection`（会话保护）、`/ws/terminal/:paneId` 等。前端只有一个入口：`Api.nodeUrl(serverId, path)`；终端视图里的旧代码统一调用 `Api.activeUrl(path)`，它会跟随当前查看的服务器（`TerminalTarget.serverId`）。切换服务器时 `TerminalTarget` 会发出 `terminal-target-server` 事件，状态 WebSocket 收到后会重连到新服务器。
 
 实现：`server/hub/proxy.js`（`createNodeProxy` / `relayNodeUpgrade`），`public/js/api.js`。
 

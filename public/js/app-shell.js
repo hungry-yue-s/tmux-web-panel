@@ -135,6 +135,8 @@
     resolveStatusSection: function (serverId, section) {
       if (section === 'connection') return 'connection';
       if (!this.server(serverId)) return 'performance';
+      // Not a monitor page, so the page visibility settings do not hide it.
+      if (section === 'sessions') return 'sessions';
       if ((section === 'claude' || section === 'codex') && this.localStatusSections().indexOf('agents') >= 0) {
         return 'agents';
       }

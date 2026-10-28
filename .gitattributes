@@ -1,3 +1,5 @@
 # Shell scripts run on Linux/macOS (and are streamed to remote `sh`), so they
 # keep LF endings even in a Windows checkout with core.autocrlf.
 *.sh text eol=lf
+# Vendored tmux plugins are bash scripts with other extensions too (*.tmux).
+vendor/tmux-plugins/** text eol=lf

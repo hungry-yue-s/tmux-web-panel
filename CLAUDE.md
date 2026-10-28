@@ -39,24 +39,29 @@
 Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.tmux-server.plist`；它们都由 `install-service.sh` 生成在用户服务目录中。这是为了让重启电脑后网页面板立刻能看到上次保存的会话。
 
 工作链路：
-1. 开机 → tmux companion service 跑 `tmux start-server`（macOS 为前台模式 `tmux -D`）→ 加载 `~/.tmux.conf`
-2. tmux-continuum 的 `@continuum-restore 'on'` 自动从 `~/.local/share/tmux/resurrect/last` 恢复 sessions/windows/panes
-3. Linux 由 systemd dependency 保证顺序；macOS 安装时先加载 tmux LaunchAgent，再加载网页面板
+1. 开机 → tmux companion service 跑 `tmux start-server`（macOS 为前台模式 `tmux -D`，Windows 为 `setsid -w tmux -D`）→ 加载 `~/.tmux.conf`
+2. 面板服务启动，“会话保护”（`server/session-protection/`）每 20 秒看一次 tmux：第一次看到某个 server 实例、且它没有会话时，用 `last` 快照自动恢复 sessions/windows/panes，并在该 server 上记下 `@twp-restored-at`（页面据此提示“已自动恢复”）
+3. 面板每 5 分钟调用项目自带的 tmux-resurrect（`vendor/tmux-plugins/tmux-resurrect`）的 `save.sh` 保存；快照仍是 resurrect 标准格式，在 `~/.local/share/tmux/resurrect/`
 4. 网页打开 → `server/tmux.js` 的 `listSessions()` 跑 `tmux list-sessions`，看到所有 restored 会话
+
+设置在每台服务器的“会话”页面（`/api/session-protection`，经 `/n/:serverId` 远程同样可用），存于 `~/.config/tmux-web-panel/session-protection.json`。不用 tmux-continuum，也不需要往 `~/.tmux.conf` 加插件配置。
 
 不变量：
 
 - **部署必须使用 `vendor/tmux` 子模块构建的 tmux**：`install-service.sh install` 会调用 `scripts/build-tmux.sh`，原子部署到 `~/.local/share/tmux-web-panel/bin/tmux`，不得退回系统 `PATH` 中的 tmux
   - 唯一例外是 Windows：使用 MSYS2 打包的 tmux（`C:\msys64\usr\bin\tmux.exe`，带 MSYS 运行时补丁），由 `server/msys.js` 解析；tmux 进程必须带 `MSYS=noglob`，否则 MSYS 会把 `#{session_id}` 这类参数做花括号展开。pane 路径是 MSYS 路径（`/home/me`、`/c/...`），读写文件前经 `toNativePath` 转换
-- **`~/.tmux.conf` 必须保留 `set -g exit-empty off`**：否则 systemd 启动的空 server 会因 continuum auto-restore 慢一拍而自杀
-- **不要在 `tmux-server.service` 里预创建会话**（如 `tmux new-session -d -s main`）：continuum auto-restore 检测到已有 session 就不会触发，会话恢复失效
-- **`server/tmux.js` 的 `listSessions()` 是只读**：不会自动创建/启动 tmux server。如果 server 不存在，网页就是空——这是设计意图，恢复责任在 systemd + continuum
+- **`~/.tmux.conf` 必须保留 `set -g exit-empty off`**：否则开机启动的空 server 等不到面板来恢复就自己退出了
+- **不要在 `tmux-server.service` 里预创建会话**（如 `tmux new-session -d -s main`）：会话保护只在 server 没有会话时自动恢复，已有会话就不会触发
+- **没有会话时绝不保存**：那次空快照会成为 `last`，下次重启就什么也恢复不了。`save.sh` 只能由 `SessionProtection` 在有会话时调用
+- **用户自己在 `~/.tmux.conf` 里加载了 tmux-resurrect（常见于 TPM + continuum）时，面板不自动保存和恢复**（`mode: 'external'`），只提供立即保存和找回会话，避免两套机制互相覆盖或重复恢复
+- **从 Windows 的 Node 调 MSYS2 程序（tmux）必须用 `msysExecArgs`**（`server/msys.js`）：Node 默认把 `"` 转义成 `\"`，MSYS 不认，布局字符串、带引号的命令或名字会被拆碎
+- **`server/tmux.js` 的 `listSessions()` 是只读**：不会自动创建/启动 tmux server。如果 server 不存在，网页就是空——这是设计意图，恢复责任在 companion service + 会话保护
 
 排障：
 
 - 启停 tmux server：`systemctl --user {start,stop,restart} tmux-server`
-- 手动 `tmux kill-server` 后 unit 重启会拉起空 server，但**不会** auto-restore（continuum 只在 server 首次启动时触发），需 `prefix + Ctrl-r` 手动恢复
-- continuum 只恢复窗口结构、cwd、命令行；不恢复进程内存状态（vim/claude 重启但不保留 buffer）
+- 手动 `tmux kill-server` 后 unit 重启会拉起空 server，面板在下一次检查（≤20 秒）时自动恢复；也可以在“会话”页面的“找回会话”里按时间点恢复单个会话（作为新会话，不影响正在运行的）
+- 只恢复窗口结构、目录，并按页面上勾选的程序重新打开（claude 用 `--continue`、codex 用 `resume --last` 接着上次的对话）；不恢复进程内存状态
 
 ## 移动端工具盘交互契约
 

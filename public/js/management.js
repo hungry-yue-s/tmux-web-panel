@@ -18,7 +18,7 @@
     }
     if (!root.isConnected) return;
     const runtime = resources.runtime;
-    const config = resources.tmuxConfig;
+    const sessionsRoute = global.Router ? global.Router.serialize({ name: 'server', params: { serverId: 'local', section: 'sessions' } }) : '';
     root.innerHTML = '<div class="intro"><h2>管理中心</h2><p>管理面板所在机器的 tmux、配置、插件和 Agent Skills。</p></div>'
       + '<div class="section"><div class="section-head"><h3>tmux 运行时</h3>' + button('刷新状态', 'refresh') + '</div>'
       + '<div class="ms-card managed-card"><strong>' + esc(runtime.version || '尚未安装项目 tmux') + '</strong>'
@@ -28,12 +28,10 @@
       + '<div class="managed-actions">' + (runtime.buildSupported === false ? '' : button(runtime.available ? '重新构建 / 更新' : '构建并安装', 'build', runtime.build?.status === 'running' ? 'disabled' : ''))
       + (runtime.rollbackSupported === false ? '' : button('回退上一版本', 'rollback', runtime.build?.status === 'running' ? 'disabled' : '')) + '</div>'
       + '<div id="managed-build" aria-live="polite">' + buildHtml(runtime.build) + '</div></div></div>'
-      + '<div class="section"><div class="section-head"><h3>tmux 配置</h3><span>' + (config.linkSupported === false ? '客户端独立配置' : config.linked ? '已接入 ~/.tmux.conf' : '尚未接入') + '</span></div>'
-      + '<div class="ms-card managed-card"><label for="managed-config">项目管理的配置片段</label>'
-      + '<p class="mono">' + esc(config.path) + '</p><textarea id="managed-config" spellcheck="false" rows="9">' + esc(config.content) + '</textarea>'
-      + '<p>' + (config.linkSupported === false ? '保存会创建备份。此配置只用于客户端托管的 tmux；应用会影响其当前会话，不修改个人 ~/.tmux.conf。' : '保存会创建备份。接入只添加一个标记区块，保留其他个人配置；应用会影响当前 tmux。') + '</p>'
-      + '<div class="managed-actions">' + button('保存配置', 'save-config') + (config.linkSupported === false ? '' : button(config.linked ? '取消自动加载' : '接入自动加载', config.linked ? 'unlink-config' : 'link-config'))
-      + button('应用已保存配置', 'apply-config') + '</div><p class="muted">备份目录：' + esc(config.backupDirectory) + '</p></div></div>'
+      + '<div class="section"><div class="section-head"><h3>tmux 配置</h3></div>'
+      + '<div class="ms-card managed-card"><p>会话保护（自动保存、重启后恢复）、找回会话，以及面板需要的 tmux 设置，'
+      + '都在每台服务器的“会话”页面里设置，远程服务器也一样。</p>'
+      + (sessionsRoute ? '<button class="ms-btn" data-route="' + esc(sessionsRoute) + '">打开本机的会话页面</button>' : '') + '</div></div>'
       + '<div class="section"><div class="section-head"><h3>插件</h3></div>'
       + plugins.plugins.map((plugin) => '<div class="ms-card managed-card"><h3>' + esc(plugin.name) + ' <small>v' + esc(plugin.installedVersion || plugin.version) + '</small></h3>'
         + '<p>' + esc(plugin.description) + '</p><p>' + (plugin.enabled ? '已启用' : plugin.installed ? '已停用' : '未安装') + '</p><div class="managed-actions">'
@@ -73,25 +71,16 @@
           link.href = url; link.download = 'SKILL.md'; link.click(); URL.revokeObjectURL(url);
           return;
         }
-        if (action !== 'save-config' && root.querySelector('#managed-config').value !== config.content) {
-          throw new Error('配置有未保存的修改，请先保存再执行其他管理操作。');
-        }
         let result;
-        if (action === 'save-config') {
-          result = await global.Api.request('PUT', api + '/tmux/config', { content: root.querySelector('#managed-config').value, expectedContent: config.content });
-          config.content = root.querySelector('#managed-config').value;
-        } else if (action.endsWith('-config')) {
-          result = await global.Api.post(api + '/tmux/config/' + action.split('-')[0]);
-        } else if (action === 'build' || action === 'rollback') {
+        if (action === 'build' || action === 'rollback') {
           result = await global.Api.post(api + '/tmux/' + action);
         } else if (action.startsWith('plugin-')) {
           result = await global.Api.post('/api/plugins/' + target.dataset.id + '/' + action.slice(7));
         } else if (action.startsWith('skill-')) {
           result = await global.Api.post(api + '/skills/' + target.dataset.name + '/' + target.dataset.target + '/' + action.slice(6));
         }
-        global.AppShell.toast(result?.backup ? '已保存，备份：' + result.backup : action === 'build' ? '构建已启动，可在此查看结果' : '操作完成');
-        if (action !== 'save-config') await mount(root);
-        else feedback.textContent = '已保存，尚未应用。备份：' + (result.backup || '首次保存');
+        global.AppShell.toast(action === 'build' ? '构建已启动，可在此查看结果' : '操作完成');
+        await mount(root);
       } catch (error) {
         feedback.textContent = error.message;
         global.AppShell.toast(error.message);

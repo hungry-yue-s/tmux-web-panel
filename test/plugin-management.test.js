@@ -86,17 +86,17 @@ describe('project-managed resources', () => {
     expect(spawnProcess).toHaveBeenCalledTimes(1);
     expect(spawnProcess.mock.calls[0][1]).toEqual([resolve('scripts/build-tmux.sh')]);
   });
-  it('backs up config, preserves personal lines and symlink dotfiles, and rejects stale saves', async () => {
+  it('links the fragment with a backup, preserving personal lines, earlier hand edits and symlink dotfiles', async () => {
     const home = await temp();
     const configDir = join(home, '.config/panel');
     const resources = new ManagedResources({ userHome: home, configDir, projectDir: resolve('.') });
     await resources.load();
     const personal = join(home, 'personal.conf');
     await writeFile(personal, 'set -g status off\n'); await symlink(personal, join(home, '.tmux.conf'));
-    const initial = (await resources.status()).tmuxConfig.content;
-    const content = initial + 'set -g status-interval 10\n';
-    await resources.saveConfig({ content, expectedContent: initial });
-    await expect(resources.saveConfig({ content: initial, expectedContent: initial })).rejects.toThrow('changed');
+    // A fragment someone edited by hand before it stopped being editable.
+    const content = '# Managed by Tmux Web Panel\nset -g exit-empty off\nset -g mouse on\nset -g history-limit 50000\nset -g status-interval 10\n';
+    await mkdir(configDir, { recursive: true }); await writeFile(resources.config, content);
+    expect((await resources.status()).tmuxConfig.extraLines).toBe(1);
     const linked = await resources.linkConfig(true);
     expect(await readFile(linked.backup, 'utf8')).toBe('set -g status off\n');
     expect((await lstat(join(home, '.tmux.conf'))).isSymbolicLink()).toBe(true);

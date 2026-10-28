@@ -20,7 +20,7 @@ import {
 import { loadTotpSecret, verifyTotp, totpFilePath } from './totp.js';
 import { resolveRuntimeConfig } from './runtime-config.js';
 import * as tmux from './tmux.js';
-import { IS_WINDOWS, msysHomeRoots, toNativePath, toPosixPath } from './msys.js';
+import { IS_WINDOWS, TMUX_BIN, msysHomeRoots, tmuxUserHome, toNativePath, toPosixPath } from './msys.js';
 import { TerminalManager } from './terminal.js';
 import { StatusMonitor } from './monitor.js';
 import sessionsRouter from './api/sessions.js';
@@ -70,6 +70,8 @@ import { PluginManager } from './plugins.js';
 import { createPluginsRouter } from './api/plugins.js';
 import { ManagedResources } from './managed-resources.js';
 import { createManagedResourcesRouter } from './api/managed-resources.js';
+import { SessionProtection } from './session-protection/service.js';
+import { createSessionProtectionRouter } from './api/session-protection.js';
 
 const config = resolveRuntimeConfig();
 const configDir = config.configDir;
@@ -423,10 +425,19 @@ const pluginManager = new PluginManager({
 await pluginManager.load();
 app.use('/api/plugins', createPluginsRouter(pluginManager));
 
+const userTmuxConf = join(tmuxUserHome(), '.tmux.conf');
 const managedResources = new ManagedResources({ projectDir: join(__dirname, '..'), configDir,
-  packaged: config.managedRuntime, runtimePath: config.runtimePath });
+  packaged: config.managedRuntime, runtimePath: config.runtimePath,
+  userConfigPath: userTmuxConf, serverTmuxBin: IS_WINDOWS ? TMUX_BIN : null });
 await managedResources.load();
 app.use('/api/managed-resources', createManagedResourcesRouter(managedResources));
+
+const sessionProtection = new SessionProtection({
+  configDir, projectDir: join(__dirname, '..'), baseConfig: managedResources, userConfigPath: userTmuxConf,
+});
+await sessionProtection.load();
+sessionProtection.start();
+app.use('/api/session-protection', createSessionProtectionRouter({ protection: sessionProtection }));
 
 server.on('upgrade', (req, socket, head) => {
   // Another server's socket is relayed whole; /n/local/... is rewritten in place.

@@ -2,21 +2,22 @@ import { it, expect, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 
-it('shows packaged runtime capabilities without offering local builds or personal configuration linking', async () => {
+it('shows packaged runtime capabilities without local builds, and sends tmux settings to the session page', async () => {
   const dom = new JSDOM('<div id="root"></div>', { runScripts: 'outside-only', url: 'http://localhost' });
   const win = dom.window;
   win.AppShell = { escape: value => String(value ?? ''), toast: vi.fn() };
+  win.Router = { serialize: (route) => '#/servers/' + route.params.serverId + '/' + route.params.section };
   win.Api = { get: vi.fn(async path => path === '/api/plugins' ? { plugins: [] } : {
     runtime: { path: '/desktop/runtime/bin/tmux', version: 'tmux bundled', available: true, packaged: true, buildSupported: false, rollbackSupported: false },
-    tmuxConfig: { path: '/desktop/tmux.conf', content: 'set -g exit-empty off\n', linkSupported: false, backupDirectory: '/desktop/backups' }, skills: [],
+    tmuxConfig: { path: '/desktop/tmux.conf', extraLines: 0, linkSupported: false, backupDirectory: '/desktop/backups' }, skills: [],
   }) };
   win.eval(readFileSync('public/js/management.js', 'utf8'));
   await win.ManagementPage.mount(win.document.getElementById('root'));
   expect(win.document.querySelector('[data-managed="build"]')).toBeNull();
   expect(win.document.querySelector('[data-managed="rollback"]')).toBeNull();
-  expect(win.document.querySelector('[data-managed="link-config"]')).toBeNull();
-  expect(win.document.querySelector('[data-managed="save-config"]')).not.toBeNull();
-  expect(win.document.body.textContent).toContain('客户端独立配置');
+  // tmux.conf is no longer edited as raw text here.
+  expect(win.document.querySelector('textarea')).toBeNull();
+  expect(win.document.querySelector('[data-route="#/servers/local/sessions"]')).not.toBeNull();
   dom.window.close();
 });
 

@@ -5,6 +5,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { AppError, ErrorCode } from './servers/errors.js';
+import { toPosixPath } from './msys.js';
 
 const exec = promisify(execFile);
 const BEGIN = '# >>> tmux-web-panel managed config >>>';
@@ -19,8 +20,20 @@ async function readOptional(file) {
   try { return await readFile(file, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
 
+/** Lines of the fragment beyond the defaults: what someone added by hand earlier. */
+function extraLines(content) {
+  const defaults = new Set(DEFAULT_CONFIG.split('\n'));
+  return content.split(/\r?\n/).filter((line) => line.trim() && !line.trim().startsWith('#') && !defaults.has(line)).length;
+}
+
 export class ManagedResources {
-  constructor({ projectDir, configDir, userHome = homedir(), spawnProcess = spawn, execProcess = exec, packaged = false, runtimePath }) {
+  /**
+   * @param {object} options
+   * @param {string} [options.userConfigPath] the ~/.tmux.conf tmux reads, when it is not under userHome (MSYS2 on Windows)
+   * @param {string} [options.serverTmuxBin] the tmux that runs the server, for applying the fragment
+   */
+  constructor({ projectDir, configDir, userHome = homedir(), spawnProcess = spawn, execProcess = exec, packaged = false, runtimePath,
+    userConfigPath = null, serverTmuxBin = null }) {
     this.projectDir = projectDir;
     this.configDir = configDir;
     this.home = userHome;
@@ -29,8 +42,9 @@ export class ManagedResources {
     this.packaged = packaged;
     if (packaged && !runtimePath) throw new Error('Packaged runtime path is required');
     this.binary = packaged ? join(runtimePath, 'bin/tmux') : join(userHome, '.local/share/tmux-web-panel/bin/tmux');
+    this.serverBinary = serverTmuxBin || this.binary;
     this.config = join(configDir, 'tmux.conf');
-    this.userConfig = packaged ? null : join(userHome, '.tmux.conf');
+    this.userConfig = packaged ? null : userConfigPath || join(userHome, '.tmux.conf');
     this.busy = false;
     this.build = null;
   }
@@ -72,7 +86,7 @@ export class ManagedResources {
     }
     return { runtime: { path: this.binary, version, available: !!version, build: this.build, packaged: this.packaged,
       buildSupported: !this.packaged, rollbackSupported: !this.packaged },
-      tmuxConfig: { path: this.config, content: config ?? DEFAULT_CONFIG, exists: config !== null,
+      tmuxConfig: { path: this.config, exists: config !== null, extraLines: extraLines(config ?? DEFAULT_CONFIG),
         userPath: this.userConfig, linked: this.packaged ? config !== null : userConfig.includes(BEGIN), linkSupported: !this.packaged,
         backupDirectory: join(this.configDir, 'backups') }, skills };
   }
@@ -99,17 +113,9 @@ export class ManagedResources {
     return backup;
   }
 
-  async saveConfig({ content, expectedContent }) {
-    if (typeof content !== 'string' || Buffer.byteLength(content) > 65536 || content.includes('\0')) throw new AppError(ErrorCode.VALIDATION_ERROR, 'Config must be text under 64 KiB');
-    if (typeof expectedContent !== 'string') throw new AppError(ErrorCode.VALIDATION_ERROR, 'expectedContent is required');
-    return this.exclusive(async () => {
-      const current = await readOptional(this.config) ?? DEFAULT_CONFIG;
-      if (current !== expectedContent) throw new AppError(ErrorCode.SERVER_IN_USE, 'Configuration changed; reload before saving');
-      // Keep the project's companion-server invariant explicit in the fragment.
-      if (!/^\s*set(?:-option)?\s+-g\s+exit-empty\s+off\s*$/m.test(content)) throw new AppError(ErrorCode.VALIDATION_ERROR, 'Keep set -g exit-empty off for session recovery');
-      return { backup: await this.backupWrite(this.config, content), saved: true, applied: false };
-    });
-  }
+  // The fragment holds only what the panel needs (DEFAULT_CONFIG); it is no
+  // longer edited as raw text. Earlier hand edits stay in place and are counted
+  // in status() as extraLines.
 
   async linkConfig(enable) {
     if (this.packaged) throw new AppError(ErrorCode.UNSUPPORTED, 'Desktop installations use a separate tmux configuration; personal ~/.tmux.conf is unchanged');
@@ -123,7 +129,8 @@ export class ManagedResources {
       if (start >= 0) text = text.slice(0, start) + text.slice(end + END.length).replace(/^\r?\n/, '');
       if (enable) {
         if (await readOptional(this.config) === null) await this.backupWrite(this.config, DEFAULT_CONFIG);
-        const escaped = this.config.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$');
+        const target = process.platform === 'win32' ? toPosixPath(this.config) : this.config;
+        const escaped = target.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$');
         text += (text && !text.endsWith('\n') ? '\n' : '') + BEGIN + '\nsource-file "' + escaped + '"\n' + END + '\n';
       }
       return { linked: enable, backup: await this.backupWrite(this.userConfig, text), applied: false };
@@ -133,9 +140,11 @@ export class ManagedResources {
   async applyConfig() {
     return this.exclusive(async () => {
       if (await readOptional(this.config) === null) throw new AppError(ErrorCode.VALIDATION_ERROR, 'Save the managed configuration first');
+      // tmux reads the file itself, so it needs the path in its own (MSYS) form.
+      const file = process.platform === 'win32' ? toPosixPath(this.config) : this.config;
       // Syntax-only parse first. Do not start/restart the tmux server.
-      await this.exec(this.binary, ['source-file', '-n', this.config], { timeout: 5000 });
-      await this.exec(this.binary, ['source-file', this.config], { timeout: 5000 });
+      await this.exec(this.serverBinary, ['source-file', '-n', file], { timeout: 5000 });
+      await this.exec(this.serverBinary, ['source-file', file], { timeout: 5000 });
       return { applied: true };
     });
   }

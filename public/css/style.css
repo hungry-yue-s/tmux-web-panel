@@ -8186,12 +8186,37 @@ button.list-row:hover {
 .managed-card { padding: 20px; margin-bottom: 12px; }
 .managed-card p { margin: 10px 0; overflow-wrap: anywhere; }
 .managed-card pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; padding: 12px; background: var(--bg-primary); }
-.managed-card textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: 12px; font: 13px/1.6 monospace; color: var(--text-primary); background: var(--bg-primary); border: 1px solid var(--border-color, #555); border-radius: 6px; }
 .managed-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .managed-skill { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border-color, #555); }
 .managed-skill small { display: block; overflow-wrap: anywhere; margin-top: 4px; }
 .managed-skill > div { min-width: 0; }
 .managed-skill .ms-btn { flex-shrink: 0; }
+
+/* Server page "会话": session protection, history, tmux settings. */
+.sp-page { display: grid; gap: 12px; max-width: 860px; }
+.sp-card { padding: 16px 18px; }
+.sp-card > p { margin: 10px 0 0; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.sp-switch, .sp-choice { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.sp-switch { margin-top: 12px; }
+.sp-switch input, .sp-choice input { margin: 2px 0 0; flex-shrink: 0; width: 16px; height: 16px; accent-color: var(--accent-green); }
+.sp-switch span, .sp-choice span { display: grid; gap: 3px; min-width: 0; }
+.sp-switch strong, .sp-choice strong { font-size: 12px; }
+.sp-switch small, .sp-choice small { color: var(--text-muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.sp-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px 18px; margin-top: 12px; }
+.sp-facts { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; font-size: 11px; }
+.sp-notice { margin-top: 12px; padding: 9px 11px; border-radius: 6px; font-size: 11px; line-height: 1.5; background: var(--ms-yellow-tint); color: var(--text-primary); }
+.sp-notice.ok { background: var(--ms-green-tint); }
+.sp-notice.error { background: var(--ms-red-tint); color: var(--accent-red); }
+.sp-snapshot { margin-top: 10px; border-top: 1px solid var(--border-subtle); padding-top: 8px; }
+.sp-snapshot summary { display: flex; gap: 10px; align-items: baseline; cursor: pointer; font-size: 12px; }
+.sp-snapshot summary small { color: var(--text-muted); font-size: 10px; }
+.sp-snapshot ul { list-style: none; margin: 6px 0 0; padding: 0; }
+.sp-snapshot li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
+.sp-snapshot li > div { display: grid; gap: 2px; min-width: 0; }
+.sp-snapshot li strong { font-size: 12px; overflow-wrap: anywhere; }
+.sp-snapshot li small { color: var(--text-muted); font-size: 10px; overflow-wrap: anywhere; }
+.sp-snapshot li .ms-btn { flex-shrink: 0; }
+.sp-needs { margin: 10px 0 0; padding-left: 18px; font-size: 11px; line-height: 1.7; }
 
 /* ================================================================== */
 /* === Unified Agent control room =================================== */

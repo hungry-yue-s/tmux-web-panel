@@ -6,7 +6,14 @@ import {
   toNativePath,
   toPosixPath,
   msysHomeRoots,
+  msysQuote,
+  msysExecArgs,
+  tmuxUserHome,
 } from '../server/msys.js';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { readWindowsDiskStats } from '../server/platform-system-stats.js';
 
 const ROOT = 'C:\\msys64';
@@ -114,5 +121,38 @@ describe('readWindowsDiskStats', () => {
     };
     const disks = await readWindowsDiskStats({ env: { SystemDrive: 'C:' }, home: 'D:\\me', stat });
     expect(disks.map((disk) => disk.device)).toEqual(['C:']);
+  });
+});
+
+describe('arguments for MSYS2 programs', () => {
+  const samples = ['{"V":2,"L":{"w":80}}', '"~claude->claude --continue" vim', "it's", 'a\\b "c"', '环境 部署', 'x\\', '', '$HOME * #{session_id}'];
+
+  it('single-quotes, spelling a quote as \'"\'"\'', () => {
+    expect(msysQuote("it's")).toBe(`'it'"'"'s'`);
+    expect(msysQuote('{"V":2}')).toBe(`'{"V":2}'`);
+  });
+
+  it('passes argv through untouched off Windows', () => {
+    const options = { timeout: 5 };
+    expect(msysExecArgs(['a"b'], options, false)).toEqual([['a"b'], options]);
+    expect(msysExecArgs(['a"b'], options, true)).toEqual([[`'a"b'`], { timeout: 5, windowsVerbatimArguments: true }]);
+  });
+
+  it('finds the home tmux reads ~/.tmux.conf from', () => {
+    expect(tmuxUserHome({ windows: true, root: ROOT, user: 'me' })).toBe('C:\\msys64\\home\\me');
+  });
+
+  const bash = 'C:\\msys64\\usr\\bin\\bash.exe';
+  it.runIf(process.platform === 'win32' && existsSync(bash))('reaches a real MSYS2 program exactly as given', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'msys-argv-'));
+    try {
+      const script = join(dir, 'args.sh');
+      writeFileSync(script, 'for a in "$@"; do printf \'[%s]\\n\' "$a"; done\n');
+      const [args, options] = msysExecArgs([script.replace(/\\/g, '/'), ...samples], { encoding: 'utf8', env: { ...process.env, MSYS: 'noglob' } });
+      const out = execFileSync(bash, args, options);
+      expect(out.replace(/\n$/, '').split('\n').map((line) => line.slice(1, -1))).toEqual(samples);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

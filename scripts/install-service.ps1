@@ -117,7 +117,7 @@ function Get-MsysHome {
 }
 
 # Same invariant as on Linux/macOS: the server must survive having no sessions
-# until tmux-continuum has restored them.
+# until the panel's session protection has restored them.
 function Set-TmuxExitEmpty {
   $conf = Join-Path (Get-MsysHome) '.tmux.conf'
   $line = 'set -g exit-empty off'
@@ -225,6 +225,19 @@ function Stop-TaskTree([string]$Name) {
     foreach ($child in ($all | Where-Object { $_.ParentProcessId -eq $id })) { $queue.Enqueue($child.ProcessId) }
   }
   foreach ($id in $tree) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
+  # The wrapper starts tmux through setsid, and MSYS2's fork+exec leaves
+  # tmux.exe without a live Windows parent, so the walk above cannot find it.
+  # Ask the server itself to exit; the wrapper is gone and will not respawn it.
+  if ($Name -eq $TmuxTask) {
+    $tmux = Join-Path $Msys2Root 'usr\bin\tmux.exe'
+    if (Test-Path -LiteralPath $tmux) {
+      $previous = $env:MSYS
+      $env:MSYS = 'noglob'
+      $ErrorActionPreference = 'Continue'
+      & $tmux kill-server *> $null
+      $env:MSYS = $previous
+    }
+  }
 }
 
 function Start-Task([string]$Name) {

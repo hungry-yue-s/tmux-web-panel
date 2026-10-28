@@ -151,6 +151,9 @@ done
 mkdir -p "$RUNTIME/app/plugins/tmux-agent" "$RUNTIME/app/skills/tmux-panel"
 rsync -a --delete "$PROJECT_DIR/plugins/tmux-agent/" "$RUNTIME/app/plugins/tmux-agent/"
 rsync -a --delete "$PROJECT_DIR/skills/tmux-panel/" "$RUNTIME/app/skills/tmux-panel/"
+# tmux-resurrect: session protection saves tmux with it.
+mkdir -p "$RUNTIME/app/vendor/tmux-plugins"
+rsync -a --delete "$PROJECT_DIR/vendor/tmux-plugins/" "$RUNTIME/app/vendor/tmux-plugins/"
 # tmux source, so the app can install the panel on a Linux or macOS machine it
 # manages (the remote installer builds tmux from it). Source only, no build output.
 mkdir -p "$RUNTIME/app/vendor/tmux"
@@ -161,6 +164,7 @@ cat > "$RUNTIME/licenses/THIRD-PARTY-NOTICES.md" <<'NOTICES'
 
 - Node.js: Node-LICENSE.txt (includes Node's third-party notices).
 - tmux: tmux-COPYING.txt; source is the project's vendor/tmux submodule.
+- tmux-resurrect: ../app/vendor/tmux-plugins/tmux-resurrect/LICENSE.md (MIT).
 - libevent and utf8proc: their license files in this directory.
 - macOS ncurses and system frameworks: supplied by macOS, not copied into this runtime.
 - Maple Mono: ../app/public/fonts/OFL-MapleMono.txt.

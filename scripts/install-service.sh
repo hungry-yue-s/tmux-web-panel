@@ -165,8 +165,8 @@ tmux_server_unit="$systemd_dir/${TMUX_SERVER_SERVICE}.service"
 tmux_conf="$HOME/.tmux.conf"
 
 # Idempotently ensure ~/.tmux.conf has `set -g exit-empty off`.
-# Without this, the empty tmux server started by tmux-server.service can self-exit
-# before tmux-continuum auto-restore kicks in, breaking session persistence.
+# Without this, the empty tmux server started by tmux-server.service exits
+# before the panel's session protection can restore into it.
 ensure_tmux_exit_empty() {
   if [[ ! -f "$tmux_conf" ]]; then
     printf '# Added by tmux-web-panel install-service.sh: keep server alive without sessions\nset -g exit-empty off\n' > "$tmux_conf"
@@ -181,8 +181,8 @@ ensure_tmux_exit_empty() {
 }
 
 # Install tmux-server.service: bootstraps the user's tmux server on login so the
-# web panel always has sessions to list. Pairs with tmux-continuum's
-# @continuum-restore to recover sessions across reboots.
+# web panel always has sessions to list. The panel's session protection restores
+# the last save into it after a reboot (server/session-protection/).
 install_tmux_server_systemd() {
   if [[ -z "$TMUX_BIN" ]]; then
     echo "⚠ tmux not found in PATH — skipping tmux-server.service"
@@ -193,7 +193,7 @@ install_tmux_server_systemd() {
   cat > "$tmux_server_unit" <<UNIT
 [Unit]
 Description=tmux server (keep-alive for tmux-web-panel)
-Documentation=https://github.com/tmux-plugins/tmux-continuum
+Documentation=https://github.com/tmux-plugins/tmux-resurrect
 # Do NOT add After=default.target here. tmux-web-panel is WantedBy=default.target and
 # After=tmux-server.service, so ordering this unit after default.target forms a cycle
 # (web-panel -> tmux-server -> default.target -> web-panel) that systemd breaks at boot
@@ -372,8 +372,8 @@ uninstall_tmux_server_launchd() {
 install_launchd() {
   mkdir -p "$launchd_dir" "$launchd_log_dir"
 
-  # Load the tmux server before the panel. tmux-continuum can then restore the
-  # saved sessions while the panel starts, instead of the first API request
+  # Load the tmux server before the panel. The panel then restores the saved
+  # sessions into it as it starts, instead of the first API request
   # racing a missing tmux socket after login.
   install_tmux_server_launchd
 

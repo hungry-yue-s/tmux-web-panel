@@ -82,7 +82,7 @@
 
       shell().setHeader(
         '服务器 / ' + server.name,
-        ({ performance: '性能', agents: 'Agent 控制台', claude: 'Agent 控制台', codex: 'Agent 控制台', connection: '连接' })[section] || '性能',
+        ({ performance: '性能', agents: 'Agent 控制台', claude: 'Agent 控制台', codex: 'Agent 控制台', sessions: '会话', connection: '连接' })[section] || '性能',
         '',
       );
 
@@ -92,6 +92,8 @@
       if (isBasic(health)) return base + this._installCard(server, health);
       // Every server runs the full panel, so its status pages are the same ones.
       if (section === 'agents') return base + this._localAgents();
+      // Mounted by MsApp: session protection reads that machine's node.
+      if (section === 'sessions') return base + '<div class="section" id="session-protection-host"></div>';
       return base + this._localPerformance();
     },
 
@@ -149,8 +151,9 @@
     },
 
     _tabs: function (server, section) {
-      var labels = { performance: '性能', agents: 'Agent 控制台', claude: 'Claude 用量', codex: 'Codex 用量', connection: '连接' };
+      var labels = { performance: '性能', agents: 'Agent 控制台', claude: 'Claude 用量', codex: 'Codex 用量', sessions: '会话', connection: '连接' };
       var entries = shell().localStatusSections().map(function (name) { return [name, labels[name]]; });
+      entries.push(['sessions', labels.sessions]);
       entries.push(['connection', labels.connection]);
       return '<div class="tabs">' + entries.map(function (entry) {
         var route = { name: 'server', params: { serverId: server.id, section: entry[0] } };

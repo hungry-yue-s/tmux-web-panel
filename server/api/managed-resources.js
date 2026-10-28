@@ -2,14 +2,12 @@ import { Router } from 'express';
 import { handle } from '../servers/errors.js';
 import { requireSameOrigin } from './same-origin.js';
 
+// The tmux.conf fragment is managed per machine from the session page now
+// (/api/session-protection), so it is reachable on remote servers too.
 export function createManagedResourcesRouter(resources) {
   const router = Router();
   router.use(requireSameOrigin);
   router.get('/', handle(() => resources.status()));
-  router.put('/tmux/config', handle((req) => resources.saveConfig(req.body || {})));
-  router.post('/tmux/config/link', handle(() => resources.linkConfig(true)));
-  router.post('/tmux/config/unlink', handle(() => resources.linkConfig(false)));
-  router.post('/tmux/config/apply', handle(() => resources.applyConfig()));
   router.post('/tmux/build', handle(async (_req, res) => { res.status(202); return resources.buildTmux(); }));
   router.post('/tmux/rollback', handle(() => resources.rollbackTmux()));
   router.post('/skills/:name/:target/install', handle((req) => resources.changeSkill(req.params.name, req.params.target, true)));

@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir as nativeHomedir } from 'node:os';
 import { getArchiveType, listArchive as listNativeArchive, MAX_ENTRIES as ARCHIVE_MAX_ENTRIES } from './archive.js';
-import { IS_WINDOWS, TMUX_BIN, msysHomeRoots, toNativePath, toPosixPath } from '../msys.js';
+import { IS_WINDOWS, TMUX_BIN, msysExecArgs, msysHomeRoots, toNativePath, toPosixPath } from '../msys.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -287,9 +287,9 @@ async function resolveInputPath(rawPath, paneId) {
 async function getPaneCwd(paneId) {
   if (!paneId || !/^%\d+$/.test(paneId)) return homedir();
   try {
-    const { stdout } = await execFileAsync(TMUX_BIN, [
+    const { stdout } = await execFileAsync(TMUX_BIN, ...msysExecArgs([
       'display-message', '-p', '-t', paneId, '#{pane_current_path}',
-    ]);
+    ]));
     const cwd = stdout.trim();
     if (cwd) return cwd;
   } catch { /* ignore */ }
@@ -648,7 +648,7 @@ export function createFilesRouter(allowedRoots) {
   // Read tmux paste buffer and clean it into a file path
   router.get('/tmux-buffer', async (_req, res) => {
     try {
-      const { stdout } = await execFileAsync(TMUX_BIN, ['show-buffer'], { timeout: 3000 });
+      const { stdout } = await execFileAsync(TMUX_BIN, ...msysExecArgs(['show-buffer'], { timeout: 3000 }));
       const raw = stdout.trim();
       if (!raw) {
         return res.json({ success: true, data: { raw: '', path: '' }, error: null });

@@ -27,8 +27,8 @@ $env:PATH = (Split-Path -Parent $tmux) + ';' + $env:PATH
 New-Item -ItemType Directory -Force -Path $cfg.logDir | Out-Null
 $log = Join-Path $cfg.logDir 'tmux-server.log'
 
-# KeepAlive like the launchd agent: a killed server comes back empty (continuum
-# only auto-restores on the first start; restore manually with prefix + Ctrl-r).
+# KeepAlive like the launchd agent: a killed server comes back empty and the
+# panel's session protection restores the last save into it.
 while ($true) {
   # A server may already run from an interactive shell. Do not kill it (and its
   # sessions) to put it under the task; wait for it to exit, then take over.

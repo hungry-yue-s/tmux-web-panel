@@ -49,7 +49,7 @@ for (const name of binaryFiles) {
 }
 const tmuxImports = execFileSync('/usr/bin/nm', ['-u', path.join(root, 'bin/tmux')], { encoding: 'utf8' });
 assert(!/\b_tiparm(?:_s)?\b/.test(tmuxImports), 'tmux must use tparm for minimum macOS compatibility');
-for (const relative of ['bin/node', 'bin/tmux', 'app/server/index.js', 'app/vendor/tmux/tmux.c', 'app/scripts/remote/install-node.sh', 'app/public/index.html', 'app/public/fonts/LICENSE-SymbolsNerdFont.txt', 'licenses/THIRD-PARTY-NOTICES.md', 'app/scripts/desktop-runtime.mjs', 'app/scripts/desktop-certificates.mjs', 'app/relay/index.template.html', 'app/plugins/tmux-agent/panel-plugin.json', 'app/skills/tmux-panel/SKILL.md']) {
+for (const relative of ['bin/node', 'bin/tmux', 'app/server/index.js', 'app/vendor/tmux/tmux.c', 'app/vendor/tmux-plugins/tmux-resurrect/scripts/save.sh','app/scripts/remote/install-node.sh', 'app/public/index.html', 'app/public/fonts/LICENSE-SymbolsNerdFont.txt', 'licenses/THIRD-PARTY-NOTICES.md', 'app/scripts/desktop-runtime.mjs', 'app/scripts/desktop-certificates.mjs', 'app/relay/index.template.html', 'app/plugins/tmux-agent/panel-plugin.json', 'app/skills/tmux-panel/SKILL.md']) {
   assert(fs.existsSync(path.join(root, relative)), `Missing bundled component: ${relative}`);
 }
 assert(!fs.existsSync(path.join(root, 'app/public/js/relay-config.js')), 'Personal generated relay config must not be distributed');

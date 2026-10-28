@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { configDirectory, resolveRuntimeConfig } from '../server/runtime-config.js';
 import { hashPassword, initTokenPersistence, verifyPassword } from '../server/auth.js';
 import { ManagedResources } from '../server/managed-resources.js';
+import { toPosixPath } from '../server/msys.js';
 import { enrollTotp, loadTotpSecret, totpFilePath } from '../server/totp.js';
 
 const directories = [];
@@ -127,7 +128,7 @@ describe('unified desktop runtime settings', () => {
 });
 
 describe('bundled tmux management', () => {
-  it('reports and edits its own runtime without rebuilding binaries or touching personal tmux config', async () => {
+  it('reports and applies its own runtime config without rebuilding binaries or touching personal tmux config', async () => {
     const directory = temp();
     const configDir = join(directory, 'desktop-data');
     const runtimePath = join(directory, 'runtime', 'build-1');
@@ -144,9 +145,11 @@ describe('bundled tmux management', () => {
     await expect(resources.linkConfig(true)).rejects.toMatchObject({ code: 'UNSUPPORTED' });
     await expect(resources.buildTmux()).rejects.toMatchObject({ code: 'UNSUPPORTED' });
     await expect(resources.rollbackTmux()).rejects.toMatchObject({ code: 'UNSUPPORTED' });
-    await resources.saveConfig({ content: status.tmuxConfig.content + 'set -g status off\n', expectedContent: status.tmuxConfig.content });
+    writeFileSync(join(configDir, 'tmux.conf'), 'set -g exit-empty off\nset -g status off\n');
+    expect((await resources.status()).tmuxConfig.extraLines).toBe(1);
     await resources.applyConfig();
-    expect(execProcess).toHaveBeenCalledWith(join(runtimePath, 'bin/tmux'), ['source-file', join(configDir, 'tmux.conf')], { timeout: 5000 });
+    const file = process.platform === 'win32' ? toPosixPath(join(configDir, 'tmux.conf')) : join(configDir, 'tmux.conf');
+    expect(execProcess).toHaveBeenCalledWith(join(runtimePath, 'bin/tmux'), ['source-file', file], { timeout: 5000 });
     expect(spawnProcess).not.toHaveBeenCalled();
     expect(readFileSync(personal, 'utf8')).toBe('set -g status off\n');
   });

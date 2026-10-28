@@ -132,6 +132,7 @@
       // PerfPanel owns interval timers; leaving its route must stop them.
       this._teardownPerfPanel();
       this._teardownAgentHub();
+      this._teardownSessionProtection();
       const serverId = (route.params && route.params.serverId) || 'local';
 
       if (route.name === 'servers') {
@@ -171,6 +172,7 @@
         view.innerHTML = global.ServersPage.renderServer(route);
         this._mountPerfPanel(route);
         this._mountAgentHub(route);
+        this._mountSessionProtection(route);
         await this.refreshWorkspace(serverId);
         // The rail shows CPU and memory for every server, not just this one.
         await Promise.all(global.AppShell.servers().map((s) => this.refreshMetrics(s.id)));
@@ -178,9 +180,11 @@
         if (!global.Router.isSame(global.Router.current(), route)) return;
         this._teardownPerfPanel();
         this._teardownAgentHub();
+        this._teardownSessionProtection();
         view.innerHTML = global.ServersPage.renderServer(route);
         this._mountPerfPanel(route);
         this._mountAgentHub(route);
+        this._mountSessionProtection(route);
         return;
       }
 
@@ -221,6 +225,17 @@
       if (!this._agentHubMounted) return;
       this._agentHubMounted = false;
       if (global.AgentHub && typeof global.AgentHub.stop === 'function') global.AgentHub.stop();
+    },
+
+    _mountSessionProtection(route) {
+      if (!route || route.name !== 'server' || (route.params || {}).section !== 'sessions') return;
+      const host = global.document.getElementById('session-protection-host');
+      if (!host || !global.SessionProtectionPage) return;
+      global.SessionProtectionPage.mount(host, (route.params || {}).serverId || 'local');
+    },
+
+    _teardownSessionProtection() {
+      if (global.SessionProtectionPage) global.SessionProtectionPage.unmount();
     },
 
     async _renderTerminal(route, serverId, view) {

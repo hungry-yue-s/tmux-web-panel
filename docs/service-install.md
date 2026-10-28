@@ -75,26 +75,24 @@ persist them. To survive reboots:
    login: `tmux-server.service` on Linux and `com.tmux-web-panel.tmux-server.plist`
    on macOS. The tmux service is loaded before the web panel so restored sessions
    are available immediately.
-2. **Configure [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) +
-   [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum)** in your
-   `~/.tmux.conf` to actually persist session content (windows, panes, cwd,
-   command lines) to disk:
+2. **Session protection is built in** (each server's **会话** page). The panel
+   saves tmux every 5 minutes with the bundled
+   [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect)
+   (`vendor/tmux-plugins/`), and the first time it sees a tmux server with no
+   sessions it restores the latest save: windows, panes, their directories, and
+   the programs ticked on that page. Nothing needs to be added to
+   `~/.tmux.conf`, and tmux-continuum is not used.
 
-   ```tmux
-   set -g @plugin 'tmux-plugins/tmux-resurrect'
-   set -g @plugin 'tmux-plugins/tmux-continuum'
-   set -g @continuum-restore 'on'      # auto-restore on tmux server start
-   set -g @continuum-save-interval '15' # save every 15 minutes
-   ```
-
-   Without these plugins, `tmux-server.service` will start an empty server on
-   boot and the panel will simply show no sessions.
+   If your `~/.tmux.conf` already loads tmux-resurrect (for example through TPM
+   with tmux-continuum), the panel leaves saving and restoring to it and only
+   offers "save now" and restoring single sessions from history.
 
 3. **`set -g exit-empty off`** is appended to `~/.tmux.conf` automatically by the
-   installer (idempotent). It prevents the empty server started by systemd from
-   self-exiting before tmux-continuum's auto-restore finishes.
+   installer (idempotent). It keeps the empty server started at boot alive until
+   the panel restores into it.
 
-> **Recovery after manual `tmux kill-server`**: tmux-continuum only auto-restores
-> on the *first* server start. If you kill the server while the system is up,
-> restarting the companion service will give you an empty server — press
-> `prefix + Ctrl-r` inside any tmux session to manually restore the last snapshot.
+> **After a manual `tmux kill-server`** the companion service starts an empty
+> server and the panel restores into it within about 20 seconds. Any earlier
+> save can be brought back under **会话 → 找回会话**; it opens as a new session
+> and leaves running ones alone. `prefix + Ctrl-s` / `prefix + Ctrl-r` still
+> save and restore from a terminal.

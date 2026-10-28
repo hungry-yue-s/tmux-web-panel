@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { TMUX_BIN } from './msys.js';
+import { TMUX_BIN, msysExecArgs } from './msys.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -262,10 +262,10 @@ export function parseTree(output) {
  * @returns {Promise<string>} stdout
  */
 export async function tmuxExec(args) {
-  const { stdout } = await execFileAsync(TMUX_BIN, args, {
+  const { stdout } = await execFileAsync(TMUX_BIN, ...msysExecArgs(args, {
     timeout: EXEC_TIMEOUT,
     maxBuffer: EXEC_MAX_BUFFER,
-  });
+  }));
   return stdout;
 }
 
@@ -281,10 +281,14 @@ export const localExecutor = Object.freeze({
   // MSYS2's tmux.exe on Windows, plain `tmux` elsewhere.
   tmuxBin: TMUX_BIN,
   async exec(command, args, options = {}) {
-    const { stdout, stderr } = await execFileAsync(command, args, {
+    const execOptions = {
       timeout: options.timeout || EXEC_TIMEOUT,
       maxBuffer: options.maxBuffer || EXEC_MAX_BUFFER,
-    });
+    };
+    // Only tmux is an MSYS2 program here; anything else gets Node's own quoting.
+    const { stdout, stderr } = command === TMUX_BIN
+      ? await execFileAsync(command, ...msysExecArgs(args, execOptions))
+      : await execFileAsync(command, args, execOptions);
     return { stdout, stderr };
   },
 });
@@ -361,7 +365,7 @@ export function createTmuxApi(executor) {
     } catch (err) {
       // tmux server not running yet → treat as "no sessions" rather than error.
       // The web panel intentionally does not auto-start tmux; recovery is the
-      // job of tmux-server.service + tmux-continuum auto-restore (see CLAUDE.md).
+      // job of tmux-server.service + session protection (see CLAUDE.md).
       if (typeof err?.stderr === 'string' && err.stderr.includes('no server running')) {
         return [];
       }
