@@ -405,7 +405,7 @@ var FilePreview = (function () {
 
   function _replacePreviewBody(body, renderedBody) {
     _pauseVideos(body);
-    _disposeMermaid(body);
+    _disposePreview(body);
     body.innerHTML = '';
     while (renderedBody.firstChild) body.appendChild(renderedBody.firstChild);
   }
@@ -709,7 +709,7 @@ var FilePreview = (function () {
     var hadFocus = _dockTabs[index].modal.contains(focused) || (item && item.getAttribute('data-tab-id') === String(tabId));
     var wasActive = _activeDockTabId === tabId;
     _pauseVideos(_dockTabs[index].modal);
-    _disposeMermaid(_dockTabs[index].modal);
+    _disposePreview(_dockTabs[index].modal);
     _dockTabs[index].modal.remove();
     _dockTabs.splice(index, 1);
     if (_dockTabs.length === 0) {
@@ -747,10 +747,10 @@ var FilePreview = (function () {
     var separateOverlay = _overlay && _overlay !== _dockOverlay ? _overlay : null;
     _pauseVideos(separateOverlay);
     _dockTabs.forEach(function (tab) { _pauseVideos(tab.modal); });
-    _disposeMermaid(separateOverlay);
+    _disposePreview(separateOverlay);
     if (separateOverlay) separateOverlay.remove();
-    _dockTabs.forEach(function (tab) { _disposeMermaid(tab.modal); });
-    _disposeMermaid(_dockOverlay);
+    _dockTabs.forEach(function (tab) { _disposePreview(tab.modal); });
+    _disposePreview(_dockOverlay);
     if (_dockOverlay) _dockOverlay.remove();
     _removeDockRestoreButton();
     _dockOverlay = null;
@@ -781,7 +781,7 @@ var FilePreview = (function () {
     for (var i = 0; i < _dockTabs.length; i++) {
       if (path && _dockTabs[i].path === path) {
         _pauseVideos(modalOverlay);
-        _disposeMermaid(modalOverlay);
+        _disposePreview(modalOverlay);
         modalOverlay.remove();
         _activeDockTabId = _dockTabs[i].id;
         _showDock();
@@ -959,7 +959,7 @@ var FilePreview = (function () {
       _saveActiveDockTab();
     } else if (_overlay) {
       _pauseVideos(_overlay);
-      _disposeMermaid(_overlay);
+      _disposePreview(_overlay);
       _overlay.remove();
     }
     _maximized = false;
@@ -1846,6 +1846,15 @@ var FilePreview = (function () {
     });
   }
 
+  function _disposePreview(root) {
+    _disposeMermaid(root);
+    if (!root) return;
+    root.querySelectorAll('iframe[data-fp-blob-url]').forEach(function (frame) {
+      window.URL.revokeObjectURL(frame.getAttribute('data-fp-blob-url'));
+      frame.removeAttribute('data-fp-blob-url');
+    });
+  }
+
   function _refreshMermaidTheme() {
     if (!window.mermaid || typeof window.mermaid.render !== 'function') {
       return Promise.resolve([]);
@@ -2068,6 +2077,19 @@ var FilePreview = (function () {
   // (e.g. a binary file). Shared by "open in new tab", "export HTML", "share".
   function _buildStandaloneDoc() {
     if (!_currentFile || _currentFile.isDirectory) return Promise.resolve(null);
+    if (_currentFile.isHtml) {
+      // Keep scripts isolated in exports and shares as well as in the panel.
+      var frame = _overlay && _overlay.querySelector('.fp-html-wrap iframe');
+      if (!frame) return Promise.resolve(null);
+      frame = frame.cloneNode(true);
+      frame.hidden = false;
+      return Promise.resolve({
+        html: '<!DOCTYPE html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+          + '<style>html,body{margin:0;height:100%}iframe{display:block;width:100%;height:100%;border:0}</style>'
+          + frame.outerHTML,
+        filename: _currentFile.filename,
+      });
+    }
     var rendered = _overlay && _overlay.querySelector('.fp-md-wrap, .fp-code-wrap, .fp-xlsx-wrap');
     if (!rendered) return Promise.resolve(null);
     // Always clone: we strip interactive bits and inline images without
@@ -2111,6 +2133,11 @@ var FilePreview = (function () {
 
   function _openNewTab() {
     if (!_currentFile || _currentFile.isDirectory) return;
+    if (_currentFile.isPdf) {
+      var pdf = _overlay && _overlay.querySelector('.fp-pdf-wrap iframe');
+      if (pdf) window.open(pdf.src, '_blank');
+      return;
+    }
     var nativeWindow = null;
     try {
       var handlers = window.webkit && window.webkit.messageHandlers;
@@ -2119,7 +2146,7 @@ var FilePreview = (function () {
     if (_currentFile.isText || _currentFile.isMarkdown || _currentFile.isXlsx) {
       // Open the tab synchronously (popup blockers require a user-gesture-time
       // window.open), then fill it once the self-contained doc is built.
-      var rendered = _overlay && _overlay.querySelector('.fp-md-wrap, .fp-code-wrap, .fp-xlsx-wrap');
+      var rendered = _overlay && _overlay.querySelector('.fp-html-wrap, .fp-md-wrap, .fp-code-wrap, .fp-xlsx-wrap');
       if (rendered) {
         if (nativeWindow && typeof nativeWindow.postMessage === 'function') {
           _buildStandaloneDoc().then(function (out) {
@@ -2470,7 +2497,7 @@ var FilePreview = (function () {
     _previewReady = false;
     _stopAutoRefresh();
     _pauseVideos(_overlay);
-    _disposeMermaid(_overlay);
+    _disposePreview(_overlay);
     if (_overlay) _overlay.remove();
     _overlay = null;
     _maximized = false;
@@ -2591,15 +2618,78 @@ var FilePreview = (function () {
     body.appendChild(wrap);
   }
 
-  function _renderPdf(body, url) {
+  function _renderHtml(body, content, targetLine, showSource) {
+    var wrap = document.createElement('div');
+    wrap.className = 'fp-html-wrap';
+    var toolbar = document.createElement('div');
+    toolbar.className = 'fp-document-toolbar';
+    var toggle = document.createElement('button');
+    toggle.type = 'button';
+    var frame = document.createElement('iframe');
+    frame.title = 'HTML 预览';
+    // Scripts can render interactive reports, but cannot access the panel's
+    // origin, credentials, native bridge, top-level navigation or popups.
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.referrerPolicy = 'no-referrer';
+    frame.srcdoc = content;
+    var source = document.createElement('div');
+    source.className = 'fp-html-source';
+    var sourceRendered = false;
+    function update() {
+      if (showSource && !sourceRendered) {
+        _renderCode(source, content, 'html', targetLine);
+        sourceRendered = true;
+      }
+      frame.hidden = !!showSource;
+      source.hidden = !showSource;
+      toggle.textContent = showSource ? '查看预览' : '查看源码';
+      toggle.setAttribute('aria-pressed', showSource ? 'true' : 'false');
+      wrap.setAttribute('data-source-visible', showSource ? 'true' : 'false');
+    }
+    toggle.addEventListener('click', function () { showSource = !showSource; update(); });
+    update();
+    toolbar.appendChild(toggle);
+    wrap.appendChild(toolbar);
+    wrap.appendChild(frame);
+    wrap.appendChild(source);
+    body.appendChild(wrap);
+  }
+
+  function _renderPdf(body, url, filename) {
     body.innerHTML = '';
     var wrap = document.createElement('div');
     wrap.className = 'fp-pdf-wrap';
     var iframe = document.createElement('iframe');
-    iframe.src = url;
-    iframe.title = 'PDF Preview';
-    wrap.appendChild(iframe);
+    iframe.title = 'PDF 预览';
+    var toolbar = document.createElement('div');
+    toolbar.className = 'fp-document-toolbar';
+    var hint = document.createElement('span');
+    hint.textContent = '无法显示 PDF 时可下载查看';
+    var download = document.createElement('button');
+    download.type = 'button';
+    download.textContent = '下载 PDF';
+    download.addEventListener('click', function () {
+      _blobDownload(url + '&download=1', filename).catch(function (err) {
+        _notifyFailure('下载失败：' + err.message);
+      });
+    });
+    toolbar.appendChild(hint);
+    toolbar.appendChild(download);
+    wrap.appendChild(toolbar);
     body.appendChild(wrap);
+    // iframe navigation sends Accept: text/html, where query tokens are
+    // deliberately refused. Fetch with Bearer auth before invoking the viewer.
+    return fetch(url, { headers: typeof Auth !== 'undefined' ? Auth.headers() : {}, cache: 'no-store' })
+      .then(function (response) {
+        if (!response.ok) throw new Error('PDF 加载失败（HTTP ' + response.status + '）');
+        return response.blob();
+      })
+      .then(function (blob) {
+        var blobUrl = window.URL.createObjectURL(blob);
+        iframe.setAttribute('data-fp-blob-url', blobUrl);
+        iframe.src = blobUrl;
+        wrap.appendChild(iframe);
+      });
   }
 
   // --- xlsx (ExcelJS → styled HTML tables) ---
@@ -4047,6 +4137,7 @@ var FilePreview = (function () {
       isImage: info.isImage,
       isVideo: info.isVideo,
       isPdf: info.isPdf,
+      isHtml: info.language === 'html' || /\.html?$/i.test(filename),
       isXlsx: info.isXlsx,
       isMarkdown: info.isMarkdown,
       isArchive: info.isArchive,
@@ -4062,8 +4153,7 @@ var FilePreview = (function () {
       _renderVideo(renderedBody, rawUrl, filename);
       renderPromise = Promise.resolve();
     } else if (info.isPdf) {
-      _renderPdf(renderedBody, rawUrl);
-      renderPromise = Promise.resolve();
+      renderPromise = _renderPdf(renderedBody, rawUrl, filename);
     } else if (info.isXlsx) {
       renderPromise = _renderXlsx(renderedBody, rawUrl);
     } else if (info.isArchive) {
@@ -4080,7 +4170,11 @@ var FilePreview = (function () {
           if (info.isMarkdown) {
             return _renderMarkdown(renderedBody, cr.data.content, info.absPath, options.paneId);
           }
-          if (_isCsvPath(info.absPath)) {
+          if (current.isHtml) {
+            var previousHtml = options.reuseCurrent && body.querySelector('.fp-html-wrap');
+            _renderHtml(renderedBody, cr.data.content, targetLine,
+              targetLine != null || (previousHtml && previousHtml.getAttribute('data-source-visible') === 'true'));
+          } else if (_isCsvPath(info.absPath)) {
             _renderCsv(renderedBody, cr.data.content, info.absPath);
           } else {
             _renderCode(renderedBody, cr.data.content, cr.data.language, targetLine);
@@ -4090,7 +4184,10 @@ var FilePreview = (function () {
     }
 
     return Promise.resolve(renderPromise).then(function (rendered) {
-      if (rendered === false || !commit(current, 'file')) return false;
+      if (rendered === false || !commit(current, 'file')) {
+        _disposePreview(renderedBody);
+        return false;
+      }
       if (current.isMarkdown && options.markdownFragment) {
         var scrollToLinkedHeading = function () {
           if (!isCurrent()) return;

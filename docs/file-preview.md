@@ -37,12 +37,14 @@ dock tabs remain intact when the viewport becomes too narrow for a split.
 | Type | What you get |
 |------|--------------|
 | Source code | Syntax highlighting with `:line` jump |
+| HTML / HTM | Rendered page in a sandboxed frame, with a source toggle; inline scripts work without access to panel credentials. Use self-contained HTML or absolute HTTP(S) asset URLs; relative local assets are not resolved. A `:line` link opens source view. |
 | Markdown | markdown-it + KaTeX, plus Obsidian flavor: `[[wikilinks]]` (file and heading targets, clickable), `![[embeds]]`, `> [!note]` callouts, YAML frontmatter property cards |
 | Mermaid | Theme-synced diagrams, scrollable embeds, zoom dialog, PNG export and copy-to-clipboard |
 | Archives | Entry tree for zip/jar/apk/epub/docx/pptx and tar/tgz/bz2/xz/zst |
 | Tables | CSV and XLSX rendered as tables |
 | Video | Native player with playback controls, seeking and fullscreen for MP4/M4V, WebM, Ogg/OGV and MOV (codec support depends on the browser) |
-| Others | Images, PDF, directory listings |
+| PDF | Authenticated loading into the browser's PDF viewer, with a download fallback (10 MB preview limit) |
+| Others | Images, directory listings |
 
 Markdown images support `![Description](images/example.png)` and image tags such
 as `<img src="images/example.png" width="200" alt="Description">`. Tags retain
