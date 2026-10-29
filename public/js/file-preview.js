@@ -1072,6 +1072,12 @@ var FilePreview = (function () {
     var btnMore = _menuBtn('更多文件操作', '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>', function () {
       var items = _isMobileReader() ? [] : [buttonAction(btnMaximize)];
       if (_currentFile && !_currentFile.isDirectory) {
+        var html = modal.querySelector('.fp-html-wrap');
+        if (html) items.push({
+          label: html.getAttribute('data-source-visible') === 'true' ? '查看预览' : '查看源码',
+          icon: '<path d="m8 8-4 4 4 4"/><path d="m16 8 4 4-4 4"/><path d="m14 4-4 16"/>',
+          run: function () { html.__fpToggleSource(); },
+        });
         items.push(buttonAction(btnNewTab));
         items = items.concat(copyItems, [buttonAction(btnShare)], downloadItems);
       }
@@ -2621,10 +2627,6 @@ var FilePreview = (function () {
   function _renderHtml(body, content, targetLine, showSource) {
     var wrap = document.createElement('div');
     wrap.className = 'fp-html-wrap';
-    var toolbar = document.createElement('div');
-    toolbar.className = 'fp-document-toolbar';
-    var toggle = document.createElement('button');
-    toggle.type = 'button';
     var frame = document.createElement('iframe');
     frame.title = 'HTML 预览';
     // Scripts can render interactive reports, but cannot access the panel's
@@ -2642,14 +2644,10 @@ var FilePreview = (function () {
       }
       frame.hidden = !!showSource;
       source.hidden = !showSource;
-      toggle.textContent = showSource ? '查看预览' : '查看源码';
-      toggle.setAttribute('aria-pressed', showSource ? 'true' : 'false');
       wrap.setAttribute('data-source-visible', showSource ? 'true' : 'false');
     }
-    toggle.addEventListener('click', function () { showSource = !showSource; update(); });
+    wrap.__fpToggleSource = function () { showSource = !showSource; update(); };
     update();
-    toolbar.appendChild(toggle);
-    wrap.appendChild(toolbar);
     wrap.appendChild(frame);
     wrap.appendChild(source);
     body.appendChild(wrap);

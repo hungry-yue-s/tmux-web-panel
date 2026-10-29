@@ -4,10 +4,10 @@ import { readFileSync } from 'node:fs';
 
 const source = readFileSync('public/js/file-preview.js', 'utf8');
 
-function setup() {
+function setup(width = 1440) {
   const dom = new JSDOM('<div id="main-layout"><div class="terminal-view"></div></div>', { url: 'https://panel.test/' });
   const { window } = dom;
-  Object.defineProperty(window, 'innerWidth', { value: 1440 });
+  Object.defineProperty(window, 'innerWidth', { value: width });
   window.URL.createObjectURL = vi.fn().mockImplementation(() => 'blob:https://panel.test/' + window.URL.createObjectURL.mock.calls.length);
   window.URL.revokeObjectURL = vi.fn();
   const headers = { Authorization: 'Bearer document-test' };
@@ -33,18 +33,19 @@ function setup() {
 }
 
 describe('HTML and PDF previews', () => {
-  it.each(['report.html', 'report.HTM'])('renders %s in an isolated frame and preserves the source toggle through refresh', async (filename) => {
-    const { window, preview, setContent } = setup();
+  it.each([['report.html', 1440], ['report.HTM', 390]])('renders %s at width %i with the source toggle in More and preserves it through refresh', async (filename, width) => {
+    const { window, preview, setContent } = setup(width);
     await preview.openFile('/tmp/' + filename, '%1');
     const frame = window.document.querySelector('.fp-html-wrap iframe');
     expect(frame.srcdoc).toContain('<h1>Report</h1>');
     expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
     expect(frame.referrerPolicy).toBe('no-referrer');
     expect(frame.srcdoc).not.toContain('document-test');
-    const toggle = window.document.querySelector('.fp-document-toolbar button');
-    toggle.click();
+    expect(window.document.querySelector('.fp-html-wrap .fp-document-toolbar')).toBeNull();
+    window.document.querySelector('.fp-btn-more').click();
+    window.document.querySelector('.fp-menu [aria-label="查看源码"]').click();
     expect(frame.hidden).toBe(true);
-    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    expect(window.document.querySelector('.fp-menu')).toBeNull();
     expect(window.document.querySelector('.fp-html-source code').textContent).toBe(frame.srcdoc);
     const exported = new JSDOM((await preview._test.buildStandaloneDoc()).html);
     expect(exported.window.document.querySelector('iframe').getAttribute('sandbox')).toBe('allow-scripts');
@@ -53,7 +54,8 @@ describe('HTML and PDF previews', () => {
     setContent('<h1>Updated</h1>');
     await preview._test.refreshCurrent(false);
     expect(window.document.querySelector('.fp-html-source code').textContent).toBe('<h1>Updated</h1>');
-    window.document.querySelector('.fp-document-toolbar button').click();
+    window.document.querySelector('.fp-btn-more').click();
+    window.document.querySelector('.fp-menu [aria-label="查看预览"]').click();
     expect(window.document.querySelector('.fp-html-wrap iframe').hidden).toBe(false);
     preview.close();
     window.close();
@@ -80,6 +82,7 @@ describe('HTML and PDF previews', () => {
     expect(fetch.mock.calls.some(([url]) => url.includes('/content'))).toBe(false);
     window.open = vi.fn();
     window.document.querySelector('.fp-btn-more').click();
+    expect(window.document.querySelector('.fp-menu [aria-label="查看源码"]')).toBeNull();
     window.document.querySelector('.fp-menu [aria-label="在新标签页打开"]').click();
     expect(window.open).toHaveBeenCalledWith(frame.src, '_blank');
     await preview._test.refreshCurrent(true);

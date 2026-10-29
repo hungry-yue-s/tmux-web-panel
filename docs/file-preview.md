@@ -37,7 +37,7 @@ dock tabs remain intact when the viewport becomes too narrow for a split.
 | Type | What you get |
 |------|--------------|
 | Source code | Syntax highlighting with `:line` jump |
-| HTML / HTM | Rendered page in a sandboxed frame, with a source toggle; inline scripts work without access to panel credentials. Use self-contained HTML or absolute HTTP(S) asset URLs; relative local assets are not resolved. A `:line` link opens source view. |
+| HTML / HTM | Rendered page in a sandboxed frame, with a source/preview toggle in **More**; inline scripts work without access to panel credentials. Use self-contained HTML or absolute HTTP(S) asset URLs; relative local assets are not resolved. A `:line` link opens source view. |
 | Markdown | markdown-it + KaTeX, plus Obsidian flavor: `[[wikilinks]]` (file and heading targets, clickable), `![[embeds]]`, `> [!note]` callouts, YAML frontmatter property cards |
 | Mermaid | Theme-synced diagrams, scrollable embeds, zoom dialog, PNG export and copy-to-clipboard |
 | Archives | Entry tree for zip/jar/apk/epub/docx/pptx and tar/tgz/bz2/xz/zst |
