@@ -38,7 +38,7 @@ describe('createTmuxApi', () => {
     expect(PANE_BORDER_FORMAT).toContain('#[fg=colour4]▸#[default]#[bold]');
     expect(PANE_BORDER_FORMAT).toContain('#[fg=colour8]·#[default]');
     expect(PANE_BORDER_FORMAT).toContain('#{@pane_label}');
-    expect(PANE_BORDER_FORMAT).toContain('#{pane_current_command}');
+    expect(PANE_BORDER_FORMAT).toContain(':pane_current_command}');
     expect(PANE_BORDER_FORMAT).not.toContain('reverse');
     expect(PANE_BORDER_FORMAT).not.toMatch(/#[0-9a-f]{6}/i);
   });

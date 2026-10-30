@@ -144,7 +144,10 @@ html.tmux-native-titlebar body { --workspace-chrome-height:44px; }
 .ms-app .tree-window-row>.tree-item { flex:1; min-width:0; min-height:34px; display:flex; align-items:center; justify-content:space-between; gap:6px; padding:7px 9px; border-radius:6px; background:none; color:var(--workspace-muted); font-size:13px; }
 .ms-app .tree-window-row>.tree-item.active { background:var(--workspace-accent); color:var(--workspace-bg); box-shadow:none; font-weight:550; }
 .ms-app .tree-window-row>.tree-item.active::before { display:none; }
-.ms-app .tree-window-list .cmd { flex-shrink:0; font-size:10px; color:var(--workspace-muted); opacity:1; }
+/* The window's name comes first: its process gives way, never the other way round. */
+.tree-window-row .tree-item-name { flex:1 1 auto; min-width:0; }
+.tree-window-row .cmd { flex:0 4 auto; min-width:0; max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ms-app .tree-window-list .cmd { font-size:10px; color:var(--workspace-muted); opacity:1; }
 .ms-app .tree-window-row>.tree-item.active .cmd { color:inherit; }
 .ms-app .tree-item:hover { background:var(--workspace-hover); }
 .ms-app .tree-menu-button,.ms-app .tree-create-window { display:inline-flex; align-items:center; justify-content:center; flex:0 0 24px; width:24px; height:28px; border:0; border-radius:5px; color:var(--workspace-muted); background:none; font-size:17px; cursor:pointer; }

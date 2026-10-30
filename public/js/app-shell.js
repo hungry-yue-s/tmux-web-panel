@@ -378,7 +378,11 @@
             paneId: pane ? pane.id : undefined,
           },
         };
-        var command = pane ? (pane.command || pane.name || '') : '';
+        // A node not yet updated still sends Windows programs as a full path.
+        var command = pane ? String(pane.command || pane.name || '').split(/[\\/]+/).filter(Boolean).pop() || '' : '';
+        command = command.replace(/\.exe$/i, '');
+        // A window named after its own process would just say it twice.
+        if (command === win.name) command = '';
         return '<div class="tree-window-row" data-sidebar-entity="window"'
           + ' data-server-id="' + esc(serverId) + '" data-provider="' + esc(workspace.provider) + '"'
           + ' data-session="' + esc(session.id) + '" data-window="' + esc(win.id) + '"'
@@ -389,7 +393,7 @@
           + ' title="' + esc(win.name) + '"'
           + (active ? ' aria-current="page"' : '')
           + '><span class="tree-item-name">' + esc(win.name) + '</span>'
-          + '<span class="cmd">' + esc(command) + '</span></button>'
+          + (command ? '<span class="cmd">' + esc(command) + '</span>' : '') + '</button>'
           + ((actions.renameWindow || actions.closeWindow)
             ? '<button type="button" class="tree-add-button tree-menu-button" data-action="workspace-entity-menu"'
               + ' aria-label="' + esc(win.name) + ' 的窗口操作" aria-haspopup="menu" aria-expanded="false"'

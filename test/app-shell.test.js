@@ -167,6 +167,35 @@ describe('AppShell sidebar tree', () => {
     expect(styles).toMatch(/\.tree-window-list \.tree-item-name\s*\{[^}]*white-space:\s*nowrap/);
   });
 
+  it('leads with the window name and shows its process as a bare name, once', () => {
+    seedLocalTmux(ctx.Store, { sessions: [{
+      id: '$8', name: '环境部署', active: true,
+      windows: [
+        // A node not yet updated still sends the path MSYS2 tmux reports.
+        { id: '@1', index: 1, name: 'Tmux-panel', active: true, panes: [{ id: '%1', command: 'C:\\\\Users\\\\me\\\\.local\\\\bin\\\\claude.exe' }] },
+        { id: '@0', index: 0, name: 'bash', panes: [{ id: '%0', command: 'bash' }] },
+      ],
+    }] });
+    ctx.Store.setRoute({ name: 'terminal', params: { serverId: 'local', sessionId: '$8', windowId: '@1' } });
+    ctx.Shell.render();
+    const rows = [...ctx.document.querySelectorAll('.tree-window-row')];
+    const named = rows.find((row) => row.dataset.window === '@1');
+    expect(named.querySelector('.tree-item-name').textContent).toBe('Tmux-panel');
+    expect(named.querySelector('.cmd').textContent).toBe('claude');
+    expect(named.textContent).not.toContain('Users');
+    const auto = rows.find((row) => row.dataset.window === '@0');
+    expect(auto.querySelector('.tree-item-name').textContent).toBe('bash');
+    expect(auto.querySelector('.cmd')).toBeNull();
+  });
+
+  it('never lets the process squeeze the window name away', () => {
+    const styles = readFileSync('public/css/workspace.css', 'utf8');
+    const cmdRules = styles.match(/[^}]*\.cmd\s*\{[^}]*\}/g).filter((rule) => rule.includes('tree-window'));
+    expect(cmdRules.join('\n')).not.toMatch(/flex-shrink:\s*0/);
+    expect(styles).toMatch(/\.tree-window-row \.cmd \{[^}]*text-overflow:\s*ellipsis/);
+    expect(styles).toMatch(/\.tree-window-row \.cmd \{[^}]*max-width:\s*45%/);
+  });
+
   it('keeps the full name as the tooltip', () => {
     const first = ctx.document.querySelector('.tree-window-row .tree-item');
     expect(first.getAttribute('title')).toBe('三绿');
