@@ -642,6 +642,27 @@
       var win = this._findWindow(session, params.windowId);
       crumb.textContent = (server ? server.name : serverId) + (session ? ' / ' + session.name : '');
       pageTitle.textContent = win ? win.name : (session ? session.name : '终端工作台');
+      this._setHeaderCopy(session && win ? [server ? server.name : serverId, session.name, win.name].join(' / ') : null);
+    },
+
+    _setHeaderCopy: function (text) {
+      var context = global.document.querySelector('#ms-topbar .crumbs');
+      if (!context) return;
+      context.classList.toggle('copyable', Boolean(text));
+      context.onclick = text ? function () { global._copyToClipboard(text); } : null;
+      context.onkeydown = text ? function (event) {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        if (!event.repeat) context.click();
+      } : null;
+      if (text) {
+        context.setAttribute('role', 'button');
+        context.tabIndex = 0;
+        context.title = '点击复制：' + text;
+        context.setAttribute('aria-label', '复制完整标题：' + text);
+      } else {
+        ['role', 'tabindex', 'title', 'aria-label'].forEach(function (name) { context.removeAttribute(name); });
+      }
     },
 
     setHeader: function (crumbText, title, actionsHtml) {
@@ -651,6 +672,7 @@
       var actions = el('ms-top-actions');
       if (!topbar || !crumb || !pageTitle) return;
       topbar.classList.remove('terminal-layout');
+      this._setHeaderCopy(null);
       crumb.textContent = crumbText;
       pageTitle.textContent = title;
       if (actions) actions.innerHTML = actionsHtml || '';

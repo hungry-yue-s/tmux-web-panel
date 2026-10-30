@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
@@ -19,7 +19,7 @@ const SHELL_DOM = `<!DOCTYPE html><html><body>
         <div id="ms-mobile-tools"></div>
       </header>
       <header class="ms-topbar" id="ms-topbar">
-        <div class="crumb" id="ms-crumb"></div><h1 id="ms-page-title"></h1>
+        <div class="crumbs"><div class="crumb" id="ms-crumb"></div><h1 id="ms-page-title"></h1></div>
         <div id="ms-top-actions"></div>
       </header>
       <div id="ms-view"></div>
@@ -334,6 +334,51 @@ describe('AppShell sidebar preferences', () => {
 });
 
 describe('AppShell window bar', () => {
+  it('copies the complete current server/session/window title when its region is clicked', () => {
+    const ctx = loadShell();
+    seedLocalTmux(ctx.Store);
+    const workspace = ctx.Store.getState().entities.workspaceByServerId.local;
+    ctx.win._copyToClipboard = vi.fn();
+    const context = ctx.document.querySelector('.crumbs');
+    ctx.Shell.setTerminalHeader('local', workspace, { sessionId: '$0', windowId: '@0' });
+    ctx.document.getElementById('ms-page-title').click();
+    expect(ctx.win._copyToClipboard).toHaveBeenLastCalledWith('本机 / DataAnt / 三绿');
+    ctx.Shell.setTerminalHeader('local', workspace, { sessionId: '$0', windowId: '@2' });
+    ctx.document.getElementById('ms-crumb').click();
+    expect(ctx.win._copyToClipboard).toHaveBeenLastCalledWith('本机 / DataAnt / 风控点总结');
+    expect(ctx.win._copyToClipboard).toHaveBeenCalledTimes(2);
+    expect(context.title).toBe('点击复制：本机 / DataAnt / 风控点总结');
+    expect(context.getAttribute('aria-label')).toBe('复制完整标题：本机 / DataAnt / 风控点总结');
+    ctx.win.close();
+  });
+
+  it('supports keyboard copying and disables it when the target is missing or not a terminal', () => {
+    const ctx = loadShell();
+    seedLocalTmux(ctx.Store);
+    const workspace = ctx.Store.getState().entities.workspaceByServerId.local;
+    ctx.win._copyToClipboard = vi.fn();
+    ctx.Shell.setTerminalHeader('local', workspace, { sessionId: '$0', windowId: '@0' });
+    const context = ctx.document.querySelector('.crumbs');
+    expect(context.getAttribute('role')).toBe('button');
+    expect(context.tabIndex).toBe(0);
+    for (const key of ['Enter', ' ']) {
+      const event = new ctx.win.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      context.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+    expect(ctx.win._copyToClipboard).toHaveBeenCalledTimes(2);
+    ctx.Shell.setTerminalHeader('local', workspace, { sessionId: '$0', windowId: '@gone' });
+    context.click();
+    expect(ctx.win._copyToClipboard).toHaveBeenCalledTimes(2);
+    ctx.Shell.setHeader('全局', '设置', '');
+    context.click();
+    expect(context.hasAttribute('role')).toBe(false);
+    expect(context.hasAttribute('tabindex')).toBe(false);
+    expect(context.hasAttribute('title')).toBe(false);
+    expect(ctx.win._copyToClipboard).toHaveBeenCalledTimes(2);
+    ctx.win.close();
+  });
+
   it('emphasizes the window title while retaining server and session in the breadcrumb', () => {
     const ctx = loadShell();
     seedLocalTmux(ctx.Store);
