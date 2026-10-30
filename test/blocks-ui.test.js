@@ -54,7 +54,7 @@ describe('blocks on native glass', () => {
   const glass = css.slice(css.indexOf('/* --- native glass'));
 
   it('lets the window material show through and tints each depth separately', () => {
-    expect(glass).toMatch(/html\[data-native-transparency\] :is\(\.blk-dock, \.blk-frame, \.git-side, \.git-log\) \{ background: transparent; \}/);
+    expect(glass).toMatch(/html\[data-native-transparency\] :is\(\.blk-frame, \.git-side, \.git-log\) \{ background: transparent; \}/);
     for (const depth of ['--g-well', '--g-bar', '--g-raised', '--g-float']) {
       expect(glass).toContain(depth + ':');
     }

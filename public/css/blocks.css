@@ -6,7 +6,7 @@
   --b-font-mono: "Tmux Panel Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --b-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
-.blk-frame, .blk-dock, .blk-picker-overlay, .blk-dialog-overlay, .blk-db, .blk-board, .blk-editor, .blk-nb,
+.blk-frame, .fp-dock-actions, .blk-picker-overlay, .blk-dialog-overlay, .blk-db, .blk-board, .blk-editor, .blk-nb,
 .blk-difffile, .cmd-palette-overlay, .pane-git-chip, .ms-toast {
   --b-bg: var(--workspace-bg, var(--bg-primary));
   --b-panel: var(--workspace-panel, var(--bg-card));
@@ -130,30 +130,19 @@
 
 /* --- BlockHost: dock, float, maximize, sheet ---------------------------------------------- */
 
-.ms-app .ms-main.blk-has-dock { grid-template-columns: minmax(0, 1fr) auto auto; }
-.blk-dock {
-  position: relative; grid-column: 3; grid-row: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%;
-  border-left: 1px solid var(--b-line); background: var(--b-panel); color: var(--b-text); animation: blk-dock-in .2s var(--b-ease);
-}
-.blk-dock-resizer { position: absolute; top: 0; bottom: 0; left: -5px; width: 10px; z-index: 3; cursor: col-resize; }
-.blk-dock-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; background: transparent; transition: background .15s; }
-.blk-dock-resizer:hover::after, .blk-dock-resizer:focus-visible::after, body.blk-resizing .blk-dock-resizer::after { background: var(--b-accent); }
-.blk-dock-resizer:focus-visible { outline: none; }
-.blk-dock-bar { display: flex; align-items: stretch; height: 38px; flex: none; border-bottom: 1px solid var(--b-line); background: var(--b-sunken); }
-.blk-dock-tabs { display: flex; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-.blk-dock-tabs::-webkit-scrollbar { display: none; }
-.blk-dock-tab { position: relative; display: flex; align-items: center; flex: none; max-width: 220px; border-right: 1px solid var(--b-line); color: var(--b-muted); }
-.blk-dock-tab.is-active { background: var(--b-panel); color: var(--b-text); }
-.blk-dock-tab.is-active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--b-accent); }
-.blk-dock-tab-select { display: flex; align-items: center; gap: 7px; min-width: 0; height: 100%; padding: 0 4px 0 12px; border: 0; background: none; color: inherit; font: 500 12.5px var(--b-font-ui); cursor: pointer; }
-.blk-dock-tab-select:focus-visible { outline: 2px solid var(--b-accent); outline-offset: -3px; }
-.blk-dock-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.blk-dock-tab.is-busy .blk-dock-tab-select .blk-svg { animation: blk-pulse 1s ease-in-out infinite; }
-.blk-dock-tab-close.blk-icon-btn { width: 24px; height: 24px; margin-right: 6px; opacity: 0; }
-.blk-dock-tab:hover .blk-dock-tab-close, .blk-dock-tab.is-active .blk-dock-tab-close, .blk-dock-tab-close:focus-visible { opacity: 1; }
-.blk-dock-tab-close .blk-svg { width: 13px; height: 13px; }
-.blk-dock-actions { display: flex; align-items: center; gap: 2px; padding: 0 6px; flex: none; }
-.blk-dock-panels { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* Docked blocks are tabs in the sidebar they share with file previews. A block
+   has no file header, so its window controls sit at the end of the tab strip. */
+.fp-dock-panels > .blk-frame { width: 100%; height: 100%; }
+.fp-dock-tab-item.is-block .fp-dock-tab { display: flex; align-items: center; gap: 6px; }
+.fp-dock-tab-item.is-block .blk-svg { width: 14px; height: 14px; opacity: .75; }
+.fp-dock-tab-item.is-block.active .blk-svg { opacity: 1; color: var(--fp-accent, var(--accent-blue)); }
+.fp-dock-tab-item.is-busy .blk-svg { animation: blk-pulse 1s ease-in-out infinite; }
+.fp-dock-actions { position: absolute; top: 0; right: 0; z-index: 2; display: none; align-items: center; gap: 2px; height: 36px; padding: 0 6px; }
+.fp-dock-has-actions > .fp-dock-actions { display: flex; }
+.fp-dock-has-actions > .fp-dock-tabs { padding-right: 96px; }
+.fp-dock-actions .blk-icon-btn { display: inline-grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 6px; cursor: pointer; }
+.fp-dock-actions .blk-icon-btn:hover { background: var(--b-hover); color: var(--b-text); }
+.fp-dock-actions .blk-icon-btn:focus-visible { outline: 2px solid var(--b-accent); outline-offset: -2px; }
 
 .blk-frame { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--b-panel); color: var(--b-text); font: 13px/1.45 var(--b-font-ui); }
 .blk-frame[hidden] { display: none !important; }
@@ -189,10 +178,9 @@ body.blk-dragging iframe, body.blk-resizing iframe, body.fp-side-resizing iframe
 @keyframes blk-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes blk-pop { from { opacity: 0; transform: scale(.97) translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes blk-sheet { from { opacity: .6; transform: translateY(24px); } to { opacity: 1; transform: none; } }
-@keyframes blk-dock-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
 @keyframes blk-pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) {
-  .blk-dock, .blk-frame.is-entering, .blk-dialog, .blk-dialog-overlay, .blk-picker, .blk-picker-overlay { animation: none !important; }
+  .blk-frame.is-entering, .blk-dialog, .blk-dialog-overlay, .blk-picker, .blk-picker-overlay { animation: none !important; }
 }
 
 /* --- menus ------------------------------------------------------------------------- */
@@ -549,14 +537,14 @@ body.blk-dragging iframe, body.blk-resizing iframe, body.fp-side-resizing iframe
 /* With window transparency on, the native material is the base of a block, so
    its surfaces are tints of that glass instead of panels on top of it.
    Back to front:
-     window  the dock and frame: clear, only a hairline against the terminal
+     window  the frame in the sidebar: clear, showing the glass
      well    what you read and type in: diffs, history detail, inputs
-     bar     tab strip, toolbars, hunk headers: a tint with a lit top edge
+     bar     toolbars, hunk headers: a tint with a lit top edge
      raised  composer, active tab, active segment, buttons: a stronger tint
      float   menus, dialogs, floating and maximized blocks: nearly opaque
    Only surfaces with content moving behind them blur: a blur inside a scrolling
    pane costs every scrolled frame. */
-html[data-native-transparency] :is(.blk-dock, .blk-frame, .blk-dialog-overlay) {
+html[data-native-transparency] :is(.blk-frame, .fp-dock-actions, .blk-dialog-overlay) {
   --g-well: rgba(0, 0, 0, .16);
   --g-bar: color-mix(in srgb, var(--workspace-panel) 24%, transparent);
   --g-raised: color-mix(in srgb, var(--workspace-panel) 46%, transparent);
@@ -570,7 +558,7 @@ html[data-native-transparency] :is(.blk-dock, .blk-frame, .blk-dialog-overlay) {
   --b-line-strong: color-mix(in srgb, var(--workspace-text) 20%, transparent);
   --b-accent-soft: color-mix(in srgb, var(--b-accent) 24%, transparent);
 }
-html[data-native-transparency][data-color-scheme="light"] :is(.blk-dock, .blk-frame, .blk-dialog-overlay) {
+html[data-native-transparency][data-color-scheme="light"] :is(.blk-frame, .fp-dock-actions, .blk-dialog-overlay) {
   --g-well: rgba(0, 0, 0, .045);
   --g-bar: color-mix(in srgb, var(--workspace-panel) 46%, transparent);
   --g-raised: color-mix(in srgb, var(--workspace-panel) 68%, transparent);
@@ -578,16 +566,15 @@ html[data-native-transparency][data-color-scheme="light"] :is(.blk-dock, .blk-fr
   --g-edge: rgba(255, 255, 255, .55);
 }
 @media (prefers-reduced-transparency: reduce) {
-  html[data-native-transparency] :is(.blk-dock, .blk-frame, .blk-dialog-overlay) {
+  html[data-native-transparency] :is(.blk-frame, .fp-dock-actions, .blk-dialog-overlay) {
     --g-well: color-mix(in srgb, var(--workspace-bg) 80%, transparent);
     --g-bar: color-mix(in srgb, var(--workspace-panel) 80%, transparent);
     --g-raised: var(--workspace-panel);
     --g-float: var(--workspace-panel);
   }
 }
-html[data-native-transparency] :is(.blk-dock, .blk-frame, .git-side, .git-log) { background: transparent; }
-html[data-native-transparency] .blk-dock { border-left-color: var(--b-line-strong); }
-html[data-native-transparency] :is(.blk-dock-bar, .blk-frame-head, .blk-toolbar, .git-diff-head, .git-commit-card) {
+html[data-native-transparency] :is(.blk-frame, .git-side, .git-log) { background: transparent; }
+html[data-native-transparency] :is(.blk-frame-head, .blk-toolbar, .git-diff-head, .git-commit-card) {
   background: var(--g-bar);
   box-shadow: inset 0 1px 0 var(--g-edge);
 }

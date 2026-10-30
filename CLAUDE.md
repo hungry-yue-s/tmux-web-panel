@@ -101,3 +101,11 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 - 分窗最小宽度为 320px，最大为扣除侧栏后可用工作区的 70%，不再设 820px 固定上限；左侧 12px resize 热区负责拖拽，保存值恢复、键盘调宽及窗口缩放时必须统一 clamp，至少为终端保留 30% 的共享空间。
 - 分窗存在时点击其中的目录项/文件链接，仍必须先弹出 modal，不能直接覆盖当前 Tab。
 - 导航离开 terminal 时 `FilePreview.closeDocked()` 会销毁整组分窗 Tab；普通 modal 的关闭语义保持独立。
+
+Git、浏览器等工具 block 与文件共用这个分窗（同一个标签条、宽度和隐藏按钮），不要再做第二个右侧栏：
+
+- 分窗归 `file-preview.js` 所有；`public/js/block-host.js` 只通过 `FilePreview.blockDock.sync()` 声明哪些 frame 属于标签条，block 的生命周期仍归它管。
+- 切换文件 Tab 时文件 modal 离开 DOM，block 的 frame 只隐藏不移除，这样浏览器页面和未写完的提交说明都不会丢。
+- 文件 Tab 按窗口保存，block 按服务器保存：切换窗口只换文件 Tab，block 标签保留；`_persistDockState` 不写入 block，只记录它是否在最前（`activeBlock`）。
+- 关闭最后一个文件 Tab 时，只要还有 block 标签，分窗就保留；所有标签都没了才销毁。
+- 分窗只存在于终端旁：离开终端页时 block 暂存（frame 脱离 DOM），回来再挂上；在其它页面打开 block 时用浮动窗口。

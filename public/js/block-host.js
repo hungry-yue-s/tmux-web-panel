@@ -2,20 +2,20 @@
 
 // BlockHost: where tool blocks (git, browser…) live next to the terminal.
 //
-// A block is docked as a tab in a right-hand column, floats as a window over
-// the workstage, or is maximized over it. Phones and narrow windows show it
-// as a full-screen sheet. Every block belongs to one server: switching
-// servers swaps the set of blocks, and each server remembers its own
-// blocks, modes, sizes and positions across reloads.
+// A block is docked as a tab in the right-hand sidebar it shares with file
+// previews, floats as a window over the workstage, or is maximized over it.
+// Phones and narrow windows show it as a full-screen sheet. Every block
+// belongs to one server: switching servers swaps the set of blocks, and each
+// server remembers its own blocks, modes and positions across reloads.
 //
-// File blocks (SQLite, notebooks, boards) stay in the file preview, which has
-// its own docked tabs keyed by path.
+// The sidebar itself (tab strip, width, hide/restore) belongs to the file
+// preview; this file only declares which frames belong in it. It exists only
+// next to a terminal, so a block opened anywhere else floats.
 
 var BlockHost = (function () {
   'use strict';
 
   var STORAGE_PREFIX = 'twp_blocks_v1:';
-  var DOCK_MIN = 360;
   var FLOAT_MIN_W = 360;
   var FLOAT_MIN_H = 240;
   var COMPACT_WIDTH = 900;
@@ -24,8 +24,7 @@ var BlockHost = (function () {
   var instances = [];
   var nextId = 1;
   var zTop = 30;
-  var dock = null;
-  var dockState = {}; // serverId -> { active, width }
+  var dockState = {}; // serverId -> { active }
   var restoredServers = {};
   var focusedId = null;
 
@@ -33,6 +32,7 @@ var BlockHost = (function () {
 
   var ICON_PATHS = {
     dock: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16"/>',
+    hide: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/><path d="m8 9 3 3-3 3"/>',
     float: '<rect x="3" y="4" width="18" height="16" rx="2"/><rect x="11" y="11" width="8" height="6" rx="1"/>',
     max: '<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/>',
     restore: '<path d="M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"/>',
@@ -86,6 +86,20 @@ var BlockHost = (function () {
     return isCompact() ? 'sheet' : instance.mode;
   }
 
+  function sidebar() {
+    return window.FilePreview ? window.FilePreview.blockDock : null;
+  }
+
+  function canDock() {
+    var dock = sidebar();
+    return !!(dock && dock.available());
+  }
+
+  /** The sidebar only exists next to a terminal: elsewhere a docked block floats. */
+  function placeableMode(mode) {
+    return mode === 'dock' && !isCompact() && !canDock() ? 'float' : mode;
+  }
+
   function reducedMotion() {
     return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   }
@@ -104,10 +118,9 @@ var BlockHost = (function () {
         return { kind: i.kind, params: i.params, mode: i.mode, geom: i.geom || null };
       }),
       active: active ? own.indexOf(active) : -1,
-      width: state.width || 0,
     };
     try {
-      if (own.length || data.width) window.localStorage.setItem(storageKey(serverId), JSON.stringify(data));
+      if (own.length) window.localStorage.setItem(storageKey(serverId), JSON.stringify(data));
       else window.localStorage.removeItem(storageKey(serverId));
     } catch (_) { /* private mode */ }
   }
@@ -121,7 +134,7 @@ var BlockHost = (function () {
     var data;
     try { data = JSON.parse(raw); } catch (_) { return; }
     if (!data || data.version !== 1 || !Array.isArray(data.blocks)) return;
-    dockState[serverId] = { active: null, width: Number(data.width) || 0 };
+    dockState[serverId] = { active: null };
     var created = [];
     data.blocks.forEach(function (saved) {
       if (!saved || !kinds[saved.kind]) return;
@@ -169,10 +182,22 @@ var BlockHost = (function () {
       serverId: serverId,
       params: instance.params,
       url: function (path) { return window.Api ? Api.nodeUrl(serverId, path) : path; },
-      setTitle: function (title) { instance.title = title || definition.title; syncTitle(instance); },
-      setSubtitle: function (subtitle) { instance.subtitle = subtitle || ''; syncTitle(instance); },
+      setTitle: function (title) {
+        var next = title || definition.title;
+        if (next === instance.title) return;
+        instance.title = next;
+        syncTitle(instance);
+        syncSidebar();
+      },
+      setSubtitle: function (subtitle) {
+        var next = subtitle || '';
+        if (next === instance.subtitle) return;
+        instance.subtitle = next;
+        syncTitle(instance);
+        syncSidebar();
+      },
       setParams: function (next) { instance.params = Object.assign({}, instance.params, next || {}); instance.key = keyOf(kind, instance.params); persist(serverId); },
-      setBusy: function (busy) { instance.busy = !!busy; instance.frame.classList.toggle('is-busy', instance.busy); renderTabs(); },
+      setBusy: function (busy) { instance.busy = !!busy; instance.frame.classList.toggle('is-busy', instance.busy); syncSidebar(); },
       close: function () { close(instance.id); },
       isVisible: function () { return isVisible(instance); },
       focus: function () { focusInstance(instance); },
@@ -237,7 +262,6 @@ var BlockHost = (function () {
     instance.subtitleEl.textContent = instance.subtitle;
     instance.subtitleEl.hidden = !instance.subtitle;
     instance.frame.setAttribute('aria-label', instance.title + (instance.subtitle ? ' · ' + instance.subtitle : ''));
-    renderTabs();
   }
 
   function renderActions(instance) {
@@ -248,7 +272,7 @@ var BlockHost = (function () {
       actions.appendChild(iconButton('close', '关闭', function () { close(instance.id); }, 'blk-frame-close'));
       return;
     }
-    if (mode !== 'dock') actions.appendChild(iconButton('dock', '停靠到右侧', function () { setMode(instance.id, 'dock'); }));
+    if (mode !== 'dock' && canDock()) actions.appendChild(iconButton('dock', '停靠到右侧', function () { setMode(instance.id, 'dock'); }));
     if (mode !== 'float') actions.appendChild(iconButton('float', '浮动窗口', function () { setMode(instance.id, 'float'); }));
     actions.appendChild(mode === 'max'
       ? iconButton('restore', '还原（Esc）', function () { setMode(instance.id, instance.previousMode || 'dock'); })
@@ -336,127 +360,52 @@ var BlockHost = (function () {
     });
   }
 
-  // --- dock ------------------------------------------------------------------
+  // --- sidebar ---------------------------------------------------------------
 
-  function ensureDock() {
-    if (dock) return dock;
-    var root = el('aside', 'blk-dock');
-    root.setAttribute('aria-label', '工具区');
-    var grip = el('div', 'blk-dock-resizer');
-    grip.setAttribute('role', 'separator');
-    grip.setAttribute('aria-orientation', 'vertical');
-    grip.setAttribute('aria-label', '调整工具区宽度');
-    grip.tabIndex = 0;
-    var bar = el('div', 'blk-dock-bar');
-    var tabs = el('div', 'blk-dock-tabs');
-    tabs.setAttribute('role', 'tablist');
-    tabs.setAttribute('aria-label', '工具标签');
-    var actions = el('div', 'blk-dock-actions');
-    bar.append(tabs, actions);
-    var panels = el('div', 'blk-dock-panels');
-    root.append(grip, bar, panels);
-    dock = { root: root, tabs: tabs, actions: actions, panels: panels, grip: grip };
-
-    function setWidth(width) {
-      var bounds = dockBounds();
-      var next = Math.round(Math.max(bounds.min, Math.min(bounds.max, width || bounds.preferred)));
-      root.style.width = next + 'px';
-      var sid = currentServer();
-      dockState[sid] = dockState[sid] || {};
-      dockState[sid].width = next;
-      grip.setAttribute('aria-valuenow', String(next));
-      return next;
-    }
-    dock.setWidth = setWidth;
-    grip.addEventListener('pointerdown', function (e) {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      var startX = e.clientX;
-      var startW = root.getBoundingClientRect().width;
-      document.body.classList.add('blk-resizing');
-      function move(ev) { setWidth(startW + startX - ev.clientX); }
-      function up() {
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', up);
-        window.removeEventListener('pointercancel', up);
-        document.body.classList.remove('blk-resizing');
-        persist(currentServer());
-      }
-      window.addEventListener('pointermove', move);
-      window.addEventListener('pointerup', up);
-      window.addEventListener('pointercancel', up);
-    });
-    grip.addEventListener('keydown', function (e) {
-      var width = root.getBoundingClientRect().width;
-      var step = e.shiftKey ? 60 : 20;
-      if (e.key === 'ArrowLeft') width += step;
-      else if (e.key === 'ArrowRight') width -= step;
-      else return;
-      e.preventDefault();
-      setWidth(width);
-      persist(currentServer());
-    });
-    return dock;
+  function sidebarActions(instance) {
+    return [
+      iconButton('float', '浮动窗口', function () { setMode(instance.id, 'float'); }),
+      iconButton('max', '最大化', function () { setMode(instance.id, 'max'); }),
+      iconButton('hide', '隐藏右侧边栏（Esc）', function () { sidebar().hide(); }),
+    ];
   }
 
-  function dockBounds() {
-    var main = layout();
-    var width = main ? main.getBoundingClientRect().width : window.innerWidth;
-    var max = Math.max(DOCK_MIN, Math.floor(width * 0.65));
-    return { min: DOCK_MIN, max: max, preferred: Math.min(max, Math.max(DOCK_MIN, Math.round(width * 0.42))) };
-  }
-
-  function renderTabs() {
+  /** Tells the sidebar which of this server's blocks belong in its tab strip. */
+  function syncSidebar() {
+    var dock = sidebar();
     if (!dock) return;
     var sid = currentServer();
-    var docked = instances.filter(function (i) { return i.serverId === sid && effectiveMode(i) === 'dock'; });
     var state = dockState[sid] || {};
-    var focusTab = document.activeElement && document.activeElement.closest && document.activeElement.closest('.blk-dock-tab');
-    var focusedTabId = focusTab && focusTab.dataset.blockId;
-    dock.tabs.replaceChildren();
-    docked.forEach(function (instance) {
-      var active = instance.id === state.active;
-      var tab = el('div', 'blk-dock-tab' + (active ? ' is-active' : '') + (instance.busy ? ' is-busy' : ''));
-      tab.dataset.blockId = instance.id;
-      var select = el('button', 'blk-dock-tab-select');
-      select.type = 'button';
-      select.setAttribute('role', 'tab');
-      select.setAttribute('aria-selected', String(active));
-      select.tabIndex = active ? 0 : -1;
-      select.title = instance.title + (instance.subtitle ? ' · ' + instance.subtitle : '');
-      select.innerHTML = iconMarkup(kinds[instance.kind].icon || instance.kind);
-      select.appendChild(el('span', 'blk-dock-tab-title', instance.title));
-      select.addEventListener('click', function () { activate(instance.id); });
-      select.addEventListener('dblclick', function () { setMode(instance.id, 'max'); });
-      select.addEventListener('auxclick', function (e) { if (e.button === 1) close(instance.id); });
-      select.addEventListener('keydown', function (e) {
-        var index = docked.indexOf(instance);
-        var next = null;
-        if (e.key === 'ArrowRight') next = docked[(index + 1) % docked.length];
-        else if (e.key === 'ArrowLeft') next = docked[(index + docked.length - 1) % docked.length];
-        else if (e.key === 'Delete') { e.preventDefault(); close(instance.id); return; }
-        if (!next) return;
-        e.preventDefault();
-        activate(next.id);
-        var target = dock.tabs.querySelector('[data-block-id="' + next.id + '"] .blk-dock-tab-select');
-        if (target) target.focus();
-      });
-      var closeBtn = iconButton('close', '关闭 ' + instance.title, function (e) { e.stopPropagation(); close(instance.id); }, 'blk-dock-tab-close');
-      tab.append(select, closeBtn);
-      dock.tabs.appendChild(tab);
-    });
-    if (focusedTabId) {
-      var again = dock.tabs.querySelector('[data-block-id="' + focusedTabId + '"] .blk-dock-tab-select');
-      if (again) again.focus();
+    dock.sync(instances.filter(function (instance) {
+      return instance.serverId === sid && effectiveMode(instance) === 'dock';
+    }).map(function (instance) {
+      return {
+        key: instance.id,
+        persistKey: instance.key || instance.kind,
+        title: instance.title,
+        subtitle: instance.subtitle,
+        icon: iconMarkup(kinds[instance.kind].icon || instance.kind),
+        busy: instance.busy,
+        element: instance.frame,
+        active: instance.id === state.active,
+        actions: sidebarActions(instance),
+        onClose: function () { close(instance.id); },
+        onDoubleClick: function () { setMode(instance.id, 'max'); },
+      };
+    }));
+  }
+
+  /** A tab in the sidebar came to the front (null: a file preview did). */
+  function onSidebarChange(id) {
+    var sid = currentServer();
+    var state = dockState[sid] = dockState[sid] || { active: null };
+    var changed = state.active !== id;
+    state.active = id;
+    var instance = instances.find(function (i) { return i.id === id; });
+    if (instance && instance.impl && typeof instance.impl.onShow === 'function') {
+      try { instance.impl.onShow(); } catch (_) { /* a block's own refresh failing must not break the tabs */ }
     }
-    dock.actions.replaceChildren();
-    var activeInstance = docked.find(function (i) { return i.id === state.active; });
-    if (activeInstance) {
-      dock.actions.append(
-        iconButton('float', '浮动窗口', function () { setMode(activeInstance.id, 'float'); }),
-        iconButton('max', '最大化', function () { setMode(activeInstance.id, 'max'); })
-      );
-    }
+    if (changed) persist(sid);
   }
 
   // --- placement -------------------------------------------------------------
@@ -469,22 +418,9 @@ var BlockHost = (function () {
     var sid = currentServer();
     restore(sid);
     var main = layout();
-    var compact = isCompact();
-    var docked = instances.filter(function (i) { return i.serverId === sid && effectiveMode(i) === 'dock'; });
-    var state = dockState[sid] = dockState[sid] || { active: null, width: 0 };
-    if (docked.length && !docked.some(function (i) { return i.id === state.active; })) {
-      state.active = docked[docked.length - 1].id;
-    }
-
-    if (docked.length && main && !compact) {
-      ensureDock();
-      if (dock.root.parentNode !== main) main.appendChild(dock.root);
-      main.classList.add('blk-has-dock');
-      dock.setWidth(state.width);
-    } else if (dock && dock.root.isConnected) {
-      dock.root.remove();
-      if (main) main.classList.remove('blk-has-dock');
-    }
+    dockState[sid] = dockState[sid] || { active: null };
+    // First: a frame leaving the sidebar must be released before it is placed.
+    syncSidebar();
 
     instances.forEach(function (instance) {
       var frame = instance.frame;
@@ -498,16 +434,18 @@ var BlockHost = (function () {
       frame.classList.toggle('blk-mode-float', mode === 'float');
       frame.classList.toggle('blk-mode-max', mode === 'max');
       frame.classList.toggle('blk-mode-sheet', mode === 'sheet');
-      var target = mode === 'dock' ? dock && dock.panels : mode === 'sheet' ? document.body : main;
-      if (!target) target = document.body;
-      if (frame.parentNode !== target) target.appendChild(frame);
-      frame.hidden = mode === 'dock' && instance.id !== state.active;
       if (mode === 'float') {
         applyGeom(instance);
         frame.style.zIndex = String(instance.z);
       } else {
         frame.style.left = frame.style.top = frame.style.width = frame.style.height = '';
         frame.style.zIndex = mode === 'max' ? '60' : '';
+      }
+      // The sidebar attaches and shows docked frames itself.
+      if (mode !== 'dock') {
+        var target = (mode === 'sheet' ? document.body : main) || document.body;
+        if (frame.parentNode !== target) target.appendChild(frame);
+        frame.hidden = false;
       }
       renderActions(instance);
       syncTitle(instance);
@@ -516,14 +454,16 @@ var BlockHost = (function () {
         setTimeout(function () { frame.classList.remove('is-entering'); }, 220);
       }
       instance.entering = false;
-      // onShow fires when a block comes back into view, not on every layout pass.
-      var shown = !frame.hidden;
-      if (shown && !instance.shown && instance.impl && typeof instance.impl.onShow === 'function') {
-        try { instance.impl.onShow(); } catch (_) { /* a block's own refresh failing must not break the host */ }
+      if (mode !== 'dock') {
+        // onShow fires when a block comes back into view, not on every layout pass.
+        if (!instance.shown && instance.impl && typeof instance.impl.onShow === 'function') {
+          try { instance.impl.onShow(); } catch (_) { /* a block's own refresh failing must not break the host */ }
+        }
+        instance.shown = true;
+      } else {
+        instance.shown = false;
       }
-      instance.shown = shown;
     });
-    renderTabs();
     document.body.classList.toggle('blk-sheet-open', instances.some(function (i) {
       return i.serverId === sid && effectiveMode(i) === 'sheet';
     }));
@@ -549,24 +489,31 @@ var BlockHost = (function () {
     if (!kinds[kind]) return null;
     var sid = currentServer();
     restore(sid);
+    // Whatever was asked for should be what's on screen, not behind a file modal.
+    if (window.FilePreview && window.FilePreview.closeModal) window.FilePreview.closeModal();
     var key = keyOf(kind, params);
     var existing = key && instances.find(function (i) { return i.serverId === sid && i.key === key; });
     if (existing) {
       if (options.mode && options.mode !== existing.mode) existing.mode = options.mode;
+      existing.mode = placeableMode(existing.mode);
       if (existing.impl && typeof existing.impl.update === 'function') existing.impl.update(params || {});
       activate(existing.id);
       return existing.api;
     }
-    var instance = create(kind, params || {}, { mode: options.mode || kinds[kind].defaultMode || 'dock', serverId: sid });
+    var mode = placeableMode(options.mode || kinds[kind].defaultMode || 'dock');
+    var instance = create(kind, params || {}, { mode: mode, serverId: sid });
     if (!instance) return null;
-    if (instance.mode === 'dock') {
-      dockState[sid] = dockState[sid] || {};
-      dockState[sid].active = instance.id;
-    }
-    render();
-    persist(sid);
+    activate(instance.id);
+    // A freshly built frame may have nothing focusable until its first load.
     setTimeout(function () { focusInstance(instance); }, 30);
     return instance.api;
+  }
+
+  /** Brings a docked block to the front of the sidebar once it is in the strip. */
+  function frontInSidebar(instance) {
+    if (instance.mode !== 'dock' || isCompact()) return;
+    var dock = sidebar();
+    if (dock) dock.activate(instance.id);
   }
 
   function activate(id) {
@@ -578,12 +525,14 @@ var BlockHost = (function () {
     }
     raise(instance);
     render();
+    frontInSidebar(instance);
     persist(instance.serverId);
     focusInstance(instance);
   }
 
-  function setMode(id, mode) {
+  function setMode(id, requested) {
     var instance = instances.find(function (i) { return i.id === id; });
+    var mode = placeableMode(requested);
     if (!instance || instance.mode === mode) return;
     if (mode === 'max') instance.previousMode = instance.mode;
     if (mode === 'float' && !instance.geom) instance.geom = defaultGeom();
@@ -595,6 +544,7 @@ var BlockHost = (function () {
     instance.entering = true;
     raise(instance);
     render();
+    frontInSidebar(instance);
     persist(instance.serverId);
     focusInstance(instance);
   }
@@ -625,7 +575,7 @@ var BlockHost = (function () {
     if (instance) return instance;
     var state = dockState[sid] || {};
     return instances.find(function (i) { return i.id === state.active && i.serverId === sid; })
-      || instances.filter(function (i) { return i.serverId === sid; }).pop() || null;
+      || instances.filter(isVisible).pop() || null;
   }
 
   function closeFocused() {
@@ -663,6 +613,7 @@ var BlockHost = (function () {
     });
     window.addEventListener('terminal-target-server', function () { render(); });
     window.addEventListener('hashchange', function () { setTimeout(render, 0); });
+    if (sidebar()) sidebar().onChange(onSidebarChange);
   }
 
   return {

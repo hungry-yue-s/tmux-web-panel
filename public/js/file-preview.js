@@ -50,6 +50,15 @@ var FilePreview = (function () {
   var LEGACY_DOCK_WIDTH_KEY = 'tmux_file_preview_side_width';
   var DOCK_STATE_VERSION = 1;
   var MAX_PERSISTED_DOCK_TABS = 12;
+  // Tool blocks (git, browser) share this dock's tab strip, width and hide
+  // button. BlockHost owns their lifetime and declares them through `blockDock`;
+  // a tab keeps `block` and `modal` (its frame), and no file state of its own.
+  var _blockTabs = [];
+  var _blockListener = null;
+  var _pendingBlockKey = null;
+  var _sideSetWidth = null;
+  var BLOCK_SIDE_WIDTH = 560;
+  var BLOCK_WIDTH_KEY = 'twp_block_side_width';
 
   /**
    * Identifies one window's dock state.
@@ -106,12 +115,14 @@ var FilePreview = (function () {
         return null;
       }
       var width = Number(parsed.width);
-      return {
+      var loaded = {
         tabs: tabs,
         activePath: typeof parsed.activePath === 'string' ? parsed.activePath : tabs[0].path,
         hidden: parsed.hidden === true,
         width: isFinite(width) && width > 0 ? width : 0,
       };
+      if (typeof parsed.activeBlock === 'string') loaded.activeBlock = parsed.activeBlock;
+      return loaded;
     } catch (_) {
       _clearPersistedDock();
       return null;
@@ -133,13 +144,14 @@ var FilePreview = (function () {
     }
     var state = {
       version: DOCK_STATE_VERSION,
-      tabs: _dockTabs.slice(0, MAX_PERSISTED_DOCK_TABS).map(function (tab) {
+      tabs: _fileTabs().slice(0, MAX_PERSISTED_DOCK_TABS).map(function (tab) {
         return { path: tab.path, paneId: tab.paneId || null };
       }).filter(function (tab) { return typeof tab.path === 'string' && tab.path.charAt(0) === '/'; }),
-      activePath: active ? active.path : null,
+      activePath: active && !active.block ? active.path : null,
       hidden: _dockHidden,
       width: width > 0 ? Math.round(width) : 0,
     };
+    if (active && active.block) state.activeBlock = active.block.persistKey;
     if (state.tabs.length === 0) {
       _clearPersistedDock();
       return;
@@ -233,6 +245,11 @@ var FilePreview = (function () {
     sideOverlay.insertBefore(grip, sideOverlay.firstChild);
 
     var startX = 0, startWidth = 0;
+    function rememberBlockWidth(width) {
+      var active = _activeDockTab();
+      if (!active || !active.block) return;
+      try { window.localStorage.setItem(BLOCK_WIDTH_KEY, String(Math.round(width))); } catch (_) {}
+    }
     function setWidth(width) {
       var next = Math.round(_clampSideWidth(width));
       sideOverlay.style.flexBasis = next + 'px';
@@ -255,15 +272,19 @@ var FilePreview = (function () {
       else return;
       e.preventDefault();
       e.stopPropagation();
-      _persistDockState(setWidth(width));
+      var next = setWidth(width);
+      rememberBlockWidth(next);
+      _persistDockState(next);
     }
     setWidth(parseFloat(sideOverlay.style.width) || 0);
+    _sideSetWidth = setWidth;
     function onUp() {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
       document.body.classList.remove('fp-side-resizing');
       var width = Math.round(sideOverlay.getBoundingClientRect().width);
+      rememberBlockWidth(width);
       _persistDockState(width);
     }
     function onDown(e) {
@@ -296,6 +317,7 @@ var FilePreview = (function () {
       if (mainLayout) layoutObserver.observe(mainLayout);
     }
     _sideResizeCleanup = function () {
+      _sideSetWidth = null;
       grip.removeEventListener('pointerdown', onDown);
       grip.removeEventListener('keydown', onKeydown);
       window.removeEventListener('pointermove', onMove);
@@ -495,6 +517,7 @@ var FilePreview = (function () {
   }
 
   function _tabTitle(tab) {
+    if (tab.block) return tab.block.title;
     var path = tab.path || '';
     return path.split('/').filter(Boolean).pop() || path || 'Preview';
   }
@@ -506,10 +529,14 @@ var FilePreview = (function () {
     return null;
   }
 
+  function _fileTabs() {
+    return _dockTabs.filter(function (tab) { return !tab.block; });
+  }
+
   function _saveActiveDockTab() {
     if (_placement !== 'side') return;
     var tab = _activeDockTab();
-    if (!tab) return;
+    if (!tab || tab.block) return;
     tab.currentFile = _currentFile;
     tab.paneId = _currentPaneId;
     tab.dirContext = _dirContext;
@@ -546,6 +573,14 @@ var FilePreview = (function () {
       select.setAttribute('aria-selected', tab.id === _activeDockTabId ? 'true' : 'false');
       select.title = tab.path || _tabTitle(tab);
       select.textContent = _tabTitle(tab);
+      if (tab.block) {
+        item.classList.add('is-block');
+        item.classList.toggle('is-busy', !!tab.block.busy);
+        if (tab.block.subtitle) select.title = tab.block.title + ' · ' + tab.block.subtitle;
+        select.insertAdjacentHTML('afterbegin', tab.block.icon || '');
+        select.addEventListener('dblclick', function () { if (tab.block.onDoubleClick) tab.block.onDoubleClick(); });
+        select.addEventListener('auxclick', function (e) { if (e.button === 1) _closeDockTab(tab.id); });
+      }
       select.addEventListener('click', function () { _activateDockTab(tab.id); });
       select.addEventListener('keydown', function (e) {
         var index = _dockTabs.indexOf(tab), next;
@@ -580,6 +615,12 @@ var FilePreview = (function () {
       var replacement = bar.querySelector('[data-tab-id="' + focusedId + '"] ' + (focusWasClose ? '.fp-dock-tab-close' : '.fp-dock-tab'));
       if (replacement) replacement.focus();
     }
+    // A block has no file header, so its window controls sit in the strip.
+    var active = _activeDockTab();
+    var blockActions = active && active.block && active.block.actions ? active.block.actions : [];
+    var actionsBox = _dockOverlay.querySelector('.fp-dock-actions');
+    if (actionsBox) actionsBox.replaceChildren.apply(actionsBox, blockActions);
+    _dockOverlay.classList.toggle('fp-dock-has-actions', blockActions.length > 0);
   }
 
   function _ensureDockOverlay() {
@@ -589,6 +630,9 @@ var FilePreview = (function () {
     _dockOverlay.className = 'fp-overlay fp-side fp-dock';
     _dockOverlay.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
+      // Esc while typing in a block (a commit message, a URL) is not "hide".
+      var activeTab = _activeDockTab();
+      if (activeTab && activeTab.block && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
       e.preventDefault();
       e.stopPropagation();
       _hideDock();
@@ -600,7 +644,10 @@ var FilePreview = (function () {
     tabs.setAttribute('aria-label', '\u6587\u4EF6\u9884\u89C8\u6807\u7B7E');
     var panels = document.createElement('div');
     panels.className = 'fp-dock-panels';
+    var actions = document.createElement('div');
+    actions.className = 'fp-dock-actions';
     _dockOverlay.appendChild(tabs);
+    _dockOverlay.appendChild(actions);
     _dockOverlay.appendChild(panels);
   }
 
@@ -618,6 +665,13 @@ var FilePreview = (function () {
     var savedWidth = 0;
     var persisted = _loadDockState();
     if (persisted) savedWidth = persisted.width;
+    // A dock holding only blocks has no saved state yet: keep its current width.
+    if (!savedWidth) savedWidth = parseFloat(_dockOverlay.style.width) || 0;
+    // Nothing to go on, and git needs more room than a document.
+    if (!savedWidth && _fileTabs().length === 0) {
+      try { savedWidth = Number(window.localStorage.getItem(BLOCK_WIDTH_KEY)) || 0; } catch (_) {}
+      savedWidth = savedWidth || BLOCK_SIDE_WIDTH;
+    }
     var dockWidth = _clampSideWidth(savedWidth);
     _dockOverlay.style.flexBasis = dockWidth + 'px';
     _dockOverlay.style.width = dockWidth + 'px';
@@ -657,6 +711,7 @@ var FilePreview = (function () {
       var layout = _dockLayout();
       if (layout) layout.appendChild(_dockRestoreButton);
     }
+    if (_fileTabs().length < _dockTabs.length) _dockRestoreButton.setAttribute('aria-label', '\u5C55\u5F00\u53F3\u4FA7\u8FB9\u680F');
     _dockRestoreButton.textContent = '\u25E7 ' + _dockTabs.length;
     if (persistHidden !== false) _persistDockState();
   }
@@ -675,29 +730,36 @@ var FilePreview = (function () {
     var panels = _dockOverlay.querySelector('.fp-dock-panels');
     if (panels) {
       _pauseVideos(panels);
-      panels.innerHTML = '';
-      panels.appendChild(tab.modal);
+      // A file preview leaves the DOM; a block stays attached but hidden, so a
+      // browser tab keeps its page and a half-written commit message survives.
+      Array.prototype.slice.call(panels.children).forEach(function (child) {
+        if (child.hasAttribute('data-dock-block')) child.hidden = true;
+        else child.remove();
+      });
+      if (tab.modal.parentNode !== panels) panels.appendChild(tab.modal);
+      tab.modal.hidden = false;
       if (tab.scrollState) _restorePreviewScroll(tab.modal.querySelector('.fp-body'), tab.scrollState);
     }
     _overlay = _dockOverlay;
     _placement = 'side';
-    _currentFile = tab.currentFile;
-    _currentPaneId = tab.paneId;
-    _dirContext = tab.dirContext;
-    _placementButton = tab.placementButton;
-    _maximizeButton = tab.maximizeButton;
-    _refreshButton = tab.refreshButton;
-    _previewReady = tab.previewReady !== false;
-    _maximized = !!tab.maximized;
+    _currentFile = tab.block ? null : tab.currentFile;
+    _currentPaneId = tab.block ? null : tab.paneId;
+    _dirContext = tab.block ? null : tab.dirContext;
+    _placementButton = tab.block ? null : tab.placementButton;
+    _maximizeButton = tab.block ? null : tab.maximizeButton;
+    _refreshButton = tab.block ? null : tab.refreshButton;
+    _previewReady = !tab.block && tab.previewReady !== false;
+    _maximized = !tab.block && !!tab.maximized;
     _dockOverlay.classList.toggle('fp-mode-dir', !!tab.modeDir);
     _dockOverlay.classList.toggle('fp-has-back', !!tab.hasBack);
     _dockOverlay.classList.toggle('fp-side-maximized', _maximized);
     _syncPlacementButton();
     _syncMaximizeButton();
-    _setPreviewTitle(tab.path);
+    if (!tab.block) _setPreviewTitle(tab.path);
     _renderDockTabs();
     _syncAutoRefresh();
     _persistDockState();
+    if (_blockListener) _blockListener(tab.block ? tab.block.key : null);
   }
 
   function _closeDockTab(tabId) {
@@ -706,13 +768,29 @@ var FilePreview = (function () {
       if (_dockTabs[i].id === tabId) { index = i; break; }
     }
     if (index < 0) return;
+    // BlockHost closes the block, and its next sync removes the tab.
+    if (_dockTabs[index].block) {
+      _dockTabs[index].block.onClose();
+      return;
+    }
+    _removeDockTab(index);
+  }
+
+  function _removeDockTab(index) {
+    var removed = _dockTabs[index];
+    var tabId = removed.id;
     var focused = document.activeElement;
     var item = focused && focused.closest('.fp-dock-tab-item');
-    var hadFocus = _dockTabs[index].modal.contains(focused) || (item && item.getAttribute('data-tab-id') === String(tabId));
+    var hadFocus = removed.modal.contains(focused) || (item && item.getAttribute('data-tab-id') === String(tabId));
     var wasActive = _activeDockTabId === tabId;
-    _pauseVideos(_dockTabs[index].modal);
-    _disposePreview(_dockTabs[index].modal);
-    _dockTabs[index].modal.remove();
+    var modalOpen = _overlay && _overlay !== _dockOverlay;
+    _pauseVideos(removed.modal);
+    if (removed.block) {
+      _releaseBlockFrame(removed.modal);
+    } else {
+      _disposePreview(removed.modal);
+    }
+    removed.modal.remove();
     _dockTabs.splice(index, 1);
     if (_dockTabs.length === 0) {
       var opener = _dockReturnFocus;
@@ -723,7 +801,7 @@ var FilePreview = (function () {
     if (wasActive) {
       var next = _dockTabs[Math.min(index, _dockTabs.length - 1)];
       _activeDockTabId = next.id;
-      if (!_dockHidden) {
+      if (!_dockHidden && !modalOpen) {
         // The old active tab has already been removed; do not save its globals
         // into the replacement tab when activating the neighbour.
         _placement = 'modal';
@@ -816,6 +894,104 @@ var FilePreview = (function () {
     return true;
   }
 
+  // --- Tool blocks in the dock ---
+
+  function _findBlockTab(key) {
+    for (var i = 0; i < _dockTabs.length; i++) {
+      if (_dockTabs[i].block && _dockTabs[i].block.key === key) return _dockTabs[i];
+    }
+    return null;
+  }
+
+  function _releaseBlockFrame(frame) {
+    frame.removeAttribute('data-dock-block');
+    frame.removeAttribute('aria-labelledby');
+    frame.removeAttribute('id');
+    frame.setAttribute('role', 'region');
+  }
+
+  /** Puts declared blocks into the dock whenever one can exist. */
+  function _mountBlockTabs() {
+    if (!_blockTabs.length || _restoringDock) return;
+    // A file modal owns the preview globals; close() mounts once it is gone.
+    if (_overlay && _placement !== 'side') return;
+    if (!_canDockRight()) return;
+    _blockTabs.forEach(function (block) {
+      if (_findBlockTab(block.key)) return;
+      _ensureDockOverlay();
+      var id = _nextDockTabId++;
+      block.element.id = 'fp-panel-' + id;
+      block.element.setAttribute('role', 'tabpanel');
+      block.element.setAttribute('aria-labelledby', 'fp-tab-' + id);
+      block.element.setAttribute('data-dock-block', '');
+      block.element.hidden = true;
+      _dockTabs.push({ id: id, block: block, path: '', modal: block.element });
+    });
+    if (!_dockOverlay) return;
+    if (!_activeDockTabId) {
+      var preferred = _blockTabs.filter(function (block) { return block.active; })[0];
+      if (preferred) _activeDockTabId = _findBlockTab(preferred.key).id;
+    }
+    // The block that was on top when this window's dock was last saved.
+    var pendingTab = null;
+    if (_pendingBlockKey) {
+      var pending = _blockTabs.filter(function (block) { return block.persistKey === _pendingBlockKey; })[0];
+      if (pending) {
+        _pendingBlockKey = null;
+        pendingTab = _findBlockTab(pending.key);
+      }
+    }
+    if (_dockHidden) {
+      if (pendingTab) _activeDockTabId = pendingTab.id;
+      if (_dockRestoreButton) _dockRestoreButton.textContent = '◧ ' + _dockTabs.length;
+      return;
+    }
+    if (_dockOverlay.isConnected) _renderDockTabs();
+    else _showDock(true);
+    if (pendingTab) _activateDockTab(pendingTab.id);
+  }
+
+  /** Declares the blocks that belong in the dock; anything else leaves it. */
+  function _syncBlockTabs(blocks) {
+    var byKey = {};
+    blocks.forEach(function (block) { byKey[block.key] = block; });
+    for (var i = _dockTabs.length - 1; i >= 0; i--) {
+      if (_dockTabs[i].block && !byKey[_dockTabs[i].block.key]) _removeDockTab(i);
+    }
+    _blockTabs = blocks;
+    _dockTabs.forEach(function (tab) {
+      if (tab.block) {
+        tab.block = byKey[tab.block.key];
+        tab.modal = tab.block.element;
+      }
+    });
+    _mountBlockTabs();
+    if (_dockOverlay && _dockTabs.length) _renderDockTabs();
+  }
+
+  function _activateBlockTab(key) {
+    var tab = _findBlockTab(key);
+    if (!tab) return false;
+    _pendingBlockKey = null;
+    if (_overlay && _placement !== 'side') {
+      // Shown when the file modal on top of it closes.
+      _activeDockTabId = tab.id;
+      return true;
+    }
+    if (_dockHidden || !_dockOverlay.isConnected) {
+      _activeDockTabId = tab.id;
+      _showDock();
+    } else {
+      _activateDockTab(tab.id);
+    }
+    // Opened next to a narrow document: give the block room to work.
+    if (_sideSetWidth && _dockOverlay && _dockOverlay.isConnected) {
+      var current = parseFloat(_dockOverlay.style.width) || 0;
+      if (current && current < BLOCK_SIDE_WIDTH) _persistDockState(_sideSetWidth(BLOCK_SIDE_WIDTH));
+    }
+    return true;
+  }
+
   function _isDockContextCurrent(contextKey, generation) {
     return !!contextKey
       && contextKey === _dockContextKey
@@ -826,10 +1002,14 @@ var FilePreview = (function () {
     var nextContextKey = _makeDockContextKey(serverId, windowId);
     if (nextContextKey === _dockContextKey) {
       if (!nextContextKey) return Promise.resolve(false);
-      if (_dockTabs.length > 0) return Promise.resolve(true);
+      if (_fileTabs().length > 0) {
+        _mountBlockTabs();
+        return Promise.resolve(true);
+      }
       return restoreDocked();
     }
 
+    _pendingBlockKey = null;
     _dockContextGeneration++;
     if (_dockContextKey) _persistDockState();
     _persistenceSuspended = true;
@@ -850,13 +1030,17 @@ var FilePreview = (function () {
     var generation = expectedGeneration == null ? _dockContextGeneration : expectedGeneration;
     if (!contextKey || !_isDockContextCurrent(contextKey, generation)) return Promise.resolve(false);
     if (_restorePromise && _restoreContextKey === contextKey) return _restorePromise;
-    if (_dockTabs.length > 0) {
+    if (_fileTabs().length > 0) {
       if (_dockHidden) _hideDock();
       else _showDock();
+      _mountBlockTabs();
       return Promise.resolve(true);
     }
     var saved = _loadDockState();
-    if (!saved || !_canDockRight()) return Promise.resolve(false);
+    if (!saved || !_canDockRight()) {
+      _mountBlockTabs();
+      return Promise.resolve(false);
+    }
 
     _restoringDock = true;
     _persistenceSuspended = true;
@@ -901,6 +1085,8 @@ var FilePreview = (function () {
       _persistenceSuspended = false;
       _restorePromise = null;
       _restoreContextKey = null;
+      _pendingBlockKey = saved.activeBlock || null;
+      _mountBlockTabs();
       _persistDockState();
     });
     return _restorePromise;
@@ -2531,6 +2717,7 @@ var FilePreview = (function () {
     } else if (!_dockOverlay) {
       document.body.classList.remove('fp-side-open');
     }
+    _mountBlockTabs();
     var returnFocus = _modalReturnFocus;
     _modalReturnFocus = null;
     if (returnFocus && returnFocus.isConnected && typeof returnFocus.focus === 'function') returnFocus.focus();
@@ -4689,6 +4876,17 @@ var FilePreview = (function () {
     openFromBuffer: openFromBuffer, close: close, closeModal: closeModal, closeDocked: closeDocked,
     restoreDocked: restoreDocked, switchDockContext: switchDockContext, hitTest: hitTest,
     activateHit: _activateLink,
+    // Lets BlockHost put tool blocks in this dock's tab strip.
+    blockDock: {
+      available: _canDockRight,
+      sync: _syncBlockTabs,
+      activate: _activateBlockTab,
+      hide: function () {
+        _hideDock();
+        if (_dockRestoreButton) _dockRestoreButton.focus();
+      },
+      onChange: function (listener) { _blockListener = listener; },
+    },
     // Test seam (no DOM): exercised by test/file-preview-links.test.js.
     _test: {
       getLogicalLine: _getLogicalLine,
@@ -4730,6 +4928,7 @@ var FilePreview = (function () {
       },
       legacyDockStateKey: LEGACY_DOCK_STATE_KEY,
       dockContextKey: function () { return _dockContextKey; },
+      dockCurrent: _dockCurrentPreview,
       buildLinkRange: function (logical, f) {
         var start = _logicalStrOffsetToTermPos(logical.rows, f.startCol);
         var end = _logicalStrOffsetToTermPos(logical.rows, f.endCol - 1);
