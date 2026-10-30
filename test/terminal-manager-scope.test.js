@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const { spawn } = vi.hoisted(() => ({ spawn: vi.fn() }));
 
@@ -11,7 +11,10 @@ function fakeTerm() {
   return {
     handlers,
     onData: vi.fn((fn) => { handlers.data = fn; return { dispose: vi.fn() }; }),
-    onExit: vi.fn((fn) => { handlers.exit = fn; }),
+    onExit: vi.fn((fn) => {
+      const earlier = handlers.exit;
+      handlers.exit = earlier ? (info) => { earlier(info); fn(info); } : fn;
+    }),
     write: vi.fn(),
     resize: vi.fn(),
     kill: vi.fn(),
@@ -90,23 +93,218 @@ describe('TerminalManager PTY termination', () => {
     spawn.mockImplementation(() => fakeTerm());
   });
 
-  // Windows has no process groups; the ConPTY is closed instead.
-  it.runIf(process.platform === 'win32')('closes the PTY directly on Windows', () => {
-    const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
-    try {
+  describe('on Windows', () => {
+    let reaper;
+    const windows = () => new TerminalManager({ platform: 'win32', tmux: async () => '$7\n', consoleReaper: reaper });
+    let processKill;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      processKill = vi.spyOn(process, 'kill').mockReturnValue(true);
+      reaper = { clientEnded: vi.fn() };
+    });
+
+    afterEach(() => {
+      processKill.mockRestore();
+      vi.useRealTimers();
+    });
+
+    const message = (ws, body) => ws.listeners.message(Buffer.from(JSON.stringify(body)));
+    const started = (term) => term.handlers.data('\x1b[?1049h');
+
+    // node-pty's kill ends everything on the console, and that can be the tmux server.
+    it('ends only the client process, at any moment, never through node-pty', () => {
       const term = fakeTerm();
       spawn.mockReturnValue(term);
-      const manager = new TerminalManager();
       const ws = fakeWs();
+      windows().create(ws, '%1');
 
-      manager.create(ws, '%1');
       ws.listeners.close();
+      expect(processKill).toHaveBeenCalledTimes(1);
+      expect(processKill).toHaveBeenCalledWith(4242);
+      expect(term.kill).not.toHaveBeenCalled();
+    });
 
+    it('once a client has exited, releases its reader and hands its console to the reaper', () => {
+      const term = fakeTerm();
+      spawn.mockReturnValue(term);
+      const ws = fakeWs();
+      windows().create(ws, '%1');
+      ws.listeners.close();
+      expect(reaper.clientEnded).not.toHaveBeenCalled();
+
+      term.handlers.exit({ exitCode: 0 });
       expect(term.kill).toHaveBeenCalledTimes(1);
-      expect(kill).not.toHaveBeenCalled();
-    } finally {
-      kill.mockRestore();
-    }
+      expect(reaper.clientEnded).toHaveBeenCalledWith({ from: expect.any(Number), to: expect.any(Number) });
+    });
+
+    it('does the same for a client that exits by itself', () => {
+      const term = fakeTerm();
+      spawn.mockReturnValue(term);
+      const ws = fakeWs();
+      windows().create(ws, '%1');
+
+      term.handlers.exit({ exitCode: 0 });
+      expect(reaper.clientEnded).toHaveBeenCalledTimes(1);
+      expect(processKill).not.toHaveBeenCalled();
+      expect(ws.close).toHaveBeenCalledWith(1000, expect.any(String));
+    });
+
+    it('does not end a client that has already left', () => {
+      const term = fakeTerm();
+      spawn.mockReturnValue(term);
+      const ws = fakeWs();
+      const manager = windows();
+      const id = manager.create(ws, '%1');
+      term.handlers.exit({ exitCode: 0 });
+      manager.destroy(id);
+      expect(processKill).not.toHaveBeenCalled();
+    });
+
+    it('waits for the process id: process.kill(0) would end the panel itself', async () => {
+      const term = { ...fakeTerm(), pid: 0 };
+      spawn.mockReturnValue(term);
+      const ws = fakeWs();
+      windows().create(ws, '%1');
+
+      ws.listeners.close();
+      await vi.advanceTimersByTimeAsync(50);
+      expect(processKill).not.toHaveBeenCalled();
+
+      term.pid = 555;
+      await vi.advanceTimersByTimeAsync(10);
+      expect(processKill).toHaveBeenCalledWith(555);
+    });
+
+    it('still closes the PTY of a client that is not tmux, like a hub\'s ssh', () => {
+      const term = fakeTerm();
+      spawn.mockReturnValue(term);
+      const ws = fakeWs();
+      windows().create(ws, '%1', 80, 24, false, { scope: 'box', spawn: { file: 'ssh', args: [] } });
+
+      message(ws, { type: 'resize', cols: 120, rows: 40 });
+      expect(term.resize).toHaveBeenCalledWith(120, 40);
+      expect(spawn).toHaveBeenCalledTimes(1);
+
+      ws.listeners.close();
+      expect(term.kill).toHaveBeenCalledTimes(1);
+      expect(processKill).not.toHaveBeenCalled();
+    });
+
+    it('never resizes a running client: a new one starts at the new size', async () => {
+      const first = fakeTerm();
+      const second = fakeTerm();
+      spawn.mockReturnValueOnce(first).mockReturnValueOnce(second);
+      const ws = fakeWs();
+      windows().create(ws, '%1', 100, 30);
+      started(first);
+
+      message(ws, { type: 'resize', cols: 120, rows: 40 });
+      await vi.advanceTimersByTimeAsync(800);
+
+      expect(first.resize).not.toHaveBeenCalled();
+      const [file, args, options] = spawn.mock.calls[1];
+      expect(file).toBe(spawn.mock.calls[0][0]);
+      expect(args).toEqual(['-u', 'attach-session', '-d', '-t', '$7']);
+      expect(options).toMatchObject({ cols: 120, rows: 40 });
+
+      // The old client is ended the safe way, and only that one.
+      expect(processKill).toHaveBeenCalledTimes(1);
+      expect(processKill).toHaveBeenCalledWith(4242);
+      expect(first.kill).not.toHaveBeenCalled();
+      expect(second.kill).not.toHaveBeenCalled();
+
+      // Input goes to the new client, and the old one leaving is not a disconnect.
+      message(ws, { type: 'input', data: 'x' });
+      expect(second.write).toHaveBeenCalledWith('x');
+      expect(first.write).not.toHaveBeenCalled();
+      first.handlers.exit({ exitCode: 0 });
+      expect(ws.close).not.toHaveBeenCalled();
+      expect(reaper.clientEnded).toHaveBeenCalledTimes(1);
+      expect(second.kill).not.toHaveBeenCalled();
+
+      // The current client exiting is a disconnect.
+      second.handlers.exit({ exitCode: 0 });
+      expect(ws.close).toHaveBeenCalledWith(1000, expect.any(String));
+    });
+
+    it('asks for the size it already has without touching anything', async () => {
+      const term = fakeTerm();
+      spawn.mockReturnValue(term);
+      const ws = fakeWs();
+      windows().create(ws, '%1', 100, 30);
+      started(term);
+
+      message(ws, { type: 'resize', cols: 100, rows: 30 });
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(term.resize).not.toHaveBeenCalled();
+    });
+
+    it('starts one client at a time and ends on the latest size', async () => {
+      const terms = [fakeTerm(), fakeTerm(), fakeTerm()];
+      let next = 0;
+      spawn.mockImplementation(() => terms[next++]);
+      const ws = fakeWs();
+      windows().create(ws, '%1', 100, 30);
+
+      // None of these may start a client before the first one has settled.
+      message(ws, { type: 'resize', cols: 110, rows: 31 });
+      message(ws, { type: 'resize', cols: 120, rows: 32 });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(spawn).toHaveBeenCalledTimes(1);
+
+      started(terms[0]);
+      await vi.advanceTimersByTimeAsync(800);
+      expect(spawn).toHaveBeenCalledTimes(2);
+      expect(spawn.mock.calls[1][2]).toMatchObject({ cols: 120, rows: 32 });
+
+      message(ws, { type: 'resize', cols: 130, rows: 33 });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(spawn).toHaveBeenCalledTimes(2);
+
+      started(terms[1]);
+      await vi.advanceTimersByTimeAsync(800);
+      expect(spawn).toHaveBeenCalledTimes(3);
+      expect(spawn.mock.calls[2][2]).toMatchObject({ cols: 130, rows: 33 });
+    });
+
+    it('keeps the session a closed pane was in', async () => {
+      const terms = [fakeTerm(), fakeTerm(), fakeTerm()];
+      let next = 0;
+      spawn.mockImplementation(() => terms[next++]);
+      const answers = ['$7\n'];
+      const manager = new TerminalManager({
+        platform: 'win32',
+        consoleReaper: reaper,
+        tmux: async () => {
+          if (answers.length) return answers.shift();
+          throw new Error("can't find pane");
+        },
+      });
+      const ws = fakeWs();
+      manager.create(ws, '%1', 100, 30);
+      started(terms[0]);
+      message(ws, { type: 'resize', cols: 120, rows: 40 });
+      await vi.advanceTimersByTimeAsync(800);
+      started(terms[1]);
+      await vi.advanceTimersByTimeAsync(800);
+      message(ws, { type: 'resize', cols: 130, rows: 41 });
+      await vi.advanceTimersByTimeAsync(800);
+      expect(spawn.mock.calls[2][1]).toEqual(['-u', 'attach-session', '-d', '-t', '$7']);
+    });
+
+    it('starts nothing for a connection that closed in the meantime', async () => {
+      const term = fakeTerm();
+      spawn.mockReturnValue(term);
+      const ws = fakeWs();
+      windows().create(ws, '%1', 100, 30);
+      started(term);
+      message(ws, { type: 'resize', cols: 120, rows: 40 });
+      ws.listeners.close();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(spawn).toHaveBeenCalledTimes(1);
+    });
   });
 
   it.skipIf(process.platform === 'win32')('keeps the SIGKILL fallback after a WebSocket closes', () => {

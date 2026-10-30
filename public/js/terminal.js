@@ -624,14 +624,14 @@ var TERMINAL_FONT_FAMILY = "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mo
 var CORE_FONT_WAIT_MS = 1500;
 
 /** The core font arrived after the terminal started: measure cells again and refit. */
-function _remeasureTerminalFont(term, fitAddon, ws, termContainer) {
+function _remeasureTerminalFont(term, fitAddon, termContainer) {
   // Setting the same family is a no-op in xterm; toggling forces a new measurement.
   term.options.fontFamily = 'monospace';
   term.options.fontFamily = TERMINAL_FONT_FAMILY;
   if (typeof term.clearTextureAtlas === 'function') term.clearTextureAtlas();
   if (termContainer.clientWidth > 0 && termContainer.clientHeight > 0) {
     fitAddon.fit();
-    _syncTerminalSize(ws, term, true);
+    _syncTerminalSize(terminalState.ws, term, true);
   }
   term.refresh(0, term.rows - 1);
 }
@@ -725,10 +725,11 @@ function createTerminalInstance(paneCols, paneRows, nozoom) {
 
 // === Connect WebSocket ===
 
-function connectTerminalWs(paneId, term, nozoom) {
+function connectTerminalWs(paneId, term, nozoom, onReady) {
   // The adapter decides between the server-scoped and the legacy address; a
   // hardcoded /ws/terminal/:paneId would always attach to the local host.
-  var wsUrl = TerminalTarget.wsUrl(paneId, nozoom);
+  // Attach at the real size: on a Windows host a later change costs a new client.
+  var wsUrl = TerminalTarget.wsUrl(paneId, nozoom, term.cols, term.rows);
 
   var ws = new WebSocket(wsUrl);
 
@@ -753,6 +754,7 @@ function connectTerminalWs(paneId, term, nozoom) {
         ws._sentCols = null;
         ws._sentRows = null;
         _syncTerminalSize(ws, term, true);
+        if (onReady) onReady();
       }
     } catch (_err) {
       // Ignore parse errors
@@ -1297,7 +1299,7 @@ function _mountTerminal(termContainer, nozoom) {
     if (ready[0] !== false) term.options.fontFamily = TERMINAL_FONT_FAMILY;
     if (ready[0] === null) {
       TerminalFonts.coreReady(0).then(function (loaded) {
-        if (loaded && terminalState.term === term) _remeasureTerminalFont(term, fitAddon, ws, termContainer);
+        if (loaded && terminalState.term === term) _remeasureTerminalFont(term, fitAddon, termContainer);
       });
     }
     if (typeof WebglAddon !== 'undefined') {
@@ -1320,7 +1322,7 @@ function _mountTerminal(termContainer, nozoom) {
     }
     if (termContainer.clientWidth > 0 && termContainer.clientHeight > 0) {
       fitAddon.fit();
-      _syncTerminalSize(ws, term, true);
+      _syncTerminalSize(terminalState.ws, term, true);
     }
     term.refresh(0, term.rows - 1);
     // Last: a slice problem must never cost the terminal its renderer.
@@ -1335,7 +1337,7 @@ function _mountTerminal(termContainer, nozoom) {
     fitAddon.fit();
     // The socket can open before this final fit. Send the fitted dimensions
     // again so tmux never keeps drawing at the default/narrow PTY width.
-    _syncTerminalSize(ws, term, true);
+    _syncTerminalSize(terminalState.ws, term, true);
     // On mobile, don't auto-focus to avoid browser scroll-to-focus pushing header away
     if (!_isMobileTerminal()) {
       term.focus();
@@ -1348,7 +1350,15 @@ function _mountTerminal(termContainer, nozoom) {
 
 
   // Connect WebSocket (nozoom = split mode, shows full window with native tmux splits)
-  var ws = connectTerminalWs(state.currentPane, term, nozoom);
+  // Reconnecting replaces the socket, so everything below reads terminalState.ws
+  // when it runs; a socket captured here would be closed after the first drop.
+  if (termContainer.clientWidth && termContainer.clientHeight) fitAddon.fit();
+  terminalState.ws = connectTerminalWs(state.currentPane, term, nozoom);
+
+  function _openTerminalWs() {
+    var current = terminalState.term === term ? terminalState.ws : null;
+    return current && current.readyState === WebSocket.OPEN ? current : null;
+  }
 
   // Enable touch scrolling on mobile.
   // xterm.js preventDefault()s all touch events on its canvas, and tmux uses
@@ -1551,7 +1561,8 @@ function _mountTerminal(termContainer, nozoom) {
   // Emit `lines` worth of SGR wheel events at the given screen point.
   // Shared by finger-tracking drag and inertial fling.
   function _sendWheelLines(lines, clientX, clientY) {
-    if (ws.readyState !== WebSocket.OPEN) return false;
+    var ws = _openTerminalWs();
+    if (!ws) return false;
     // Send the wheel event at the finger's terminal cell, NOT 1;1 — tmux
     // treats the 1;1 corner as outside any pane and drops WheelUpPane, so
     // a hard-coded 1;1 never scrolls. Cell coords are 1-based; clamp to >=2
@@ -1617,7 +1628,7 @@ function _mountTerminal(termContainer, nozoom) {
 
     function step(t) {
       flingRaf = null;
-      if (ws.readyState !== WebSocket.OPEN) return;
+      if (!_openTerminalWs()) return;
       if (!lastT) {
         lastT = t;
         flingRaf = requestAnimationFrame(step);
@@ -1738,7 +1749,7 @@ function _mountTerminal(termContainer, nozoom) {
         term.options.fontSize = newSize;
         fitAddon.fit();
         cellCache = null;
-        _syncTerminalSize(ws, term);
+        _syncTerminalSize(terminalState.ws, term);
       }
       e.preventDefault();
       return;
@@ -1879,7 +1890,7 @@ function _mountTerminal(termContainer, nozoom) {
     if (terminalState.term !== term || !termContainer.clientWidth || !termContainer.clientHeight) return;
     fitAddon.fit();
     cellCache = null;
-    _syncTerminalSize(ws, term);
+    _syncTerminalSize(terminalState.ws, term);
   });
   resizeObserver.observe(termContainer);
 
@@ -1925,7 +1936,7 @@ function _mountTerminal(termContainer, nozoom) {
       requestAnimationFrame(function () {
         if (terminalState.term !== term) return;
         fitAddon.fit();
-        _syncTerminalSize(ws, term);
+        _syncTerminalSize(terminalState.ws, term);
       });
     };
     window.visualViewport.addEventListener('resize', vpHandler);
@@ -1934,7 +1945,6 @@ function _mountTerminal(termContainer, nozoom) {
 
   // Store references for cleanup
   terminalState.term = term;
-  terminalState.ws = ws;
   terminalState.fitAddon = fitAddon;
   terminalState.resizeObserver = resizeObserver;
   terminalState._vpHandler = vpHandler;
@@ -1975,15 +1985,14 @@ function _showReconnectOverlay(term, paneId, nozoom) {
 
     if (textEl) textEl.textContent = '正在重连... (' + attempt + '/' + maxAttempts + ')';
 
-    var ws = connectTerminalWs(paneId, term, nozoom);
-
-    ws.onopen = function () {
-      // Reconnected — remove overlay, update state
+    // `open` only means the socket is up, it can still be refused. `ready` means
+    // the pane is back, so the retries end and the next drop starts over.
+    var ws = connectTerminalWs(paneId, term, nozoom, function () {
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
       terminalState.ws = ws;
-      // Re-send resize
-      _syncTerminalSize(ws, term, true);
-    };
+      ws.onclose = onDropped;
+    });
+    var onDropped = ws.onclose;
 
     ws.onclose = function (event) {
       // Stop retrying on a clean close — we were detached/taken over, not

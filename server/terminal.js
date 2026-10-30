@@ -6,12 +6,24 @@
  */
 
 import pty from 'node-pty';
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { TMUX_BIN } from './msys.js';
+import { promisify } from 'node:util';
+import { TMUX_BIN, msysExecArgs } from './msys.js';
+import { ConsoleReaper } from './terminal/console-reaper.js';
+
+const execFileAsync = promisify(execFile);
 
 const PANE_ID_PATTERN = /^%\d+$/;
 const PING_INTERVAL_MS = 30_000;
 const REAP_INTERVAL_MS = 60_000;
+
+// A tmux client has started once it enters the alternate screen.
+const CLIENT_STARTED_MARKER = '\x1b[?1049h';
+const CLIENT_START_WAIT_MS = 1500;
+// How long a Windows client stays after it has started before it may be replaced.
+// With about 300ms to start, that is the 1100ms lifetime measured clean.
+const CLIENT_SETTLE_MS = 800;
 
 // Cap the carry-over buffer so a runaway/never-terminated OSC 52 can't grow
 // unbounded. tmux's set-clipboard payload caps well under this.
@@ -152,6 +164,14 @@ export function buildTmuxAttachArgs(paneId, { nozoom = false } = {}) {
   ];
 }
 
+/**
+ * A new client for a session that is already on screen. Unlike the first attach
+ * it selects nothing, so the current window, pane and zoom stay as the user left them.
+ */
+export function buildTmuxReattachArgs(target) {
+  return ['-u', 'attach-session', '-d', '-t', target];
+}
+
 /** Local attach PTY: `sh -c` on Unix, MSYS2 tmux itself on Windows. */
 export function localAttachSpawnSpec(paneId, { nozoom = false, platform = process.platform } = {}) {
   if (platform === 'win32') return { file: TMUX_BIN, args: buildTmuxAttachArgs(paneId, { nozoom }) };
@@ -159,8 +179,14 @@ export function localAttachSpawnSpec(paneId, { nozoom = false, platform = proces
 }
 
 export class TerminalManager {
-  /** @param {{ maxConnectionsPerPane?: number }} [options] */
+  /** @param {{ maxConnectionsPerPane?: number, platform?: string, tmux?: (args: string[]) => Promise<string>, consoleReaper?: ConsoleReaper }} [options] */
   constructor(options = {}) {
+    this.platform = options.platform ?? process.platform;
+    this._consoleReaper = options.consoleReaper ?? new ConsoleReaper();
+    this._tmux = options.tmux ?? (async (args) => String((await execFileAsync(
+      TMUX_BIN, ...msysExecArgs(args, { timeout: 5000, windowsHide: true }),
+    )).stdout));
+
     /** @type {Map<string, { ws: import('ws').WebSocket, pty: import('node-pty').IPty, paneId: string, pingTimer: ReturnType<typeof setInterval> | null, killTimer: ReturnType<typeof setTimeout> | null, dataDisposable: import('node-pty').IDisposable | null, alive: boolean }>} */
     this.connections = new Map();
 
@@ -244,13 +270,14 @@ export class TerminalManager {
 
     const connectionId = randomUUID();
 
-    const spawnSpec = options.spawn || localAttachSpawnSpec(paneId, { nozoom });
-    let term;
-    try {
-      term = pty.spawn(spawnSpec.file, spawnSpec.args, {
+    const spawnSpec = options.spawn || localAttachSpawnSpec(paneId, { nozoom, platform: this.platform });
+    const spawnWindows = new WeakMap();
+    const spawnPty = (args, size) => {
+      const from = Date.now();
+      const spawned = pty.spawn(spawnSpec.file, args, {
         name: 'xterm-256color',
-        cols: cols || 80,
-        rows: rows || 24,
+        cols: size.cols || 80,
+        rows: size.rows || 24,
         // launchd/systemd services often have no locale. tmux then treats the
         // attached client as non-UTF-8 and replaces wide characters with `_`
         // before they ever reach xterm.js.
@@ -261,6 +288,12 @@ export class TerminalManager {
           LC_CTYPE: process.env.LC_CTYPE || process.env.LANG || 'C.UTF-8',
         },
       });
+      spawnWindows.set(spawned, { from, to: Date.now() });
+      return spawned;
+    };
+    let term;
+    try {
+      term = spawnPty(spawnSpec.args, { cols, rows });
     } catch {
       return reject('TERMINAL_SPAWN_FAILED', 1011, 'Terminal process could not be started');
     }
@@ -279,46 +312,20 @@ export class TerminalManager {
       output: createOutputBatcher((data) => {
         if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'output', data }));
       }),
+      onPtyExit: options.onPtyExit,
+      spawnPty,
+      spawnWindows,
+      // See _setClientSize. A basic-mode host's ssh client is not an MSYS2 tmux client.
+      replaceToResize: this.platform === 'win32' && !options.spawn,
+      size: { cols: cols || 80, rows: rows || 24 },
+      wantedSize: null,
+      resizing: false,
+      sessionTarget: null,
     };
     this.connections.set(connectionId, conn);
     this.paneConnectionCount.set(quotaKey, currentCount + 1);
 
-    // PTY → WebSocket
-    // Also intercept OSC 52 clipboard sequences from tmux. Long selections can
-    // span multiple PTY reads, so a stateful parser is needed instead of a
-    // single-chunk regex.
-    conn.dataDisposable = term.onData((data) => {
-      if (ws.readyState !== ws.OPEN) return;
-
-      const { clipboard, cleaned, pending } = extractOsc52(conn.osc52Pending + data);
-      conn.osc52Pending = pending;
-
-      for (const text of clipboard) {
-        // Output before the copy stays before it.
-        conn.output.flush();
-        ws.send(JSON.stringify({ type: 'clipboard', data: text }));
-      }
-      if (cleaned.length > 0) conn.output.push(cleaned);
-    });  // disposable stored in conn.dataDisposable
-
-    // PTY exit → close WebSocket + cleanup
-    term.onExit(({ exitCode, signal }) => {
-      conn.output.flush();
-      // The new server-scoped entry point emits a structured exit frame here so
-      // tmux and SSH panes speak the same protocol; the legacy caller passes
-      // nothing and keeps the original close-only behavior.
-      if (typeof options.onPtyExit === 'function') {
-        try {
-          options.onPtyExit({ code: exitCode ?? null, signal: signal ?? null, reason: 'tmux_client_exit' });
-        } catch {
-          // A reporting failure must not block cleanup.
-        }
-      }
-      if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) {
-        ws.close(1000, `PTY exited with code ${exitCode}`);
-      }
-      this._cleanup(connectionId);
-    });
+    conn.started = this._bindPty(connectionId, conn, term);
 
     // WebSocket → PTY
     ws.on('message', (raw) => {
@@ -332,7 +339,7 @@ export class TerminalManager {
       switch (msg.type) {
         case 'input':
           if (typeof msg.data === 'string') {
-            term.write(msg.data);
+            conn.pty.write(msg.data);
           }
           break;
         case 'resize':
@@ -340,7 +347,8 @@ export class TerminalManager {
             typeof msg.cols === 'number' && msg.cols > 0 &&
             typeof msg.rows === 'number' && msg.rows > 0
           ) {
-            term.resize(msg.cols, msg.rows);
+            if (conn.replaceToResize) this._setClientSize(connectionId, conn, msg.cols, msg.rows);
+            else conn.pty.resize(msg.cols, msg.rows);
           }
           break;
         default:
@@ -379,6 +387,154 @@ export class TerminalManager {
     }, PING_INTERVAL_MS);
 
     return connectionId;
+  }
+
+  /**
+   * Connects a PTY to the connection's socket.
+   * @returns {Promise<void>|undefined} when clients get replaced to resize,
+   *   resolves once this one has started: the next may not race it to attach.
+   * @private
+   */
+  _bindPty(connectionId, conn, term) {
+    const { ws } = conn;
+    let started = () => {};
+    let startWait = null;
+    const startedPromise = conn.replaceToResize ? new Promise((resolve) => {
+      started = () => {
+        clearTimeout(startWait);
+        resolve();
+      };
+      startWait = setTimeout(started, CLIENT_START_WAIT_MS);
+      if (startWait.unref) startWait.unref();
+    }) : undefined;
+    // Replacing a client sooner than this can leak its terminal query replies into
+    // the pane as typed text.
+    conn.settled = startedPromise && startedPromise.then(() => new Promise((resolve) => {
+      const settle = setTimeout(resolve, CLIENT_SETTLE_MS);
+      if (settle.unref) settle.unref();
+    }));
+
+    // PTY → WebSocket
+    // Also intercept OSC 52 clipboard sequences from tmux. Long selections can
+    // span multiple PTY reads, so a stateful parser is needed instead of a
+    // single-chunk regex.
+    conn.dataDisposable = term.onData((data) => {
+      if (data.includes(CLIENT_STARTED_MARKER)) started();
+      if (ws.readyState !== ws.OPEN) return;
+
+      const { clipboard, cleaned, pending } = extractOsc52(conn.osc52Pending + data);
+      conn.osc52Pending = pending;
+
+      for (const text of clipboard) {
+        // Output before the copy stays before it.
+        conn.output.flush();
+        ws.send(JSON.stringify({ type: 'clipboard', data: text }));
+      }
+      if (cleaned.length > 0) conn.output.push(cleaned);
+    });  // disposable stored in conn.dataDisposable
+
+    // PTY exit → close WebSocket + cleanup
+    term.onExit(({ exitCode, signal }) => {
+      started();
+      if (conn.replaceToResize) {
+        // Too late for this to close the console, which is safe: it releases
+        // node-pty's reader, and the console gets ended once tmux has let go of it.
+        try { term.kill(); } catch { /* already gone */ }
+        const spawnWindow = conn.spawnWindows.get(term);
+        if (spawnWindow) this._consoleReaper.clientEnded(spawnWindow);
+      }
+      // A client replaced at a new size is meant to leave; the connection goes on.
+      if (conn.pty !== term) return;
+      conn.ptyExited = true;
+      conn.output.flush();
+      // The new server-scoped entry point emits a structured exit frame here so
+      // tmux and SSH panes speak the same protocol; the legacy caller passes
+      // nothing and keeps the original close-only behavior.
+      if (typeof conn.onPtyExit === 'function') {
+        try {
+          conn.onPtyExit({ code: exitCode ?? null, signal: signal ?? null, reason: 'tmux_client_exit' });
+        } catch {
+          // A reporting failure must not block cleanup.
+        }
+      }
+      if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) {
+        ws.close(1000, `PTY exited with code ${exitCode}`);
+      }
+      this._cleanup(connectionId);
+    });
+
+    return startedPromise;
+  }
+
+  /**
+   * MSYS2 tmux on Windows: resizing the ConPTY under a running client can end the
+   * tmux server and every session with it, and a resize that does arrive is lost
+   * during client startup (docs/known-issues.md). So the size of a running client
+   * never changes. A new one starts at the new size and `attach-session -d`
+   * replaces the old. One at a time; the latest size wins.
+   * @private
+   */
+  async _setClientSize(connectionId, conn, cols, rows) {
+    conn.wantedSize = { cols, rows };
+    if (conn.resizing) return;
+    conn.resizing = true;
+    try {
+      await conn.settled;
+      while (this.connections.get(connectionId) === conn
+        && (conn.wantedSize.cols !== conn.size.cols || conn.wantedSize.rows !== conn.size.rows)) {
+        await this._replaceClient(connectionId, conn, conn.wantedSize);
+      }
+    } finally {
+      conn.resizing = false;
+    }
+  }
+
+  /** @private */
+  async _replaceClient(connectionId, conn, size) {
+    try {
+      const session = (await this._tmux(['display-message', '-p', '-t', conn.paneId, '#{session_id}'])).trim();
+      if (session) conn.sessionTarget = session;
+    } catch {
+      // The pane may have closed since; the session it was in is still right.
+    }
+    if (this.connections.get(connectionId) !== conn) return;
+
+    const previous = conn.pty;
+    let next;
+    try {
+      next = conn.spawnPty(buildTmuxReattachArgs(conn.sessionTarget || conn.paneId), size);
+    } catch {
+      conn.wantedSize = conn.size;
+      conn.ws.close(1011, 'Terminal process could not be started');
+      return;
+    }
+
+    if (conn.dataDisposable) conn.dataDisposable.dispose();
+    conn.pty = next;
+    conn.size = size;
+    conn.osc52Pending = '';
+    this._bindPty(connectionId, conn, next);
+    this._endClient(previous);
+
+    await conn.settled;
+  }
+
+  /**
+   * Ends a Windows tmux client by its own process and nothing else. node-pty's
+   * kill ends every process on the console and closes it, and the tmux server,
+   * attached at that moment, goes with it and leaves no trace (docs/known-issues.md).
+   * What is left of the client is released when it exits; see _bindPty.
+   * @private
+   */
+  _endClient(term, attempts = 0) {
+    if (term.pid > 0) {
+      try { process.kill(term.pid); } catch { /* already gone */ }
+      return;
+    }
+    // Still starting. The pid is 0 until then, and process.kill(0) ends this process.
+    if (attempts >= 500) return;
+    const retry = setTimeout(() => this._endClient(term, attempts + 1), 10);
+    if (retry.unref) retry.unref();
   }
 
   /**
@@ -421,10 +577,15 @@ export class TerminalManager {
 
     const pid = conn.pty.pid;
 
-    // Windows has no process groups or signals; node-pty closes the ConPTY,
-    // which ends the attached tmux client.
-    if (process.platform === 'win32') {
-      try { conn.pty.kill(); } catch { /* already gone */ }
+    // Windows has no process groups or signals. A tmux client is ended on its
+    // own; anything else (a hub's ssh client) has its ConPTY closed by node-pty.
+    if (this.platform === 'win32') {
+      if (conn.ptyExited) return;
+      if (conn.replaceToResize) {
+        this._endClient(conn.pty);
+      } else {
+        try { conn.pty.kill(); } catch { /* already gone */ }
+      }
       return;
     }
 

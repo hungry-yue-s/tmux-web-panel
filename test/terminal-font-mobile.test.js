@@ -139,7 +139,7 @@ it('retains readable A± sizes across windows, dock widths, reloads and servers'
 
 it('keeps a working renderer after font/GPU failure and ignores disposed font waits', async () => {
   const source = TERMINAL_SRC.slice(TERMINAL_SRC.indexOf('  var fontsReady ='), TERMINAL_SRC.indexOf('// Small delay to ensure DOM is ready for fitting'));
-  const start = new Function('document', 'term', 'terminalState', 'WebglAddon', 'TERMINAL_FONT_FAMILY', 'termContainer', 'fitAddon', 'ws', '_syncTerminalSize', source + '\nreturn fontWriteCleanup;');
+  const start = new Function('document', 'term', 'terminalState', 'WebglAddon', 'TERMINAL_FONT_FAMILY', 'termContainer', 'fitAddon', '_syncTerminalSize', source + '\nreturn fontWriteCleanup;');
   for (const [fontFails, disposed] of [[true, false], [false, false], [false, true]]) {
     let parsed;
     const listener = { dispose: vi.fn() };
@@ -151,7 +151,7 @@ it('keeps a working renderer after font/GPU failure and ignores disposed font wa
     const gpu = { onContextLoss: vi.fn(), dispose: vi.fn() };
     const state = { term };
     const cancel = start({ fonts: { load: () => fontFails ? Promise.reject(new Error('font unavailable')) : Promise.resolve([]) } }, term, state,
-      { WebglAddon: function () { return gpu; } }, 'Maple Mono', { clientWidth: 700, clientHeight: 500 }, { fit: vi.fn() }, {}, vi.fn());
+      { WebglAddon: function () { return gpu; } }, 'Maple Mono', { clientWidth: 700, clientHeight: 500 }, { fit: vi.fn() }, vi.fn());
     if (disposed) { state.term = null; cancel(); }
     else parsed();
     await new Promise(resolve => setTimeout(resolve, 0));
@@ -252,7 +252,7 @@ describe('initial terminal fit', () => {
     );
 
     expect(delayedFit.indexOf('fitAddon.fit()')).toBeGreaterThan(-1);
-    expect(delayedFit.indexOf('_syncTerminalSize(ws, term, true)'))
+    expect(delayedFit.indexOf('_syncTerminalSize(terminalState.ws, term, true)'))
       .toBeGreaterThan(delayedFit.indexOf('fitAddon.fit()'));
   });
 
@@ -282,8 +282,8 @@ describe('mobile keyboard viewport', () => {
     const fit = vi.fn();
     const sync = vi.fn();
     const frames = [];
-    const install = new Function('window', 'termContainer', 'term', 'terminalState', 'fitAddon', 'ws', '_syncTerminalSize', '_isMobileTerminal', 'requestAnimationFrame', source);
-    install({ visualViewport: viewport }, container, term, { term }, { fit }, {}, sync, () => true, fn => frames.push(fn));
+    const install = new Function('window', 'termContainer', 'term', 'terminalState', 'fitAddon', '_syncTerminalSize', '_isMobileTerminal', 'requestAnimationFrame', source);
+    install({ visualViewport: viewport }, container, term, { term }, { fit }, sync, () => true, fn => frames.push(fn));
     viewport.height = 340;
     viewport.offsetTop = 20;
     listeners.resize();
