@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -14,6 +14,7 @@ import {
   NodeLink,
   forwardRequestHeaders,
   forwardResponseHeaders,
+  pinnedAgent,
   stripTokenParam,
 } from '../server/hub/node-link.js';
 import { certificateFingerprint } from '../server/node/identity.js';
@@ -575,6 +576,429 @@ describe('NodeLink with a link that stalls', () => {
   });
 });
 
+describe('NodeLink health checks on a link in use', () => {
+  const INFO = JSON.stringify({ success: true, data: { protocol: 1, hostname: 'node-1' } });
+  let warn;
+  const cleanups = [];
+  afterEach(() => {
+    warn.mockRestore();
+    for (const clean of cleanups.splice(0)) clean();
+  });
+  beforeEach(() => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  /**
+   * A real node that can break one request at a time: `failNext` resets the TCP
+   * connection the next probe arrived on, `holdNext` keeps it waiting. /stream stays
+   * open until told otherwise, as a terminal or a download would.
+   */
+  async function startNode() {
+    const state = { probes: [], failNext: 0, holdNext: false, held: [], answer401: false };
+    const server = http.createServer((req, res) => {
+      if (req.url === '/stream') {
+        res.writeHead(200);
+        res.write('start');
+        state.finishStream = () => res.end('end');
+        return;
+      }
+      state.probes.push({ method: req.method, socket: req.socket });
+      if (state.failNext > 0) {
+        state.failNext -= 1;
+        req.socket.resetAndDestroy();
+        return;
+      }
+      if (state.holdNext) {
+        state.holdNext = false;
+        state.held.push({ req, res });
+        return;
+      }
+      if (state.answer401) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ success: false }));
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(INFO);
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    state.server = server;
+    state.port = server.address().port;
+    cleanups.push(() => { server.closeAllConnections(); server.close(); });
+    return state;
+  }
+
+  function linkOn(node, connection = fakeConnection(pairingFor(node.port))) {
+    const link = new NodeLink({ connection, freePort: async () => node.port });
+    cleanups.push(() => link.close());
+    return { link, connection };
+  }
+
+  async function hubOn(link) {
+    const hub = await hubFor(link);
+    cleanups.push(() => hub.server.close());
+    return hub;
+  }
+
+  /** A long download through the hub, already flowing. */
+  function openStream(hub) {
+    return new Promise((resolve, reject) => {
+      const req = http.get({ host: '127.0.0.1', port: hub.port, path: '/stream' }, (res) => {
+        const stream = { text: '', ended: false, cut: false };
+        res.on('data', (chunk) => { stream.text += chunk; });
+        res.on('end', () => { stream.ended = true; });
+        res.on('close', () => { if (!stream.ended) stream.cut = true; });
+        res.on('error', () => { stream.cut = true; });
+        res.once('data', () => resolve(stream));
+      });
+      req.on('error', reject);
+    });
+  }
+
+  const linkLostLines = () => warn.mock.calls
+    .filter(([tag]) => tag === '[node-link] link lost')
+    .map(([, line]) => JSON.parse(line));
+
+  it('survives a probe failing on a reused socket: the stream goes on and the fresh probe answers', async () => {
+    const node = await startNode();
+    const { link, connection } = linkOn(node);
+    const hub = await hubOn(link);
+    const stream = await openStream(hub);
+    await link.info();
+
+    node.failNext = 1;
+    await expect(link.info()).resolves.toMatchObject({ hostname: 'node-1' });
+
+    // Real reuse, and a really new connection for the second opinion.
+    expect(node.probes).toHaveLength(3);
+    expect(node.probes[1].socket).toBe(node.probes[0].socket);
+    expect(node.probes[2].socket).not.toBe(node.probes[1].socket);
+
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
+    expect(stream.cut).toBe(false);
+    expect(link.ready).toBe(true);
+    expect(connection.children[0].kill).not.toHaveBeenCalled();
+    expect(connection.fetchPairing).toHaveBeenCalledOnce();
+    expect(linkLostLines()).toEqual([]);
+
+    node.finishStream();
+    await vi.waitFor(() => expect(stream.ended).toBe(true));
+    expect(stream.text).toBe('startend');
+  });
+
+  it('keeps using the normal pool afterwards', async () => {
+    const node = await startNode();
+    const { link } = linkOn(node);
+    await link.info();
+    const agent = link._agent;
+    node.failNext = 1;
+    await link.info();
+    expect(link._agent).toBe(agent);
+    await link.info();
+    expect(link._agent).toBe(agent);
+  });
+
+  it('gives up after one more try when the new connection fails too, and only then', async () => {
+    const node = await startNode();
+    const { link, connection } = linkOn(node);
+    await link.info();
+
+    node.failNext = 100;
+    const before = node.probes.length;
+    await expect(link.info()).rejects.toMatchObject({ code: ErrorCode.NODE_NOT_RUNNING });
+
+    expect(node.probes.length - before).toBe(2);
+    expect(link.ready).toBe(false);
+    expect(link._pairing).toBeNull();
+    expect(connection.children[0].kill).toHaveBeenCalledOnce();
+    const [lost] = linkLostLines();
+    expect(lost).toMatchObject({ serverId: 'node-1', reason: 'health-failed', code: 'ECONNRESET' });
+  });
+
+  it('finds a node that really moved: stopped here, reinstalled on another port', async () => {
+    const moved = await startNode();
+    const first = await startNode();
+    let port = first.port;
+    const pairings = [pairingFor(first.port), pairingFor(moved.port)];
+    const connection = fakeConnection(null, { fetchPairing: vi.fn(async () => pairings.shift()) });
+    const link = new NodeLink({ connection, freePort: async () => port });
+    cleanups.push(() => link.close());
+    await expect(link.info()).resolves.toMatchObject({ hostname: 'node-1' });
+
+    first.server.closeAllConnections();
+    first.server.close();
+    await expect(link.info()).rejects.toMatchObject({ code: ErrorCode.NODE_NOT_RUNNING });
+    expect(link.ready).toBe(false);
+
+    port = moved.port;
+    await expect(link.info()).resolves.toMatchObject({ hostname: 'node-1' });
+    expect(connection.fetchPairing).toHaveBeenCalledTimes(2);
+    expect(connection.openForward.mock.calls[1][0]).toMatchObject({ remotePort: moved.port });
+  });
+
+  it('never repeats a write, and one failing leaves the link alone', async () => {
+    const node = await startNode();
+    const { link, connection } = linkOn(node);
+    await link.info();
+    const before = node.probes.length;
+
+    node.failNext = 1;
+    await expect(link.requestJson('POST', '/api/plugins/x/tools/y', { go: true })).rejects.toMatchObject({ code: ErrorCode.NODE_NOT_RUNNING });
+
+    expect(node.probes.length - before).toBe(1);
+    expect(link.ready).toBe(true);
+    expect(connection.children[0].kill).not.toHaveBeenCalled();
+  });
+
+  it('does not repeat a relayed request either', async () => {
+    const node = await startNode();
+    const { link } = linkOn(node);
+    const hub = await hubOn(link);
+    await link.ensure();
+    const before = node.probes.length;
+
+    node.failNext = 1;
+    const status = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port: hub.port, path: '/api/x', method: 'POST' }, (res) => {
+        res.resume();
+        resolve(res.statusCode);
+      });
+      req.on('error', reject);
+      req.end('{}');
+    });
+
+    expect(status).toBe(503);
+    expect(node.probes.length - before).toBe(1);
+    expect(link.ready).toBe(true);
+  });
+
+  it('takes a rejected token at its word, with no second try', async () => {
+    const node = await startNode();
+    const { link, connection } = linkOn(node);
+    await link.info();
+    const before = node.probes.length;
+
+    node.answer401 = true;
+    await expect(link.info()).rejects.toMatchObject({ code: ErrorCode.NODE_AUTH_FAILED });
+
+    expect(node.probes.length - before).toBe(1);
+    expect(link._pairing).toBeNull();
+    expect(connection.children[0].kill).toHaveBeenCalledOnce();
+    expect(linkLostLines()[0]).toMatchObject({ reason: 'auth-rejected', code: 'HTTP_401' });
+  });
+
+  it('does not count a probe that times out as the node being gone', async () => {
+    const node = await startNode();
+    const { link } = linkOn(node);
+    await link.info();
+    node.holdNext = true;
+    const original = link.requestJson.bind(link);
+    link.requestJson = (method, path, body, options) => original(method, path, body, { ...options, timeout: 30 });
+    await expect(link.info()).rejects.toMatchObject({ code: ErrorCode.SSH_TIMEOUT });
+    expect(link.ready).toBe(true);
+  });
+
+  describe('an answer from a forward already replaced', () => {
+    /**
+     * A probe waiting on tunnel A, and the link since moved to tunnel B. A's agent
+     * is kept out of the drop so its socket really lives on to answer late.
+     */
+    async function replacedWhileWaiting(call) {
+      const node = await startNode();
+      const { link, connection } = linkOn(node);
+      await link.ensure();
+      node.holdNext = true;
+      const pending = call(link).catch((err) => err);
+      await vi.waitFor(() => expect(node.held).toHaveLength(1));
+
+      link._agent = new http.Agent();
+      link._upgradeAgent = new http.Agent();
+      link.reset('test');
+      await link.ensure();
+      expect(connection.openForward).toHaveBeenCalledTimes(2);
+      warn.mockClear();
+      return { node, link, connection, pending, held: node.held[0] };
+    }
+
+    const stillOnB = ({ link, connection }) => {
+      expect(link.ready).toBe(true);
+      expect(connection.children[1].kill).not.toHaveBeenCalled();
+      expect(connection.fetchPairing).toHaveBeenCalledTimes(2);
+      expect(linkLostLines()).toEqual([]);
+    };
+
+    it('does not reset the new link when the old probe fails, and does not retry on it', async () => {
+      const replaced = await replacedWhileWaiting((link) => link.info());
+      const before = replaced.node.probes.length;
+      replaced.held.req.socket.resetAndDestroy();
+      expect((await replaced.pending).code).toBe(ErrorCode.NODE_NOT_RUNNING);
+      expect(replaced.node.probes).toHaveLength(before);
+      stillOnB(replaced);
+    });
+
+    it('does not reset the new link on a late 401', async () => {
+      const replaced = await replacedWhileWaiting((link) => link.requestJson('GET', '/api/node/info'));
+      replaced.held.res.writeHead(401, { 'content-type': 'application/json' });
+      replaced.held.res.end('{}');
+      expect((await replaced.pending).code).toBe(ErrorCode.NODE_AUTH_FAILED);
+      stillOnB(replaced);
+    });
+
+    it('does not reset the new link on a late 401 to a relayed request or upgrade', async () => {
+      for (const relay of [
+        (link, hub) => new Promise((resolve) => {
+          http.get({ host: '127.0.0.1', port: hub.port, path: '/api/x' }, (res) => { res.resume(); resolve(res.statusCode); }).on('error', () => resolve('error'));
+        }),
+        (link, hub) => new Promise((resolve) => {
+          const ws = new WebSocket(`ws://127.0.0.1:${hub.port}/ws/status`);
+          ws.on('unexpected-response', (_req, res) => { res.resume(); resolve(res.statusCode); });
+          ws.on('error', () => resolve('error'));
+        }),
+      ]) {
+        const node = await startNode();
+        const { link, connection } = linkOn(node);
+        const hub = await hubOn(link);
+        await link.ensure();
+        node.holdNext = true;
+        // Upgrades reach the server's `upgrade` event, not the request handler.
+        node.server.on('upgrade', (req, socket) => {
+          node.held.push({ req, res: { writeHead() {}, end() { socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); } } });
+        });
+        const pending = relay(link, hub);
+        await vi.waitFor(() => expect(node.held).toHaveLength(1));
+
+        link._agent = new http.Agent();
+        link._upgradeAgent = new http.Agent();
+        link.reset('test');
+        await link.ensure();
+        warn.mockClear();
+
+        node.held[0].res.writeHead(401);
+        node.held[0].res.end('{}');
+        await pending;
+        expect(link.ready).toBe(true);
+        expect(connection.children[1].kill).not.toHaveBeenCalled();
+        expect(linkLostLines()).toEqual([]);
+      }
+    });
+
+    it('does not reset the new link when the second opinion fails late', async () => {
+      const node = await startNode();
+      const { link, connection } = linkOn(node);
+      await link.info();
+      node.failNext = 1;
+      // The first attempt fails, the fresh one then waits.
+      const original = link.requestJson.bind(link);
+      link.requestJson = (method, path, body, options) => {
+        if (options && options.freshConnection) node.holdNext = true;
+        return original(method, path, body, options);
+      };
+      const pending = link.info().catch((err) => err);
+      await vi.waitFor(() => expect(node.held).toHaveLength(1));
+
+      link._agent = new http.Agent();
+      link._upgradeAgent = new http.Agent();
+      link.reset('test');
+      await link.ensure();
+      warn.mockClear();
+
+      node.held[0].req.socket.resetAndDestroy();
+      expect((await pending).code).toBe(ErrorCode.NODE_NOT_RUNNING);
+      expect(link.ready).toBe(true);
+      expect(connection.children[1].kill).not.toHaveBeenCalled();
+      expect(linkLostLines()).toEqual([]);
+    });
+
+    it('fails cleanly when the link is closed during the second opinion', async () => {
+      const node = await startNode();
+      const { link } = linkOn(node);
+      await link.info();
+      node.failNext = 1;
+      const original = link.requestJson.bind(link);
+      link.requestJson = (method, path, body, options) => {
+        if (options && options.freshConnection) node.holdNext = true;
+        return original(method, path, body, options);
+      };
+      const pending = link.info().catch((err) => err);
+      await vi.waitFor(() => expect(node.held).toHaveLength(1));
+      link.close();
+      expect((await pending).code).toBe(ErrorCode.NODE_NOT_RUNNING);
+      expect(link.ready).toBe(false);
+    });
+  });
+
+  describe('what is written down when a link goes', () => {
+    const SECRET_PATH = '/api/files/raw?path=%2Fetc%2Fsecret&token=browser-token';
+
+    it('records an ssh exit with its status', async () => {
+      const node = await startNode();
+      const { link, connection } = linkOn(node);
+      await link.ensure();
+      connection.children[0].emit('exit', 255, null);
+      const [lost] = linkLostLines();
+      expect(lost).toMatchObject({ serverId: 'node-1', reason: 'ssh-exit', exitCode: 255, signal: null });
+      expect(new Date(lost.at).toISOString()).toBe(lost.at);
+    });
+
+    it('records a signal too', async () => {
+      const node = await startNode();
+      const { link, connection } = linkOn(node);
+      await link.ensure();
+      connection.children[0].emit('exit', null, 'SIGPIPE');
+      expect(linkLostLines()[0]).toMatchObject({ reason: 'ssh-exit', exitCode: null, signal: 'SIGPIPE' });
+    });
+
+    it('records a forward that cannot connect', async () => {
+      const server = net.createServer((socket) => { socket.on('error', () => {}); socket.resume(); });
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const { port } = server.address();
+      cleanups.push(() => server.close());
+      const connection = fakeConnection(pairingFor(port, { tls: true, tlsFingerprint: 'AA' }));
+      const link = new NodeLink({ connection, freePort: async () => port, stallLimits: { connect: 30 } });
+      cleanups.push(() => link.close());
+      const hub = await hubOn(link);
+      await new Promise((resolve, reject) => {
+        http.get({ host: '127.0.0.1', port: hub.port, path: SECRET_PATH }, (res) => { res.resume(); resolve(); }).on('error', reject);
+      });
+      expect(linkLostLines()[0]).toMatchObject({ reason: 'connect-timeout', code: 'ETIMEDOUT' });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('secret');
+    });
+
+    it('records a deliberate close once, and nothing for a link that was never up', async () => {
+      const node = await startNode();
+      const { link } = linkOn(node);
+      link.close();
+      expect(linkLostLines()).toEqual([]);
+
+      const { link: used } = linkOn(node);
+      await used.ensure();
+      used.close();
+      used.close();
+      expect(linkLostLines().map((line) => line.reason)).toEqual(['closed']);
+    });
+
+    it('never writes a token, a path, a host or a message', async () => {
+      const node = await startNode();
+      const { link, connection } = linkOn(node);
+      const hub = await hubOn(link);
+      await new Promise((resolve, reject) => {
+        http.get({ host: '127.0.0.1', port: hub.port, path: SECRET_PATH, headers: { authorization: 'Bearer browser-token' } }, (res) => { res.resume(); res.on('end', resolve); }).on('error', reject);
+      });
+      node.failNext = 100;
+      await link.info().catch(() => {});
+      connection.children[0].emit('exit', 1, null);
+
+      const written = JSON.stringify(warn.mock.calls);
+      expect(linkLostLines().length).toBeGreaterThan(0);
+      for (const forbidden of [TOKEN, 'browser-token', 'secret', '/api/', '127.0.0.1', String(node.port), 'not answering']) {
+        expect(written).not.toContain(forbidden);
+      }
+      const [lost] = linkLostLines();
+      expect(Object.keys(lost).sort()).toEqual(['at', 'code', 'exitCode', 'reason', 'serverId', 'signal']);
+    });
+  });
+});
+
 /** Finds an openssl binary, including MSYS2's on Windows. */
 function findOpenssl() {
   for (const candidate of ['openssl', 'C:\\msys64\\usr\\bin\\openssl.exe', '/usr/bin/openssl']) {
@@ -668,5 +1092,70 @@ describe.skipIf(!OPENSSL)('NodeLink over HTTPS', () => {
     })).rejects.toThrow();
     badHub.server.close();
     bad.close();
+  });
+
+  describe('a health check over TLS', () => {
+    /** A pinned node that can reset the connection of one chosen request. */
+    async function pinnedNode() {
+      const state = { requests: [], failNext: 0 };
+      const server = https.createServer({ key: tls.key, cert: tls.cert }, (req, res) => {
+        state.requests.push(req.socket);
+        if (state.failNext > 0) {
+          state.failNext -= 1;
+          req.socket.destroy();
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ success: true, data: { protocol: 1, hostname: 'node-1' } }));
+      });
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      state.port = server.address().port;
+      state.close = () => { server.closeAllConnections(); server.close(); };
+      return state;
+    }
+
+    function pinnedLink(port) {
+      const connection = fakeConnection(pairingFor(port, { tls: true, tlsFingerprint: certificateFingerprint(tls.cert) }));
+      return { link: new NodeLink({ connection, freePort: async () => port }), connection };
+    }
+
+    it('confirms on a new connection, still pinned, and keeps the link', async () => {
+      const node = await pinnedNode();
+      const { link, connection } = pinnedLink(node.port);
+      await link.info();
+      node.failNext = 1;
+
+      await expect(link.info()).resolves.toMatchObject({ hostname: 'node-1' });
+
+      expect(node.requests).toHaveLength(3);
+      expect(node.requests[1]).toBe(node.requests[0]);
+      expect(node.requests[2]).not.toBe(node.requests[1]);
+      expect(link.ready).toBe(true);
+      expect(connection.children[0].kill).not.toHaveBeenCalled();
+      link.close();
+      node.close();
+    });
+
+    it('still sends no token to a certificate that changed, and pairs again', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const node = await pinnedNode();
+      const { link, connection } = pinnedLink(node.port);
+      await link.info();
+      link._upgradeAgent = pinnedAgent('00:' + 'AA:'.repeat(30) + 'FF', { keepAlive: false });
+      node.failNext = 1;
+      const before = node.requests.length;
+
+      await expect(link.info()).rejects.toMatchObject({ code: ErrorCode.NODE_AUTH_FAILED });
+
+      // Only the request that failed: the one on the wrong certificate never arrived.
+      expect(node.requests.length - before).toBe(1);
+      expect(link._pairing).toBeNull();
+      expect(connection.children[0].kill).toHaveBeenCalledOnce();
+      expect(JSON.parse(warn.mock.calls.find(([tag]) => tag === '[node-link] link lost')[1]))
+        .toMatchObject({ reason: 'cert-changed', code: ErrorCode.NODE_AUTH_FAILED });
+      warn.mockRestore();
+      link.close();
+      node.close();
+    });
   });
 });

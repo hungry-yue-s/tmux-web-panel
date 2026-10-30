@@ -79,6 +79,7 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 - **工作区请求合并。** 路由和读取用 `refreshWorkspace(id, { shared: true })`；刚做完修改的调用方不能加 `shared`，那次进行中的读取可能早于修改。服务端 `getWorkspace` 同样单飞，`_mutate` 后作废。一次 `readSnapshot` 就读完整棵树和实例 ID；窗口缺窗格、读取失败都必须 `complete: false`，否则分窗和 block 的回收会误删。
 - **取消一路到底。** 浏览器走了就不能再 attach：`attach-session -d` 会抢走当前画面。前端 `_cleanupTerminalResources` 关闭 pending socket 和重试定时器；`TerminalGateway.handle`、`attachBasicTerminal`、`TerminalManager.create` 和 Hub 的 `relayNodeUpgrade`、`proxyUpgrade` 都要在继续前检查 socket 还活着。升级中的 socket 要 `watchUpgradeSocket` 才能发现对端离开。
 - **等待都有上限，但只限等待本身。** `Api.request` 默认读 45 秒、写 5 分钟，长传输不走它。`NodeLink` 的 `stallGuard` 分别限制排队、连接和等响应头；只有连接超时才判定转发已死并丢弃隧道，排队超时只取消那一个请求，开始传输后不限时。TLS 固定指纹和认证不因此放宽。终端 socket 收到任何帧后不得盲目重试。
+- **一次失败的请求不能判隧道死刑。** 隧道一断，上面所有终端和下载都跟着断。健康探针 `NodeLink.info()` 失败后在新连接上再确认一次，还不通才 `reset`；只有这个只读探针重试，写请求和转发请求都不重试，401 和证书变化不需要第二次确认。凡是 `await` 之后要 `reset` 的地方都用 `_resetIfCurrent(tunnel, …)`，旧隧道的迟到结果不得影响新隧道。每次隧道失效 `logLinkLost` 记一行（时间、`serverId`、原因、错误码、退出码或信号），不写 URL、请求头、令牌、SSH 参数或 stderr。
 - `public/js/terminal-trace.js` 记录每次打开的时间线（`TerminalTrace.enable()` 开启，`.last()` 读取），默认关闭，只存时间、网格和计数。`marks.stable` 是启发式，验收以真实界面截图和独立时序为准。
 
 ## 移动端工具盘交互契约

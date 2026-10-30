@@ -188,10 +188,21 @@ function upstreamError(err) {
   if (err instanceof AppError) return err;
   if (err && (err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED' || err.code === 'EPIPE' || /socket hang up/i.test(err.message || ''))) {
     // The forward is up but nothing answers on the node's port.
-    return new AppError(ErrorCode.NODE_NOT_RUNNING, 'tmux-web-panel is not answering on that host');
+    const notRunning = new AppError(ErrorCode.NODE_NOT_RUNNING, 'tmux-web-panel is not answering on that host');
+    notRunning.transportCode = err.code;
+    return notRunning;
   }
   if (err && err.code === 'ETIMEDOUT') return new AppError(ErrorCode.SSH_TIMEOUT, 'Node request timed out');
   return new AppError(ErrorCode.SERVER_OFFLINE, 'Node request failed');
+}
+
+/**
+ * One line for every forward that goes down, so the next unexplained disconnect can
+ * be traced. Fixed reasons, error codes and exit status only: no URL, header, token,
+ * ssh argument or stderr.
+ */
+function logLinkLost(serverId, reason, { code = null, exitCode = null, signal = null } = {}) {
+  console.warn('[node-link] link lost', JSON.stringify({ at: new Date().toISOString(), serverId, reason, code, exitCode, signal }));
 }
 
 export class NodeLink {
@@ -252,8 +263,8 @@ export class NodeLink {
       throw new AppError(ErrorCode.SERVER_NOT_FOUND, 'Link closed');
     }
     const tunnel = { child: forward.child, port };
-    forward.child.once('exit', () => {
-      if (this._tunnel === tunnel) this._dropTunnel();
+    forward.child.once('exit', (exitCode, signal) => {
+      if (this._tunnel === tunnel) this._dropTunnel('ssh-exit', { exitCode, signal });
     });
     this._pairing = pairing;
     this._tunnel = tunnel;
@@ -262,8 +273,9 @@ export class NodeLink {
     this._upgradeAgent = pairing.tls ? pinnedAgent(pairing.tlsFingerprint, { keepAlive: false }) : new http.Agent({ keepAlive: false });
   }
 
-  _dropTunnel() {
+  _dropTunnel(reason = 'reset', detail) {
     const tunnel = this._tunnel;
+    if (tunnel) logLinkLost(this.serverId, reason, detail);
     this._tunnel = null;
     if (this._agent) this._agent.destroy();
     if (this._upgradeAgent) this._upgradeAgent.destroy();
@@ -273,14 +285,22 @@ export class NodeLink {
   }
 
   /** Forget the pairing too, e.g. after the node rejected our token. */
-  reset() {
-    this._dropTunnel();
+  reset(reason, detail) {
+    this._dropTunnel(reason, detail);
     this._pairing = null;
+  }
+
+  /**
+   * reset, unless the link has moved on since `tunnel`: an answer from a forward
+   * already replaced says nothing about the one running now.
+   */
+  _resetIfCurrent(tunnel, reason, detail) {
+    if (this._tunnel === tunnel) this.reset(reason, detail);
   }
 
   close() {
     this._closed = true;
-    this.reset();
+    this.reset('closed');
   }
 
   _target(path, headers, method = 'GET') {
@@ -298,32 +318,39 @@ export class NodeLink {
     return this._pairing.tls ? https : http;
   }
 
-  /** Small JSON call for the hub's own use (health, plugin forwarding). */
-  async requestJson(method, path, body = undefined, { timeout = REQUEST_TIMEOUT_MS } = {}) {
+  /**
+   * Small JSON call for the hub's own use (health, plugin forwarding).
+   * freshConnection: on a new socket rather than one from the pool. The agent for
+   * upgrades never keeps any, is pinned the same way and leaves the pool alone.
+   */
+  async requestJson(method, path, body = undefined, { timeout = REQUEST_TIMEOUT_MS, freshConnection = false } = {}) {
     await this.ensure();
+    const tunnel = this._tunnel;
     const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
     const headers = forwardRequestHeaders({ accept: 'application/json' }, this._pairing.token);
     if (payload) {
       headers['content-type'] = 'application/json';
       headers['content-length'] = String(payload.length);
     }
+    const target = this._target(path, headers, method);
+    if (freshConnection) target.agent = this._upgradeAgent;
     const { status, text } = await new Promise((resolve, reject) => {
-      const req = this._client().request(this._target(path, headers, method), (res) => {
+      const req = this._client().request(target, (res) => {
         const chunks = [];
         res.on('data', (chunk) => chunks.push(chunk));
         res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
-        res.on('error', reject);
+        res.on('error', (err) => reject(upstreamError(err)));
       });
       req.setTimeout(timeout, () => req.destroy(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })));
       req.on('error', (err) => {
-        this._noteUpstreamError(err);
+        this._noteUpstreamError(tunnel, err);
         reject(upstreamError(err));
       });
       req.end(payload || undefined);
     });
     if (status === 401) {
       // The node was reinstalled or its token rotated: re-pair next time.
-      this.reset();
+      this._resetIfCurrent(tunnel, 'auth-rejected', { code: 'HTTP_401' });
       throw new AppError(ErrorCode.NODE_AUTH_FAILED, 'The node rejected this panel\'s token');
     }
     let json = null;
@@ -337,12 +364,26 @@ export class NodeLink {
     return json && typeof json === 'object' && 'success' in json ? json.data : json;
   }
 
+  /**
+   * The health check, and its answer decides whether this link lives. One failed
+   * request does not settle that: a pooled socket the node had just closed fails
+   * exactly like a node that is gone, and ending the link for it would cut every
+   * healthy stream on it. So it asks once more on a new connection. Only this read
+   * is retried, and only once; a rejected token or certificate needs no second opinion.
+   */
   async info() {
+    await this.ensure();
+    const tunnel = this._tunnel;
     try {
       return await this.requestJson('GET', '/api/node/info');
+    } catch (first) {
+      if (first.code !== ErrorCode.NODE_NOT_RUNNING || this._tunnel !== tunnel) throw first;
+    }
+    try {
+      return await this.requestJson('GET', '/api/node/info', undefined, { freshConnection: true });
     } catch (err) {
       // A restarted node may listen elsewhere now; read the pairing file again.
-      if (err.code === ErrorCode.NODE_NOT_RUNNING) this.reset();
+      if (err.code === ErrorCode.NODE_NOT_RUNNING) this._resetIfCurrent(tunnel, 'health-failed', { code: err.transportCode || err.code });
       throw err;
     }
   }
@@ -354,11 +395,11 @@ export class NodeLink {
    * the pairing file, read over SSH, says.
    */
   _dropDeadTunnel(tunnel) {
-    if (this._tunnel === tunnel) this._dropTunnel();
+    if (this._tunnel === tunnel) this._dropTunnel('connect-timeout', { code: 'ETIMEDOUT' });
   }
 
-  _noteUpstreamError(err) {
-    if (err && err.code === ErrorCode.NODE_AUTH_FAILED) this.reset();
+  _noteUpstreamError(tunnel, err) {
+    if (err && err.code === ErrorCode.NODE_AUTH_FAILED) this._resetIfCurrent(tunnel, 'cert-changed', { code: err.code });
   }
 
   /** Streams one browser request to the node and the answer back. */
@@ -370,7 +411,7 @@ export class NodeLink {
     const upstream = this._client().request(
       this._target(stripTokenParam(path), forwardRequestHeaders(req.headers, this._pairing.token), req.method),
       (answer) => {
-        if (answer.statusCode === 401) this.reset();
+        if (answer.statusCode === 401) this._resetIfCurrent(tunnel, 'auth-rejected', { code: 'HTTP_401' });
         res.writeHead(answer.statusCode, forwardResponseHeaders(answer.headers));
         answer.pipe(res);
       },
@@ -389,7 +430,7 @@ export class NodeLink {
       onConnectStall: () => this._dropDeadTunnel(tunnel),
     });
     upstream.on('error', (err) => {
-      this._noteUpstreamError(err);
+      this._noteUpstreamError(tunnel, err);
       fail(err);
     });
     // Closing the browser side (e.g. an aborted download) ends the upstream too.
@@ -441,12 +482,12 @@ export class NodeLink {
       socket.on('close', end);
     });
     upstream.on('response', (answer) => {
-      if (answer.statusCode === 401) this.reset();
+      if (answer.statusCode === 401) this._resetIfCurrent(tunnel, 'auth-rejected', { code: 'HTTP_401' });
       socket.end(`HTTP/1.1 ${answer.statusCode} ${answer.statusMessage || ''}\r\nConnection: close\r\n\r\n`);
       answer.resume();
     });
     upstream.on('error', (err) => {
-      this._noteUpstreamError(err);
+      this._noteUpstreamError(tunnel, err);
       // A stall has already answered, and ending that socket here would cut it off.
       if (!err || err.code !== 'ETIMEDOUT') socket.destroy();
     });
