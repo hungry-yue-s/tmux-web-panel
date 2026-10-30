@@ -144,6 +144,27 @@ export function parseSessions(output) {
 }
 
 /**
+ * The name of a pane's process. tmux normally reports a bare command, but MSYS2
+ * tmux on Windows reports a native program as an escaped absolute path
+ * (C:\\Users\\me\\.local\\bin\\claude.exe).
+ */
+export function commandName(raw) {
+  const text = String(raw || '');
+  const base = text.split(/[\\/]+/).filter(Boolean).pop() || text;
+  return base.replace(/\.exe$/i, '');
+}
+
+/**
+ * A window's name. automatic-rename copies the pane's command, so on Windows an
+ * unnamed window can be called by that same absolute path. A name someone
+ * chose is left alone.
+ */
+export function windowName(raw) {
+  const text = String(raw || '');
+  return /^[A-Za-z]:[\\/]/.test(text) ? commandName(text) : text;
+}
+
+/**
  * Parses `tmux list-windows -F` output.
  * 8 fields: id, index, name, active, width, height, bell, activity.
  */
@@ -154,7 +175,7 @@ export function parseWindows(output) {
     return {
       id,
       index: Number(index),
-      name,
+      name: windowName(name),
       active: active === '1',
       width: Number(width),
       height: Number(height),
@@ -182,7 +203,7 @@ export function parsePanes(output) {
       width: Number(width),
       height: Number(height),
       active: active === '1',
-      command,
+      command: commandName(command),
       label: label || '',
     };
   });
@@ -199,7 +220,7 @@ export function parsePaneCommands(output) {
   if (!output || output.trim().length === 0) return [];
   return output.trim().split('\n').map((line) => {
     const [windowIndex, paneId, command, path, pid] = splitTmuxFields(line, 5, 3);
-    return { windowIndex: Number(windowIndex), paneId, command, path: path || '', pid: pid ? Number(pid) : 0 };
+    return { windowIndex: Number(windowIndex), paneId, command: commandName(command), path: path || '', pid: pid ? Number(pid) : 0 };
   });
 }
 
@@ -727,8 +748,9 @@ export function createTmuxApi(executor) {
 // Border title shown by tmux on each pane's top border (pane-border-status top).
 // Keep title text in the terminal foreground. Only the leading marker uses
 // theme-resolved ANSI colors; no global border style or user option is replaced.
+// The command goes through the same reduction as commandName(), in tmux's terms.
 export const PANE_BORDER_FORMAT =
-  '#{?pane_active,#[fg=colour4]▸#[default]#[bold],#[fg=colour8]·#[default]} #{?#{@pane_label},[#{@pane_label}] ,}#{pane_index}:#{pane_current_command} #[default]';
+  '#{?pane_active,#[fg=colour4]▸#[default]#[bold],#[fg=colour8]·#[default]} #{?#{@pane_label},[#{@pane_label}] ,}#{pane_index}:#{s|\\.exe$||:#{s|^.*[\\\\/]||:pane_current_command}} #[default]';
 
 // This machine's tmux. Most callers import the named exports below; services
 // that take a tmux API as a dependency get the object itself.

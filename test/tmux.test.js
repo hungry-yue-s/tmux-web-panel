@@ -11,7 +11,46 @@ import {
   parsePaneAddress,
   validatePaneLabel,
   setPaneLabel,
+  commandName,
+  windowName,
+  PANE_BORDER_FORMAT,
 } from '../server/tmux.js';
+
+describe('process and window names on Windows', () => {
+  // What MSYS2 tmux really reports for a native program, escaping included.
+  const REPORTED = 'C:\\\\Users\\\\Administrator\\\\.local\\\\bin\\\\claude.exe';
+  const SEP = '=:=';
+
+  it('reduces a reported path to the program name', () => {
+    expect(commandName(REPORTED)).toBe('claude');
+    expect(commandName('C:\\Program Files\\Git\\bin\\bash.EXE')).toBe('bash');
+    expect(commandName('/usr/bin/fish')).toBe('fish');
+  });
+
+  it('leaves plain command names alone', () => {
+    for (const name of ['zsh', 'node', 'python3.12', 'vim']) expect(commandName(name)).toBe(name);
+    expect(commandName('')).toBe('');
+    expect(commandName(undefined)).toBe('');
+  });
+
+  it('simplifies a window auto-named after a path, never a name someone chose', () => {
+    expect(windowName(REPORTED)).toBe('claude');
+    for (const name of ['Tmux-panel', '环境部署', 'a/b', 'build\\logs', 'http://x']) {
+      expect(windowName(name)).toBe(name);
+    }
+  });
+
+  it('applies to every parser that reads tmux', () => {
+    expect(parsePanes(['%1', '0', '0', '80', '24', '1', REPORTED, ''].join(SEP))[0].command).toBe('claude');
+    expect(parsePaneCommands(['1', '%1', REPORTED, '/c/work', '42'].join(SEP))[0].command).toBe('claude');
+    expect(parseWindows(['@1', '1', REPORTED, '1', '80', '24', '0', '0'].join(SEP))[0].name).toBe('claude');
+    expect(parseWindows(['@1', '1', 'Tmux-panel', '1', '80', '24', '0', '0'].join(SEP))[0].name).toBe('Tmux-panel');
+  });
+
+  it('draws the same reduced name on tmux pane borders', () => {
+    expect(PANE_BORDER_FORMAT).toContain('#{s|\\.exe$||:#{s|^.*[\\\\/]||:pane_current_command}}');
+  });
+});
 
 describe('validateSessionName', () => {
   it('accepts valid ASCII names', () => {
