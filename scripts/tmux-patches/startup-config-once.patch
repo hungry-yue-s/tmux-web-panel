@@ -1,0 +1,25 @@
+--- a/cfg.c
++++ b/cfg.c
+@@ -31,6 +31,7 @@
+ static char		**cfg_causes;
+ static u_int		  cfg_ncauses;
+ static struct cmdq_item	 *cfg_item;
++static int		  cfg_started;
+ 
+ int                       cfg_quiet = 1;
+ char                    **cfg_files;
+@@ -67,6 +68,14 @@
+ 	struct client	 *c;
+ 	u_int		  i;
+ 	int		  flags = 0;
++
++	/*
++	 * A replacement first client may identify while configuration is still
++	 * running. It may belong to a plugin: do not load again or block it.
++	 */
++	if (cfg_started)
++		return;
++	cfg_started = 1;
+ 
+ 	/*
+ 	 * Configuration files are loaded without a client, so commands are run

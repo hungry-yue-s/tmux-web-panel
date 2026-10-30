@@ -17,10 +17,19 @@ or run the submodule command above after cloning.
 Build dependencies:
 
 - macOS (Homebrew): `autoconf automake pkgconf libevent ncurses utf8proc jemalloc`
-- Debian/Ubuntu: `autoconf automake pkg-config build-essential bison libevent-dev libncurses-dev libutf8proc-dev`
+- Debian/Ubuntu: `autoconf automake pkg-config build-essential bison patch libevent-dev libncurses-dev libutf8proc-dev`
 
 Use `TMUX_INSTALL_PREFIX` to change the deployment prefix and `TMUX_BUILD_JOBS`
 to set build parallelism.
+
+Both service and macOS app builds apply `scripts/tmux-patches/` to a temporary
+source copy. The startup patch prevents configuration from being loaded or a
+plugin client from being blocked again when the initial client disconnects.
+The pinned submodule remains unchanged. After building, check this with:
+
+```bash
+node scripts/test-tmux-startup.mjs ~/.local/share/tmux-web-panel/bin/tmux
+```
 
 To update the maintained tmux revision, check out the desired upstream commit
 inside `vendor/tmux`, verify it, and commit the resulting submodule pointer in
