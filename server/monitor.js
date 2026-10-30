@@ -21,6 +21,8 @@ export class StatusMonitor {
     this._borderConfigEnsured = false;
     /** serverId -> latest health status, replayed to new subscribers. */
     this._serverStatuses = new Map();
+    this._polling = null;
+    this._generation = 0;
   }
 
   start(intervalMs) {
@@ -36,6 +38,9 @@ export class StatusMonitor {
       clearInterval(this.interval);
       this.interval = null;
     }
+    // A round still running must not report after this.
+    this._generation += 1;
+    this._polling = null;
   }
 
   subscribe(ws) {
@@ -77,7 +82,18 @@ export class StatusMonitor {
     this._broadcast(JSON.stringify({ type: 'workspace-changed', revision }));
   }
 
-  async poll() {
+  /** A slow round does not pile up behind the interval: the next tick joins it. */
+  poll() {
+    if (this._polling) return this._polling;
+    const running = this._poll().finally(() => {
+      if (this._polling === running) this._polling = null;
+    });
+    this._polling = running;
+    return running;
+  }
+
+  async _poll() {
+    const generation = this._generation;
     try {
       const sessions = await tmux.listSessions();
 
@@ -144,6 +160,7 @@ export class StatusMonitor {
           return { ...session, windowDetails: windowsWithPanes, _paneCommands: paneCommands };
         }),
       );
+      if (generation !== this._generation) return;
 
       const totalSessions = sessionsWithWindows.length;
       const totalWindows = sessionsWithWindows.reduce(
@@ -223,6 +240,7 @@ export class StatusMonitor {
         this._broadcast(JSON.stringify(statusMessage));
       }
     } catch (err) {
+      if (generation !== this._generation) return;
       const errorMessage = {
         type: 'error',
         data: { message: err.message },

@@ -71,6 +71,7 @@ import { createBasicHttp, createBasicUpgrade } from './hub/basic/basic-routes.js
 import { NodeInstaller } from './hub/node-installer.js';
 import { createNodeInstallRouter } from './api/node-install.js';
 import pty from 'node-pty';
+import { trackConsoleSpawn } from './terminal/console-reaper.js';
 import { sshPtyBinary } from './transport/ssh-connection.js';
 import { PluginManager } from './plugins.js';
 import { createPluginsRouter } from './api/plugins.js';
@@ -107,7 +108,7 @@ await serverRegistry.load();
 
 // A machine without the panel (basic mode) still gets a workspace and
 // terminals: its remote tmux, or login shells this hub hosts over ssh -tt.
-const spawnBasicPty = (argv, env, { cols, rows }) => pty.spawn(sshPtyBinary(), argv, {
+const spawnBasicPty = (argv, env, { cols, rows }) => trackConsoleSpawn(() => pty.spawn(sshPtyBinary(), argv, {
   name: 'xterm-256color',
   cols: cols || 80,
   rows: rows || 24,
@@ -117,7 +118,7 @@ const spawnBasicPty = (argv, env, { cols, rows }) => pty.spawn(sshPtyBinary(), a
     LANG: process.env.LANG || 'C.UTF-8',
     LC_CTYPE: process.env.LC_CTYPE || process.env.LANG || 'C.UTF-8',
   },
-});
+})).term;
 
 const links = new LinkPool({
   registry: serverRegistry,

@@ -138,24 +138,20 @@ it('retains readable A± sizes across windows, dock widths, reloads and servers'
 });
 
 it('keeps a working renderer after font/GPU failure and ignores disposed font waits', async () => {
-  const source = TERMINAL_SRC.slice(TERMINAL_SRC.indexOf('  var fontsReady ='), TERMINAL_SRC.indexOf('// Small delay to ensure DOM is ready for fitting'));
-  const start = new Function('document', 'term', 'terminalState', 'WebglAddon', 'TERMINAL_FONT_FAMILY', 'termContainer', 'fitAddon', '_syncTerminalSize', source + '\nreturn fontWriteCleanup;');
+  const source = TERMINAL_SRC.slice(TERMINAL_SRC.indexOf('  var rendererReady ='), TERMINAL_SRC.indexOf('// Small delay to ensure DOM is ready for fitting'));
+  const start = new Function('_coreFontWait', '_watchFontSlices', 'term', 'terminalState', 'WebglAddon', 'TERMINAL_FONT_FAMILY', 'termContainer', 'fitAddon', source + '\nreturn rendererReady;');
   for (const [fontFails, disposed] of [[true, false], [false, false], [false, true]]) {
-    let parsed;
-    const listener = { dispose: vi.fn() };
     const term = {
       options: { fontFamily: 'monospace' }, rows: 24,
-      onWriteParsed: callback => { parsed = callback; return listener; },
       loadAddon: vi.fn(() => { throw new Error('WebGL unavailable'); }), refresh: vi.fn(),
     };
     const gpu = { onContextLoss: vi.fn(), dispose: vi.fn() };
     const state = { term };
-    const cancel = start({ fonts: { load: () => fontFails ? Promise.reject(new Error('font unavailable')) : Promise.resolve([]) } }, term, state,
-      { WebglAddon: function () { return gpu; } }, 'Maple Mono', { clientWidth: 700, clientHeight: 500 }, { fit: vi.fn() }, vi.fn());
-    if (disposed) { state.term = null; cancel(); }
-    else parsed();
-    await new Promise(resolve => setTimeout(resolve, 0));
-    expect(listener.dispose).toHaveBeenCalled();
+    const wait = async () => !fontFails;
+    const ready = start(wait, vi.fn(), term, state,
+      { WebglAddon: function () { return gpu; } }, 'Maple Mono', { clientWidth: 700, clientHeight: 500 }, { fit: vi.fn() });
+    if (disposed) state.term = null;
+    await ready;
     expect(term.options.fontFamily).toBe(fontFails || disposed ? 'monospace' : 'Maple Mono');
     if (disposed) expect(term.loadAddon).not.toHaveBeenCalled();
     else {

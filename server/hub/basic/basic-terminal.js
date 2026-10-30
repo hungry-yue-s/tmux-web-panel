@@ -45,8 +45,10 @@ export async function attachBasicTerminal(ws, host, { serverId, pathname, search
   const { cols, rows, nozoom } = parseTerminalQuery(searchParams);
   try {
     const resolved = await host.resolvePane(target.paneId);
+    if (ws.readyState !== ws.OPEN) return null;
     if (resolved.provider === 'tmux') {
       const args = await host.attachArgs(resolved.paneId, nozoom);
+      if (ws.readyState !== ws.OPEN) return null;
       const connectionId = terminalManager.create(ws, resolved.paneId, cols, rows, nozoom, {
         scope: serverId,
         spawn: { file: sshPtyBinary(), args, env: host.connection.sshEnv() },

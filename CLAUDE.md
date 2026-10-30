@@ -19,7 +19,7 @@
 
 **静态文件改动不需要重启。** `server/static-assets.js` 挂载 `public/`：HTML 每次都校验（`no-cache` + ETag），并在渲染时把本地 JS/CSS/字体 URL 改写成带内容哈希的 `?h=...`，这些 URL 可缓存一年。所以改 `public/js/*` 或 `public/css/*` 后用户刷新浏览器即生效，不再需要手动改 `?v=`——只有改 `server/*` 才需要 `systemctl --user restart`。动态加载的本地资源不经过改写，只走 `no-cache` 校验。
 
-**终端字体按 unicode-range 切片。** 完整字体每个字重约 6 MB，页面不得预载或引用 `TmuxPanelMono-*.woff2`（它们只是 `scripts/build-font-subsets.mjs` 的输入）。首屏只预载核心片，终端最多等它 `CORE_FONT_WAIT_MS`，超时先用系统等宽字体，核心片到达后重新测量。中文和 Nerd 图标片由 `public/js/terminal-fonts.js` 按需加载：xterm 画在 canvas 上不会触发 unicode-range 加载，必须经 `TerminalFonts.ensure()`，切片到达后调用 `term.clearTextureAtlas()`。切片和 `public/css/terminal-fonts.css`、`public/js/terminal-fonts-data.js` 都是生成文件，只有源字体变化时才重新生成并提交。
+**终端字体按 unicode-range 切片。** 完整字体每个字重约 6 MB，页面不得预载或引用 `TmuxPanelMono-*.woff2`（它们只是 `scripts/build-font-subsets.mjs` 的输入）。首屏只预载核心片。字体和渲染器都在打开终端 socket 之前定好，attach 带的就是最终网格（`_mountTerminal` 的 `rendererReady`），不要改回首个输出之后再换字体：那会改变网格，在 Windows 上等于再 attach 一次并清屏。终端最多等核心片 `CORE_FONT_WAIT_MS`，超时后这次挂载保持系统等宽字体，核心片晚到也不自动切换（`_applyLateCoreFont`），要等下一次真实尺寸变化或下一次挂载才用上。中文和 Nerd 图标片由 `public/js/terminal-fonts.js` 按需加载：xterm 画在 canvas 上不会触发 unicode-range 加载，必须经 `TerminalFonts.ensure()`，切片到达后调用 `term.clearTextureAtlas()`。切片和 `public/css/terminal-fonts.css`、`public/js/terminal-fonts-data.js` 都是生成文件，只有源字体变化时才重新生成并提交。
 
 **Windows** 上服务管理器是计划任务（`\tmux-web-panel\tmux-web-panel` 与 `\tmux-web-panel\tmux-server`），统一经 `scripts/install-service.ps1` 操作：`restart` / `status` / `logs`（加 `-Tmux` 针对 tmux server）。同样禁止手动 `node server/index.js` 或直接 `Stop-Process` 后自行启动——AUTH/TLS/端口配置在 `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`，只由 `scripts/windows/run-panel.ps1` 注入。`restart -Tmux` 会结束 tmux server 和所有会话；只更新包装脚本 `run-tmux-server.ps1` 时用 `reload`，它不碰 tmux。
 
@@ -56,6 +56,7 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 - **不要在 `tmux-server.service` 里预创建会话**（如 `tmux new-session -d -s main`）：同名会话不会被恢复，启动超过 2 分钟后才看到的 server 也不再恢复
 - **Windows 上不得 resize 运行中的 tmux 客户端，也不得用 node-pty 的 `kill` 关闭它**：两者都可能带走整个 tmux server 和所有会话（`docs/known-issues.md` ENV-1）。尺寸变化走 `TerminalManager._setClientSize`（新客户端替换旧的），断开走 `_endClient`（只结束客户端进程），`conhost.exe` 由 `ConsoleReaper` 延后回收
 - **Windows 上新窗格依赖 tmux 全局环境里的 `MSYS2_PATH_TYPE=inherit`**：没有它，MSYS2 登录 shell 会把 PATH 重置到最小集，窗格里找不到 claude、Node、Git（`docs/known-issues.md` ENV-2）。`run-tmux-server.ps1`、`server/msys.js` 和会话保护的 `_applyOptions` 三处保证，不要去掉
+- **Windows 上结束终端控制台要能证明没人在用**：`conhost.exe` 只能按 `pty.spawn` 的精确时间窗认领，不加余量（实测 30 个全部落在窗内）。进程里每个 `pty.spawn` 都必须经 `trackConsoleSpawn`（`server/terminal/console-reaper.js`），它把时间窗记到 pty 退出；一个控制台还可能属于活着的 pty、或一个窗里不止一个控制台，就不结束。宁可漏清，不扩大窗口，也不要批量清理来历不明的 `conhost.exe`
 - **环境问题要记录并由服务管理**：现象、证据和结论写进 `docs/known-issues.md`，检测和恢复做进服务，不靠人工救场。不要在默认 tmux server 上做接入、resize、断开实验，一律用 `tmux -L` 或 `TMUX_TMPDIR`
 - **没有会话时绝不保存**：那次空快照会成为 `last`，下次重启就什么也恢复不了。`save.sh` 只能由 `SessionProtection` 在有会话时调用
 - **用户自己在 `~/.tmux.conf` 里加载了 tmux-resurrect（常见于 TPM + continuum）时，面板不自动保存和恢复**（`mode: 'external'`），只提供立即保存和找回会话，避免两套机制互相覆盖或重复恢复
@@ -67,6 +68,18 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 - 启停 tmux server：`systemctl --user {start,stop,restart} tmux-server`
 - 手动 `tmux kill-server` 后 unit 重启会拉起空 server，面板在下一次检查（≤20 秒）时自动恢复；也可以在“会话”页面的“找回会话”里按时间点恢复单个会话（作为新会话，不影响正在运行的）
 - 只恢复窗口结构、目录，并按页面上勾选的程序重新打开（claude 用 `--continue`、codex 用 `resume --last` 接着上次的对话）；不恢复进程内存状态
+
+## 终端首屏契约
+
+打开一个窗口要尽快到稳定画面，最贵的是无谓的第二次 attach：Windows 上换尺寸就是换 tmux 客户端并清屏重画。所以：
+
+- **先定尺寸，再开 socket。** 字体（见上）、WebGL 渲染器、右侧分窗占位都在 `connectTerminalWs` 之前定好。分窗恢复时立刻按保存的宽度占位（`_reserveDockSpace`），标签内容随后异步加载；保存为隐藏的分窗全程在 DOM 外构建，不得占位。`renderTerminal` 即使拿到已知窗格也要异步挂载，这样 `MsApp._mountTerminal` 同步设置分窗后，终端量到的才是最终宽度。
+- **能不等就不等。** 工作区里已有目标窗格时直接挂载（`MsApp._knownPanes`），超过 `PANES_FRESH_MS` 或来自不完整读取的，在后台再核对一次；缺失或读取失败才阻塞查询。服务端挂载前的 `resolvePane` 不能省。
+- **过时结果不落地。** `MsApp._routeGeneration` 每次路由递增，所有在 await 之后继续的路由入口（`_renderTerminal`、`refreshCurrentTerminal`、`server` 路由）都要校验，过时就不得写 DOM、`TerminalTarget`、`state` 或分窗。同一目标重复路由时如果 `isTerminalLive()` 就不重建。
+- **工作区请求合并。** 路由和读取用 `refreshWorkspace(id, { shared: true })`；刚做完修改的调用方不能加 `shared`，那次进行中的读取可能早于修改。服务端 `getWorkspace` 同样单飞，`_mutate` 后作废。一次 `readSnapshot` 就读完整棵树和实例 ID；窗口缺窗格、读取失败都必须 `complete: false`，否则分窗和 block 的回收会误删。
+- **取消一路到底。** 浏览器走了就不能再 attach：`attach-session -d` 会抢走当前画面。前端 `_cleanupTerminalResources` 关闭 pending socket 和重试定时器；`TerminalGateway.handle`、`attachBasicTerminal`、`TerminalManager.create` 和 Hub 的 `relayNodeUpgrade`、`proxyUpgrade` 都要在继续前检查 socket 还活着。升级中的 socket 要 `watchUpgradeSocket` 才能发现对端离开。
+- **等待都有上限，但只限等待本身。** `Api.request` 默认读 45 秒、写 5 分钟，长传输不走它。`NodeLink` 的 `stallGuard` 分别限制排队、连接和等响应头；只有连接超时才判定转发已死并丢弃隧道，排队超时只取消那一个请求，开始传输后不限时。TLS 固定指纹和认证不因此放宽。终端 socket 收到任何帧后不得盲目重试。
+- `public/js/terminal-trace.js` 记录每次打开的时间线（`TerminalTrace.enable()` 开启，`.last()` 读取），默认关闭，只存时间、网格和计数。`marks.stable` 是启发式，验收以真实界面截图和独立时序为准。
 
 ## 移动端工具盘交互契约
 

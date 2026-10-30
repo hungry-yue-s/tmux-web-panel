@@ -66,12 +66,25 @@ describe('terminal font configuration', () => {
     expect(styleSource).toMatch(/html\.tmux-native-shell body\s*\{[\s\S]*?-webkit-font-smoothing:\s*auto/);
   });
 
+  it('opens the standalone terminal window at the final size too', () => {
+    const page = readFileSync(resolve(import.meta.dirname, '../public/terminal.html'), 'utf8');
+    expect(page).not.toContain('firstWrite');
+    expect(page).toContain('fontSettled.then(connect)');
+    // Without these the server attaches at 80x24 and a resize then replaces the client.
+    expect(page).toMatch(/'\?cols=' \+ encodeURIComponent\(term\.cols\) \+ '&rows=' \+ encodeURIComponent\(term\.rows\)/);
+    const connect = page.slice(page.indexOf('function connect()'), page.indexOf('new WebSocket(wsUrl)'));
+    expect(connect).toContain('fitAddon.fit()');
+  });
+
   it('rebuilds the WebGL glyph atlas after the bundled font finishes loading', () => {
     const source = readFileSync(resolve(import.meta.dirname, '../public/js/terminal.js'), 'utf8');
-    const fontReady = source.indexOf('Promise.all([fontsReady, firstWrite]).then');
+    const fontReady = source.indexOf('var rendererReady = _coreFontWait().then');
 
+    expect(fontReady).toBeGreaterThan(-1);
     expect(source.indexOf('term.loadAddon(webglAddon)')).toBeGreaterThan(fontReady);
     expect(source.indexOf('term.options.fontFamily = TERMINAL_FONT_FAMILY', fontReady)).toBeGreaterThan(fontReady);
+    expect(source.indexOf('term.options.fontFamily = TERMINAL_FONT_FAMILY', fontReady))
+      .toBeLessThan(source.indexOf('term.loadAddon(webglAddon)'));
     expect(source.indexOf('term.clearTextureAtlas()', fontReady)).toBeGreaterThan(fontReady);
     expect(source.indexOf('term.refresh(0, term.rows - 1)', fontReady)).toBeGreaterThan(fontReady);
     expect(source.slice(fontReady, source.indexOf('\n  }', fontReady)))

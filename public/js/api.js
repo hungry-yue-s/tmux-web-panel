@@ -117,6 +117,14 @@
     return res.status >= 200 && res.status < 300;
   }
 
+  /**
+   * A dead link must fail instead of hanging forever. Reads get a limit that fits
+   * anything the panel asks for; writes get more, because some are slow before
+   * they answer. `timeout: 0` turns it off. Long transfers do not use this client.
+   */
+  var READ_TIMEOUT_MS = 45000;
+  var WRITE_TIMEOUT_MS = 300000;
+
   function request(method, path, body, opts) {
     var options = opts || {};
     var headers = {};
@@ -141,8 +149,29 @@
       return Promise.reject(new ApiError({ code: 'NETWORK_ERROR', message: 'fetch is unavailable', status: 0 }));
     }
 
+    var timeoutMs = options.timeout !== undefined ? options.timeout : (init.method === 'GET' ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS);
+    var timedOut = false;
+    var timer = null;
+    if (timeoutMs > 0 && typeof AbortController === 'function') {
+      var controller = new AbortController();
+      if (options.signal) {
+        if (options.signal.aborted) controller.abort();
+        else options.signal.addEventListener('abort', function () { controller.abort(); });
+      }
+      init.signal = controller.signal;
+      timer = setTimeout(function () {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
+    }
+    function timeoutError() {
+      return new ApiError({ code: 'TIMEOUT', message: 'Request timed out', retryable: true, status: 0 });
+    }
+
     return doFetch(path, init).then(function (res) {
       return readBody(res).then(function (payload) {
+        // Reading the body swallows its own failure, and a cut-off answer is not an empty one.
+        if (timedOut) throw timeoutError();
         var status = typeof res.status === 'number' ? res.status : 0;
         if (status === 401) {
           handleUnauthorized();
@@ -156,6 +185,7 @@
     }, function (err) {
       // Only transport failures land here; response handling rejects separately.
       if (err instanceof ApiError) throw err;
+      if (timedOut) throw timeoutError();
       var aborted = Boolean(
         (err && err.name === 'AbortError') || (options.signal && options.signal.aborted),
       );
@@ -174,6 +204,8 @@
         retryable: true,
         status: 0,
       });
+    }).finally(function () {
+      clearTimeout(timer);
     });
   }
 

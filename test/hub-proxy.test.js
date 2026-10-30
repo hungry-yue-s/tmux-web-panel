@@ -127,6 +127,7 @@ describe('relayNodeUpgrade', () => {
     const s = new EventEmitter();
     s.end = vi.fn();
     s.destroy = vi.fn();
+    s.resume = vi.fn();
     return s;
   }
 
@@ -156,6 +157,32 @@ describe('relayNodeUpgrade', () => {
     links.mode.mockResolvedValue('basic');
     relayNodeUpgrade(req, s, null, { registry, links, authorize: () => true, basic });
     await vi.waitFor(() => expect(basic).toHaveBeenCalledWith(req, s, null, 'api-linux', expect.objectContaining({ pathname: '/ws/terminal/%251' })));
+  });
+
+  it('attaches nothing for a browser that left while the mode was being looked up', async () => {
+    let answer;
+    const proxyUpgrade = vi.fn(async () => {});
+    const basic = vi.fn();
+    const links = { link: vi.fn(() => ({ proxyUpgrade })), mode: vi.fn(() => new Promise((resolve) => { answer = resolve; })) };
+    const s = socket();
+    relayNodeUpgrade({ url: '/n/api-linux/ws/terminal/%251' }, s, null, { registry, links, authorize: () => true, basic });
+    s.destroyed = true;
+    answer('node');
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    expect(proxyUpgrade).not.toHaveBeenCalled();
+    expect(basic).not.toHaveBeenCalled();
+  });
+
+  it('reads a waiting socket so it can notice that, and survives it being reset', () => {
+    const links = { link: vi.fn(), mode: vi.fn(() => new Promise(() => {})) };
+    const s = socket();
+    relayNodeUpgrade({ url: '/n/api-linux/ws/terminal/%251' }, s, null, { registry, links, authorize: () => true });
+    expect(s.resume).toHaveBeenCalledOnce();
+    // Unheard, this would be an uncaught exception taking the whole panel down.
+    expect(() => s.emit('error', new Error('ECONNRESET'))).not.toThrow();
+    // A FIN alone never closes a half-open socket, so it has to count as leaving.
+    s.emit('end');
+    expect(s.destroy).toHaveBeenCalledOnce();
   });
 
   it('rejects an unauthorized, unknown or non-relayable socket without a link', () => {

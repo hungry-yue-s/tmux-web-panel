@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 
 const SRC = fs.readFileSync(new URL('../public/js/api.js', import.meta.url), 'utf8');
@@ -260,6 +260,88 @@ describe('Api transport failures', () => {
     expect(err.code).toBe('ABORTED');
     expect(err.aborted).toBe(true);
     expect(err.retryable).toBe(false);
+  });
+
+  describe('time limits', () => {
+    beforeEach(() => { vi.useFakeTimers(); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    /** A fetch that never answers, and fails as a browser does once aborted. */
+    function hanging(fetchMock) {
+      fetchMock.mockImplementation((_path, init) => new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => {
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        });
+      }));
+    }
+
+    it('fails a read that never answers instead of hanging', async () => {
+      const { Api, fetchMock } = loadApi();
+      hanging(fetchMock);
+      const result = Api.get('/api/x').catch((e) => e);
+      await vi.advanceTimersByTimeAsync(45000);
+      const err = await result;
+      expect(err).toMatchObject({ code: 'TIMEOUT', retryable: true, status: 0 });
+    });
+
+    it('gives writes far longer, as some are slow before they answer', async () => {
+      const { Api, fetchMock } = loadApi();
+      hanging(fetchMock);
+      let settled = false;
+      const result = Api.post('/api/git/commit-message', {}).catch((e) => { settled = true; return e; });
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(240000);
+      expect((await result).code).toBe('TIMEOUT');
+    });
+
+    it('takes a limit from the caller, and none when asked', async () => {
+      const { Api, fetchMock } = loadApi();
+      hanging(fetchMock);
+      const short = Api.get('/api/x', { timeout: 100 }).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(100);
+      expect((await short).code).toBe('TIMEOUT');
+
+      fetchMock.mockImplementation(() => new Promise(() => {}));
+      let settled = false;
+      Api.get('/api/long', { timeout: 0 }).finally(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(600000);
+      expect(settled).toBe(false);
+      expect(fetchMock.mock.calls.at(-1)[1].signal).toBeUndefined();
+    });
+
+    it('fails when the body stalls after the headers, not with an empty success', async () => {
+      const { Api, fetchMock } = loadApi();
+      fetchMock.mockImplementation((_path, init) => Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => new Promise((_resolve, reject) => {
+          init.signal.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+        text: async () => { throw new Error('aborted'); },
+      }));
+      const result = Api.get('/api/x').catch((e) => e);
+      await vi.advanceTimersByTimeAsync(45000);
+      expect((await result).code).toBe('TIMEOUT');
+    });
+
+    it('leaves nothing running once answered', async () => {
+      const { Api, fetchMock } = loadApi();
+      fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ success: true, data: 1 }) });
+      await Api.get('/api/x');
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('still reports the caller cancelling as an abort, not a timeout', async () => {
+      const { Api, fetchMock } = loadApi();
+      hanging(fetchMock);
+      const controller = new AbortController();
+      const result = Api.get('/api/x', { signal: controller.signal }).catch((e) => e);
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      expect((await result).code).toBe('ABORTED');
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 
   it('treats an aborted signal as an abort even without AbortError', async () => {

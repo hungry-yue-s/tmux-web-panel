@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
@@ -243,6 +244,337 @@ describe('NodeLink over plain HTTP', () => {
   });
 });
 
+describe('NodeLink with a link that stalls', () => {
+  const sockets = new Set();
+  let stuck;
+
+  /** Accepts connections and then never answers, like a forward gone dead. */
+  async function deadForward() {
+    stuck = net.createServer((socket) => {
+      sockets.add(socket);
+      socket.on('error', () => {});
+      socket.on('data', () => { socket.gotRequest = true; });
+    });
+    await new Promise((resolve) => stuck.listen(0, '127.0.0.1', resolve));
+    return stuck.address().port;
+  }
+
+  afterEach(() => {
+    for (const socket of sockets) socket.destroy();
+    sockets.clear();
+    stuck?.close();
+    stuck = null;
+  });
+
+  function linkTo(port, stallLimits, connection = fakeConnection(pairingFor(port))) {
+    return new NodeLink({ connection, freePort: async () => port, stallLimits });
+  }
+
+  function statusOf(port, path, method = 'GET') {
+    return new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path, method }, (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  function upgrade(port, path) {
+    return new Promise((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`);
+      ws.on('open', () => { ws.close(); resolve('open'); });
+      ws.on('unexpected-response', (_req, res) => { res.resume(); resolve(res.statusCode); });
+      ws.on('error', () => resolve('error'));
+    });
+  }
+
+  it('answers an ordinary request that gets no answer with a timeout, not by hanging', async () => {
+    const link = linkTo(await deadForward(), { read: 50 });
+    const hub = await hubFor(link);
+    expect(await statusOf(hub.port, '/api/workspace')).toBe(504);
+    hub.server.close();
+    link.close();
+  });
+
+  it('gives writes their own, longer limit', async () => {
+    const link = linkTo(await deadForward(), { read: 50, write: 400 });
+    const hub = await hubFor(link);
+    const start = Date.now();
+    expect(await statusOf(hub.port, '/api/git/commit-message', 'POST')).toBe(504);
+    expect(Date.now() - start).toBeGreaterThanOrEqual(350);
+    hub.server.close();
+    link.close();
+  });
+
+  it('refuses a WebSocket whose handshake stalls', async () => {
+    const link = linkTo(await deadForward(), { upgrade: 50 });
+    const hub = await hubFor(link);
+    expect(await upgrade(hub.port, '/ws/terminal/%251')).toBe(504);
+    hub.server.close();
+    link.close();
+  });
+
+  it('does not limit a slow download once its answer has started', async () => {
+    const app = http.createServer((req, res) => {
+      res.writeHead(200);
+      res.write('start');
+      setTimeout(() => res.end('end'), 150);
+    });
+    await new Promise((resolve) => app.listen(0, '127.0.0.1', resolve));
+    const { port } = app.address();
+    const link = linkTo(port, { read: 30 });
+    const hub = await hubFor(link);
+    const body = await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port: hub.port, path: '/api/files/raw' }, (res) => {
+        let text = '';
+        res.on('data', (chunk) => { text += chunk; });
+        res.on('end', () => resolve(text));
+      }).on('error', reject);
+    });
+    expect(body).toBe('startend');
+    hub.server.close();
+    app.close();
+    link.close();
+  });
+
+  it('does not limit a slow upload while it is being sent', async () => {
+    const app = http.createServer((req, res) => {
+      let size = 0;
+      req.on('data', (chunk) => { size += chunk.length; });
+      req.on('end', () => { res.writeHead(200); res.end(String(size)); });
+    });
+    await new Promise((resolve) => app.listen(0, '127.0.0.1', resolve));
+    const { port } = app.address();
+    const link = linkTo(port, { read: 30, write: 30 });
+    const hub = await hubFor(link);
+    const answer = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port: hub.port, path: '/api/upload', method: 'POST' }, (res) => {
+        let text = '';
+        res.on('data', (chunk) => { text += chunk; });
+        res.on('end', () => resolve({ status: res.statusCode, text }));
+      });
+      req.on('error', reject);
+      req.write('aaaa');
+      setTimeout(() => req.end('bbbb'), 150);
+    });
+    expect(answer).toEqual({ status: 200, text: '8' });
+    hub.server.close();
+    app.close();
+    link.close();
+  });
+
+  it('asks the node for nothing when the browser left while the forward came up', async () => {
+    const port = await deadForward();
+    const link = linkTo(port);
+    let release;
+    link.ensure = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+    const browser = new EventEmitter();
+    browser.destroyed = false;
+    browser.end = vi.fn();
+    browser.destroy = vi.fn();
+    browser.resume = vi.fn();
+    link._pairing = pairingFor(port);
+    link._tunnel = { child: new EventEmitter(), port };
+    link._upgradeAgent = new http.Agent();
+
+    const relaying = link.proxyUpgrade({ headers: {} }, browser, Buffer.alloc(0), '/ws/terminal/%251');
+    browser.destroyed = true;
+    release();
+    await relaying;
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+
+    expect([...sockets].filter((socket) => socket.gotRequest)).toEqual([]);
+    link.close();
+  });
+
+  /** A browser's end of an upgrade, as raw TCP, so it can leave in each real way. */
+  function rawUpgrade(port, path = '/ws/terminal/%251') {
+    const socket = net.connect({ host: '127.0.0.1', port });
+    socket.on('error', () => {});
+    socket.write(`GET ${path} HTTP/1.1\r\nHost: hub\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n`
+      + 'Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n');
+    return socket;
+  }
+  const handshakeAtNode = () => [...sockets].find((socket) => socket.gotRequest);
+
+  describe.each([
+    ['closing the connection with a FIN', (browser) => browser.end()],
+    ['resetting the connection', (browser) => browser.destroy()],
+  ])('the browser %s', (_how, leave) => {
+    it('abandons a handshake under way, so nothing attaches for nobody', async () => {
+      const port = await deadForward();
+      const link = linkTo(port);
+      const hub = await hubFor(link);
+      const browser = rawUpgrade(hub.port);
+      await vi.waitFor(() => expect(handshakeAtNode()).toBeTruthy());
+      const upstream = handshakeAtNode();
+      const gone = new Promise((resolve) => upstream.once('close', resolve));
+
+      leave(browser);
+
+      await gone;
+      hub.server.close();
+      link.close();
+    });
+
+    it('asks the node nothing when it happens while the forward is still coming up', async () => {
+      const port = await deadForward();
+      const link = linkTo(port);
+      const { ensure } = link;
+      let release;
+      link.ensure = () => new Promise((resolve) => { release = resolve; }).then(() => ensure.call(link));
+      const hub = await hubFor(link);
+      const browser = rawUpgrade(hub.port);
+      await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+      const closed = new Promise((resolve) => browser.once('close', resolve));
+
+      leave(browser);
+      if (browser.writable) browser.resume();
+      await closed;
+      await new Promise((resolve) => { setTimeout(resolve, 30); });
+      release();
+      await new Promise((resolve) => { setTimeout(resolve, 80); });
+
+      expect(handshakeAtNode()).toBeUndefined();
+      hub.server.close();
+      link.close();
+    });
+  });
+
+  it('ends the node\'s side when a connected browser sends its FIN', async () => {
+    const node = http.createServer();
+    const upstreamClosed = new Promise((resolve) => {
+      node.on('upgrade', (_req, socket) => {
+        socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n');
+        socket.on('error', () => {});
+        // This is a half-open socket too, so all it ever sees of the hub leaving is the FIN.
+        socket.once('end', () => { socket.destroy(); resolve(); });
+        socket.resume();
+      });
+    });
+    await new Promise((resolve) => node.listen(0, '127.0.0.1', resolve));
+    const { port } = node.address();
+    const link = linkTo(port);
+    const hub = await hubFor(link);
+    const browser = rawUpgrade(hub.port);
+    await new Promise((resolve) => browser.once('data', resolve));
+
+    browser.end();
+
+    await upstreamClosed;
+    hub.server.close();
+    node.close();
+    link.close();
+  });
+
+  it('drops the forward when TLS through it never completes, and only this link', async () => {
+    const port = await deadForward();
+    const connection = fakeConnection(pairingFor(port, { tls: true, tlsFingerprint: 'AA' }));
+    const link = linkTo(port, { connect: 50 }, connection);
+    const other = fakeConnection(pairingFor(port));
+    const otherLink = linkTo(port, {}, other);
+    await otherLink.ensure();
+    const hub = await hubFor(link);
+
+    expect(await statusOf(hub.port, '/api/workspace')).toBe(504);
+
+    expect(link.ready).toBe(false);
+    expect(connection.children[0].kill).toHaveBeenCalled();
+    expect(otherLink.ready).toBe(true);
+    expect(other.children[0].kill).not.toHaveBeenCalled();
+    hub.server.close();
+    link.close();
+    otherLink.close();
+  });
+
+  it('opens a new forward on the next request after a dead one', async () => {
+    const port = await deadForward();
+    const connection = fakeConnection(pairingFor(port, { tls: true, tlsFingerprint: 'AA' }));
+    const link = linkTo(port, { connect: 50 }, connection);
+    const hub = await hubFor(link);
+    await statusOf(hub.port, '/api/workspace');
+    await statusOf(hub.port, '/api/workspace');
+    expect(connection.openForward).toHaveBeenCalledTimes(2);
+    hub.server.close();
+    link.close();
+  });
+
+  describe('with every socket busy on a healthy stream', () => {
+    /** A node with one slow download running, and a pool with room for just that. */
+    async function fullPool(limits) {
+      let finishStream;
+      const node = http.createServer((req, res) => {
+        if (req.url === '/stream') {
+          res.writeHead(200);
+          res.write('start');
+          finishStream = () => res.end('end');
+          return;
+        }
+        res.writeHead(200);
+        res.end('quick');
+      });
+      await new Promise((resolve) => node.listen(0, '127.0.0.1', resolve));
+      const { port } = node.address();
+      const connection = fakeConnection(pairingFor(port));
+      const link = linkTo(port, limits, connection);
+      await link.ensure();
+      link._agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+      const hub = await hubFor(link);
+      const stream = await new Promise((resolve, reject) => {
+        http.get({ host: '127.0.0.1', port: hub.port, path: '/stream' }, (res) => {
+          const state = { text: '', ended: false, closedEarly: false };
+          res.on('data', (chunk) => { state.text += chunk; });
+          res.on('end', () => { state.ended = true; });
+          res.on('close', () => { if (!state.ended) state.closedEarly = true; });
+          res.once('data', () => resolve(state));
+        }).on('error', reject);
+      });
+      const finish = async () => {
+        finishStream();
+        await vi.waitFor(() => expect(stream.ended).toBe(true));
+      };
+      const close = () => { hub.server.close(); node.close(); link.close(); };
+      return { link, connection, hub, stream, finish, close };
+    }
+
+    it('gives up on the queued request only, and leaves the stream and the forward alone', async () => {
+      const { link, connection, hub, stream, finish, close } = await fullPool({ queue: 50, connect: 50, read: 50 });
+
+      expect(await statusOf(hub.port, '/api/workspace')).toBe(504);
+
+      expect(stream.closedEarly).toBe(false);
+      expect(link.ready).toBe(true);
+      expect(connection.children[0].kill).not.toHaveBeenCalled();
+      await finish();
+      expect(stream.text).toBe('startend');
+      close();
+    });
+
+    it('serves a queued request that gets its turn in time', async () => {
+      const { hub, stream, finish, close } = await fullPool({ queue: 2000, connect: 50, read: 2000 });
+      const queued = statusOf(hub.port, '/api/quick');
+      await new Promise((resolve) => { setTimeout(resolve, 100); });
+      await finish();
+      expect(await queued).toBe(200);
+      expect(stream.closedEarly).toBe(false);
+      close();
+    });
+
+    it('does not count the time in the queue against connecting', async () => {
+      const { link, connection, hub, finish, close } = await fullPool({ queue: 2000, connect: 10, read: 2000 });
+      const queued = statusOf(hub.port, '/api/quick');
+      await new Promise((resolve) => { setTimeout(resolve, 150); });
+      expect(link.ready).toBe(true);
+      expect(connection.children[0].kill).not.toHaveBeenCalled();
+      await finish();
+      expect(await queued).toBe(200);
+      close();
+    });
+  });
+});
+
 /** Finds an openssl binary, including MSYS2's on Windows. */
 function findOpenssl() {
   for (const candidate of ['openssl', 'C:\\msys64\\usr\\bin\\openssl.exe', '/usr/bin/openssl']) {
@@ -311,6 +643,20 @@ describe.skipIf(!OPENSSL)('NodeLink over HTTPS', () => {
     expect(frame).toEqual({ type: 'hello', url: '/ws/status' });
     hub.server.close();
     good.close();
+
+    // A certificate that no longer matches never sees the token, and the next
+    // attempt reads the pairing file again: the node may have been reinstalled.
+    const rotated = linkWith('00:' + 'AA:'.repeat(30) + 'FF');
+    await rotated.ensure();
+    const rotatedHub = await hubFor(rotated);
+    await new Promise((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${rotatedHub.port}/ws/status`);
+      ws.on('error', resolve);
+    });
+    expect(rotated._pairing).toBeNull();
+    expect(rotated.ready).toBe(false);
+    rotatedHub.server.close();
+    rotated.close();
 
     const bad = linkWith('00:' + 'AA:'.repeat(30) + 'FF');
     await bad.ensure();

@@ -280,6 +280,8 @@ var BlockHost = (function () {
       id: instance.id,
       serverId: serverId,
       params: instance.params,
+      /** Coming back with its window rather than opened by the user just now. */
+      restored: !!options.quiet,
       url: function (path) { return window.Api ? Api.nodeUrl(serverId, path) : path; },
       setTitle: function (title) {
         var next = title || definition.title;

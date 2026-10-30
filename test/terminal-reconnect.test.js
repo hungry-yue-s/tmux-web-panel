@@ -33,6 +33,9 @@ function setup() {
   });
   win.eval(`var terminalState = { term: __term, termContainer: __container, ws: null };`);
   win.eval(between('var RESIZE_DEBOUNCE_MS', 'var terminalState ='));
+  win.eval(between('var TERMINAL_CONNECT_TIMEOUT_MS', '/** The core slice'));
+  win.eval('function exitFullscreen() {}');
+  win.eval(between('function _cleanupTerminalResources(', '// === Fullscreen'));
   win.eval(between('function connectTerminalWs(', '// === Render Terminal View'));
   win.eval(between('function _showReconnectOverlay(', '// === Navigate back to windows'));
 
@@ -137,6 +140,133 @@ describe('reconnecting a terminal', () => {
     vi.advanceTimersByTime(60000);
     expect(sockets).toHaveLength(2);
     expect(overlays()).toHaveLength(0);
+  });
+
+  describe('leaving while a reconnect is under way', () => {
+    it('closes the socket that is still connecting, so it cannot attach later', () => {
+      const { win, sockets, drop, connected } = setup();
+      drop(connected());
+      vi.advanceTimersByTime(1000);
+      const pending = sockets[1];
+      expect(win.eval('terminalState.pendingWs')).toBe(pending);
+
+      win.eval('cleanupTerminal()');
+
+      expect(pending.readyState).toBe(3);
+      expect(win.eval('terminalState.pendingWs')).toBeNull();
+    });
+
+    it('cancels the retry waiting on its timer', () => {
+      const { win, sockets, drop, connected } = setup();
+      drop(connected());
+      win.eval('cleanupTerminal()');
+      vi.advanceTimersByTime(60000);
+      expect(sockets).toHaveLength(1);
+    });
+
+    it('cancels the next retry after a failed attempt too', () => {
+      const { win, sockets, drop, connected } = setup();
+      drop(connected());
+      vi.advanceTimersByTime(1000);
+      drop(sockets[1]);
+      win.eval('cleanupTerminal()');
+      vi.advanceTimersByTime(60000);
+      expect(sockets).toHaveLength(2);
+    });
+
+    it('closes a socket that answers after its terminal has been replaced', () => {
+      const { win, sockets, open, drop, connected, overlays } = setup();
+      drop(connected());
+      vi.advanceTimersByTime(1000);
+      const pending = sockets[1];
+      win.eval('terminalState.term = { cols: 80, rows: 24 }');
+
+      open(pending);
+      expect(pending.readyState).toBe(3);
+      expect(pending.sent).toEqual([]);
+      expect(overlays()).toHaveLength(1);
+      expect(win.eval('terminalState.ws')).not.toBe(pending);
+    });
+
+    it('does not let a late `ready` from an old socket become the current one', () => {
+      const { win, sockets, drop, connected } = setup();
+      const first = connected();
+      drop(first);
+      vi.advanceTimersByTime(1000);
+      const pending = sockets[1];
+      win.eval('terminalState.term = { cols: 80, rows: 24 }');
+      pending.readyState = 1;
+      pending.onmessage({ data: JSON.stringify({ type: 'ready' }) });
+      expect(win.eval('terminalState.ws')).toBe(first);
+      expect(pending.readyState).toBe(3);
+    });
+
+    it('forgets the pending socket once it is the current one', () => {
+      const { win, sockets, open, ready, drop, connected } = setup();
+      drop(connected());
+      vi.advanceTimersByTime(1000);
+      open(sockets[1]);
+      ready(sockets[1]);
+      expect(win.eval('terminalState.pendingWs')).toBeNull();
+      expect(win.eval('terminalState.ws')).toBe(sockets[1]);
+    });
+  });
+
+  describe('a connection that never comes up', () => {
+    it('counts as a drop after the limit and retries', () => {
+      const { win, sockets, overlays } = setup();
+      const ws = win.eval(`terminalState.ws = connectTerminalWs('%1', __term, false); terminalState.ws`);
+      ws.close = function close() { this.readyState = 3; this.onclose({ code: 1006 }); };
+
+      vi.advanceTimersByTime(19999);
+      expect(ws.readyState).toBe(0);
+      vi.advanceTimersByTime(1);
+      expect(ws.readyState).toBe(3);
+      expect(overlays()).toHaveLength(1);
+      vi.advanceTimersByTime(1000);
+      expect(sockets).toHaveLength(2);
+    });
+
+    it('leaves one alone that has delivered anything: it is attached, and must not attach twice', () => {
+      const { win, open } = setup();
+      const ws = win.eval(`terminalState.ws = connectTerminalWs('%1', __term, false); terminalState.ws`);
+      open(ws);
+      ws.onmessage({ data: JSON.stringify({ type: 'output', data: 'x' }) });
+      vi.advanceTimersByTime(600000);
+      expect(ws.readyState).toBe(1);
+    });
+
+    it('does not fire after the terminal has gone', () => {
+      const { win } = setup();
+      const ws = win.eval(`terminalState.ws = connectTerminalWs('%1', __term, false); terminalState.ws`);
+      const close = vi.spyOn(ws, 'close');
+      win.eval('cleanupTerminal()');
+      expect(close).toHaveBeenCalledOnce();
+      vi.advanceTimersByTime(600000);
+      expect(close).toHaveBeenCalledOnce();
+    });
+  });
+
+  it('does not pile up input and copy handlers across reconnects', () => {
+    const { win, term, sockets, open, ready, drop, connected } = setup();
+    const element = win.document.createElement('div');
+    term.element = element;
+    const disposed = [];
+    term.onData = vi.fn(() => ({ dispose: () => disposed.push(1) }));
+    term.getSelection = vi.fn(() => 'text');
+    drop(connected());
+    vi.advanceTimersByTime(1000);
+    open(sockets[1]);
+    ready(sockets[1]);
+    drop(sockets[1]);
+    vi.advanceTimersByTime(1000);
+    open(sockets[2]);
+    ready(sockets[2]);
+
+    expect(term.onData).toHaveBeenCalledTimes(3);
+    expect(disposed).toHaveLength(2);
+    element.dispatchEvent(new win.Event('mouseup'));
+    expect(win._copyToClipboard).toHaveBeenCalledOnce();
   });
 
   it('never holds on to the first socket in the terminal mount', () => {

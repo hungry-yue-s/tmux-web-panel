@@ -10,7 +10,7 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { TMUX_BIN, msysExecArgs } from './msys.js';
-import { ConsoleReaper } from './terminal/console-reaper.js';
+import { ConsoleReaper, trackConsoleSpawn } from './terminal/console-reaper.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -136,6 +136,16 @@ export function createOutputBatcher(send, { now = Date.now } = {}) {
   };
 }
 
+/** Spots `marker` in a stream of chunks, also when it arrives split across two. */
+export function createMarkerWatch(marker) {
+  let tail = '';
+  return (chunk) => {
+    const text = tail + chunk;
+    tail = text.slice(-(marker.length - 1));
+    return text.includes(marker);
+  };
+}
+
 /** Builds the tmux attach command line that runs under `sh -c` on Unix. */
 export function buildTmuxAttachCommand(paneId, { nozoom = false } = {}) {
   // xterm.js supports UTF-8 even when SSH does not forward a UTF-8 locale.
@@ -242,6 +252,10 @@ export class TerminalManager {
    * @returns {string} connectionId
    */
   create(ws, paneId, cols = 80, rows = 24, nozoom = false, options = {}) {
+    // A socket that has already closed never reports it again, so nothing would
+    // end a client started now, and `attach-session -d` takes over the pane.
+    if (ws.readyState > 1) return null;
+
     const reject = (code, closeCode, message) => {
       // Reported before the close so a caller can send a structured frame; the
       // legacy caller passes nothing and just sees the close.
@@ -273,8 +287,7 @@ export class TerminalManager {
     const spawnSpec = options.spawn || localAttachSpawnSpec(paneId, { nozoom, platform: this.platform });
     const spawnWindows = new WeakMap();
     const spawnPty = (args, size) => {
-      const from = Date.now();
-      const spawned = pty.spawn(spawnSpec.file, args, {
+      const { term: spawned, spawnWindow } = trackConsoleSpawn(() => pty.spawn(spawnSpec.file, args, {
         name: 'xterm-256color',
         cols: size.cols || 80,
         rows: size.rows || 24,
@@ -287,8 +300,8 @@ export class TerminalManager {
           LANG: process.env.LANG || 'C.UTF-8',
           LC_CTYPE: process.env.LC_CTYPE || process.env.LANG || 'C.UTF-8',
         },
-      });
-      spawnWindows.set(spawned, { from, to: Date.now() });
+      }));
+      spawnWindows.set(spawned, spawnWindow);
       return spawned;
     };
     let term;
@@ -320,7 +333,7 @@ export class TerminalManager {
       size: { cols: cols || 80, rows: rows || 24 },
       wantedSize: null,
       resizing: false,
-      sessionTarget: null,
+      sessionTarget: options.sessionTarget || null,
     };
     this.connections.set(connectionId, conn);
     this.paneConnectionCount.set(quotaKey, currentCount + 1);
@@ -399,6 +412,9 @@ export class TerminalManager {
     const { ws } = conn;
     let started = () => {};
     let startWait = null;
+    let settle = null;
+    let settleDone = () => {};
+    let released = false;
     const startedPromise = conn.replaceToResize ? new Promise((resolve) => {
       started = () => {
         clearTimeout(startWait);
@@ -410,16 +426,26 @@ export class TerminalManager {
     // Replacing a client sooner than this can leak its terminal query replies into
     // the pane as typed text.
     conn.settled = startedPromise && startedPromise.then(() => new Promise((resolve) => {
-      const settle = setTimeout(resolve, CLIENT_SETTLE_MS);
+      if (released) { resolve(); return; }
+      settleDone = resolve;
+      settle = setTimeout(resolve, CLIENT_SETTLE_MS);
       if (settle.unref) settle.unref();
     }));
+    // A connection that ends stops waiting: nothing is left to replace.
+    conn.releaseStartup = () => {
+      released = true;
+      started();
+      clearTimeout(settle);
+      settleDone();
+    };
+    const sawStart = createMarkerWatch(CLIENT_STARTED_MARKER);
 
     // PTY → WebSocket
     // Also intercept OSC 52 clipboard sequences from tmux. Long selections can
     // span multiple PTY reads, so a stateful parser is needed instead of a
     // single-chunk regex.
     conn.dataDisposable = term.onData((data) => {
-      if (data.includes(CLIENT_STARTED_MARKER)) started();
+      if (conn.replaceToResize && sawStart(data)) started();
       if (ws.readyState !== ws.OPEN) return;
 
       const { clipboard, cleaned, pending } = extractOsc52(conn.osc52Pending + data);
@@ -491,13 +517,17 @@ export class TerminalManager {
 
   /** @private */
   async _replaceClient(connectionId, conn, size) {
-    try {
-      const session = (await this._tmux(['display-message', '-p', '-t', conn.paneId, '#{session_id}'])).trim();
-      if (session) conn.sessionTarget = session;
-    } catch {
-      // The pane may have closed since; the session it was in is still right.
+    // Once known it stays right: the client on screen is in that session, even if
+    // the pane has closed since.
+    if (!conn.sessionTarget) {
+      try {
+        const session = (await this._tmux(['display-message', '-p', '-t', conn.paneId, '#{session_id}'])).trim();
+        if (session) conn.sessionTarget = session;
+      } catch {
+        // Fall back to the pane itself below.
+      }
+      if (this.connections.get(connectionId) !== conn) return;
     }
-    if (this.connections.get(connectionId) !== conn) return;
 
     const previous = conn.pty;
     let next;
@@ -632,6 +662,7 @@ export class TerminalManager {
       conn.dataDisposable = null;
     }
     if (conn.output) conn.output.dispose();
+    if (conn.releaseStartup) conn.releaseStartup();
 
     const key = conn.quotaKey || conn.paneId;
     const count = this.paneConnectionCount.get(key) ?? 0;

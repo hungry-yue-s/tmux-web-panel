@@ -30,6 +30,9 @@ export class TerminalGateway {
     const { cols, rows, nozoom } = parseTerminalQuery(searchParams);
     try {
       const resolved = await this.workspace.resolvePane(target.paneId);
+      // Whoever opened this may have moved on during the check. `attach-session -d`
+      // for nobody would take the pane from the client they moved on to.
+      if (ws.readyState !== ws.OPEN) return null;
       return this._attach(ws, resolved, { cols, rows, nozoom });
     } catch (err) {
       const appError = err instanceof AppError ? err : new AppError(ErrorCode.INTERNAL, 'Terminal setup failed');
@@ -56,6 +59,7 @@ export class TerminalGateway {
   /** tmux keeps the pane's state, so each socket owns its own attach client. */
   _attach(ws, resolved, { cols, rows, nozoom }) {
     const options = {
+      sessionTarget: resolved.sessionId,
       onReject: ({ code, message }) => {
         if (ws.readyState === ws.OPEN) {
           ws.send(ServerMessage.error({ code, message, retryable: code === ErrorCode.CONNECTION_LIMIT }));

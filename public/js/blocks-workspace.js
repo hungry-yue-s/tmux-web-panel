@@ -26,6 +26,8 @@
 
   var STATUS_LABEL = { M: '已修改', A: '新增', D: '已删除', R: '重命名', C: '复制', U: '冲突', '?': '未跟踪', T: '类型变化' };
 
+  var RESTORED_LOAD_DELAY_MS = 800;
+
   function gitBlock(api) {
     var c = ui.client(api.serverId);
     var target = { path: api.params.path || '.', paneId: api.params.paneId || undefined };
@@ -639,12 +641,21 @@
     function onFocus() { poll(); }
     window.addEventListener('focus', onFocus);
 
-    load(true);
+    // Restored along with its window: the terminal coming up goes first.
+    var firstLoad = null;
+    if (api.restored) {
+      firstLoad = setTimeout(function () {
+        firstLoad = null;
+        load(true);
+      }, RESTORED_LOAD_DELAY_MS);
+    } else {
+      load(true);
+    }
     syncCounter();
 
     return {
       el: root,
-      onShow: function () { load(false); },
+      onShow: function () { if (!firstLoad) load(false); },
       update: function (params) {
         if (params && params.path && params.path !== target.path && params.path !== '.') {
           target = { path: params.path, paneId: params.paneId || undefined };
@@ -655,6 +666,7 @@
       },
       dispose: function () {
         clearInterval(pollTimer);
+        clearTimeout(firstLoad);
         window.removeEventListener('focus', onFocus);
         closeBranchMenu();
       },
@@ -1187,7 +1199,13 @@
     }
     if (chipBusy) return;
     chipBusy = true;
+    var isStale = function () {
+      var now = ui.currentContext();
+      return now.serverId !== ctx.serverId || now.paneId !== ctx.paneId;
+    };
     ui.client(ctx.serverId).get('/api/git/status', { path: '.', paneId: ctx.paneId }).then(function (data) {
+      // The user moved on while this was running: it describes another repository.
+      if (isStale()) return;
       chipData = data;
       node.replaceChildren();
       node.innerHTML = icon('branch');
@@ -1199,9 +1217,22 @@
       node.setAttribute('aria-label', 'Git 分支 ' + (data.branch || '') + '，' + data.files.length + ' 个改动，打开 Git');
       node.hidden = false;
     }).catch(function () {
+      if (isStale()) return;
       chipData = null;
       node.hidden = true;
-    }).finally(function () { chipBusy = false; });
+    }).finally(function () {
+      chipBusy = false;
+      if (isStale()) scheduleChip();
+    });
+  }
+
+  // The chip never competes with a terminal coming up, and a navigation that
+  // changes both the route and the server asks only once.
+  var CHIP_DELAY_MS = 800;
+  var chipTimer = null;
+  function scheduleChip() {
+    clearTimeout(chipTimer);
+    chipTimer = setTimeout(refreshChip, CHIP_DELAY_MS);
   }
 
   // ===========================================================================
@@ -1315,10 +1346,10 @@
   // --- boot ---
   function boot() {
     BlockHost.render();
-    refreshChip();
+    scheduleChip();
   }
-  window.addEventListener('hashchange', function () { setTimeout(refreshChip, 50); });
-  window.addEventListener('terminal-target-server', function () { chipData = null; setTimeout(refreshChip, 50); });
+  window.addEventListener('hashchange', scheduleChip);
+  window.addEventListener('terminal-target-server', function () { chipData = null; scheduleChip(); });
   document.addEventListener('visibilitychange', refreshChip);
   setInterval(refreshChip, 15000);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

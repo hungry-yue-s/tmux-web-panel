@@ -1,5 +1,9 @@
 (function (global) {
   var POLL_MS = 10000;
+  /** A workspace read is what the first screen waits on, so it fails early. */
+  var WORKSPACE_TIMEOUT_MS = 20000;
+  /** After this the panes in a workspace still get used, and checked in the background. */
+  var PANES_FRESH_MS = 15000;
 
   function promptDialog(options) {
     if (typeof global.showPrompt === 'function') return global.showPrompt(options);
@@ -19,6 +23,16 @@
     _resizing: false,
     _perfPanelMounted: false,
     _agentHubMounted: false,
+    /** Bumped per route: whatever an older route was waiting for no longer applies. */
+    _routeGeneration: 0,
+    /** serverId -> the workspace read under way, and when the last one arrived. */
+    _workspaceRequests: {},
+    _workspaceReadAt: {},
+    _metricsRequests: {},
+    _serversRequest: null,
+    /** What the live terminal shows, so showing it again does not attach again. */
+    _terminalMountKey: null,
+    _resolvingDefaultWindow: false,
 
     /**
      * A failed render used to leave a blank page with no trace. Always leave
@@ -37,6 +51,8 @@
       global.Store.loadUiPrefs();
       global.AppShell.applyUiPrefs();
       this._bindEvents();
+      // Loads alongside everything else, so it is there when the first terminal asks.
+      if (global.TerminalFonts) global.TerminalFonts.coreReady(0);
 
       global.Router.subscribe((route) => {
         global.Store.setRoute(route);
@@ -52,36 +68,68 @@
       this._startPolling();
     },
 
-    /** Server list plus each server's last known health. */
-    async refreshServers() {
-      try {
-        const data = await global.Api.get('/api/servers');
-        const servers = (data && data.servers) || [];
-        global.Store.setServers(servers);
-        for (const server of servers) {
-          if (server.status) global.Store.setHealth(server.id, server.status);
+    /** Server list plus each server's last known health. A slow answer is not asked for twice. */
+    refreshServers() {
+      if (this._serversRequest) return this._serversRequest;
+      const request = (async () => {
+        try {
+          const data = await global.Api.get('/api/servers');
+          const servers = (data && data.servers) || [];
+          global.Store.setServers(servers);
+          for (const server of servers) {
+            if (server.status) global.Store.setHealth(server.id, server.status);
+          }
+        } catch (err) {
+          global.AppShell.toast('无法读取服务器列表：' + (err && err.message ? err.message : '未知错误'));
+        } finally {
+          this._serversRequest = null;
         }
-      } catch (err) {
-        global.AppShell.toast('无法读取服务器列表：' + (err && err.message ? err.message : '未知错误'));
-      }
+      })();
+      this._serversRequest = request;
+      return request;
     },
 
     /**
      * Loads a server's workspace. The request token makes a slow response for
      * one server unable to land on another server's page.
+     *
+     * `shared` joins a read already under way. Anyone who has just changed something
+     * must not: that read may predate the change. They start a new one, which
+     * replaces the old, and whoever waited on the old gets the new answer.
      */
-    async refreshWorkspace(serverId) {
+    refreshWorkspace(serverId, { shared = false } = {}) {
+      const running = this._workspaceRequests[serverId];
+      if (shared && running) return running.promise;
+      if (running && running.controller) running.controller.abort();
+      const request = {
+        controller: typeof global.AbortController === 'function' ? new global.AbortController() : null,
+        promise: null,
+      };
+      this._workspaceRequests[serverId] = request;
+      request.promise = this._readWorkspace(serverId, request);
+      return request.promise;
+    },
+
+    async _readWorkspace(serverId, request) {
       const token = global.Store.beginRequest('workspace', serverId);
+      const replaced = () => {
+        const latest = this._workspaceRequests[serverId];
+        return latest && latest !== request ? latest.promise : (global.AppShell.workspace(serverId) || null);
+      };
       try {
-        const workspace = await global.Api.get(global.Api.workspaceUrl(serverId));
-        if (!global.Store.isCurrentRequest('workspace', serverId, token)) return null;
+        const workspace = await global.Api.get(global.Api.workspaceUrl(serverId), {
+          timeout: WORKSPACE_TIMEOUT_MS,
+          signal: request.controller ? request.controller.signal : undefined,
+        });
+        if (!global.Store.isCurrentRequest('workspace', serverId, token)) return replaced();
         if (global.FilePreview && typeof global.FilePreview.reconcileWorkspace === 'function') {
           global.FilePreview.reconcileWorkspace(serverId, workspace);
         }
+        this._workspaceReadAt[serverId] = Date.now();
         global.Store.setWorkspace(serverId, workspace);
         return workspace;
       } catch (err) {
-        if (!global.Store.isCurrentRequest('workspace', serverId, token)) return null;
+        if (!global.Store.isCurrentRequest('workspace', serverId, token)) return replaced();
         // Keep the previous tree: a failed refresh must not blank the sidebar.
         global.Store.setWorkspace(serverId, null);
         if (err && err.code !== 'ABORTED') {
@@ -92,10 +140,22 @@
           });
         }
         return null;
+      } finally {
+        if (this._workspaceRequests[serverId] === request) delete this._workspaceRequests[serverId];
       }
     },
 
-    async refreshMetrics(serverId) {
+    /** One read per server at a time: a poll never stacks up behind a slow link. */
+    refreshMetrics(serverId) {
+      if (this._metricsRequests[serverId]) return this._metricsRequests[serverId];
+      const request = this._readMetrics(serverId).finally(() => {
+        delete this._metricsRequests[serverId];
+      });
+      this._metricsRequests[serverId] = request;
+      return request;
+    },
+
+    async _readMetrics(serverId) {
       const token = global.Store.beginRequest('metrics', serverId);
       try {
         const current = await global.Api.get(global.Api.nodeUrl(serverId, '/api/metrics/current'));
@@ -120,6 +180,7 @@
     },
 
     async _onRoute(route) {
+      const generation = ++this._routeGeneration;
       this._hideSidebarContextMenu();
       const view = global.document.getElementById('ms-view');
       if (!view) return;
@@ -131,6 +192,10 @@
         .forEach(node => node.remove());
       if (route.name !== 'terminal') {
         this._setDockContext(null, null);
+        // Otherwise its attach client stays connected with nothing on screen.
+        this._terminalMountKey = null;
+        this._resolvingDefaultWindow = false;
+        if (typeof global.cleanupTerminal === 'function') global.cleanupTerminal();
       }
       // PerfPanel owns interval timers; leaving its route must stop them.
       this._teardownPerfPanel();
@@ -176,11 +241,11 @@
         this._mountPerfPanel(route);
         this._mountAgentHub(route);
         this._mountSessionProtection(route);
-        await this.refreshWorkspace(serverId);
+        await this.refreshWorkspace(serverId, { shared: true });
         // The rail shows CPU and memory for every server, not just this one.
         await Promise.all(global.AppShell.servers().map((s) => this.refreshMetrics(s.id)));
         // The route may have moved on while those two were in flight.
-        if (!global.Router.isSame(global.Router.current(), route)) return;
+        if (generation !== this._routeGeneration || !global.Router.isSame(global.Router.current(), route)) return;
         this._teardownPerfPanel();
         this._teardownAgentHub();
         this._teardownSessionProtection();
@@ -191,7 +256,7 @@
         return;
       }
 
-      await this._renderTerminal(route, serverId, view);
+      await this._renderTerminal(route, serverId, view, generation);
     },
 
     /** Returns the PerfPanel mode owned by this status route. */
@@ -241,9 +306,24 @@
       if (global.SessionProtectionPage) global.SessionProtectionPage.unmount();
     },
 
-    async _renderTerminal(route, serverId, view) {
-      const workspace = global.AppShell.workspace(serverId) || await this.refreshWorkspace(serverId);
+    async _renderTerminal(route, serverId, view, generation) {
       const params = route.params || {};
+      if (global.TerminalTrace) {
+        // A bare route resolving to its default window is still the same navigation.
+        global.TerminalTrace.begin(serverId + ' ' + (params.windowId || ''), { continues: this._resolvingDefaultWindow });
+      }
+      this._resolvingDefaultWindow = false;
+      let workspace = global.AppShell.workspace(serverId);
+      // A window this copy has never heard of may simply be newer than the copy.
+      const missing = workspace && params.windowId
+        && !global.AppShell._findWindow(global.AppShell._findSession(workspace, params.sessionId), params.windowId);
+      if (!workspace || missing) {
+        workspace = await this.refreshWorkspace(serverId, { shared: true });
+        // The user moved on while that was running, and what they moved to is on
+        // screen by now: nothing here may touch the page, the target or the dock.
+        if (generation !== this._routeGeneration) return;
+      }
+      if (global.TerminalTrace) global.TerminalTrace.mark('workspace');
 
       if (!workspace || workspace.provider === 'unavailable') {
         this._setDockContext(null, null);
@@ -262,6 +342,7 @@
       if (!params.windowId) {
         const target = global.AppShell.resolveDefaultTarget(serverId);
         if (target) {
+          this._resolvingDefaultWindow = true;
           global.Router.go(target, { replace: true });
           return;
         }
@@ -285,9 +366,38 @@
         at: Date.now(),
       });
 
+      // The same target again, say after a rename refreshed the shell: rebuilding
+      // would only throw away a working terminal and clear the screen.
+      const mountKey = this._mountKeyFor(serverId, workspace, params);
+      if (mountKey && mountKey === this._terminalMountKey && typeof global.isTerminalLive === 'function' && global.isTerminalLive()) {
+        return;
+      }
+      this._terminalMountKey = mountKey;
+
       view.classList.add('terminal-mode');
       view.innerHTML = '<section class="section terminal-stage" id="ms-terminal-host"></section>';
       this._mountTerminal(serverId, workspace, params);
+    },
+
+    _mountKeyFor(serverId, workspace, params) {
+      const session = global.AppShell._findSession(workspace, params.sessionId);
+      const win = global.AppShell._findWindow(session, params.windowId);
+      if (!session || !win) return null;
+      const panes = (win.panes || []).map((pane) => pane.id).join();
+      return [serverId, workspace.instanceId || '', session.id, win.id, params.paneId || '', panes].join('\u0000');
+    },
+
+    /**
+     * The panes a workspace listed for this window, if they can be used right away.
+     * A failed read, an empty list or a route naming a pane they do not include all
+     * mean asking tmux. The terminal socket checks the pane either way.
+     */
+    _knownPanes(serverId, workspace, win, paneId) {
+      const panes = win.panes;
+      if (!Array.isArray(panes) || panes.length === 0 || win.panesComplete === false) return null;
+      if (paneId && !panes.some((pane) => pane.id === paneId)) return null;
+      const readAt = this._workspaceReadAt[serverId] || 0;
+      return { panes, verifyPanes: workspace.complete !== true || Date.now() - readAt > PANES_FRESH_MS };
     },
 
     /**
@@ -331,8 +441,9 @@
       if (global.NotificationPanel && global.NotificationPanel._markReadByWindow) {
         global.NotificationPanel._markReadByWindow(session.name, win.index);
       }
-      // renderTerminal calls embedTerminalChrome itself, on every render.
-      global.renderTerminal(host);
+      // renderTerminal calls embedTerminalChrome itself, on every render. It mounts
+      // the terminal asynchronously, so the dock below has taken its space by then.
+      global.renderTerminal(host, this._knownPanes(serverId, workspace, win, params.paneId) || undefined);
       this._setDockContext(serverId, win.id, workspace.instanceId);
     },
 
@@ -534,9 +645,13 @@
      * place — the legacy render() would jump back to the hidden old shell.
      */
     async refreshCurrentTerminal() {
+      const generation = this._routeGeneration;
       const route = global.Router.current();
       const serverId = (route.params && route.params.serverId) || 'local';
       const workspace = await this.refreshWorkspace(serverId);
+      // The user may have gone elsewhere meanwhile, maybe to another server. This
+      // tree must not reach that page's header, terminal or dock.
+      if (generation !== this._routeGeneration || !global.Router.isSame(global.Router.current(), route)) return;
       if (!workspace) {
         await this._onRoute(route);
         return;
@@ -558,7 +673,10 @@
       const host = global.document.getElementById('ms-terminal-host');
       if (host) {
         global.state.panes = win.panes || [];
-        global.renderTerminal(host);
+        this._terminalMountKey = this._mountKeyFor(serverId, workspace, params);
+        global.renderTerminal(host, this._knownPanes(serverId, workspace, win, params.paneId) || undefined);
+        // tmux may have restarted, which makes this another window under the same id.
+        this._setDockContext(serverId, win.id, workspace.instanceId);
       }
     },
 

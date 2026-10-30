@@ -350,7 +350,7 @@ describe('AppShell window bar', () => {
     Object.defineProperty(ctx.document, 'visibilityState', { value: 'visible' });
     ctx.win.eval(WORKSPACE_BLOCKS);
     ctx.document.dispatchEvent(new ctx.win.Event('DOMContentLoaded'));
-    await vi.waitFor(() => expect(ctx.document.querySelector('.pane-git-chip')?.hidden).toBe(false));
+    await vi.waitFor(() => expect(ctx.document.querySelector('.pane-git-chip')?.hidden).toBe(false), { timeout: 3000 });
     const chip = ctx.document.querySelector('.pane-git-chip');
     chip.click();
     expect(ctx.win.BlockHost.open).toHaveBeenCalledExactlyOnceWith('git', { path: '/tmp/repo' });
@@ -359,6 +359,98 @@ describe('AppShell window bar', () => {
     ctx.document.getElementById('ms-page-title').click();
     expect(ctx.win._copyToClipboard).toHaveBeenCalledExactlyOnceWith('本机 / DataAnt / 三绿');
     ctx.win.close();
+  });
+
+  describe('the Git chip while the user moves between windows', () => {
+    function chipSetup() {
+      const ctx = loadShell();
+      seedLocalTmux(ctx.Store);
+      ctx.Shell.render();
+      ctx.Shell.setTerminalHeader('local', ctx.Shell.workspace('local'), { sessionId: '$0', windowId: '@0' });
+      ctx.win.eval(BLOCKS);
+      ctx.win.BlockHost = { register: vi.fn(), render: vi.fn(), open: vi.fn() };
+      const answers = [];
+      const get = vi.fn((_path, query) => new Promise((resolve, reject) => { answers.push({ query, resolve, reject }); }));
+      ctx.win.Blocks.ui.client = () => ({ get });
+      const place = { serverId: 'local', paneId: '%1' };
+      ctx.win.Blocks.ui.currentContext = () => ({ ...place });
+      Object.defineProperty(ctx.document, 'visibilityState', { value: 'visible', configurable: true });
+      ctx.win.eval(WORKSPACE_BLOCKS);
+      return { ctx, answers, get, place };
+    }
+    const repo = (root) => ({ root, branch: root, files: [], detached: false });
+    const chipText = (ctx) => ctx.document.querySelector('.pane-git-chip')?.textContent;
+
+    it('does not show the repository of a pane the user has left, and asks again for the new one', async () => {
+      const { ctx, answers, get, place } = chipSetup();
+      ctx.document.dispatchEvent(new ctx.win.Event('DOMContentLoaded'));
+      await vi.waitFor(() => expect(get).toHaveBeenCalledOnce(), { timeout: 3000 });
+
+      place.paneId = '%2';
+      answers[0].resolve(repo('first-repo'));
+      await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2), { timeout: 3000 });
+      expect(chipText(ctx) || '').not.toContain('first-repo');
+
+      answers[1].resolve(repo('second-repo'));
+      await vi.waitFor(() => expect(chipText(ctx)).toContain('second-repo'));
+      expect(answers[1].query.paneId).toBe('%2');
+      ctx.win.close();
+    });
+
+    it('keeps the current chip when a request for a pane it left fails', async () => {
+      const { ctx, answers, get, place } = chipSetup();
+      ctx.document.dispatchEvent(new ctx.win.Event('DOMContentLoaded'));
+      await vi.waitFor(() => expect(get).toHaveBeenCalledOnce(), { timeout: 3000 });
+      answers[0].resolve(repo('first-repo'));
+      await vi.waitFor(() => expect(chipText(ctx)).toContain('first-repo'));
+
+      ctx.document.dispatchEvent(new ctx.win.Event('visibilitychange'));
+      await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+      place.paneId = '%2';
+      answers[1].reject(new Error('gone'));
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+      expect(ctx.document.querySelector('.pane-git-chip').hidden).toBe(false);
+      ctx.win.close();
+    });
+
+    it('lets a restored Git block wait for the terminal, and an opened one load at once', async () => {
+      const { ctx, get } = chipSetup();
+      const definition = ctx.win.BlockHost.register.mock.calls.find(([kind]) => kind === 'git')[1];
+      const api = (restored) => new Proxy({ restored, params: { path: '/repo' }, serverId: 'local', id: 'b' }, {
+        get: (target, name) => (name in target ? target[name] : () => undefined),
+      });
+      const client = vi.fn(() => ({ get: (...args) => get(...args), send: vi.fn() }));
+      ctx.win.Blocks.ui.client = client;
+      // The chip asks through the same client, for the pane's directory.
+      const blockReads = () => get.mock.calls.filter(([, query]) => query && query.path === '/repo');
+
+      const restored = definition.create(api(true));
+      expect(blockReads()).toHaveLength(0);
+      restored.onShow();
+      expect(blockReads()).toHaveLength(0);
+      await vi.waitFor(() => expect(blockReads()).toHaveLength(1), { timeout: 3000 });
+      restored.dispose();
+
+      get.mockClear();
+      const opened = definition.create(api(false));
+      expect(blockReads()).toHaveLength(1);
+      opened.dispose();
+
+      get.mockClear();
+      const gone = definition.create(api(true));
+      gone.dispose();
+      await new Promise((resolve) => { setTimeout(resolve, 1000); });
+      expect(blockReads()).toHaveLength(0);
+      ctx.win.close();
+    });
+
+    it('waits before asking, so it does not compete with a terminal coming up', async () => {
+      const { ctx, get } = chipSetup();
+      ctx.document.dispatchEvent(new ctx.win.Event('DOMContentLoaded'));
+      await new Promise((resolve) => { setTimeout(resolve, 200); });
+      expect(get).not.toHaveBeenCalled();
+      ctx.win.close();
+    });
   });
 
   it('copies the complete current server/session/window title when its region is clicked', () => {

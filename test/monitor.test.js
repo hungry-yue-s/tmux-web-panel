@@ -73,6 +73,83 @@ describe('StatusMonitor', () => {
     });
   });
 
+  describe('poll under a slow tmux', () => {
+    const SESSION = { name: 'main', windows: 1, attached: true, lastActivity: '12345' };
+
+    function slowRound() {
+      let finish;
+      tmux.listSessions.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+      tmux.listWindows.mockResolvedValue([]);
+      tmux.listPaneCommands.mockResolvedValue([]);
+      return (sessions = [SESSION]) => finish(sessions);
+    }
+
+    it('does not start a round while the last one is still running', async () => {
+      const finish = slowRound();
+      monitor.start(3000);
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(tmux.listSessions).toHaveBeenCalledTimes(1);
+
+      finish();
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(tmux.listSessions).toHaveBeenCalledTimes(2);
+    });
+
+    it('lets callers wait for the round already running', async () => {
+      const finish = slowRound();
+      const first = monitor.poll();
+      const second = monitor.poll();
+      expect(tmux.listSessions).toHaveBeenCalledTimes(1);
+      finish();
+      await Promise.all([first, second]);
+    });
+
+    it('keeps polling after a round fails', async () => {
+      tmux.listSessions.mockRejectedValueOnce(new Error('tmux gone')).mockResolvedValue([]);
+      tmux.listWindows.mockResolvedValue([]);
+      tmux.listPaneCommands.mockResolvedValue([]);
+      await monitor.poll();
+      await monitor.poll();
+      expect(tmux.listSessions).toHaveBeenCalledTimes(2);
+    });
+
+    it('reports nothing from a round that outlives stop()', async () => {
+      const finish = slowRound();
+      const ws = createMockWs();
+      monitor.subscribe(ws);
+      const running = monitor.poll();
+      monitor.stop();
+      finish();
+      await running;
+      expect(ws.send).not.toHaveBeenCalled();
+      expect(monitor.previousState).toBeNull();
+    });
+
+    it('reports no failure from a round that outlives stop() either', async () => {
+      let fail;
+      tmux.listSessions.mockImplementation(() => new Promise((_resolve, reject) => { fail = reject; }));
+      const ws = createMockWs();
+      monitor.subscribe(ws);
+      const running = monitor.poll();
+      monitor.stop();
+      fail(new Error('tmux gone'));
+      await running;
+      expect(ws.send).not.toHaveBeenCalled();
+    });
+
+    it('can start again at once after stop(), with the old round still running', async () => {
+      const finish = slowRound();
+      const old = monitor.poll();
+      monitor.stop();
+      tmux.listSessions.mockResolvedValue([]);
+      await monitor.poll();
+      expect(tmux.listSessions).toHaveBeenCalledTimes(2);
+      finish();
+      await old;
+    });
+  });
+
   describe('poll', () => {
     it('fetches sessions and windows and broadcasts to subscribers', async () => {
       tmux.listSessions.mockResolvedValue([

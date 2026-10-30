@@ -68,6 +68,144 @@ async function dockFile(preview, path) {
   preview._test.dockCurrent();
 }
 
+describe('the dock taking its final space before the terminal measures', () => {
+  const saved = (extra) => JSON.stringify({
+    version: 1,
+    tabs: [{ path: '/tmp/one.md', paneId: '%1' }, { path: '/tmp/two.md', paneId: '%1' }],
+    activePath: '/tmp/one.md',
+    width: 500,
+    ...extra,
+  });
+
+  /** A page opening window @0 with this saved state, its file requests held back. */
+  function restoring(state, { width = 1440, release = true } = {}) {
+    const first = setup({ context: null, width });
+    const key = first.preview._test.dockStateKey('local', '@0', INSTANCE);
+    first.win.close();
+    const { win, doc, preview } = setup({ context: null, width, storage: { [key]: state } });
+    const realFetch = win.fetch;
+    const held = [];
+    let open = release;
+    win.fetch = vi.fn((url) => new Promise((resolve) => {
+      const go = () => realFetch(url).then(resolve);
+      if (open) go(); else held.push(go);
+    }));
+    const finished = preview.switchDockContext('local', '@0', INSTANCE);
+    const dock = () => doc.querySelector('.fp-dock');
+    // From here on requests go through, including ones the restore has yet to make.
+    const flushHeld = () => {
+      open = true;
+      while (held.length) held.shift()();
+    };
+    return { win, doc, preview, finished, dock, flushHeld };
+  }
+
+  it('holds the saved width at once, before any file has loaded', async () => {
+    const { win, dock, finished, flushHeld } = restoring(saved(), { release: false });
+    expect(dock()).not.toBeNull();
+    expect(dock().style.width).toBe('500px');
+    expect(dock().classList.contains('fp-restoring')).toBe(true);
+    expect(win.document.body.classList.contains('fp-side-open')).toBe(true);
+
+    flushHeld();
+    await finished;
+    expect(dock().style.width).toBe('500px');
+    expect(dock().classList.contains('fp-restoring')).toBe(false);
+  });
+
+  it('keeps that width from start to finish, whatever the tabs do', async () => {
+    const { dock, finished, doc } = restoring(saved(), { release: true });
+    const widths = [dock().style.width];
+    await finished;
+    widths.push(dock().style.width);
+    expect(new Set(widths)).toEqual(new Set(['500px']));
+    expect(tabNames(doc)).toEqual(['one.md', 'two.md']);
+  });
+
+  it('holds to the 70% limit like the dock itself does', () => {
+    const { dock } = restoring(saved({ width: 5000 }), { release: false });
+    expect(dock().style.width).toBe(`${Math.floor(1440 * 0.7)}px`);
+  });
+
+  it('holds the default width when none was saved', () => {
+    const { dock } = restoring(saved({ width: 0 }), { release: false });
+    expect(parseFloat(dock().style.width)).toBeGreaterThanOrEqual(320);
+  });
+
+  it('takes no space at any moment for a dock saved as hidden, however many tabs it has', async () => {
+    const { win, doc, dock, finished, flushHeld } = restoring(saved({ hidden: true }), { release: false });
+    const inLayout = () => !!doc.querySelector('.ms-main .fp-dock');
+    const opened = () => win.document.body.classList.contains('fp-side-open');
+    expect(inLayout()).toBe(false);
+    expect(opened()).toBe(false);
+
+    // Tab by tab, as the two files arrive: this is where it used to appear.
+    const seen = [];
+    const watch = new win.MutationObserver(() => seen.push([inLayout(), opened()]));
+    watch.observe(doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    flushHeld();
+    await finished;
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    watch.disconnect();
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.filter(([layout, side]) => layout || side)).toEqual([]);
+    expect(inLayout()).toBe(false);
+    expect(opened()).toBe(false);
+    expect(doc.querySelector('.fp-dock-restore').textContent).toContain('2');
+    expect(dock()).toBeNull();
+  });
+
+  it('opens with all its tabs when a hidden dock is brought back', async () => {
+    const { doc, finished } = restoring(saved({ hidden: true }));
+    await finished;
+    doc.querySelector('.fp-dock-restore').click();
+    expect(doc.querySelector('.ms-main .fp-dock')).not.toBeNull();
+    expect(tabNames(doc)).toEqual(['one.md', 'two.md']);
+    expect(doc.body.classList.contains('fp-side-open')).toBe(true);
+  });
+
+  it('takes no space on a narrow window', () => {
+    const { dock, win } = restoring(saved(), { width: 800, release: false });
+    expect(dock()).toBeNull();
+    expect(win.document.body.classList.contains('fp-side-open')).toBe(false);
+  });
+
+  it('gives the space back when none of the files can be opened any more', async () => {
+    const first = setup({ context: null });
+    const key = first.preview._test.dockStateKey('local', '@0', INSTANCE);
+    first.win.close();
+    const { win, doc, preview } = setup({ context: null, storage: { [key]: saved() } });
+    win.fetch = vi.fn(() => Promise.resolve({ status: 404, json: () => Promise.resolve({ success: false, error: 'gone' }) }));
+    const finished = preview.switchDockContext('local', '@0', INSTANCE);
+    expect(doc.querySelector('.fp-dock')).not.toBeNull();
+    await finished;
+    expect(doc.querySelector('.fp-dock')).toBeNull();
+    expect(win.document.body.classList.contains('fp-side-open')).toBe(false);
+  });
+
+  it('takes no space for a window it has already left', async () => {
+    const { win, doc, preview, finished, flushHeld } = restoring(saved(), { release: false });
+    const leaving = preview.switchDockContext('local', '@1', INSTANCE);
+    expect(doc.querySelector('.fp-dock')).toBeNull();
+    expect(win.document.body.classList.contains('fp-side-open')).toBe(false);
+    flushHeld();
+    await Promise.all([finished, leaving]);
+    expect(doc.querySelector('.fp-dock')).toBeNull();
+  });
+
+  it('forgets a hidden restore when the window changes halfway', async () => {
+    const { win, doc, preview, finished, flushHeld } = restoring(saved({ hidden: true }), { release: false });
+    await preview.switchDockContext('local', '@1', INSTANCE);
+    flushHeld();
+    await finished;
+    // A dock in the next window shows up as usual.
+    await dockFile(preview, '/tmp/next.md');
+    expect(doc.querySelector('.ms-main .fp-dock')).not.toBeNull();
+    expect(win.document.body.classList.contains('fp-side-open')).toBe(true);
+  });
+});
+
 describe('one sidebar for files and tool blocks', () => {
   it('shows a block as a tab next to file tabs and switches between them', async () => {
     const { doc, host, preview } = setup();

@@ -264,7 +264,9 @@ export function parseTree(output) {
     if (!map) continue;
     const parsed = (kind === 'W' ? parseWindows : parsePanes)(body);
     if (!map.has(parent)) map.set(parent, []);
-    map.get(parent).push(...parsed);
+    const known = map.get(parent);
+    // `list-panes -a` repeats a linked window's panes for every session holding it.
+    known.push(...(kind === 'P' ? parsed.filter((pane) => !known.some((other) => other.id === pane.id)) : parsed));
   }
   return sessions.map((session) => ({
     ...session,
@@ -274,6 +276,15 @@ export function parseTree(output) {
     })),
   }));
 }
+
+/** The session/window/pane tree as one chained tmux command; see parseTree. */
+const TREE_COMMANDS = [
+  'list-sessions', '-F', `S${FIELD_SEP}#{session_id}${FIELD_SEP}#{session_name}${FIELD_SEP}#{session_windows}${FIELD_SEP}#{session_attached}${FIELD_SEP}#{session_last_attached}`,
+  ';',
+  'list-windows', '-a', '-F', `W${FIELD_SEP}#{session_id}${FIELD_SEP}#{window_id}${FIELD_SEP}#{window_index}${FIELD_SEP}#{window_name}${FIELD_SEP}#{window_active}${FIELD_SEP}#{window_width}${FIELD_SEP}#{window_height}${FIELD_SEP}#{window_bell_flag}${FIELD_SEP}#{window_activity}`,
+  ';',
+  'list-panes', '-a', '-F', `P${FIELD_SEP}#{window_id}${FIELD_SEP}#{pane_id}${FIELD_SEP}#{pane_left}${FIELD_SEP}#{pane_top}${FIELD_SEP}#{pane_width}${FIELD_SEP}#{pane_height}${FIELD_SEP}#{pane_active}${FIELD_SEP}#{pane_current_command}${FIELD_SEP}#{@pane_label}`,
+];
 
 // --- Exec Wrapper ---
 
@@ -684,19 +695,37 @@ export function createTmuxApi(executor) {
   async function readTree() {
     let stdout;
     try {
-      stdout = await run([
-        'list-sessions', '-F', `S${FIELD_SEP}#{session_id}${FIELD_SEP}#{session_name}${FIELD_SEP}#{session_windows}${FIELD_SEP}#{session_attached}${FIELD_SEP}#{session_last_attached}`,
-        ';',
-        'list-windows', '-a', '-F', `W${FIELD_SEP}#{session_id}${FIELD_SEP}#{window_id}${FIELD_SEP}#{window_index}${FIELD_SEP}#{window_name}${FIELD_SEP}#{window_active}${FIELD_SEP}#{window_width}${FIELD_SEP}#{window_height}${FIELD_SEP}#{window_bell_flag}${FIELD_SEP}#{window_activity}`,
-        ';',
-        'list-panes', '-a', '-F', `P${FIELD_SEP}#{window_id}${FIELD_SEP}#{pane_id}${FIELD_SEP}#{pane_left}${FIELD_SEP}#{pane_top}${FIELD_SEP}#{pane_width}${FIELD_SEP}#{pane_height}${FIELD_SEP}#{pane_active}${FIELD_SEP}#{pane_current_command}${FIELD_SEP}#{@pane_label}`,
-      ]);
+      stdout = await run(TREE_COMMANDS);
     } catch (err) {
       // No server, or a server with no sessions: -a has nothing to target.
       if (typeof err?.stderr === 'string' && /no server running|no current target|no sessions/.test(err.stderr)) return [];
       throw err;
     }
     return parseTree(stdout);
+  }
+
+  /**
+   * readTree plus the server it came from, in the same invocation: one client
+   * talks to one server, so a restart cannot fall between the two. null when this
+   * tmux or this moment cannot answer like that; the caller then reads piece by
+   * piece, which can report a failure per session.
+   */
+  async function readSnapshot() {
+    let stdout;
+    try {
+      stdout = await run(['display-message', '-p', `I${FIELD_SEP}#{pid}:#{start_time}`, ';', ...TREE_COMMANDS]);
+    } catch (err) {
+      if (/no server running|no sessions|error connecting[^\n]*No such file/i.test(err?.stderr || '')) {
+        return { instanceId: null, sessions: [] };
+      }
+      return null;
+    }
+    const line = String(stdout).split('\n').find((text) => text.startsWith(`I${FIELD_SEP}`));
+    const instanceId = line ? line.slice(1 + FIELD_SEP.length).trim() : '';
+    if (!/^\d+:\d+$/.test(instanceId)) return null;
+    const sessions = parseTree(stdout);
+    // Without session ids (old tmux) windows cannot be matched to their sessions.
+    return sessions.every((session) => session.id) ? { instanceId, sessions } : null;
   }
 
   /** Reads the tmux server version, e.g. "3.5a". Throws if tmux is unusable. */
@@ -711,6 +740,7 @@ export function createTmuxApi(executor) {
     run,
     getServerInstance,
     readTree,
+    readSnapshot,
     listSessions,
     listWindows,
     listAllWindowIds,

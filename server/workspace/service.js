@@ -23,6 +23,7 @@ export class WorkspaceService {
     this.provider = new TmuxProvider({ tmux });
     this._onChange = onChange;
     this._revision = 0;
+    this._reading = null;
   }
 
   get revision() {
@@ -32,28 +33,45 @@ export class WorkspaceService {
   async _mutate(fn) {
     const result = await fn();
     this._revision += 1;
+    // A read already under way may have missed this; whoever asks next gets a new one.
+    this._reading = null;
     if (typeof this._onChange === 'function') this._onChange(this._revision);
     return result;
   }
 
-  /** Full tree. `actions` is what the UI renders from. */
-  async getWorkspace() {
+  /** Full tree. `actions` is what the UI renders from. Callers at the same moment share one read. */
+  getWorkspace() {
+    if (this._reading) return this._reading;
+    const reading = this._readWorkspace().finally(() => {
+      if (this._reading === reading) this._reading = null;
+    });
+    this._reading = reading;
+    return reading;
+  }
+
+  async _readWorkspace() {
+    const { instanceId, sessions } = await this.provider.readSnapshot() || await this._readPieces();
+    return {
+      provider: this.provider.provider,
+      persistence: this.provider.persistence,
+      instanceId,
+      complete: sessions.every((session) => session.windowsComplete !== false
+        && session.windows.length === session.windowCount
+        && session.windows.every((window) => window.panesComplete !== false)),
+      revision: this._revision,
+      actions: this.provider.actions,
+      sessions,
+    };
+  }
+
+  async _readPieces() {
     const instanceId = await this.provider.tmux.getServerInstance();
     const sessions = await this.provider.getTree();
     // A restart during the read must not stamp the old tree with a new identity.
     if (instanceId !== await this.provider.tmux.getServerInstance()) {
       throw new AppError(ErrorCode.WORKSPACE_UNAVAILABLE, 'tmux restarted while reading the workspace; retry');
     }
-    return {
-      provider: this.provider.provider,
-      persistence: this.provider.persistence,
-      instanceId,
-      complete: sessions.every((session) => session.windowsComplete !== false
-        && session.windows.length === session.windowCount),
-      revision: this._revision,
-      actions: this.provider.actions,
-      sessions,
-    };
+    return { instanceId, sessions };
   }
 
   /** One window by stable id, so opening it never walks the whole tree. */

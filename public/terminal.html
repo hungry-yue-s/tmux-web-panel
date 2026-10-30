@@ -75,27 +75,22 @@
       var container = document.getElementById('terminal');
       term.open(container);
 
-      var firstWrite = new Promise(function (resolve) {
-        var listener = term.onWriteParsed(function () {
-          listener.dispose();
-          resolve();
-        });
-      });
       var FONT_FAMILY = "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
+      var lateFont = false;
       function applyFont() {
-        // Toggling forces xterm to measure the cells again.
-        term.options.fontFamily = 'monospace';
+        lateFont = false;
         term.options.fontFamily = FONT_FAMILY;
         if (typeof term.clearTextureAtlas === 'function') term.clearTextureAtlas();
-        fitAddon.fit();
         term.refresh(0, term.rows - 1);
       }
-      // Wait briefly for the small core font slice; a slow link starts with the
-      // fallback monospace and switches when the core arrives.
-      Promise.all([TerminalFonts.coreReady(1500), firstWrite]).then(function (ready) {
-        if (ready[0] === false) return;
-        applyFont();
-        if (ready[0] === null) TerminalFonts.coreReady(0).then(function (loaded) { if (loaded) applyFont(); });
+      // The font settles before the socket opens, so the attach has the final size:
+      // a later change costs a redraw, and on a Windows host a second tmux client
+      // that clears the screen. Only the small core slice is awaited, and briefly. A
+      // slow link attaches in the fallback monospace, and a font arriving after that
+      // waits for a change of size that happens anyway.
+      var fontSettled = TerminalFonts.coreReady(1500).then(function (fontState) {
+        if (fontState === true) applyFont();
+        if (fontState === null) TerminalFonts.coreReady(0).then(function (loaded) { lateFont = loaded; });
       }).catch(function () { /* keep the working default font */ });
 
       // The canvas never triggers unicode-range loads: fetch the CJK / icon
@@ -136,18 +131,45 @@
       }, 50);
 
       // WebSocket connection
-      var wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      var wsUrl = wsProtocol + '//' + location.host + '/ws/terminal/' + encodeURIComponent(paneId);
-      var authToken = null;
-      try { authToken = localStorage.getItem('tmux_auth_token'); } catch (_e) {}
-      if (authToken) wsUrl += '?token=' + encodeURIComponent(authToken);
-      var ws = new WebSocket(wsUrl);
+      var ws = null;
+      var pageLeft = false;
+      function connect() {
+        if (pageLeft) return;
+        fitAddon.fit();
+        _lastCols = term.cols;
+        _lastRows = term.rows;
+        var wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        var wsUrl = wsProtocol + '//' + location.host + '/ws/terminal/' + encodeURIComponent(paneId)
+          + '?cols=' + encodeURIComponent(term.cols) + '&rows=' + encodeURIComponent(term.rows);
+        var authToken = null;
+        try { authToken = localStorage.getItem('tmux_auth_token'); } catch (_e) {}
+        if (authToken) wsUrl += '&token=' + encodeURIComponent(authToken);
+        ws = new WebSocket(wsUrl);
 
-      ws.onopen = function () {
-        if (term.cols && term.rows) {
-          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-        }
-      };
+        ws.onopen = function () {
+          if (term.cols && term.rows) {
+            ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+          }
+        };
+
+        ws.onmessage = function (e) {
+          try {
+            var msg = JSON.parse(e.data);
+            if (msg.type === 'output') {
+              term.write(msg.data);
+            } else if (msg.type === 'clipboard') {
+              _copyToClipboard(msg.data);
+            }
+          } catch (_err) {
+            // Ignore
+          }
+        };
+
+        ws.onclose = function () {
+          term.write('\r\n\x1b[31m[Connection closed]\x1b[0m\r\n');
+        };
+      }
+      fontSettled.then(connect);
 
       function _copyToClipboard(text) {
         try {
@@ -173,25 +195,8 @@
         document.body.removeChild(ta);
       }
 
-      ws.onmessage = function (e) {
-        try {
-          var msg = JSON.parse(e.data);
-          if (msg.type === 'output') {
-            term.write(msg.data);
-          } else if (msg.type === 'clipboard') {
-            _copyToClipboard(msg.data);
-          }
-        } catch (_err) {
-          // Ignore
-        }
-      };
-
-      ws.onclose = function () {
-        term.write('\r\n\x1b[31m[Connection closed]\x1b[0m\r\n');
-      };
-
       term.onData(function (data) {
-        if (ws.readyState === WebSocket.OPEN) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'input', data: data }));
         }
       });
@@ -201,12 +206,18 @@
       // actually changed, otherwise tmux pushes a full redraw and the
       // in-progress text selection gets cleared mid-drag.
       var _lastCols = 0, _lastRows = 0;
+      var _seenWidth = container.clientWidth, _seenHeight = container.clientHeight;
       var resizeObserver = new ResizeObserver(function () {
+        if (container.clientWidth !== _seenWidth || container.clientHeight !== _seenHeight) {
+          _seenWidth = container.clientWidth;
+          _seenHeight = container.clientHeight;
+          if (lateFont) applyFont();
+        }
         fitAddon.fit();
         if (term.cols === _lastCols && term.rows === _lastRows) return;
         _lastCols = term.cols;
         _lastRows = term.rows;
-        if (ws.readyState === WebSocket.OPEN) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
         }
       });
@@ -214,8 +225,9 @@
 
       // Cleanup on page unload
       window.addEventListener('beforeunload', function () {
+        pageLeft = true;
         resizeObserver.disconnect();
-        ws.close();
+        if (ws) ws.close();
         term.dispose();
       });
     })();

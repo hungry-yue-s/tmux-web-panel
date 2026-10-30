@@ -41,6 +41,9 @@ var FilePreview = (function () {
   var _restorePromise = null;
   var _restoreContextKey = null;
   var _restoringDock = false;
+  // A dock restored as hidden is built offstage: taking space even for a moment
+  // would change the terminal's size twice, and each change can mean a new attach.
+  var _restoringHidden = false;
   var _persistenceSuspended = false;
   var _dockContextKey = null;
   var _dockContextGeneration = 0;
@@ -701,7 +704,7 @@ var FilePreview = (function () {
     _dockHidden = false;
     _removeDockRestoreButton();
     var layout = _dockLayout();
-    if (layout) layout.appendChild(_dockOverlay);
+    if (layout && !_restoringHidden) layout.appendChild(_dockOverlay);
     var savedWidth = 0;
     var persisted = _loadDockState();
     if (persisted) savedWidth = persisted.width;
@@ -716,10 +719,23 @@ var FilePreview = (function () {
     _dockOverlay.style.flexBasis = dockWidth + 'px';
     _dockOverlay.style.width = dockWidth + 'px';
     _dockOverlay.classList.toggle('fp-restoring', _restoringDock);
-    document.body.classList.add('fp-side-open');
+    if (!_restoringHidden) document.body.classList.add('fp-side-open');
     _activateDockTab(_activeDockTabId || _dockTabs[0].id, preserveRequest);
     _installSideResize();
     _persistDockState(dockWidth);
+  }
+
+  /** The dock's place in the layout, empty and invisible until _showDock fills it. */
+  function _reserveDockSpace(savedWidth) {
+    var layout = _dockLayout();
+    if (!layout) return;
+    _ensureDockOverlay();
+    var dockWidth = _clampSideWidth(savedWidth);
+    _dockOverlay.style.flexBasis = dockWidth + 'px';
+    _dockOverlay.style.width = dockWidth + 'px';
+    _dockOverlay.classList.add('fp-restoring');
+    layout.appendChild(_dockOverlay);
+    document.body.classList.add('fp-side-open');
   }
 
   function _hideDock(persistHidden) {
@@ -1057,6 +1073,7 @@ var FilePreview = (function () {
     _restorePromise = null;
     _restoreContextKey = null;
     _restoringDock = false;
+    _restoringHidden = false;
     _persistenceSuspended = false;
     _dockContextKey = nextContextKey;
 
@@ -1092,6 +1109,10 @@ var FilePreview = (function () {
 
     _restoringDock = true;
     _persistenceSuspended = true;
+    _restoringHidden = saved.hidden;
+    // The terminal measures itself next, and its tabs take a while to load. Holding
+    // the space now means it attaches at the final size, not once more when they arrive.
+    if (!saved.hidden) _reserveDockSpace(saved.width);
     var chain = Promise.resolve();
     saved.tabs.forEach(function (tab) {
       chain = chain.then(function () {
@@ -1130,6 +1151,7 @@ var FilePreview = (function () {
     }).finally(function () {
       if (!_isDockContextCurrent(contextKey, generation)) return;
       _restoringDock = false;
+      _restoringHidden = false;
       _persistenceSuspended = false;
       _restorePromise = null;
       _restoreContextKey = null;

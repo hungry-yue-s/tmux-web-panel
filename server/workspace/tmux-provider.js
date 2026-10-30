@@ -106,26 +106,45 @@ export class TmuxProvider {
    * broken session must not blank the sidebar.
    */
   async getTree() {
-    if (this.batched) {
-      return (await this.tmux.readTree()).map((session) => ({
-        id: session.id || session.name,
-        name: session.name,
-        active: Boolean(session.attached),
-        windowCount: Number.isFinite(session.windows) ? session.windows : 0,
-        lastActivity: session.lastActivity || null,
-        windows: session.windowList.map((window) => ({
-          id: window.id,
-          index: window.index,
-          name: window.name,
-          active: window.active,
-          bell: window.bell,
-          activity: window.activity,
-          panes: window.panes.map(paneView),
-        })),
-      }));
-    }
+    if (this.batched) return this._treeView(await this.tmux.readTree());
     const sessions = await this.tmux.listSessions();
     return Promise.all(sessions.map((session) => this._sessionFor(session)));
+  }
+
+  /**
+   * The tree and its server instance from a single tmux call, or null when the
+   * caller has to read them piece by piece.
+   */
+  async readSnapshot() {
+    if (typeof this.tmux.readSnapshot !== 'function') return null;
+    const snapshot = await this.tmux.readSnapshot();
+    return snapshot && { instanceId: snapshot.instanceId, sessions: this._treeView(snapshot.sessions) };
+  }
+
+  _treeView(sessions) {
+    return sessions.map((session) => ({
+      id: session.id || session.name,
+      name: session.name,
+      active: Boolean(session.attached),
+      windowCount: Number.isFinite(session.windows) ? session.windows : 0,
+      lastActivity: session.lastActivity || null,
+      windows: session.windowList.map((window) => this._windowView(window, window.panes.map(paneView))),
+    }));
+  }
+
+  /** tmux has no window without a pane, so none listed means the read failed. */
+  _windowView(window, panes) {
+    const view = {
+      id: window.id,
+      index: window.index,
+      name: window.name,
+      active: window.active,
+      bell: window.bell,
+      activity: window.activity,
+      panes,
+    };
+    if (panes.length === 0) view.panesComplete = false;
+    return view;
   }
 
   async _sessionFor(session) {
@@ -142,16 +161,7 @@ export class TmuxProvider {
     };
     try {
       const windows = await this.tmux.listWindows(sessionId);
-      const render = async (window) => ({
-        id: window.id,
-        index: window.index,
-        name: window.name,
-        active: window.active,
-        bell: window.bell,
-        activity: window.activity,
-        panes: await this._panesFor(window),
-      });
-      entry.windows = await Promise.all(windows.map(render));
+      entry.windows = await Promise.all(windows.map(async (window) => this._windowView(window, await this._panesFor(window))));
     } catch {
       // Keep the session visible with no windows.
       entry.windowsComplete = false;

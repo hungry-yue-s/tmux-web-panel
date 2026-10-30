@@ -15,6 +15,7 @@
 
 import { AppError, ErrorCode, fail } from '../servers/errors.js';
 import { LOCAL_SERVER_ID } from '../servers/registry.js';
+import { watchUpgradeSocket } from './node-link.js';
 
 const PREFIX_RE = /^\/n\/([a-z0-9][a-z0-9._-]{0,63})(\/[^?#]*)?(\?[^#]*)?$/;
 const HUB_ONLY = /^\/api\/(auth|servers|plugins|managed-resources)(\/|$)/;
@@ -93,8 +94,11 @@ export function relayNodeUpgrade(req, socket, head, { registry, links, authorize
   if (!isRelayable(target.pathname, { upgrade: true })) { reject('404 Not Found'); return true; }
   if (!authorize(req)) { reject('401 Unauthorized'); return true; }
   if (!registry.has(target.serverId)) { reject('404 Not Found'); return true; }
+  watchUpgradeSocket(socket);
   links.mode(target.serverId)
     .then((mode) => {
+      // The browser may have left already: nothing may attach on its behalf.
+      if (socket.destroyed) return undefined;
       if (mode === 'node') return links.link(target.serverId).proxyUpgrade(req, socket, head, target.path);
       if (!basic) { reject('503 Service Unavailable'); return undefined; }
       return basic(req, socket, head, target.serverId, target);

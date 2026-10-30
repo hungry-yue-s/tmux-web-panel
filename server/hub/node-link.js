@@ -20,6 +20,15 @@ import { NODE_PROTOCOL } from '../node/identity.js';
 
 const READY_TIMEOUT_MS = 15_000;
 const REQUEST_TIMEOUT_MS = 15_000;
+// How long a relayed request may stall before its answer starts. Once bytes move
+// there is no limit, so long downloads and uploads are fine. Writes get more room:
+// generating a commit message or running a notebook is slow before it answers.
+// Waiting for a free socket says nothing about the link, which may be busy streaming.
+const QUEUE_TIMEOUT_MS = 30_000;
+const CONNECT_TIMEOUT_MS = 10_000;
+const READ_ANSWER_TIMEOUT_MS = 60_000;
+const WRITE_ANSWER_TIMEOUT_MS = 5 * 60_000;
+const UPGRADE_TIMEOUT_MS = 15_000;
 
 /** Headers that describe one hop and must not be forwarded (RFC 9110 §7.6.1). */
 export const HOP_BY_HOP = new Set([
@@ -116,6 +125,65 @@ export function pinnedAgent(fingerprint, { keepAlive = true } = {}) {
   return agent;
 }
 
+const watchedSockets = new WeakSet();
+
+/**
+ * Makes a socket waiting on an upgrade notice its browser leaving. It only finds out
+ * by reading, and that loses nothing: a WebSocket client may not send anything before
+ * the handshake completes (RFC 6455). An HTTP server's sockets are half-open, so a
+ * browser's FIN is only an `end`; a WebSocket has no use for half a connection, so
+ * that ends it, before and after the upgrade alike. The HTTP server has dropped its
+ * error handler by now, and a reset with nobody listening would take the whole
+ * process down.
+ */
+export function watchUpgradeSocket(socket) {
+  if (watchedSockets.has(socket)) return;
+  watchedSockets.add(socket);
+  socket.on('error', () => {});
+  socket.once('end', () => socket.destroy());
+  socket.resume();
+}
+
+/**
+ * Ends a relayed request that stalls before its answer starts. Each wait has its
+ * own limit: for a free socket in the agent's pool, for connecting (TCP and TLS
+ * through the forward), and for the answer once the request has been sent. Sending
+ * itself has no limit, so a big upload is not cut short. Only a connection that
+ * cannot be made says the forward is dead; a full pool costs just this request.
+ *
+ * onStall is told directly: a request still queued for a socket reports its own
+ * destruction only once it gets one, which may be never.
+ */
+function stallGuard(upstream, { queueMs, connectMs, answerMs, onStall, onConnectStall }) {
+  let timer = null;
+  const clear = () => {
+    clearTimeout(timer);
+    timer = null;
+  };
+  const arm = (ms, deadLink) => {
+    clear();
+    timer = setTimeout(() => {
+      const err = Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' });
+      upstream.destroy(err);
+      onStall(err);
+      if (deadLink) deadLink();
+    }, ms);
+    if (timer.unref) timer.unref();
+  };
+  arm(queueMs);
+  upstream.once('socket', (socket) => {
+    clear();
+    if (!socket.connecting) return;
+    arm(connectMs, onConnectStall);
+    socket.once(socket instanceof tls.TLSSocket ? 'secureConnect' : 'connect', clear);
+  });
+  upstream.once('finish', () => arm(answerMs));
+  upstream.once('response', clear);
+  upstream.once('upgrade', clear);
+  upstream.once('close', clear);
+  return clear;
+}
+
 function upstreamError(err) {
   if (err instanceof AppError) return err;
   if (err && (err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED' || err.code === 'EPIPE' || /socket hang up/i.test(err.message || ''))) {
@@ -131,11 +199,19 @@ export class NodeLink {
    * @param {object} deps
    * @param {import('../transport/ssh-connection.js').SshConnection} deps.connection
    */
-  constructor({ connection, freePort = freeLoopbackPort, readyTimeoutMs = READY_TIMEOUT_MS }) {
+  constructor({ connection, freePort = freeLoopbackPort, readyTimeoutMs = READY_TIMEOUT_MS, stallLimits = {} }) {
     this.connection = connection;
     this.serverId = connection.id;
     this._freePort = freePort;
     this._readyTimeoutMs = readyTimeoutMs;
+    this._stallLimits = {
+      queue: QUEUE_TIMEOUT_MS,
+      connect: CONNECT_TIMEOUT_MS,
+      read: READ_ANSWER_TIMEOUT_MS,
+      write: WRITE_ANSWER_TIMEOUT_MS,
+      upgrade: UPGRADE_TIMEOUT_MS,
+      ...stallLimits,
+    };
     this._pairing = null;
     this._tunnel = null; // { child, port }
     this._agent = null;
@@ -239,7 +315,10 @@ export class NodeLink {
         res.on('error', reject);
       });
       req.setTimeout(timeout, () => req.destroy(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })));
-      req.on('error', (err) => reject(upstreamError(err)));
+      req.on('error', (err) => {
+        this._noteUpstreamError(err);
+        reject(upstreamError(err));
+      });
       req.end(payload || undefined);
     });
     if (status === 401) {
@@ -268,9 +347,26 @@ export class NodeLink {
     }
   }
 
+  /**
+   * A forward nothing gets through is dead even if ssh has not noticed yet, and a
+   * certificate that changed means the node was reinstalled. Each ends this link
+   * only, and the next call pairs again; the certificate is still pinned to what
+   * the pairing file, read over SSH, says.
+   */
+  _dropDeadTunnel(tunnel) {
+    if (this._tunnel === tunnel) this._dropTunnel();
+  }
+
+  _noteUpstreamError(err) {
+    if (err && err.code === ErrorCode.NODE_AUTH_FAILED) this.reset();
+  }
+
   /** Streams one browser request to the node and the answer back. */
   async proxy(req, res, path) {
     await this.ensure();
+    // The browser may have gone while the forward came up.
+    if (res.destroyed || res.writableEnded) return;
+    const tunnel = this._tunnel;
     const upstream = this._client().request(
       this._target(stripTokenParam(path), forwardRequestHeaders(req.headers, this._pairing.token), req.method),
       (answer) => {
@@ -279,10 +375,22 @@ export class NodeLink {
         answer.pipe(res);
       },
     );
-    upstream.on('error', (err) => {
+    const fail = (err) => {
+      if (res.writableEnded) return;
       if (res.headersSent) { res.destroy(); return; }
       const appError = upstreamError(err);
       res.status(appError.status).json({ success: false, data: null, error: appError.toJSON(), meta: { requestId: null } });
+    };
+    stallGuard(upstream, {
+      queueMs: this._stallLimits.queue,
+      connectMs: this._stallLimits.connect,
+      answerMs: /^(GET|HEAD)$/i.test(req.method) ? this._stallLimits.read : this._stallLimits.write,
+      onStall: fail,
+      onConnectStall: () => this._dropDeadTunnel(tunnel),
+    });
+    upstream.on('error', (err) => {
+      this._noteUpstreamError(err);
+      fail(err);
     });
     // Closing the browser side (e.g. an aborted download) ends the upstream too.
     res.on('close', () => { if (!res.writableFinished) upstream.destroy(); });
@@ -291,17 +399,34 @@ export class NodeLink {
 
   /** Relays a WebSocket upgrade byte-for-byte after the node accepts it. */
   async proxyUpgrade(req, socket, head, path) {
+    watchUpgradeSocket(socket);
     try {
       await this.ensure();
     } catch (err) {
       socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
       throw err;
     }
+    // The browser may have gone while the forward came up. Asking the node now
+    // would start an attach client for nobody, and it would take the pane over.
+    if (socket.destroyed) return;
     const headers = forwardRequestHeaders(req.headers, this._pairing.token);
     headers.connection = 'Upgrade';
     headers.upgrade = 'websocket';
+    const tunnel = this._tunnel;
     const upstream = this._client().request({ ...this._target(stripTokenParam(path), headers, 'GET'), agent: this._upgradeAgent });
+    const abandon = () => upstream.destroy();
+    socket.once('close', abandon);
+    stallGuard(upstream, {
+      queueMs: this._stallLimits.queue,
+      connectMs: this._stallLimits.connect,
+      answerMs: this._stallLimits.upgrade,
+      onStall: () => {
+        if (!socket.destroyed) socket.end('HTTP/1.1 504 Gateway Timeout\r\nConnection: close\r\n\r\n');
+      },
+      onConnectStall: () => this._dropDeadTunnel(tunnel),
+    });
     upstream.on('upgrade', (answer, upstreamSocket, upstreamHead) => {
+      socket.off('close', abandon);
       const lines = [`HTTP/1.1 ${answer.statusCode} ${answer.statusMessage || 'Switching Protocols'}`];
       for (let i = 0; i < answer.rawHeaders.length; i += 2) lines.push(`${answer.rawHeaders[i]}: ${answer.rawHeaders[i + 1]}`);
       socket.write(lines.join('\r\n') + '\r\n\r\n');
@@ -320,7 +445,11 @@ export class NodeLink {
       socket.end(`HTTP/1.1 ${answer.statusCode} ${answer.statusMessage || ''}\r\nConnection: close\r\n\r\n`);
       answer.resume();
     });
-    upstream.on('error', () => socket.destroy());
+    upstream.on('error', (err) => {
+      this._noteUpstreamError(err);
+      // A stall has already answered, and ending that socket here would cut it off.
+      if (!err || err.code !== 'ETIMEDOUT') socket.destroy();
+    });
     upstream.end();
   }
 }

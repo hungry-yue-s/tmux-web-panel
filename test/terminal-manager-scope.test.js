@@ -4,7 +4,7 @@ const { spawn } = vi.hoisted(() => ({ spawn: vi.fn() }));
 
 vi.mock('node-pty', () => ({ default: { spawn } }));
 
-import { TerminalManager, buildTmuxAttachCommand, buildTmuxAttachArgs, localAttachSpawnSpec } from '../server/terminal.js';
+import { TerminalManager, buildTmuxAttachCommand, buildTmuxAttachArgs, createMarkerWatch, localAttachSpawnSpec } from '../server/terminal.js';
 
 function fakeTerm() {
   const handlers = {};
@@ -305,6 +305,134 @@ describe('TerminalManager PTY termination', () => {
       await vi.advanceTimersByTimeAsync(5000);
       expect(spawn).toHaveBeenCalledTimes(1);
     });
+
+    it('asks for the session once, and not at all when the gateway already verified it', async () => {
+      const terms = [fakeTerm(), fakeTerm(), fakeTerm()];
+      let next = 0;
+      spawn.mockImplementation(() => terms[next++]);
+      const tmux = vi.fn(async () => '$7\n');
+      const ws = fakeWs();
+      new TerminalManager({ platform: 'win32', tmux, consoleReaper: reaper }).create(ws, '%1', 100, 30, false, { sessionTarget: '$3' });
+      started(terms[0]);
+      message(ws, { type: 'resize', cols: 120, rows: 40 });
+      await vi.advanceTimersByTimeAsync(800);
+      started(terms[1]);
+      await vi.advanceTimersByTimeAsync(800);
+      message(ws, { type: 'resize', cols: 130, rows: 41 });
+      await vi.advanceTimersByTimeAsync(800);
+
+      expect(tmux).not.toHaveBeenCalled();
+      expect(spawn.mock.calls[1][1]).toEqual(['-u', 'attach-session', '-d', '-t', '$3']);
+      expect(spawn.mock.calls[2][1]).toEqual(['-u', 'attach-session', '-d', '-t', '$3']);
+    });
+
+    it('notices a client has started when the marker arrives split in two', async () => {
+      const terms = [fakeTerm(), fakeTerm()];
+      let next = 0;
+      spawn.mockImplementation(() => terms[next++]);
+      const ws = fakeWs();
+      windows().create(ws, '%1', 100, 30);
+      message(ws, { type: 'resize', cols: 120, rows: 40 });
+
+      terms[0].handlers.data('\x1b[?10');
+      terms[0].handlers.data('49h');
+      // Started, so only the settle time is left; well short of the 1500ms fallback.
+      await vi.advanceTimersByTimeAsync(800);
+      expect(spawn).toHaveBeenCalledTimes(2);
+    });
+
+    it('falls back to a time limit when the marker never comes, and still waits out the settle time', async () => {
+      const terms = [fakeTerm(), fakeTerm()];
+      let next = 0;
+      spawn.mockImplementation(() => terms[next++]);
+      const ws = fakeWs();
+      windows().create(ws, '%1', 100, 30);
+      message(ws, { type: 'resize', cols: 120, rows: 40 });
+      await vi.advanceTimersByTimeAsync(1500 + 799);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(spawn).toHaveBeenCalledTimes(2);
+    });
+
+    it('leaves no startup timers behind when a connection ends', async () => {
+      const term = fakeTerm();
+      spawn.mockReturnValue(term);
+      const ws = fakeWs();
+      const manager = windows();
+      manager.create(ws, '%1', 100, 30);
+      const waiting = vi.getTimerCount();
+      expect(waiting).toBeGreaterThan(0);
+      ws.listeners.close();
+      await vi.advanceTimersByTimeAsync(0);
+      // Only the heartbeat could outlive it, and that goes with the connection too.
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('lets a resize waiting on startup finish when the connection ends', async () => {
+      const term = fakeTerm();
+      spawn.mockReturnValue(term);
+      const ws = fakeWs();
+      const manager = windows();
+      const id = manager.create(ws, '%1', 100, 30);
+      const conn = manager.connections.get(id);
+      message(ws, { type: 'resize', cols: 120, rows: 40 });
+      expect(conn.resizing).toBe(true);
+      ws.listeners.close();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(conn.resizing).toBe(false);
+      expect(spawn).toHaveBeenCalledTimes(1);
+    });
+
+    it('settles on the latest size only, after a burst of different ones', async () => {
+      const terms = [fakeTerm(), fakeTerm()];
+      let next = 0;
+      spawn.mockImplementation(() => terms[next++]);
+      const ws = fakeWs();
+      windows().create(ws, '%1', 100, 30);
+      started(terms[0]);
+      for (let cols = 101; cols <= 140; cols += 1) message(ws, { type: 'resize', cols, rows: 30 });
+      await vi.advanceTimersByTimeAsync(800);
+      expect(spawn).toHaveBeenCalledTimes(2);
+      expect(spawn.mock.calls[1][2]).toMatchObject({ cols: 140, rows: 30 });
+      started(terms[1]);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(spawn).toHaveBeenCalledTimes(2);
+    });
+
+    it('ends up on the original size with no new client when a burst returns to it', async () => {
+      const term = fakeTerm();
+      spawn.mockReturnValue(term);
+      const ws = fakeWs();
+      windows().create(ws, '%1', 100, 30);
+      started(term);
+      message(ws, { type: 'resize', cols: 120, rows: 40 });
+      message(ws, { type: 'resize', cols: 100, rows: 30 });
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(spawn).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('starts nothing for a socket that has already closed: nothing would ever end it', () => {
+    const manager = new TerminalManager();
+    const ws = fakeWs();
+    ws.readyState = 3;
+    expect(manager.create(ws, '%1')).toBeNull();
+    expect(spawn).not.toHaveBeenCalled();
+    expect(manager.paneConnectionCount.has('%1')).toBe(false);
+  });
+
+  it('spots a marker however the stream is cut', () => {
+    const marker = '\x1b[?1049h';
+    for (let cut = 1; cut < marker.length; cut += 1) {
+      const watch = createMarkerWatch(marker);
+      expect(watch('before' + marker.slice(0, cut))).toBe(false);
+      expect(watch(marker.slice(cut) + 'after')).toBe(true);
+    }
+    const watch = createMarkerWatch(marker);
+    expect(watch('\x1b[?10')).toBe(false);
+    expect(watch('48h')).toBe(false);
+    expect(watch('\x1b')).toBe(false);
+    expect(watch(marker.slice(1))).toBe(true);
   });
 
   it.skipIf(process.platform === 'win32')('keeps the SIGKILL fallback after a WebSocket closes', () => {

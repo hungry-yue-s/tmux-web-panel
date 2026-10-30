@@ -87,6 +87,25 @@ describe('attachBasicTerminal', () => {
     expect(ws.sent[0]).toEqual({ type: 'ready', paneId: '%3', provider: 'tmux', persistence: 'tmux' });
   });
 
+  it('attaches nothing for a socket that closed while the pane was being checked', async () => {
+    const host = {
+      resolvePane: vi.fn(async (paneId) => ({ provider: 'tmux', paneId })),
+      attachArgs: vi.fn(async () => ['-tt', 'box', 'attach']),
+      connection: { sshEnv: () => ({}) },
+    };
+    const terminalManager = { create: vi.fn(() => 'conn-1') };
+
+    const closedFirst = new FakeWs();
+    closedFirst.readyState = 3;
+    await attachBasicTerminal(closedFirst, host, { serverId: 'box', pathname: '/ws/terminal/%253', searchParams: new URLSearchParams(), terminalManager });
+    expect(host.attachArgs).not.toHaveBeenCalled();
+
+    const closedLater = new FakeWs();
+    host.attachArgs.mockImplementationOnce(async () => { closedLater.readyState = 3; return ['-tt', 'box', 'attach']; });
+    await attachBasicTerminal(closedLater, host, { serverId: 'box', pathname: '/ws/terminal/%253', searchParams: new URLSearchParams(), terminalManager });
+    expect(terminalManager.create).not.toHaveBeenCalled();
+  });
+
   it('subscribes to a hosted shell and replays its buffer', async () => {
     let subscriber;
     const runtime = {

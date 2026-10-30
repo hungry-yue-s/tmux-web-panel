@@ -110,7 +110,8 @@ describe('single Window Bar', () => {
     // renderTerminal without going through MsApp. Adopting only at the mount
     // call site let a full legacy header — back button and all — come back.
     expect(TERMINAL_SRC).toContain('window.MsApp.embedTerminalChrome(view)');
-    const renderStart = TERMINAL_SRC.indexOf('function renderTerminal(container)');
+    const renderStart = TERMINAL_SRC.indexOf('function renderTerminal(container');
+    expect(renderStart).toBeGreaterThan(-1);
     const hookAt = TERMINAL_SRC.indexOf('window.MsApp.embedTerminalChrome(view)');
     expect(hookAt).toBeGreaterThan(renderStart);
     // The hook must run before renderTerminal's own asynchronous pane fetch.
@@ -942,6 +943,388 @@ describe('MsApp mobile workspace action', () => {
 
     expect(ctx.document.getElementById('ms-mobile-workspace-sheet')).toBeNull();
     expect(ctx.win.location.hash).toContain('#/terminal/local/%240/%402/%252');
+  });
+});
+
+describe('MsApp terminal routes under load', () => {
+  const INSTANCE = '1873:1700000000';
+  const windowOf = (id, panes) => ({ id, index: 0, name: 'w', active: true, panes });
+  const treeOf = (win, extra = {}) => ({
+    provider: 'tmux', instanceId: INSTANCE, complete: true,
+    sessions: [{ id: '$1', name: 'work', windowCount: 1, windows: [win] }],
+    ...extra,
+  });
+  const route = (serverId, windowId, paneId) => ({ name: 'terminal', params: { serverId, sessionId: '$1', windowId, paneId } });
+
+  function setup() {
+    const ctx = loadStatusShell();
+    const dock = [];
+    ctx.win.FilePreview = { switchDockContext: (...args) => dock.push(args) };
+    ctx.win.state = {};
+    ctx.win.renderTerminal = vi.fn((host) => { host.dataset.mounted = String((Number(host.dataset.mounted) || 0) + 1); });
+    ctx.win.cleanupTerminal = vi.fn();
+    ctx.win.isTerminalLive = () => true;
+    return { ...ctx, dock };
+  }
+
+  function holdWorkspace(ctx) {
+    const pending = [];
+    ctx.win.Api.get = vi.fn((path, opts) => new Promise((resolve, reject) => {
+      pending.push({ path, opts, resolve, reject });
+    }));
+    return pending;
+  }
+
+  it('does not let a slow window overwrite the one the user went to next', async () => {
+    const ctx = setup();
+    ctx.Store.setWorkspace('local', treeOf(windowOf('@2', [{ id: '%2' }])));
+    const pending = holdWorkspace(ctx);
+
+    const slow = ctx.MsApp._onRoute(route('api-linux', '@9'));
+    await ctx.MsApp._onRoute(route('local', '@2'));
+    expect(ctx.win.TerminalTarget.serverId).toBe('local');
+    expect(ctx.win.state.currentPane).toBe('%2');
+
+    pending[0].resolve(treeOf(windowOf('@9', [{ id: '%9' }])));
+    await slow;
+
+    expect(ctx.win.renderTerminal).toHaveBeenCalledOnce();
+    expect(ctx.win.TerminalTarget.serverId).toBe('local');
+    expect(ctx.win.TerminalTarget.windowId).toBe('@2');
+    expect(ctx.win.state.currentPane).toBe('%2');
+    expect(ctx.dock).toEqual([['local', '@2', INSTANCE]]);
+    ctx.win.close();
+  });
+
+  it('ends up on A after A, B, A, mounted once for the last A', async () => {
+    const ctx = setup();
+    ctx.Store.setWorkspace('local', treeOf(windowOf('@2', [{ id: '%2' }])));
+    const pending = holdWorkspace(ctx);
+
+    const first = ctx.MsApp._onRoute(route('api-linux', '@9'));
+    await ctx.MsApp._onRoute(route('local', '@2'));
+    const last = ctx.MsApp._onRoute(route('api-linux', '@9'));
+    // Both waits share one request.
+    expect(pending).toHaveLength(1);
+
+    pending[0].resolve(treeOf(windowOf('@9', [{ id: '%9' }])));
+    await Promise.all([first, last]);
+
+    expect(ctx.win.renderTerminal).toHaveBeenCalledTimes(2);
+    expect(ctx.win.TerminalTarget.serverId).toBe('api-linux');
+    expect(ctx.win.state.currentPane).toBe('%9');
+    expect(ctx.dock.at(-1)).toEqual(['api-linux', '@9', INSTANCE]);
+    ctx.win.close();
+  });
+
+  it('leaves the settings page alone when a terminal route finishes loading behind it', async () => {
+    const ctx = setup();
+    const pending = holdWorkspace(ctx);
+    const slow = ctx.MsApp._onRoute(route('api-linux', '@9'));
+    await ctx.MsApp._onRoute({ name: 'settings', params: {} });
+    const page = ctx.document.getElementById('ms-view').innerHTML;
+
+    pending[0].resolve(treeOf(windowOf('@9', [{ id: '%9' }])));
+    await slow;
+
+    expect(ctx.win.renderTerminal).not.toHaveBeenCalled();
+    expect(ctx.document.getElementById('ms-view').innerHTML).toBe(page);
+    expect(ctx.win.TerminalTarget.serverId).toBe('local');
+    ctx.win.close();
+  });
+
+  it('ends the attach when leaving for another page', async () => {
+    const ctx = setup();
+    await ctx.MsApp._onRoute({ name: 'settings', params: {} });
+    expect(ctx.win.cleanupTerminal).toHaveBeenCalledOnce();
+    ctx.win.close();
+  });
+
+  it('shares a workspace read between routes, but not with someone who just changed something', async () => {
+    const ctx = setup();
+    const pending = holdWorkspace(ctx);
+    const a = ctx.MsApp.refreshWorkspace('local', { shared: true });
+    const b = ctx.MsApp.refreshWorkspace('local', { shared: true });
+    expect(pending).toHaveLength(1);
+
+    // After a mutation: the running read may predate it.
+    const fresh = ctx.MsApp.refreshWorkspace('local');
+    expect(pending).toHaveLength(2);
+    expect(pending[0].opts.signal.aborted).toBe(true);
+
+    const answer = treeOf(windowOf('@1', [{ id: '%1' }]));
+    pending[1].resolve(answer);
+    // The older answer arrives too and must lose.
+    pending[0].resolve(treeOf(windowOf('@old', [{ id: '%0' }])));
+    expect(await fresh).toEqual(answer);
+    expect(await a).toEqual(answer);
+    expect(await b).toEqual(answer);
+    expect(ctx.win.AppShell.workspace('local')).toEqual(answer);
+    ctx.win.close();
+  });
+
+  it('bounds the workspace read the first screen waits on', async () => {
+    const ctx = setup();
+    const pending = holdWorkspace(ctx);
+    ctx.MsApp.refreshWorkspace('local');
+    expect(pending[0].opts.timeout).toBeGreaterThan(0);
+    expect(pending[0].opts.timeout).toBeLessThanOrEqual(30000);
+    ctx.win.close();
+  });
+
+  it('keeps servers apart: a read for one does not join another', async () => {
+    const ctx = setup();
+    const pending = holdWorkspace(ctx);
+    ctx.MsApp.refreshWorkspace('local', { shared: true });
+    ctx.MsApp.refreshWorkspace('api-linux', { shared: true });
+    expect(pending).toHaveLength(2);
+    ctx.win.close();
+  });
+
+  it('checks once more before saying a window does not exist', async () => {
+    const ctx = setup();
+    ctx.Store.setWorkspace('local', treeOf(windowOf('@1', [{ id: '%1' }])));
+    ctx.win.Api.get = vi.fn(async () => treeOf(windowOf('@7', [{ id: '%7' }])));
+    await ctx.MsApp._onRoute(route('local', '@7'));
+    expect(ctx.win.Api.get).toHaveBeenCalledOnce();
+    expect(ctx.win.renderTerminal).toHaveBeenCalledOnce();
+    expect(ctx.win.state.currentPane).toBe('%7');
+    ctx.win.close();
+  });
+
+  describe('showing the same terminal again', () => {
+    function mounted() {
+      const ctx = setup();
+      ctx.Store.setWorkspace('local', treeOf(windowOf('@2', [{ id: '%2' }])));
+      return ctx;
+    }
+
+    it('keeps it, instead of tearing down a working attach', async () => {
+      const ctx = mounted();
+      await ctx.MsApp._onRoute(route('local', '@2'));
+      const host = ctx.document.getElementById('ms-terminal-host');
+      await ctx.MsApp._onRoute(route('local', '@2'));
+      expect(ctx.win.renderTerminal).toHaveBeenCalledOnce();
+      expect(ctx.document.getElementById('ms-terminal-host')).toBe(host);
+      ctx.win.close();
+    });
+
+    it('mounts again once the terminal is no longer attached', async () => {
+      const ctx = mounted();
+      await ctx.MsApp._onRoute(route('local', '@2'));
+      ctx.win.isTerminalLive = () => false;
+      await ctx.MsApp._onRoute(route('local', '@2'));
+      expect(ctx.win.renderTerminal).toHaveBeenCalledTimes(2);
+      ctx.win.close();
+    });
+
+    it('mounts again for another pane, a changed pane list or a restarted tmux', async () => {
+      const ctx = mounted();
+      await ctx.MsApp._onRoute(route('local', '@2'));
+      ctx.Store.setWorkspace('local', treeOf(windowOf('@2', [{ id: '%2' }, { id: '%3' }])));
+      await ctx.MsApp._onRoute(route('local', '@2'));
+      expect(ctx.win.renderTerminal).toHaveBeenCalledTimes(2);
+      await ctx.MsApp._onRoute(route('local', '@2', '%3'));
+      expect(ctx.win.renderTerminal).toHaveBeenCalledTimes(3);
+      ctx.Store.setWorkspace('local', treeOf(windowOf('@2', [{ id: '%2' }, { id: '%3' }]), { instanceId: '2000:1700000099' }));
+      await ctx.MsApp._onRoute(route('local', '@2', '%3'));
+      expect(ctx.win.renderTerminal).toHaveBeenCalledTimes(4);
+      ctx.win.close();
+    });
+  });
+
+  describe('using the panes a workspace already listed', () => {
+    const knownFor = (ctx, workspace, paneId) => {
+      const win = workspace.sessions[0].windows[0];
+      return ctx.MsApp._knownPanes('local', workspace, win, paneId);
+    };
+
+    it('passes them on from a fresh, complete read', async () => {
+      const ctx = setup();
+      const tree = treeOf(windowOf('@2', [{ id: '%2' }]));
+      ctx.win.Api.get = vi.fn(async () => tree);
+      await ctx.MsApp._onRoute(route('local', '@2'));
+      const known = ctx.win.renderTerminal.mock.calls[0][1];
+      expect(known.panes.map((p) => p.id)).toEqual(['%2']);
+      expect(known.verifyPanes).toBe(false);
+      ctx.win.close();
+    });
+
+    it('checks them in the background when old or from an incomplete read', () => {
+      const ctx = setup();
+      const old = treeOf(windowOf('@2', [{ id: '%2' }]));
+      ctx.MsApp._workspaceReadAt.local = Date.now() - 60000;
+      expect(knownFor(ctx, old).verifyPanes).toBe(true);
+      ctx.MsApp._workspaceReadAt.local = Date.now();
+      expect(knownFor(ctx, old).verifyPanes).toBe(false);
+      expect(knownFor(ctx, treeOf(windowOf('@2', [{ id: '%2' }]), { complete: false })).verifyPanes).toBe(true);
+      // An older node does not say.
+      expect(knownFor(ctx, treeOf(windowOf('@2', [{ id: '%2' }]), { complete: undefined })).verifyPanes).toBe(true);
+      ctx.win.close();
+    });
+
+    it('asks tmux when they are missing, failed or do not include the pane', () => {
+      const ctx = setup();
+      expect(knownFor(ctx, treeOf(windowOf('@2', [])))).toBeNull();
+      expect(knownFor(ctx, treeOf(windowOf('@2', undefined)))).toBeNull();
+      expect(knownFor(ctx, treeOf({ ...windowOf('@2', [{ id: '%2' }]), panesComplete: false }))).toBeNull();
+      expect(knownFor(ctx, treeOf(windowOf('@2', [{ id: '%2' }])), '%8')).toBeNull();
+      ctx.win.close();
+    });
+  });
+
+  describe('the refresh button while the user moves on', () => {
+    /** On window A, with a refresh of A waiting for its answer. */
+    async function refreshing(pendingOn = 'local') {
+      const ctx = setup();
+      ctx.win.Router.current = vi.fn(() => route('local', '@2'));
+      ctx.win.Router.isSame = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      ctx.Store.setWorkspace('local', treeOf(windowOf('@2', [{ id: '%2' }])));
+      ctx.Store.setWorkspace('api-linux', treeOf(windowOf('@9', [{ id: '%9' }])));
+      await ctx.MsApp._onRoute(route('local', '@2'));
+      ctx.win.renderTerminal.mockClear();
+      ctx.dock.length = 0;
+      const pending = holdWorkspace(ctx);
+      const refresh = ctx.MsApp.refreshCurrentTerminal();
+      expect(pending[0].path).toContain(pendingOn === 'local' ? '/api/workspace' : pendingOn);
+      return { ctx, pending, refresh };
+    }
+    const treeA = () => treeOf(windowOf('@2', [{ id: '%2' }, { id: '%3' }]));
+
+    it('renders nothing of A into B when the answer arrives after moving to another server', async () => {
+      const { ctx, pending, refresh } = await refreshing();
+      ctx.win.Router.current = vi.fn(() => route('api-linux', '@9'));
+      await ctx.MsApp._onRoute(route('api-linux', '@9'));
+      const mounted = ctx.win.renderTerminal.mock.calls.length;
+      const title = ctx.document.getElementById('ms-page-title')?.textContent;
+
+      pending[0].resolve(treeA());
+      await refresh;
+
+      expect(ctx.win.renderTerminal).toHaveBeenCalledTimes(mounted);
+      expect(ctx.win.renderTerminal.mock.calls.at(-1)[1].panes.map((p) => p.id)).toEqual(['%9']);
+      expect(ctx.win.TerminalTarget.serverId).toBe('api-linux');
+      expect(ctx.win.state.currentPane).toBe('%9');
+      expect(ctx.dock.at(-1)).toEqual(['api-linux', '@9', INSTANCE]);
+      expect(ctx.document.getElementById('ms-page-title')?.textContent).toBe(title);
+      ctx.win.close();
+    });
+
+    it('leaves the settings page alone', async () => {
+      const { ctx, pending, refresh } = await refreshing();
+      ctx.win.Router.current = vi.fn(() => ({ name: 'settings', params: {} }));
+      await ctx.MsApp._onRoute({ name: 'settings', params: {} });
+      const page = ctx.document.getElementById('ms-view').innerHTML;
+
+      pending[0].resolve(treeA());
+      await refresh;
+
+      expect(ctx.win.renderTerminal).not.toHaveBeenCalled();
+      expect(ctx.document.getElementById('ms-view').innerHTML).toBe(page);
+      ctx.win.close();
+    });
+
+    it('does not fall back to the old route when the refresh fails after moving on', async () => {
+      const { ctx, pending, refresh } = await refreshing();
+      ctx.win.Router.current = vi.fn(() => route('api-linux', '@9'));
+      await ctx.MsApp._onRoute(route('api-linux', '@9'));
+      const onRoute = vi.spyOn(ctx.MsApp, '_onRoute');
+
+      pending[0].reject(new Error('network'));
+      await refresh;
+
+      expect(onRoute).not.toHaveBeenCalled();
+      expect(ctx.win.TerminalTarget.serverId).toBe('api-linux');
+      ctx.win.close();
+    });
+
+    it('does nothing for an A that was left and returned to: the new A is on screen already', async () => {
+      const { ctx, pending, refresh } = await refreshing();
+      ctx.win.Router.current = vi.fn(() => route('api-linux', '@9'));
+      await ctx.MsApp._onRoute(route('api-linux', '@9'));
+      ctx.win.Router.current = vi.fn(() => route('local', '@2'));
+      await ctx.MsApp._onRoute(route('local', '@2'));
+      const mounted = ctx.win.renderTerminal.mock.calls.length;
+
+      pending[0].resolve(treeA());
+      await refresh;
+
+      expect(ctx.win.renderTerminal).toHaveBeenCalledTimes(mounted);
+      expect(ctx.win.TerminalTarget.serverId).toBe('local');
+      expect(ctx.win.state.currentPane).toBe('%2');
+      ctx.win.close();
+    });
+
+    it('notices the route changing before its event has fired', async () => {
+      const { ctx, pending, refresh } = await refreshing();
+      ctx.win.Router.current = vi.fn(() => route('api-linux', '@9'));
+      pending[0].resolve(treeA());
+      await refresh;
+      expect(ctx.win.renderTerminal).not.toHaveBeenCalled();
+      ctx.win.close();
+    });
+
+    it('still refreshes when the user stays, keeping the dock on the same tmux instance', async () => {
+      const { ctx, pending, refresh } = await refreshing();
+      pending[0].resolve(treeOf(windowOf('@2', [{ id: '%2' }]), { instanceId: '2000:1700000099' }));
+      await refresh;
+      expect(ctx.win.renderTerminal).toHaveBeenCalledOnce();
+      expect(ctx.dock).toEqual([['local', '@2', '2000:1700000099']]);
+      ctx.win.close();
+    });
+
+    it('still shows what is wrong when the refresh fails and the user stayed', async () => {
+      const { ctx, pending, refresh } = await refreshing();
+      const onRoute = vi.spyOn(ctx.MsApp, '_onRoute');
+      pending[0].reject(new Error('network'));
+      await vi.waitFor(() => expect(onRoute).toHaveBeenCalledOnce());
+      // It looks again, and shows the failure if that fails too.
+      await vi.waitFor(() => expect(pending).toHaveLength(2));
+      pending[1].reject(new Error('network'));
+      await refresh;
+      expect(ctx.document.getElementById('ms-view').textContent).toContain('工作区不可用');
+      ctx.win.close();
+    });
+  });
+
+  it('counts a bare server route and the window it resolves to as one navigation', async () => {
+    const ctx = setup();
+    ctx.win.eval(readFileSync('public/js/terminal-trace.js', 'utf8'));
+    ctx.win.TerminalTrace.enable();
+    let clock = 0;
+    Object.defineProperty(ctx.win.performance, 'now', { configurable: true, value: () => clock });
+    const pending = holdWorkspace(ctx);
+    const goes = [];
+    ctx.win.Router.go = (target) => goes.push(target);
+
+    const bare = ctx.MsApp._onRoute({ name: 'terminal', params: { serverId: 'local' } });
+    clock = 1456;
+    pending[0].resolve(treeOf(windowOf('@2', [{ id: '%2' }])));
+    await bare;
+    expect(goes).toHaveLength(1);
+
+    await ctx.MsApp._onRoute(goes[0]);
+    const runs = ctx.win.TerminalTrace.all();
+    expect(runs).toHaveLength(1);
+    expect(runs[0].marks.workspace).toBe(1456);
+    expect(runs[0].label).toContain('@2');
+
+    // The next click is a run of its own again.
+    await ctx.MsApp._onRoute(goes[0]);
+    expect(ctx.win.TerminalTrace.all()).toHaveLength(2);
+    ctx.win.TerminalTrace.disable();
+    ctx.win.close();
+  });
+
+  it('does not stack polls behind a slow link', async () => {
+    const ctx = setup();
+    const pending = holdWorkspace(ctx);
+    ctx.MsApp.refreshMetrics('local');
+    ctx.MsApp.refreshMetrics('local');
+    ctx.MsApp.refreshServers();
+    ctx.MsApp.refreshServers();
+    expect(pending.map((p) => p.path)).toEqual(['/api/metrics/current', '/api/servers']);
+    ctx.win.close();
   });
 });
 

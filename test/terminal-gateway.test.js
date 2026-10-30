@@ -243,6 +243,34 @@ describe('TerminalGateway', () => {
     expect(ws.framesOfType('ready')).toEqual([]);
   });
 
+  it('starts nothing when the socket closed during the pane check', async () => {
+    let answer;
+    workspace.resolvePane.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+    const ws = new FakeWs();
+    const handled = gateway.handle(ws, '/ws/terminal/%2512', new URLSearchParams());
+
+    ws.readyState = 3;
+    answer({ provider: 'tmux', persistence: 'tmux', sessionId: '$1', windowId: '@5', paneId: '%12' });
+
+    await expect(handled).resolves.toBeNull();
+    expect(terminalManager.create).not.toHaveBeenCalled();
+    expect(ws.sent).toEqual([]);
+  });
+
+  it('still checks the pane with the server before attaching', async () => {
+    const ws = new FakeWs();
+    await gateway.handle(ws, '/ws/terminal/%2512', new URLSearchParams());
+    expect(workspace.resolvePane).toHaveBeenCalledWith('%12');
+    expect(workspace.resolvePane.mock.invocationCallOrder[0])
+      .toBeLessThan(terminalManager.create.mock.invocationCallOrder[0]);
+  });
+
+  it('hands the manager the session it just verified, so a resize need not ask again', async () => {
+    const ws = new FakeWs();
+    await gateway.handle(ws, '/ws/terminal/%2512', new URLSearchParams());
+    expect(terminalManager.create.mock.calls[0][5].sessionTarget).toBe('$1');
+  });
+
   it('reports an invalid pane refusal without marking it retryable', async () => {
     terminalManager.create.mockImplementation((ws, paneId, cols, rows, nozoom, options) => {
       options.onReject({ code: 'VALIDATION_ERROR', message: 'Invalid paneId format' });
