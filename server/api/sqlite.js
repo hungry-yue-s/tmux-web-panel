@@ -69,7 +69,7 @@ export function createSqliteRouter({ pathGuard }) {
   }
 
   function tablesOf(db) {
-    return db.prepare("SELECT name, type FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY type, name").all();
+    return db.prepare("SELECT name, type, sql FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY type, name").all();
   }
 
   function requireTable(db, name) {
@@ -113,8 +113,21 @@ export function createSqliteRouter({ pathGuard }) {
         } catch {
           // A view over a missing table still lists.
         }
-        return { name: entry.name, type: entry.type, columns, rows, editable: entry.type === 'table' && hasRowid(db, entry.name) };
+        const indexes = db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? ORDER BY name").all(entry.name)
+          .map((index) => ({ name: index.name, sql: index.sql || null }));
+        return {
+          name: entry.name, type: entry.type, sql: entry.sql || null, columns, rows, indexes,
+          editable: entry.type === 'table' && hasRowid(db, entry.name),
+        };
       }),
+      pragmas: {
+        journalMode: db.prepare('PRAGMA journal_mode').get().journal_mode,
+        pageSize: Number(db.prepare('PRAGMA page_size').get().page_size),
+        pageCount: Number(db.prepare('PRAGMA page_count').get().page_count),
+        encoding: db.prepare('PRAGMA encoding').get().encoding,
+        userVersion: Number(db.prepare('PRAGMA user_version').get().user_version),
+        foreignKeys: Number(db.prepare('PRAGMA foreign_keys').get().foreign_keys) === 1,
+      },
     };
   }));
 
@@ -139,6 +152,8 @@ export function createSqliteRouter({ pathGuard }) {
     const { sql, write = false } = req.body || {};
     if (typeof sql !== 'string' || !sql.trim() || sql.length > 100_000) throw new SqliteError('invalid_sql');
     const db = keep(await openDb(req.body, { write: write === true }));
+    const started = process.hrtime.bigint();
+    const elapsed = () => Number(process.hrtime.bigint() - started) / 1e6;
     const statement = db.prepare(sql);
     const columns = typeof statement.columns === 'function' ? statement.columns().map((col) => col.name) : null;
     if (columns && columns.length > 0) {
@@ -147,10 +162,10 @@ export function createSqliteRouter({ pathGuard }) {
         if (rows.length >= QUERY_ROWS_MAX) break;
         rows.push(row);
       }
-      return { columns, rows: plainRows(rows, QUERY_ROWS_MAX), truncated: rows.length >= QUERY_ROWS_MAX };
+      return { columns, rows: plainRows(rows, QUERY_ROWS_MAX), truncated: rows.length >= QUERY_ROWS_MAX, ms: elapsed() };
     }
     const result = statement.run();
-    return { columns: [], rows: [], changes: Number(result.changes || 0) };
+    return { columns: [], rows: [], changes: Number(result.changes || 0), ms: elapsed() };
   }));
 
   router.patch('/cell', route(async (req, keep) => {

@@ -300,6 +300,58 @@ async function getPaneCwd(paneId) {
   return homedir();
 }
 
+const INDEX_MAX_FILES = 20000;
+const INDEX_WALK_MS = 4000;
+const INDEX_SKIP_DIRS = new Set([
+  '.git', 'node_modules', '.hg', '.svn', 'dist', 'build', 'target', '.next', '.nuxt', '.cache',
+  '__pycache__', '.venv', 'venv', '.tox', '.gradle', '.idea', 'Pods', 'DerivedData', 'vendor',
+  // Per-user system folders: huge, and never what quick-open is for.
+  'AppData', 'Application Data', 'Local Settings', 'Library', 'scoop', 'go', 'snap', 'miniconda3', 'anaconda3',
+]);
+
+async function indexFiles(dir) {
+  try {
+    const { stdout } = await execFileAsync('git', [
+      '-c', 'core.quotepath=off', 'ls-files', '-co', '--exclude-standard', '-z',
+    ], { cwd: fsPath(dir), maxBuffer: 64 * 1024 * 1024, timeout: 15000, windowsHide: true });
+    // Files the preview refuses to open are not offered either.
+    const files = stdout.split('\0').filter((file) => file && !SENSITIVE_PATTERNS.some((p) => p.test('/' + file)));
+    return {
+      files: files.slice(0, INDEX_MAX_FILES),
+      truncated: files.length > INDEX_MAX_FILES,
+      source: 'git',
+    };
+  } catch {
+    // Not a repository (or no git): walk the tree instead.
+  }
+  const files = [];
+  const queue = [''];
+  let truncated = false;
+  const deadline = Date.now() + INDEX_WALK_MS;
+  while (queue.length && !truncated) {
+    if (Date.now() > deadline) { truncated = true; break; }
+    const rel = queue.shift();
+    let entries;
+    try {
+      entries = await fs.readdir(fsPath(rel ? dir + '/' + rel : dir), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const child = rel ? rel + '/' + entry.name : entry.name;
+      if (entry.isDirectory()) {
+        if (!INDEX_SKIP_DIRS.has(entry.name) && !entry.name.startsWith('.')) queue.push(child);
+      } else if (entry.isFile() || entry.isSymbolicLink()) {
+        if (SENSITIVE_PATTERNS.some((p) => p.test('/' + child))) continue;
+        files.push(child);
+        if (files.length >= INDEX_MAX_FILES) { truncated = true; break; }
+      }
+    }
+  }
+  return { files, truncated, source: 'walk' };
+}
+
 /**
  * Path checks shared with the routers that act on files the preview opened
  * (git, sqlite, notebooks): the same roots, sensitive patterns and MSYS
@@ -722,6 +774,23 @@ export function createFilesRouter(allowedRoots) {
         if (!err || res.headersSent || res.destroyed) return;
         res.status(err.status || 500).type('json').json({ success: false, data: null, error: err.message });
       });
+    } catch (err) {
+      res.status(500).json({ success: false, data: null, error: err.message });
+    }
+  });
+
+  // Quick-open index: every file under a directory (the pane's cwd by
+  // default), from `git ls-files` inside a repository so .gitignore applies,
+  // otherwise a bounded walk that skips dependency and build folders.
+  router.get('/index', async (req, res) => {
+    try {
+      const { path: rawPath = '.', paneId } = req.query;
+      const result = await validateDirPath(await resolveInputPath(String(rawPath), paneId), roots);
+      if (result.error) {
+        return res.status(result.status).json({ success: false, data: null, error: result.error });
+      }
+      const listed = await indexFiles(result.realPath);
+      res.json({ success: true, data: { root: result.absPath, ...listed }, error: null });
     } catch (err) {
       res.status(500).json({ success: false, data: null, error: err.message });
     }

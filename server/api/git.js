@@ -134,6 +134,32 @@ export function parseLog(output) {
 
 const RECORD = '%x1f%H%x1f%h%x1f%an%x1f%ar%x1f%D%x1f%s';
 
+/** Parses `for-each-ref` rows written with the format in GET /branches. */
+export function parseBranches(output) {
+  return output.split('\n').filter(Boolean).map((line) => {
+    const [head, ref, name, upstream, track, date, subject] = line.split('\x1f');
+    const ahead = /ahead (\d+)/.exec(track || '');
+    const behind = /behind (\d+)/.exec(track || '');
+    return {
+      name,
+      remote: ref.startsWith('refs/remotes/'),
+      current: head === '*',
+      upstream: upstream || null,
+      gone: (track || '').includes('gone'),
+      ahead: ahead ? Number(ahead[1]) : 0,
+      behind: behind ? Number(behind[1]) : 0,
+      date,
+      subject,
+    };
+  }).filter((branch) => !(branch.remote && branch.name.endsWith('/HEAD')) && branch.name !== 'origin');
+}
+
+/** Rejects names git would refuse or read as an option. */
+export function validBranchName(name) {
+  return typeof name === 'string' && name.length > 0 && name.length <= 250 && !name.startsWith('-')
+    && !/[\s~^:?*[\\\0]|\.\.|@\{|\/\/|\.lock$|\/$|\.$/.test(name);
+}
+
 function fileList(value) {
   if (!Array.isArray(value) || value.length === 0 || value.length > 2000) throw new GitError('invalid_files');
   for (const file of value) {
@@ -330,6 +356,57 @@ export function createGitRouter({ pathGuard, generateMessage = generateWithClaud
     }
     await runGit(root, ['reset', '--soft', 'HEAD~1']);
     return { message: message.trim() };
+  }));
+
+  router.get('/branches', route(async (req) => {
+    const { root } = await repo(req);
+    const format = '%(HEAD)%1f%(refname)%1f%(refname:short)%1f%(upstream:short)%1f%(upstream:track,nobracket)%1f%(committerdate:relative)%1f%(contents:subject)';
+    const out = await runGit(root, ['for-each-ref', '--sort=-committerdate', `--format=${format}`, 'refs/heads', 'refs/remotes'], {
+      env: { GIT_OPTIONAL_LOCKS: '0' },
+    });
+    return { branches: parseBranches(out) };
+  }));
+
+  router.post('/checkout', route(async (req) => {
+    const { root } = await repo(req);
+    const { branch, create = false, from = null } = req.body;
+    if (!validBranchName(branch)) throw new GitError('invalid_branch');
+    if (create) {
+      const args = ['switch', '-c', branch];
+      if (from != null) {
+        if (!validBranchName(from)) throw new GitError('invalid_branch');
+        args.push(from);
+      }
+      await runGit(root, args);
+    } else if (/^[^/]+\/.+/.test(branch) && req.body.remote === true) {
+      // A remote branch checks out as a local tracking branch.
+      await runGit(root, ['switch', '--track', branch]);
+    } else {
+      await runGit(root, ['switch', branch]);
+    }
+    return {};
+  }));
+
+  // Fetch, pull (fast-forward only) or push. A branch without an upstream is
+  // pushed to origin and starts tracking it.
+  router.post('/sync', route(async (req) => {
+    const { root } = await repo(req);
+    const action = req.body.action;
+    // No terminal is attached, so a credential prompt fails instead of hanging.
+    const options = { timeout: 120_000 };
+    let output;
+    if (action === 'fetch') output = await runGit(root, ['fetch', '--all', '--prune'], options);
+    else if (action === 'pull') output = await runGit(root, ['pull', '--ff-only'], options);
+    else if (action === 'push') {
+      const upstream = await runGit(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { allowExit: [128] });
+      if (upstream.trim()) output = await runGit(root, ['push'], options);
+      else {
+        const branch = (await runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+        if (!branch || branch === 'HEAD') throw new GitError('detached_head');
+        output = await runGit(root, ['push', '-u', 'origin', branch], options);
+      }
+    } else throw new GitError('invalid_action');
+    return { output: output.trim() };
   }));
 
   router.post('/commit-message', route(async (req) => {

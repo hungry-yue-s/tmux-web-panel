@@ -1799,6 +1799,8 @@ class StatusSocket {
         sessionCount: sessionCount,
         windowCount: windowCount,
       };
+      // Blocks read pane commands and listening ports from the latest snapshot.
+      window.__twpStatus = data;
 
       var statusText = sessionCount + 's · ' + windowCount + 'w';
       if (statusEl) {

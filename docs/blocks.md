@@ -10,16 +10,20 @@
 | 看板 | 命令面板 / 打开 `TODO.md` | Alt+Shift+K | `## 标题` 为列，顶层列表项为卡片，拖动排序后写回文件 |
 | 浏览器 | 命令面板 / `twp open <url>` | Alt+Shift+B | 右侧 iframe 浏览本地开发页面 |
 | 任务管理器 | 命令面板 | Alt+Shift+M | 跳到当前服务器的性能页（进程、CPU、内存） |
-| 切换主机 | 命令面板 | Alt+Shift+H | 打开命令面板并筛选服务器 |
-| 主题 | 命令面板 | Alt+Shift+Y | ↑↓ 实时预览，Enter 应用，Esc 恢复原主题 |
+| 快速打开文件 | 命令面板输入 `/` | Alt+Shift+P | 在当前 pane 目录里模糊查找文件 |
+| 切换主机 | 命令面板输入 `@` | Alt+Shift+H | 主机面板：连接状态、会话数、延迟，可添加远程主机 |
+| 主题 | 命令面板 | Alt+Shift+Y | 分深浅色筛选，↑↓ 带终端样例实时预览，Enter 应用，Esc 恢复原主题 |
+| 快捷键表 | 命令面板 | Alt+Shift+/ | 列出全部快捷键 |
 
-快捷键在捕获阶段处理，终端获得焦点时也生效（不会发给 shell）。
+快捷键在捕获阶段处理，终端获得焦点时也生效（不会发给 shell）。命令面板还支持 `>` 只搜命令。
+
+Git、浏览器由 `public/js/block-host.js` 托管：可停靠成右侧标签、浮动成可拖动缩放的窗口（Alt+Shift+F）或在工作区最大化（Alt+Shift+Enter，Esc 还原），Alt+Shift+W 关闭；窄屏和手机上是全屏页面。每台服务器分别记住打开的 block、模式和位置。
 
 ## 文件预览里的 block
 
 - **编辑**：“更多 → 编辑”。Markdown 用 Toast UI Editor 的所见即所得模式（可切换 Markdown 源码），其它文本用纯文本编辑器；Ctrl/⌘+S 保存。保存走 `PUT /api/files/content`，只有文件的 mtime 和大小与加载时一致才写入，否则提示冲突（409），不会覆盖别人的修改。编辑期间暂停自动刷新。
 - **Git 行标记**：代码预览的行号栏标出相对 HEAD 新增（绿）、修改（蓝）、删除位置（红）。
-- **SQLite**：`.sqlite` `.sqlite3` `.db` `.db3` 打开为数据库浏览器：表/视图列表、分页、按列排序、双击单元格编辑、新增/删除行、SQL 查询（默认只读，勾选“允许修改数据”才以读写方式打开）。基于 Node 自带的 `node:sqlite`，无需安装。
+- **SQLite**：`.sqlite` `.sqlite3` `.db` `.db3` 打开为数据库浏览器，分“结构 / 浏览 / 执行”三页：表结构与建表语句、分页、按列排序、双击单元格编辑、新增/删除行、SQL 查询（默认只读，勾选“允许修改数据”才以读写方式打开）、结果导出 CSV。基于 Node 自带的 `node:sqlite`，无需安装。
 - **Notebook**：`.ipynb` 渲染 Markdown、代码与输出（文本、错误、图片；HTML/SVG 输出放在无权限的 sandbox iframe 里）。“运行全部”在服务器上执行 `jupyter nbconvert --execute --inplace`，需要该机器装有 Jupyter。
 - **补丁**：`.diff` `.patch` 用 diff2html 渲染，可切换逐行/并排。
 - **看板视图**：任意 Markdown 都可从“更多 → 看板视图”进入；`TODO.md`、`todo.md`、`kanban.md`、`board.md` 默认以看板打开，“返回文档”回到普通渲染。没有 `##` 标题时按勾选状态分为“待办/完成”两列。拖到名为 Done/完成 的列会勾选任务，拖出则取消勾选。看板写回时会规范化空行，第一个 `##` 之前的内容原样保留。
