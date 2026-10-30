@@ -226,7 +226,12 @@ export class SessionProtection {
       'set-option', '-g', '@resurrect-default-processes', processes.defaultProcesses, ';',
       'set-option', '-g', '@resurrect-processes', processes.processes,
     ];
-    if (this.windows) args.push(';', 'set-option', '-g', '@resurrect-save-command-strategy', 'msys_procfs');
+    if (this.windows) {
+      args.push(';', 'set-option', '-g', '@resurrect-save-command-strategy', 'msys_procfs');
+      // New panes start from this environment. A tmux typed in PowerShell does not
+      // have it, and its login shells would drop claude, Node and Git from PATH.
+      args.push(';', 'set-environment', '-g', 'MSYS2_PATH_TYPE', 'inherit');
+    }
     await this._tmux(args);
   }
 

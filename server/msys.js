@@ -110,5 +110,10 @@ export function tmuxUserHome({ windows = IS_WINDOWS, root = MSYS_ROOT, user = us
   return windows ? win32.join(root, 'home', user) : homedir();
 }
 
-// Every tmux child — execFile calls and the attach PTY — inherits this.
-if (IS_WINDOWS) process.env.MSYS = withNoGlob(process.env.MSYS);
+// Every tmux child — execFile calls and the attach PTY — inherits these.
+// MSYS2_PATH_TYPE reaches the panes of a server the panel itself starts; without
+// it their login shells reset PATH to the MSYS2 minimum.
+if (IS_WINDOWS) {
+  process.env.MSYS = withNoGlob(process.env.MSYS);
+  process.env.MSYS2_PATH_TYPE = 'inherit';
+}

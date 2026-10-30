@@ -274,6 +274,25 @@ describe('SessionProtection', () => {
     expect((await protection._inspect()).dir).toBe(dir);
   });
 
+  it('keeps the Windows PATH in new panes before restoring any, whoever started the server', async () => {
+    const tmux = fakeTmux();
+    const { home } = setup({ tmux });
+    const protection = new SessionProtection({
+      configDir: join(home, 'config'), projectDir: resolve('.'), windows: true, exec: tmux.exec, now: () => 1_000_000, home, intervalMs: 300_000,
+    });
+    await protection.tick();
+    const names = tmux.state.commands.map((args) => args[0]);
+    expect(tmux.state.commands).toContainEqual(['set-environment', '-g', 'MSYS2_PATH_TYPE', 'inherit']);
+    expect(names.indexOf('set-environment')).toBeLessThan(names.indexOf('new-session'));
+  });
+
+  it('leaves the pane environment alone off Windows', async () => {
+    const tmux = fakeTmux();
+    const { protection } = setup({ tmux });
+    await protection.tick();
+    expect(tmux.state.commands.some((args) => args[0] === 'set-environment')).toBe(false);
+  });
+
   it('tries the resurrect options again when tmux refused them, without restoring twice', async () => {
     const tmux = fakeTmux();
     const { protection } = setup({ tmux });

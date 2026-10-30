@@ -55,6 +55,7 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 - **`~/.tmux.conf` 必须保留 `set -g exit-empty off`**：否则开机启动的空 server 等不到面板来恢复就自己退出了
 - **不要在 `tmux-server.service` 里预创建会话**（如 `tmux new-session -d -s main`）：同名会话不会被恢复，启动超过 2 分钟后才看到的 server 也不再恢复
 - **Windows 上不得 resize 运行中的 tmux 客户端，也不得用 node-pty 的 `kill` 关闭它**：两者都可能带走整个 tmux server 和所有会话（`docs/known-issues.md` ENV-1）。尺寸变化走 `TerminalManager._setClientSize`（新客户端替换旧的），断开走 `_endClient`（只结束客户端进程），`conhost.exe` 由 `ConsoleReaper` 延后回收
+- **Windows 上新窗格依赖 tmux 全局环境里的 `MSYS2_PATH_TYPE=inherit`**：没有它，MSYS2 登录 shell 会把 PATH 重置到最小集，窗格里找不到 claude、Node、Git（`docs/known-issues.md` ENV-2）。`run-tmux-server.ps1`、`server/msys.js` 和会话保护的 `_applyOptions` 三处保证，不要去掉
 - **环境问题要记录并由服务管理**：现象、证据和结论写进 `docs/known-issues.md`，检测和恢复做进服务，不靠人工救场。不要在默认 tmux server 上做接入、resize、断开实验，一律用 `tmux -L` 或 `TMUX_TMPDIR`
 - **没有会话时绝不保存**：那次空快照会成为 `last`，下次重启就什么也恢复不了。`save.sh` 只能由 `SessionProtection` 在有会话时调用
 - **用户自己在 `~/.tmux.conf` 里加载了 tmux-resurrect（常见于 TPM + continuum）时，面板不自动保存和恢复**（`mode: 'external'`），只提供立即保存和找回会话，避免两套机制互相覆盖或重复恢复
