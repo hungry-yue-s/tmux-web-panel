@@ -50,11 +50,12 @@ html.tmux-native-titlebar body { --workspace-chrome-height:44px; }
 .workspace-chrome .crumbs,.workspace-chrome .terminal-layout .crumbs {
   display:flex; align-items:center; gap:10px; min-width:0; flex:1; text-align:left;
 }
-.workspace-chrome .crumbs.copyable { cursor:copy; border-radius:4px; }
-.workspace-chrome .crumbs.copyable:hover { background:var(--workspace-hover); }
-.workspace-chrome .crumbs.copyable:focus-visible { outline:2px solid var(--accent-blue); outline-offset:3px; }
+.workspace-chrome .window-context { display:flex; align-items:center; gap:10px; min-width:0; flex:0 1 auto; }
+.workspace-chrome .window-context.copyable { cursor:copy; border-radius:4px; }
+.workspace-chrome .window-context.copyable:hover { background:var(--workspace-hover); }
+.workspace-chrome .window-context.copyable:focus-visible { outline:2px solid var(--accent-blue); outline-offset:3px; }
 .workspace-chrome .ms-topbar .crumb {
-  display:block; max-width:40%; overflow:hidden; text-overflow:ellipsis;
+  display:block; overflow:hidden; text-overflow:ellipsis;
   white-space:nowrap; color:var(--workspace-muted); font-size:11px; line-height:1.4;
 }
 .workspace-chrome .crumb:not(:empty)::after { content:"/"; margin-left:10px; color:var(--workspace-line-strong); }

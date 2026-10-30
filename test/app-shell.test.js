@@ -5,6 +5,8 @@ import { JSDOM } from 'jsdom';
 const ROUTER = readFileSync('public/js/router.js', 'utf8');
 const STORE = readFileSync('public/js/store.js', 'utf8');
 const SHELL = readFileSync('public/js/app-shell.js', 'utf8');
+const BLOCKS = readFileSync('public/js/blocks.js', 'utf8');
+const WORKSPACE_BLOCKS = readFileSync('public/js/blocks-workspace.js', 'utf8');
 
 const SHELL_DOM = `<!DOCTYPE html><html><body>
   <div class="ms-app sidebar-collapsed">
@@ -19,7 +21,7 @@ const SHELL_DOM = `<!DOCTYPE html><html><body>
         <div id="ms-mobile-tools"></div>
       </header>
       <header class="ms-topbar" id="ms-topbar">
-        <div class="crumbs"><div class="crumb" id="ms-crumb"></div><h1 id="ms-page-title"></h1></div>
+        <div class="crumbs"><div class="window-context" id="ms-window-context"><div class="crumb" id="ms-crumb"></div><h1 id="ms-page-title"></h1></div></div>
         <div id="ms-top-actions"></div>
       </header>
       <div id="ms-view"></div>
@@ -334,12 +336,37 @@ describe('AppShell sidebar preferences', () => {
 });
 
 describe('AppShell window bar', () => {
+  it('opens Git from its chip without triggering the title copy action', async () => {
+    const ctx = loadShell();
+    seedLocalTmux(ctx.Store);
+    ctx.Shell.render();
+    ctx.Shell.setTerminalHeader('local', ctx.Shell.workspace('local'), { sessionId: '$0', windowId: '@0' });
+    ctx.win._copyToClipboard = vi.fn();
+    ctx.win.eval(BLOCKS);
+    ctx.win.BlockHost = { register: vi.fn(), render: vi.fn(), open: vi.fn() };
+    const data = { root: '/tmp/repo', branch: 'feat/header-copy', files: [], detached: false };
+    ctx.win.Blocks.ui.client = () => ({ get: async () => data });
+    ctx.win.Blocks.ui.currentContext = () => ({ serverId: 'local', paneId: '%95' });
+    Object.defineProperty(ctx.document, 'visibilityState', { value: 'visible' });
+    ctx.win.eval(WORKSPACE_BLOCKS);
+    ctx.document.dispatchEvent(new ctx.win.Event('DOMContentLoaded'));
+    await vi.waitFor(() => expect(ctx.document.querySelector('.pane-git-chip')?.hidden).toBe(false));
+    const chip = ctx.document.querySelector('.pane-git-chip');
+    chip.click();
+    expect(ctx.win.BlockHost.open).toHaveBeenCalledExactlyOnceWith('git', { path: '/tmp/repo' });
+    expect(ctx.win._copyToClipboard).not.toHaveBeenCalled();
+    expect(chip.title).toContain('点击打开 Git');
+    ctx.document.getElementById('ms-page-title').click();
+    expect(ctx.win._copyToClipboard).toHaveBeenCalledExactlyOnceWith('本机 / DataAnt / 三绿');
+    ctx.win.close();
+  });
+
   it('copies the complete current server/session/window title when its region is clicked', () => {
     const ctx = loadShell();
     seedLocalTmux(ctx.Store);
     const workspace = ctx.Store.getState().entities.workspaceByServerId.local;
     ctx.win._copyToClipboard = vi.fn();
-    const context = ctx.document.querySelector('.crumbs');
+    const context = ctx.document.getElementById('ms-window-context');
     ctx.Shell.setTerminalHeader('local', workspace, { sessionId: '$0', windowId: '@0' });
     ctx.document.getElementById('ms-page-title').click();
     expect(ctx.win._copyToClipboard).toHaveBeenLastCalledWith('本机 / DataAnt / 三绿');
@@ -347,6 +374,9 @@ describe('AppShell window bar', () => {
     ctx.document.getElementById('ms-crumb').click();
     expect(ctx.win._copyToClipboard).toHaveBeenLastCalledWith('本机 / DataAnt / 风控点总结');
     expect(ctx.win._copyToClipboard).toHaveBeenCalledTimes(2);
+    ctx.document.querySelector('.crumbs').click();
+    expect(ctx.win._copyToClipboard).toHaveBeenCalledTimes(2);
+    expect(ctx.document.querySelector('.crumbs').hasAttribute('role')).toBe(false);
     expect(context.title).toBe('点击复制：本机 / DataAnt / 风控点总结');
     expect(context.getAttribute('aria-label')).toBe('复制完整标题：本机 / DataAnt / 风控点总结');
     ctx.win.close();
@@ -358,7 +388,7 @@ describe('AppShell window bar', () => {
     const workspace = ctx.Store.getState().entities.workspaceByServerId.local;
     ctx.win._copyToClipboard = vi.fn();
     ctx.Shell.setTerminalHeader('local', workspace, { sessionId: '$0', windowId: '@0' });
-    const context = ctx.document.querySelector('.crumbs');
+    const context = ctx.document.getElementById('ms-window-context');
     expect(context.getAttribute('role')).toBe('button');
     expect(context.tabIndex).toBe(0);
     for (const key of ['Enter', ' ']) {
@@ -939,6 +969,28 @@ describe('AppShell mobile workspace sheet', () => {
 
 
 describe('native titlebar drag regions', () => {
+  it('excludes only the title text and branch button, leaving their surrounding space draggable', async () => {
+    const dom = new JSDOM('<header class="workspace-chrome"><div id="ms-topbar"><div class="crumbs">'
+      + '<div id="ms-window-context">本机 / 会话 / 窗口</div><button>feat/header-copy</button>'
+      + '</div></div></header>', { url: 'http://localhost/', runScripts: 'outside-only' });
+    const win = dom.window;
+    win.document.querySelector('header').getBoundingClientRect = () => ({ height: 44, top: 0 });
+    win.document.querySelector('.crumbs').getBoundingClientRect = () => ({ left: 200, top: 8, width: 600, height: 28 });
+    win.document.getElementById('ms-window-context').getBoundingClientRect = () => ({ left: 200, top: 8, width: 150, height: 28 });
+    win.document.querySelector('button').getBoundingClientRect = () => ({ left: 360, top: 8, width: 100, height: 28 });
+    const messages = [];
+    win.webkit = { messageHandlers: { tmuxPanelAction: { postMessage: message => messages.push(message) } } };
+    win.requestAnimationFrame = callback => { callback(); return 1; };
+    win.eval(SHELL);
+    win.AppShell._setHeaderCopy('本机 / 会话 / 窗口');
+    await Promise.resolve();
+    expect(messages.at(-1).exclusions).toEqual([
+      { x: 200, y: 8, width: 150, height: 28 }, { x: 360, y: 8, width: 100, height: 28 },
+    ]);
+    expect(win.document.querySelector('.crumbs').hasAttribute('role')).toBe(false);
+    dom.window.close();
+  });
+
   it('reports interactive holes and updates them after a toolbar change', async () => {
     const dom = new JSDOM('<header class="workspace-chrome"><span>工作台</span><button>通知</button><summary>更多</summary></header>',
       { url: 'http://localhost/', runScripts: 'outside-only' });

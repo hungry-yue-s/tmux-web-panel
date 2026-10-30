@@ -646,7 +646,7 @@
     },
 
     _setHeaderCopy: function (text) {
-      var context = global.document.querySelector('#ms-topbar .crumbs');
+      var context = el('ms-window-context');
       if (!context) return;
       context.classList.toggle('copyable', Boolean(text));
       context.onclick = text ? function () { global._copyToClipboard(text); } : null;
