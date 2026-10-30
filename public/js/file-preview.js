@@ -55,6 +55,9 @@ var FilePreview = (function () {
   // a tab keeps `block` and `modal` (its frame), and no file state of its own.
   var _blockTabs = [];
   var _blockListener = null;
+  var _blockWindowListener = null;
+  var _blockWindowsGoneListener = null;
+  var _switchingDockContext = false;
   var _pendingBlockKey = null;
   var _sideSetWidth = null;
   var BLOCK_SIDE_WIDTH = 560;
@@ -199,6 +202,7 @@ var FilePreview = (function () {
         }
       }
     } catch (_) { /* storage may be unavailable */ }
+    if (_blockWindowsGoneListener) _blockWindowsGoneListener(serverId, function (context) { return live.has(context); });
   }
 
   /** A successful DELETE is enough evidence even if the next tree fetch fails. */
@@ -211,6 +215,7 @@ var FilePreview = (function () {
       if (key) window.localStorage.removeItem(key);
       window.localStorage.removeItem('tmux_file_preview_dock_v3:' + encodeURIComponent(serverId + '\u0000' + windowId));
     } catch (_) { /* storage may be unavailable */ }
+    if (_blockWindowsGoneListener) _blockWindowsGoneListener(serverId, function (other) { return other !== context; });
   }
 
   function _dockLayout() {
@@ -947,7 +952,7 @@ var FilePreview = (function () {
 
   /** Puts declared blocks into the dock whenever one can exist. */
   function _mountBlockTabs() {
-    if (!_blockTabs.length || _restoringDock) return;
+    if (!_blockTabs.length || _restoringDock || _switchingDockContext) return;
     // A file modal owns the preview globals; close() mounts once it is gone.
     if (_overlay && _placement !== 'side') return;
     if (!_canDockRight()) return;
@@ -1054,6 +1059,15 @@ var FilePreview = (function () {
     _restoringDock = false;
     _persistenceSuspended = false;
     _dockContextKey = nextContextKey;
+
+    // Per-window blocks change with it. They are declared now but mounted by the
+    // restore below, so they cannot land in the wrong window or ahead of its files.
+    _switchingDockContext = true;
+    try {
+      if (_blockWindowListener) _blockWindowListener();
+    } finally {
+      _switchingDockContext = false;
+    }
 
     if (!nextContextKey) return Promise.resolve(false);
     return restoreDocked(_dockContextGeneration);
@@ -4922,6 +4936,9 @@ var FilePreview = (function () {
         if (_dockRestoreButton) _dockRestoreButton.focus();
       },
       onChange: function (listener) { _blockListener = listener; },
+      context: function () { return _dockContextKey; },
+      onWindowChange: function (listener) { _blockWindowListener = listener; },
+      onWindowsGone: function (listener) { _blockWindowsGoneListener = listener; },
     },
     // Test seam (no DOM): exercised by test/file-preview-links.test.js.
     _test: {

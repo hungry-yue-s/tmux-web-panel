@@ -108,7 +108,8 @@ Git、浏览器等工具 block 与文件共用这个分窗（同一个标签条�
 
 - 分窗归 `file-preview.js` 所有；`public/js/block-host.js` 只通过 `FilePreview.blockDock.sync()` 声明哪些 frame 属于标签条，block 的生命周期仍归它管。
 - 切换文件 Tab 时文件 modal 离开 DOM，block 的 frame 只隐藏不移除，这样浏览器页面和未写完的提交说明都不会丢。
-- 文件 Tab 按窗口保存，block 按服务器保存：切换窗口只换文件 Tab，block 标签保留；`_persistDockState` 不写入 block，只记录它是否在最前（`activeBlock`）。
-- 文件 Tab 的持久化键包含服务器 ID、tmux 服务实例（PID + 启动时间）和窗口 ID；不恢复缺少实例信息的旧缓存。删除窗口成功时立即清理；成功且完整的工作区快照还会回收已消失窗口和旧实例的记录，失败或不完整的读取不得触发回收。
+- 文件 Tab 和 Git block 按窗口保存，浏览器 block 按服务器保存：切换窗口时文件和 Git 标签跟着换，浏览器标签保留。block 的归属由注册时的 `perWindow` 决定，`_persistDockState` 不写入 block，只记录它是否在最前（`activeBlock`）。
+- 切走窗口时 Git block 的 frame 只脱离 DOM、不销毁，这样没写完的提交说明不会丢；窗口的 block 要等访问到它才创建。在没有窗口的页面打开的 Git 先浮动，到第一个窗口时归属于它。
+- 文件 Tab 和窗口级 block 的持久化键包含服务器 ID、tmux 服务实例（PID + 启动时间）和窗口 ID；不恢复缺少实例信息的旧缓存。删除窗口成功时立即清理；成功且完整的工作区快照还会回收已消失窗口和旧实例的记录，失败或不完整的读取不得触发回收。
 - 关闭最后一个文件 Tab 时，只要还有 block 标签，分窗就保留；所有标签都没了才销毁。
 - 分窗只存在于终端旁：离开终端页时 block 暂存（frame 脱离 DOM），回来再挂上；在其它页面打开 block 时用浮动窗口。

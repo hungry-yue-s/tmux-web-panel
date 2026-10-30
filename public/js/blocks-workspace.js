@@ -664,7 +664,8 @@
   BlockHost.register('git', {
     title: 'Git',
     icon: 'git',
-    // One Git block per repository root; before the first status it is keyed by the path asked for.
+    perWindow: true,
+    // One Git block per repository root in a window; before the first status it is keyed by the path asked for.
     key: function (params) { return params.path && params.path !== '.' ? params.path : 'pane:' + (params.paneId || ''); },
     create: gitBlock,
   });

@@ -6,7 +6,9 @@
 // previews, floats as a window over the workstage, or is maximized over it.
 // Phones and narrow windows show it as a full-screen sheet. Every block
 // belongs to one server: switching servers swaps the set of blocks, and each
-// server remembers its own blocks, modes and positions across reloads.
+// server remembers its own blocks, modes and positions across reloads. A kind
+// registered with `perWindow` (git) belongs to one tmux window as well, the way
+// file tabs do, and is kept under the same identity: server, tmux instance, window.
 //
 // The sidebar itself (tab strip, width, hide/restore) belongs to the file
 // preview; this file only declares which frames belong in it. It exists only
@@ -16,6 +18,7 @@ var BlockHost = (function () {
   'use strict';
 
   var STORAGE_PREFIX = 'twp_blocks_v1:';
+  var WINDOW_STORAGE_PREFIX = 'twp_window_blocks_v1:';
   var FLOAT_MIN_W = 360;
   var FLOAT_MIN_H = 240;
   var COMPACT_WIDTH = 900;
@@ -24,8 +27,8 @@ var BlockHost = (function () {
   var instances = [];
   var nextId = 1;
   var zTop = 30;
-  var dockState = {}; // serverId -> { active }
-  var restoredServers = {};
+  var dockState = {}; // scope -> { active }
+  var restoredScopes = {};
   var focusedId = null;
 
   // --- small DOM helpers (shared look with blocks.js) ---------------------
@@ -90,6 +93,23 @@ var BlockHost = (function () {
     return window.FilePreview ? window.FilePreview.blockDock : null;
   }
 
+  /** The tmux window on screen on this server, under the key the sidebar knows it by. */
+  function currentWindow() {
+    var dock = sidebar();
+    var context = dock ? dock.context() : null;
+    return context && context.indexOf(currentServer() + '\u0000') === 0 ? context : null;
+  }
+
+  /** What a block is saved and restored with: its window, or else its server. */
+  function scopeOf(instance) {
+    return instance.windowKey || instance.serverId;
+  }
+
+  function isHere(instance) {
+    return instance.serverId === currentServer()
+      && (!instance.windowKey || instance.windowKey === currentWindow());
+  }
+
   function canDock() {
     var dock = sidebar();
     return !!(dock && dock.available());
@@ -106,11 +126,18 @@ var BlockHost = (function () {
 
   // --- persistence -----------------------------------------------------------
 
-  function storageKey(serverId) { return STORAGE_PREFIX + encodeURIComponent(serverId); }
+  function storageKey(scope) {
+    if (scope.indexOf('\u0000') < 0) return STORAGE_PREFIX + encodeURIComponent(scope);
+    // tmux reuses window ids after a restart, so without its instance id a window
+    // cannot be told from an earlier one: memory only, the same as file tabs.
+    return scope.split('\u0000')[1] ? WINDOW_STORAGE_PREFIX + encodeURIComponent(scope) : null;
+  }
 
-  function persist(serverId) {
-    var own = instances.filter(function (i) { return i.serverId === serverId && kinds[i.kind] && kinds[i.kind].persist !== false; });
-    var state = dockState[serverId] || {};
+  function persist(scope) {
+    var key = storageKey(scope);
+    if (!key) return;
+    var own = instances.filter(function (i) { return scopeOf(i) === scope && kinds[i.kind] && kinds[i.kind].persist !== false; });
+    var state = dockState[scope] || {};
     var active = own.find(function (i) { return i.id === state.active; });
     var data = {
       version: 1,
@@ -120,30 +147,101 @@ var BlockHost = (function () {
       active: active ? own.indexOf(active) : -1,
     };
     try {
-      if (own.length) window.localStorage.setItem(storageKey(serverId), JSON.stringify(data));
-      else window.localStorage.removeItem(storageKey(serverId));
+      if (own.length) window.localStorage.setItem(key, JSON.stringify(data));
+      else window.localStorage.removeItem(key);
     } catch (_) { /* private mode */ }
   }
 
-  function restore(serverId) {
-    if (restoredServers[serverId]) return;
-    restoredServers[serverId] = true;
+  function restore(scope, serverId, windowKey) {
+    if (restoredScopes[scope]) return;
+    restoredScopes[scope] = true;
+    var key = storageKey(scope);
+    if (!key) return;
     var raw = null;
-    try { raw = window.localStorage.getItem(storageKey(serverId)); } catch (_) { return; }
+    try { raw = window.localStorage.getItem(key); } catch (_) { return; }
     if (!raw) return;
     var data;
     try { data = JSON.parse(raw); } catch (_) { return; }
     if (!data || data.version !== 1 || !Array.isArray(data.blocks)) return;
-    dockState[serverId] = { active: null };
+    dockState[scope] = { active: null };
     var created = [];
     data.blocks.forEach(function (saved) {
       if (!saved || !kinds[saved.kind]) return;
       var mode = saved.mode === 'float' || saved.mode === 'max' ? saved.mode : 'dock';
-      var instance = create(saved.kind, saved.params || {}, { mode: mode, serverId: serverId, geom: saved.geom, quiet: true });
+      var instance = create(saved.kind, saved.params || {}, { mode: mode, serverId: serverId, windowKey: windowKey, geom: saved.geom, quiet: true });
       if (instance) created.push(instance);
     });
     var active = created[data.active];
-    if (active) dockState[serverId].active = active.id;
+    if (active) dockState[scope].active = active.id;
+  }
+
+  /** A window's blocks are only built once it is visited. */
+  function restoreHere() {
+    var sid = currentServer();
+    restore(sid, sid, null);
+    var win = currentWindow();
+    if (win) restore(win, sid, win);
+  }
+
+  /**
+   * A per-window block with no window yet, because it was opened on another page
+   * or saved before blocks were per window, joins the first one it is seen in.
+   */
+  function adoptUnbound() {
+    var win = currentWindow();
+    if (!win) return;
+    var sid = currentServer();
+    var adopted = false;
+    instances.slice().forEach(function (instance) {
+      if (instance.windowKey || instance.serverId !== sid || !kinds[instance.kind].perWindow) return;
+      adopted = true;
+      var twin = instance.key && instances.find(function (i) { return i.windowKey === win && i.key === instance.key; });
+      if (twin) {
+        discard(instance);
+        return;
+      }
+      var state = dockState[sid];
+      if (state && state.active === instance.id) {
+        state.active = null;
+        dockState[win] = dockState[win] || { active: null };
+        dockState[win].active = instance.id;
+      }
+      instance.windowKey = win;
+    });
+    if (!adopted) return;
+    persist(sid);
+    persist(win);
+  }
+
+  /** Windows that are gone take their blocks with them, like their file tabs. */
+  function forgetWindows(serverId, isLive) {
+    var gone = function (scope) {
+      return scope.indexOf(serverId + '\u0000') === 0 && !isLive(scope);
+    };
+    var removed = false;
+    instances.slice().forEach(function (instance) {
+      if (instance.windowKey && gone(instance.windowKey)) {
+        discard(instance);
+        removed = true;
+      }
+    });
+    Object.keys(restoredScopes).forEach(function (scope) {
+      if (gone(scope)) delete restoredScopes[scope];
+    });
+    Object.keys(dockState).forEach(function (scope) {
+      if (gone(scope)) delete dockState[scope];
+    });
+    try {
+      var storage = window.localStorage;
+      for (var i = storage.length - 1; i >= 0; i--) {
+        var key = storage.key(i);
+        if (key.indexOf(WINDOW_STORAGE_PREFIX) !== 0) continue;
+        var scope;
+        try { scope = decodeURIComponent(key.slice(WINDOW_STORAGE_PREFIX.length)); } catch (_) { continue; }
+        if (gone(scope)) storage.removeItem(key);
+      }
+    } catch (_) { /* storage may be unavailable */ }
+    if (removed) render();
   }
 
   // --- instances -------------------------------------------------------------
@@ -166,6 +264,7 @@ var BlockHost = (function () {
       kind: kind,
       key: keyOf(kind, params),
       serverId: serverId,
+      windowKey: options.windowKey || null,
       params: params || {},
       mode: options.mode || definition.defaultMode || 'dock',
       previousMode: null,
@@ -196,7 +295,7 @@ var BlockHost = (function () {
         syncTitle(instance);
         syncSidebar();
       },
-      setParams: function (next) { instance.params = Object.assign({}, instance.params, next || {}); instance.key = keyOf(kind, instance.params); persist(serverId); },
+      setParams: function (next) { instance.params = Object.assign({}, instance.params, next || {}); instance.key = keyOf(kind, instance.params); persist(scopeOf(instance)); },
       setBusy: function (busy) { instance.busy = !!busy; instance.frame.classList.toggle('is-busy', instance.busy); syncSidebar(); },
       close: function () { close(instance.id); },
       isVisible: function () { return isVisible(instance); },
@@ -298,7 +397,7 @@ var BlockHost = (function () {
 
   function defaultGeom() {
     var rect = mainRect();
-    var floats = instances.filter(function (i) { return i.mode === 'float' && i.serverId === currentServer(); }).length;
+    var floats = instances.filter(function (i) { return i.mode === 'float' && isHere(i); }).length;
     var w = Math.min(760, Math.max(FLOAT_MIN_W, rect.width * 0.55));
     var h = Math.min(560, Math.max(FLOAT_MIN_H, rect.height * 0.7));
     return clampGeom({ x: rect.width - w - 24 - floats * 24, y: 24 + floats * 24, w: w, h: h });
@@ -328,7 +427,7 @@ var BlockHost = (function () {
         window.removeEventListener('pointerup', up);
         window.removeEventListener('pointercancel', up);
         document.body.classList.remove('blk-dragging');
-        persist(instance.serverId);
+        persist(scopeOf(instance));
       }
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
@@ -352,7 +451,7 @@ var BlockHost = (function () {
         window.removeEventListener('pointerup', up);
         window.removeEventListener('pointercancel', up);
         document.body.classList.remove('blk-resizing');
-        persist(instance.serverId);
+        persist(scopeOf(instance));
       }
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
@@ -370,15 +469,14 @@ var BlockHost = (function () {
     ];
   }
 
-  /** Tells the sidebar which of this server's blocks belong in its tab strip. */
+  /** Tells the sidebar which blocks belong in its tab strip right now. */
   function syncSidebar() {
     var dock = sidebar();
     if (!dock) return;
-    var sid = currentServer();
-    var state = dockState[sid] || {};
     dock.sync(instances.filter(function (instance) {
-      return instance.serverId === sid && effectiveMode(instance) === 'dock';
+      return isHere(instance) && effectiveMode(instance) === 'dock';
     }).map(function (instance) {
+      var state = dockState[scopeOf(instance)] || {};
       return {
         key: instance.id,
         persistKey: instance.key || instance.kind,
@@ -397,34 +495,37 @@ var BlockHost = (function () {
 
   /** A tab in the sidebar came to the front (null: a file preview did). */
   function onSidebarChange(id) {
-    var sid = currentServer();
-    var state = dockState[sid] = dockState[sid] || { active: null };
-    var changed = state.active !== id;
-    state.active = id;
     var instance = instances.find(function (i) { return i.id === id; });
+    var front = instance ? scopeOf(instance) : null;
+    [currentServer(), currentWindow()].forEach(function (scope) {
+      if (!scope) return;
+      var state = dockState[scope] = dockState[scope] || { active: null };
+      var next = scope === front ? id : null;
+      if (state.active === next) return;
+      state.active = next;
+      persist(scope);
+    });
     if (instance && instance.impl && typeof instance.impl.onShow === 'function') {
       try { instance.impl.onShow(); } catch (_) { /* a block's own refresh failing must not break the tabs */ }
     }
-    if (changed) persist(sid);
   }
 
   // --- placement -------------------------------------------------------------
 
   function isVisible(instance) {
-    return instance.serverId === currentServer() && instance.frame.isConnected && !instance.frame.hidden;
+    return isHere(instance) && instance.frame.isConnected && !instance.frame.hidden;
   }
 
   function render() {
-    var sid = currentServer();
-    restore(sid);
+    restoreHere();
+    adoptUnbound();
     var main = layout();
-    dockState[sid] = dockState[sid] || { active: null };
     // First: a frame leaving the sidebar must be released before it is placed.
     syncSidebar();
 
     instances.forEach(function (instance) {
       var frame = instance.frame;
-      if (instance.serverId !== sid) {
+      if (!isHere(instance)) {
         frame.hidden = true;
         instance.shown = false;
         return;
@@ -465,7 +566,7 @@ var BlockHost = (function () {
       }
     });
     document.body.classList.toggle('blk-sheet-open', instances.some(function (i) {
-      return i.serverId === sid && effectiveMode(i) === 'sheet';
+      return isHere(i) && effectiveMode(i) === 'sheet';
     }));
   }
 
@@ -488,11 +589,11 @@ var BlockHost = (function () {
     options = options || {};
     if (!kinds[kind]) return null;
     var sid = currentServer();
-    restore(sid);
+    restoreHere();
     // Whatever was asked for should be what's on screen, not behind a file modal.
     if (window.FilePreview && window.FilePreview.closeModal) window.FilePreview.closeModal();
     var key = keyOf(kind, params);
-    var existing = key && instances.find(function (i) { return i.serverId === sid && i.key === key; });
+    var existing = key && instances.find(function (i) { return isHere(i) && i.key === key; });
     if (existing) {
       if (options.mode && options.mode !== existing.mode) existing.mode = options.mode;
       existing.mode = placeableMode(existing.mode);
@@ -501,7 +602,7 @@ var BlockHost = (function () {
       return existing.api;
     }
     var mode = placeableMode(options.mode || kinds[kind].defaultMode || 'dock');
-    var instance = create(kind, params || {}, { mode: mode, serverId: sid });
+    var instance = create(kind, params || {}, { mode: mode, serverId: sid, windowKey: kinds[kind].perWindow ? currentWindow() : null });
     if (!instance) return null;
     activate(instance.id);
     // A freshly built frame may have nothing focusable until its first load.
@@ -520,13 +621,13 @@ var BlockHost = (function () {
     var instance = instances.find(function (i) { return i.id === id; });
     if (!instance) return;
     if (instance.mode === 'dock') {
-      dockState[instance.serverId] = dockState[instance.serverId] || {};
-      dockState[instance.serverId].active = id;
+      dockState[scopeOf(instance)] = dockState[scopeOf(instance)] || {};
+      dockState[scopeOf(instance)].active = id;
     }
     raise(instance);
     render();
     frontInSidebar(instance);
-    persist(instance.serverId);
+    persist(scopeOf(instance));
     focusInstance(instance);
   }
 
@@ -538,30 +639,34 @@ var BlockHost = (function () {
     if (mode === 'float' && !instance.geom) instance.geom = defaultGeom();
     instance.mode = mode;
     if (mode === 'dock') {
-      dockState[instance.serverId] = dockState[instance.serverId] || {};
-      dockState[instance.serverId].active = id;
+      dockState[scopeOf(instance)] = dockState[scopeOf(instance)] || {};
+      dockState[scopeOf(instance)].active = id;
     }
     instance.entering = true;
     raise(instance);
     render();
     frontInSidebar(instance);
-    persist(instance.serverId);
+    persist(scopeOf(instance));
     focusInstance(instance);
   }
 
-  function close(id) {
-    var instance = instances.find(function (i) { return i.id === id; });
-    if (!instance) return;
+  function discard(instance) {
     if (instance.impl && typeof instance.impl.dispose === 'function') {
       try { instance.impl.dispose(); } catch (_) { /* best effort */ }
     }
     instance.frame.remove();
     instances = instances.filter(function (i) { return i !== instance; });
-    var state = dockState[instance.serverId];
-    if (state && state.active === id) state.active = null;
-    if (focusedId === id) focusedId = null;
+    var state = dockState[scopeOf(instance)];
+    if (state && state.active === instance.id) state.active = null;
+    if (focusedId === instance.id) focusedId = null;
+  }
+
+  function close(id) {
+    var instance = instances.find(function (i) { return i.id === id; });
+    if (!instance) return;
+    discard(instance);
     render();
-    persist(instance.serverId);
+    persist(scopeOf(instance));
     // Typing returns to the terminal on desktop; phones would pop the keyboard.
     if (!isCompact()) {
       var terminal = document.querySelector('.terminal-view .xterm-helper-textarea');
@@ -570,11 +675,9 @@ var BlockHost = (function () {
   }
 
   function focused() {
-    var sid = currentServer();
-    var instance = instances.find(function (i) { return i.id === focusedId && i.serverId === sid && isVisible(i); });
+    var instance = instances.find(function (i) { return i.id === focusedId && isVisible(i); });
     if (instance) return instance;
-    var state = dockState[sid] || {};
-    return instances.find(function (i) { return i.id === state.active && i.serverId === sid; })
+    return instances.find(function (i) { return isHere(i) && i.id === (dockState[scopeOf(i)] || {}).active; })
       || instances.filter(isVisible).pop() || null;
   }
 
@@ -599,8 +702,7 @@ var BlockHost = (function () {
   }
 
   function list() {
-    var sid = currentServer();
-    return instances.filter(function (i) { return i.serverId === sid; }).map(function (i) {
+    return instances.filter(isHere).map(function (i) {
       return { id: i.id, kind: i.kind, title: i.title, subtitle: i.subtitle, mode: i.mode };
     });
   }
@@ -613,7 +715,11 @@ var BlockHost = (function () {
     });
     window.addEventListener('terminal-target-server', function () { render(); });
     window.addEventListener('hashchange', function () { setTimeout(render, 0); });
-    if (sidebar()) sidebar().onChange(onSidebarChange);
+    if (sidebar()) {
+      sidebar().onChange(onSidebarChange);
+      sidebar().onWindowChange(render);
+      sidebar().onWindowsGone(forgetWindows);
+    }
   }
 
   return {
