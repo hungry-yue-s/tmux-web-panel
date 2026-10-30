@@ -543,3 +543,65 @@ body.blk-dragging iframe, body.blk-resizing iframe, body.fp-side-resizing iframe
 .fp-git-added { --fp-git-color: var(--accent-green); }
 .fp-git-modified { --fp-git-color: var(--accent-blue); }
 .fp-git-deleted { --fp-git-color: var(--accent-red); }
+
+/* --- native glass ----------------------------------------------------------------------------- */
+
+/* With window transparency on, the native material is the base of a block, so
+   its surfaces are tints of that glass instead of panels on top of it.
+   Back to front:
+     window  the dock and frame: clear, only a hairline against the terminal
+     well    what you read and type in: diffs, history detail, inputs
+     bar     tab strip, toolbars, hunk headers: a tint with a lit top edge
+     raised  composer, active tab, active segment, buttons: a stronger tint
+     float   menus, dialogs, floating and maximized blocks: nearly opaque
+   Only surfaces with content moving behind them blur: a blur inside a scrolling
+   pane costs every scrolled frame. */
+html[data-native-transparency] :is(.blk-dock, .blk-frame, .blk-dialog-overlay) {
+  --g-well: rgba(0, 0, 0, .16);
+  --g-bar: color-mix(in srgb, var(--workspace-panel) 24%, transparent);
+  --g-raised: color-mix(in srgb, var(--workspace-panel) 46%, transparent);
+  --g-float: color-mix(in srgb, var(--workspace-panel) 82%, transparent);
+  --g-edge: rgba(255, 255, 255, .07);
+  --b-bg: var(--g-well);
+  --b-sunken: var(--g-well);
+  --b-panel: var(--g-raised);
+  --b-hover: color-mix(in srgb, var(--workspace-text) 9%, transparent);
+  --b-line: color-mix(in srgb, var(--workspace-text) 11%, transparent);
+  --b-line-strong: color-mix(in srgb, var(--workspace-text) 20%, transparent);
+  --b-accent-soft: color-mix(in srgb, var(--b-accent) 24%, transparent);
+}
+html[data-native-transparency][data-color-scheme="light"] :is(.blk-dock, .blk-frame, .blk-dialog-overlay) {
+  --g-well: rgba(0, 0, 0, .045);
+  --g-bar: color-mix(in srgb, var(--workspace-panel) 46%, transparent);
+  --g-raised: color-mix(in srgb, var(--workspace-panel) 68%, transparent);
+  --g-float: color-mix(in srgb, var(--workspace-panel) 88%, transparent);
+  --g-edge: rgba(255, 255, 255, .55);
+}
+@media (prefers-reduced-transparency: reduce) {
+  html[data-native-transparency] :is(.blk-dock, .blk-frame, .blk-dialog-overlay) {
+    --g-well: color-mix(in srgb, var(--workspace-bg) 80%, transparent);
+    --g-bar: color-mix(in srgb, var(--workspace-panel) 80%, transparent);
+    --g-raised: var(--workspace-panel);
+    --g-float: var(--workspace-panel);
+  }
+}
+html[data-native-transparency] :is(.blk-dock, .blk-frame, .git-side, .git-log) { background: transparent; }
+html[data-native-transparency] .blk-dock { border-left-color: var(--b-line-strong); }
+html[data-native-transparency] :is(.blk-dock-bar, .blk-frame-head, .blk-toolbar, .git-diff-head, .git-commit-card) {
+  background: var(--g-bar);
+  box-shadow: inset 0 1px 0 var(--g-edge);
+}
+html[data-native-transparency] .git-commit { background: var(--g-raised); box-shadow: inset 0 1px 0 var(--g-edge); }
+html[data-native-transparency] .blk-hunk { background: color-mix(in srgb, var(--workspace-panel) 12%, transparent); }
+html[data-native-transparency] .blk-hunk-head { background: var(--g-bar); }
+html[data-native-transparency] .blk-diff-filehead {
+  background: var(--g-float);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+html[data-native-transparency] :is(.blk-mode-float, .blk-mode-max, .blk-menu, .blk-dialog) {
+  background: var(--g-float);
+  box-shadow: var(--b-shadow), inset 0 1px 0 var(--g-edge);
+  -webkit-backdrop-filter: blur(26px) saturate(1.25);
+  backdrop-filter: blur(26px) saturate(1.25);
+}

@@ -49,6 +49,27 @@ describe('line staging patches', () => {
   });
 });
 
+describe('blocks on native glass', () => {
+  const css = fs.readFileSync('public/css/blocks.css', 'utf8');
+  const glass = css.slice(css.indexOf('/* --- native glass'));
+
+  it('lets the window material show through and tints each depth separately', () => {
+    expect(glass).toMatch(/html\[data-native-transparency\] :is\(\.blk-dock, \.blk-frame, \.git-side, \.git-log\) \{ background: transparent; \}/);
+    for (const depth of ['--g-well', '--g-bar', '--g-raised', '--g-float']) {
+      expect(glass).toContain(depth + ':');
+    }
+    expect(glass).toContain('[data-color-scheme="light"]');
+    expect(fs.readFileSync('public/js/theme.js', 'utf8')).toContain("root.setAttribute('data-color-scheme', t.colorScheme)");
+  });
+
+  it('blurs only surfaces with content moving behind them, never a scrolling pane', () => {
+    const blurred = [...glass.matchAll(/([^{}]+)\{[^{}]*backdrop-filter[^{}]*\}/g)].map((m) => m[1].trim());
+    expect(blurred.join(' ')).not.toMatch(/\.git-(list|log|main|diff-scroll|side)\b/);
+    expect(blurred.join(' ')).toContain('.blk-mode-float');
+    expect(blurred.join(' ')).toContain('.blk-menu');
+  });
+});
+
 describe('TODO.md board', () => {
   it('round-trips sections, notes and indented card details', () => {
     const text = '# Plan\n\nintro\n\n## Todo\n\nsome note\n\n- [ ] a\n  - detail\n- [ ] b\n\n## Done\n\n- [x] c\n';

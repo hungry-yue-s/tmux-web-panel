@@ -498,6 +498,7 @@ var Theme = (function () {
     // Set data attribute for potential CSS selectors
     root.setAttribute('data-theme', themeId);
     root.style.colorScheme = t.colorScheme;
+    root.setAttribute('data-color-scheme', t.colorScheme);
     applyTransparency(themeId);
 
     // Persist
