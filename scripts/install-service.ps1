@@ -24,7 +24,7 @@
 #>
 param(
   [Parameter(Position = 0)]
-  [ValidateSet('install', 'uninstall', 'start', 'stop', 'restart', 'status', 'logs', 'cert')]
+  [ValidateSet('install', 'uninstall', 'start', 'stop', 'restart', 'reload', 'status', 'logs', 'cert')]
   [string]$Action,
   [int]$Port = $(if ($env:PORT) { [int]$env:PORT } else { 7681 }),
   [string]$ListenHost = $(if ($env:HOST) { $env:HOST } else { '0.0.0.0' }),
@@ -351,6 +351,13 @@ switch ($Action) {
   'start' { Start-Task $selected; Write-Ok "Started $selected" }
   'stop' { Stop-TaskTree $selected; Write-Ok "Stopped $selected" }
   'restart' { Stop-TaskTree $selected; Start-Task $selected; Write-Ok "Restarted $selected" }
+  # A new run-tmux-server.ps1 without touching tmux: restart -Tmux would end the
+  # server and every session. The new wrapper finds the server running and waits.
+  'reload' {
+    Stop-ScheduledTask -TaskPath $TaskPath -TaskName $TmuxTask -ErrorAction SilentlyContinue
+    Start-Task $TmuxTask
+    Write-Ok "Reloaded the $TmuxTask wrapper; tmux was left running"
+  }
   'status' { Show-Status }
   'logs' {
     $file = Join-Path $LogDir $(if ($Tmux) { 'tmux-server.log' } else { 'panel.log' })

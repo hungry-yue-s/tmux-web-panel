@@ -21,7 +21,7 @@
 
 **终端字体按 unicode-range 切片。** 完整字体每个字重约 6 MB，页面不得预载或引用 `TmuxPanelMono-*.woff2`（它们只是 `scripts/build-font-subsets.mjs` 的输入）。首屏只预载核心片，终端最多等它 `CORE_FONT_WAIT_MS`，超时先用系统等宽字体，核心片到达后重新测量。中文和 Nerd 图标片由 `public/js/terminal-fonts.js` 按需加载：xterm 画在 canvas 上不会触发 unicode-range 加载，必须经 `TerminalFonts.ensure()`，切片到达后调用 `term.clearTextureAtlas()`。切片和 `public/css/terminal-fonts.css`、`public/js/terminal-fonts-data.js` 都是生成文件，只有源字体变化时才重新生成并提交。
 
-**Windows** 上服务管理器是计划任务（`\tmux-web-panel\tmux-web-panel` 与 `\tmux-web-panel\tmux-server`），统一经 `scripts/install-service.ps1` 操作：`restart` / `status` / `logs`（加 `-Tmux` 针对 tmux server）。同样禁止手动 `node server/index.js` 或直接 `Stop-Process` 后自行启动——AUTH/TLS/端口配置在 `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`，只由 `scripts/windows/run-panel.ps1` 注入。
+**Windows** 上服务管理器是计划任务（`\tmux-web-panel\tmux-web-panel` 与 `\tmux-web-panel\tmux-server`），统一经 `scripts/install-service.ps1` 操作：`restart` / `status` / `logs`（加 `-Tmux` 针对 tmux server）。同样禁止手动 `node server/index.js` 或直接 `Stop-Process` 后自行启动——AUTH/TLS/端口配置在 `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`，只由 `scripts/windows/run-panel.ps1` 注入。`restart -Tmux` 会结束 tmux server 和所有会话；只更新包装脚本 `run-tmux-server.ps1` 时用 `reload`，它不碰 tmux。
 
 ## 多服务器：Hub 与 Node
 
@@ -42,7 +42,7 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 
 工作链路：
 1. 开机 → tmux companion service 跑 `tmux start-server`（macOS 为前台模式 `tmux -D`，Windows 为 `setsid -w tmux -D`）→ 加载 `~/.tmux.conf`
-2. 面板服务启动，“会话保护”（`server/session-protection/`）每 20 秒看一次 tmux：第一次看到某个 server 实例、且它没有会话时，用 `last` 快照自动恢复 sessions/windows/panes，并在该 server 上记下 `@twp-restored-at`（页面据此提示“已自动恢复”）
+2. 面板服务启动，“会话保护”（`server/session-protection/`）每 20 秒看一次 tmux：第一次看到某个 server 实例时，如果它没有会话或刚启动（2 分钟内），就用 `last` 快照自动恢复它还缺的 sessions/windows/panes，并在该 server 上记下 `@twp-restored-at`（页面据此提示“已自动恢复”）
 3. 面板每 5 分钟调用项目自带的 tmux-resurrect（`vendor/tmux-plugins/tmux-resurrect`）的 `save.sh` 保存；快照仍是 resurrect 标准格式，在 `~/.local/share/tmux/resurrect/`
 4. 网页打开 → `server/tmux.js` 的 `listSessions()` 跑 `tmux list-sessions`，看到所有 restored 会话
 
@@ -53,7 +53,9 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 - **部署必须使用 `vendor/tmux` 子模块构建的 tmux**：`install-service.sh install` 会调用 `scripts/build-tmux.sh`，原子部署到 `~/.local/share/tmux-web-panel/bin/tmux`，不得退回系统 `PATH` 中的 tmux
   - 唯一例外是 Windows：使用 MSYS2 打包的 tmux（`C:\msys64\usr\bin\tmux.exe`，带 MSYS 运行时补丁），由 `server/msys.js` 解析；tmux 进程必须带 `MSYS=noglob`，否则 MSYS 会把 `#{session_id}` 这类参数做花括号展开。pane 路径是 MSYS 路径（`/home/me`、`/c/...`），读写文件前经 `toNativePath` 转换
 - **`~/.tmux.conf` 必须保留 `set -g exit-empty off`**：否则开机启动的空 server 等不到面板来恢复就自己退出了
-- **不要在 `tmux-server.service` 里预创建会话**（如 `tmux new-session -d -s main`）：会话保护只在 server 没有会话时自动恢复，已有会话就不会触发
+- **不要在 `tmux-server.service` 里预创建会话**（如 `tmux new-session -d -s main`）：同名会话不会被恢复，启动超过 2 分钟后才看到的 server 也不再恢复
+- **Windows 上不得 resize 运行中的 tmux 客户端，也不得用 node-pty 的 `kill` 关闭它**：两者都可能带走整个 tmux server 和所有会话（`docs/known-issues.md` ENV-1）。尺寸变化走 `TerminalManager._setClientSize`（新客户端替换旧的），断开走 `_endClient`（只结束客户端进程），`conhost.exe` 由 `ConsoleReaper` 延后回收
+- **环境问题要记录并由服务管理**：现象、证据和结论写进 `docs/known-issues.md`，检测和恢复做进服务，不靠人工救场。不要在默认 tmux server 上做接入、resize、断开实验，一律用 `tmux -L` 或 `TMUX_TMPDIR`
 - **没有会话时绝不保存**：那次空快照会成为 `last`，下次重启就什么也恢复不了。`save.sh` 只能由 `SessionProtection` 在有会话时调用
 - **用户自己在 `~/.tmux.conf` 里加载了 tmux-resurrect（常见于 TPM + continuum）时，面板不自动保存和恢复**（`mode: 'external'`），只提供立即保存和找回会话，避免两套机制互相覆盖或重复恢复
 - **从 Windows 的 Node 调 MSYS2 程序（tmux）必须用 `msysExecArgs`**（`server/msys.js`）：Node 默认把 `"` 转义成 `\"`，MSYS 不认，布局字符串、带引号的命令或名字会被拆碎

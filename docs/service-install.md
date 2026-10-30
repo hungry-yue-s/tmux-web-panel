@@ -105,3 +105,10 @@ persist them. To survive reboots:
 > save can be brought back under **会话 → 找回会话**; it opens as a new session
 > and leaves running ones alone. `prefix + Ctrl-s` / `prefix + Ctrl-r` still
 > save and restore from a terminal.
+
+On Windows the task also ends a server that has stopped answering and starts a
+new one, and every such event goes to `tmux-server.log`
+(`install-service.ps1 logs -Tmux`). `install-service.ps1 reload` picks up a new
+`run-tmux-server.ps1` without touching tmux; `restart -Tmux` ends the server and
+every session. Known environment problems are recorded in
+[known-issues.md](known-issues.md).

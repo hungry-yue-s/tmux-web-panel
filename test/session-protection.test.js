@@ -249,6 +249,31 @@ describe('SessionProtection', () => {
     expect(saves()).toHaveLength(2);
   });
 
+  it('brings saved sessions back next to whatever got onto a new server first', async () => {
+    const tmux = fakeTmux({ sessions: ['0', 'ops'] });
+    // fakeTmux reports a server that started at 1700000000 seconds.
+    const { protection, clock } = setup({ tmux, now: 1_700_000_030_000 });
+    await protection.tick();
+    expect(tmux.state.sessions).toEqual(['0', 'ops', '环境 部署']);
+    expect(tmux.state.options['@twp-restored-sessions']).toBe('1');
+    const saves = () => tmux.state.commands.filter((args) => args[0] === 'run-shell' && args[1].includes('save.sh'));
+    expect(saves()).toHaveLength(0);
+    clock.now += 300_000;
+    await protection.tick();
+    expect(saves()).toHaveLength(1);
+    expect(tmux.state.sessions).toHaveLength(3);
+  });
+
+  it('keeps saves in one place on Windows, whichever HOME the server was started with', async () => {
+    const tmux = fakeTmux();
+    const { home, dir } = setup({ tmux });
+    tmux.state.home = '/c/Users/someone-else';
+    const protection = new SessionProtection({
+      configDir: join(home, 'config'), projectDir: resolve('.'), windows: true, exec: tmux.exec, now: () => 1_000_000, home, intervalMs: 300_000,
+    });
+    expect((await protection._inspect()).dir).toBe(dir);
+  });
+
   it('tries the resurrect options again when tmux refused them, without restoring twice', async () => {
     const tmux = fakeTmux();
     const { protection } = setup({ tmux });

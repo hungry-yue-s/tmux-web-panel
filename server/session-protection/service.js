@@ -32,6 +32,8 @@ const execFileAsync = promisify(execFile);
 
 export const SAVE_INTERVAL_MS = 5 * 60 * 1000;
 const TICK_MS = 20 * 1000;
+/** A server younger than this was just (re)started, whatever sessions it already has. */
+const FRESH_SERVER_MS = 2 * 60 * 1000;
 const SEP = '=:=';
 const SETTINGS_FILE = 'session-protection.json';
 const MAX_PROGRAMS = 64;
@@ -185,6 +187,10 @@ export class SessionProtection {
     const ours = this._tmuxPath(this.pluginDir);
     const theirs = Boolean(scriptPath) && !scriptPath.startsWith(ours);
     env.mode = theirs ? 'external' : 'managed';
+    // On Windows HOME depends on who started the server: the task gets the MSYS
+    // home, a tmux typed in PowerShell the profile directory. Saves stay in one
+    // place, or a server started the other way finds nothing to restore.
+    if (this.windows && !theirs) env.home = this.defaultHome();
     env.scriptPath = scriptPath || '';
     env.external = theirs ? {
       scriptPath,
@@ -282,10 +288,17 @@ export class SessionProtection {
   async _firstSight(env) {
     await this._tmux(['set-option', '-g', OPT_SEEN, String(env.pid || 1)]);
     if (!this.settings.enabled) return;
-    if ((await this._sessions()).length > 0) return;
+    const current = await this._sessions();
+    // A server that has been up for a while was there before us; leave it alone.
+    if (current.length > 0 && !this._justStarted(env)) return;
     const latest = await readLatest(env.dir);
-    if (!latest || latest.snapshot.sessions.length === 0) return;
-    const restored = await this._restoreAll(latest.snapshot, env);
+    if (!latest) return;
+    // Something can get in first on a new server, like a tmux typed in a terminal.
+    // Its session must not cost the saved ones: the next save replaces `last`.
+    const missing = latest.snapshot.sessions.filter((session) => !current.includes(session.name));
+    if (missing.length === 0) return;
+    const restored = await this._restoreAll({ ...latest.snapshot, sessions: missing }, env);
+    console.log(`[session-protection] new tmux server ${env.pid}: restored ${restored} of ${missing.length} sessions saved at ${latest.at}`);
     await this._tmux([
       'set-option', '-g', OPT_RESTORED_AT, new Date(this._now()).toISOString(), ';',
       'set-option', '-g', OPT_RESTORED_FROM, latest.at, ';',
@@ -293,6 +306,11 @@ export class SessionProtection {
     ]);
     // Programs just reopened may not be running yet; a save now would forget them.
     this._lastSaveAt = this._now();
+  }
+
+  _justStarted(env) {
+    const age = this._now() - Date.parse(env.startedAt);
+    return age >= 0 && age < FRESH_SERVER_MS;
   }
 
   async _restoreAll(snapshot, env) {
