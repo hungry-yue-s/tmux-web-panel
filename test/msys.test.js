@@ -18,6 +18,12 @@ import { readWindowsDiskStats } from '../server/platform-system-stats.js';
 
 const ROOT = 'C:\\msys64';
 
+describe('environment of tmux children', () => {
+  it.runIf(process.platform === 'win32')('keeps the Windows PATH in panes of a server the panel starts', () => {
+    expect(process.env.MSYS2_PATH_TYPE).toBe('inherit');
+  });
+});
+
 describe('resolveTmuxBin', () => {
   it('honors TMUX_BIN on every platform', () => {
     expect(resolveTmuxBin({ env: { TMUX_BIN: '/opt/tmux' }, platform: 'linux' })).toBe('/opt/tmux');

@@ -66,6 +66,34 @@ README 重做过程中实际踩到、观察到或验证过的问题。每条都�
 
 **实验规则。** 不要在默认 tmux server 上做接入、resize、断开实验，只碰临时会话也不行，会话隔离不等于 server 隔离。一律用 `tmux -L <name>` 或 `TMUX_TMPDIR`，每条命令带超时。不要在普通 shell 里手动起默认 socket 的 tmux。
 
+### ENV-2 Windows：手动启动的 tmux server，窗格里找不到 claude（2026-10-30）
+
+**现象。** 窗格里运行 `claude` 报 `fish: Unknown command: claude`，而 `C:\Users\Administrator\.local\bin\claude.exe` 存在，PowerShell 里也能运行。Node、Git for Windows 等只装在 Windows PATH 上的程序同样会找不到。
+
+**原因。** tmux 把窗格的 shell 作为登录 shell 启动。MSYS2 的登录脚本（fish 是 `/etc/fish/msys2.fish`，bash 是 `/etc/profile`）在没有 `MSYS2_PATH_TYPE` 时按 `minimal` 处理，把 PATH 重置成 MSYS2 目录加 `C:\Windows` 的几个系统目录。计划任务的 `run-tmux-server.ps1` 会设置 `MSYS2_PATH_TYPE=inherit`，但 ENV-1 第 4 步在 PowerShell 里手动运行的 `tmux` 没有这个变量。
+
+**证据。** 用窗格的初始环境单独启动 `fish -l`：
+
+| `MSYS2_PATH_TYPE` | 登录后的 PATH | `claude` |
+|-------------------|---------------|----------|
+| 未设置（手动启动的 server） | MSYS2 目录 + `C:\Windows` 系统目录 | 找不到 |
+| `inherit`（计划任务的 server） | MSYS2 目录 + 完整的 Windows PATH | `/c/Users/Administrator/.local/bin/claude` |
+
+`/proc/<pid>/environ` 里的 PATH 含有 `.local/bin`，所以只看环境变量会误判，要在登录 shell 里看。
+
+**服务现在怎么处理。**
+
+- `server/session-protection/service.js`：Windows 上面板每看到一个 server 实例，就在恢复会话之前执行 `set-environment -g MSYS2_PATH_TYPE inherit`，手动启动的 server 最多 20 秒内补上。
+- `server/msys.js`：面板自身启动的 tmux 进程都带这个变量，面板新建会话时拉起的 server 第一个窗格就是对的。
+
+验证：真实 `SessionProtection` 在私有 tmux 上，补变量之前开的窗格找不到 claude，之后新开的窗口能找到，已打开的 shell 不变，`fish_add_path` 能修复已打开的 shell。
+
+**还没解决的。**
+
+- 变量只影响之后新建的窗格。已经打开的 shell 改不了，要新开窗口，或在里面运行 `fish_add_path -g /c/Users/<用户>/.local/bin`（只补 claude 所在目录，bash 用 `export PATH="$PATH:/c/Users/<用户>/.local/bin"`）。
+- 手动运行 `tmux` 时创建的第一个窗格，在面板补上变量之前就已经启动了，也属于这种情况。
+- 用户自己加载 tmux-resurrect 的 `external` 模式不经过这段逻辑，手动起的 server 仍需自己设置。
+
 ## 捕获环境备注
 
 两条和产物无关但值得记下来的事。CDP 的 `Page.startScreencast` 在这台共享 Chrome 上返回的帧偶发无样式，所以所有动画改成定时 `page.screenshot` 静帧合成，脚本在 `.playwright-mcp/readme-shot/shot.mjs`。截图里的主机名、内网和公网 IP、服务器名、进程名都在捕获期做了 DOM 文本替换脱敏，tmux 状态栏的主机名用 session 级 `status-right` 覆盖掉，规则见同目录 `shot.mjs` 的 `SANITIZE_RULES`。
