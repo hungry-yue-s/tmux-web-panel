@@ -17,7 +17,9 @@
 
 原因：systemd service 配置了 TLS 证书、认证凭据、HTTP 跳转端口等环境变量。手动启动会丢失这些配置，导致 HTTPS 不可用、认证失效。
 
-**静态文件改动不需要重启。** `express.static` 用 `{ etag: false, maxAge: 0 }` 挂载 `public/`，改 `public/js/*` 或 `public/css/*` 后用户刷新浏览器即生效——只有改 `server/*` 才需要 `systemctl --user restart`。
+**静态文件改动不需要重启。** `server/static-assets.js` 挂载 `public/`：HTML 每次都校验（`no-cache` + ETag），并在渲染时把本地 JS/CSS/字体 URL 改写成带内容哈希的 `?h=...`，这些 URL 可缓存一年。所以改 `public/js/*` 或 `public/css/*` 后用户刷新浏览器即生效，不再需要手动改 `?v=`——只有改 `server/*` 才需要 `systemctl --user restart`。动态加载的本地资源不经过改写，只走 `no-cache` 校验。
+
+**终端字体按 unicode-range 切片。** 完整字体每个字重约 6 MB，页面不得预载或引用 `TmuxPanelMono-*.woff2`（它们只是 `scripts/build-font-subsets.mjs` 的输入）。首屏只预载核心片，终端最多等它 `CORE_FONT_WAIT_MS`，超时先用系统等宽字体，核心片到达后重新测量。中文和 Nerd 图标片由 `public/js/terminal-fonts.js` 按需加载：xterm 画在 canvas 上不会触发 unicode-range 加载，必须经 `TerminalFonts.ensure()`，切片到达后调用 `term.clearTextureAtlas()`。切片和 `public/css/terminal-fonts.css`、`public/js/terminal-fonts-data.js` 都是生成文件，只有源字体变化时才重新生成并提交。
 
 **Windows** 上服务管理器是计划任务（`\tmux-web-panel\tmux-web-panel` 与 `\tmux-web-panel\tmux-server`），统一经 `scripts/install-service.ps1` 操作：`restart` / `status` / `logs`（加 `-Tmux` 针对 tmux server）。同样禁止手动 `node server/index.js` 或直接 `Stop-Process` 后自行启动——AUTH/TLS/端口配置在 `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`，只由 `scripts/windows/run-panel.ps1` 注入。
 

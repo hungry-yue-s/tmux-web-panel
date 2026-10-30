@@ -16,6 +16,7 @@
   "type": "module",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "compression": "^1.8.1",
     "express": "^5.2.1",
     "multer": "^2.1.1",
     "node-pty": "1.2.0-beta.14",
@@ -25,7 +26,9 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "fontkit": "^2.0.4",
     "jsdom": "^29.0.1",
+    "subset-font": "^2.4.0",
     "supertest": "^7.2.2",
     "vitest": "^4.1.0"
   }

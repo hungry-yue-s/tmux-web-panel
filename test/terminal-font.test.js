@@ -12,27 +12,43 @@ describe('terminal font configuration', () => {
     for (const source of sources) {
       expect(source).toContain("'Tmux Panel Mono', 'Maple Mono NF CN'");
       expect(source).toContain("fontFamily: 'monospace'");
-      expect(source).toContain('document.fonts.load');
-      expect(source).toContain('Promise.all([fontsReady, firstWrite])');
+      // Only the core slice is awaited, and only briefly.
+      expect(source).toContain('TerminalFonts.coreReady(');
+      expect(source).toContain('TerminalFonts.ensure(');
     }
   });
 
-  it('ships and preloads complete WOFF2 regular and bold faces', () => {
+  it('ships the bundled faces as unicode-range slices and preloads only the small core', () => {
     const publicDir = resolve(import.meta.dirname, '../public');
-    const styleSource = readFileSync(resolve(publicDir, 'css/style.css'), 'utf8');
-    const indexSource = readFileSync(resolve(publicDir, 'index.html'), 'utf8');
-    const regular = readFileSync(resolve(publicDir, 'fonts/TmuxPanelMono-Regular.woff2'));
-    const bold = readFileSync(resolve(publicDir, 'fonts/TmuxPanelMono-Bold.woff2'));
+    const fontCss = readFileSync(resolve(publicDir, 'css/terminal-fonts.css'), 'utf8');
+    const data = readFileSync(resolve(publicDir, 'js/terminal-fonts-data.js'), 'utf8');
     const license = readFileSync(resolve(publicDir, 'fonts/OFL-MapleMono.txt'), 'utf8');
+    const slices = JSON.parse(data.slice(data.indexOf('{'), data.lastIndexOf('}') + 1));
 
-    expect(regular.subarray(0, 4).toString('ascii')).toBe('wOF2');
-    expect(bold.subarray(0, 4).toString('ascii')).toBe('wOF2');
-    expect(regular.length).toBeGreaterThan(1_000_000);
-    expect(bold.length).toBeGreaterThan(1_000_000);
-    expect(styleSource).toMatch(/font-family:\s*'Tmux Panel Mono'[\s\S]*?TmuxPanelMono-Regular\.woff2/);
-    expect(styleSource).toMatch(/font-family:\s*'Tmux Panel Mono'[\s\S]*?TmuxPanelMono-Bold\.woff2/);
-    expect(indexSource).toContain('rel="preload" href="/fonts/TmuxPanelMono-Regular.woff2?v=1"');
-    expect(indexSource).toContain('rel="preload" href="/fonts/TmuxPanelMono-Bold.woff2?v=1"');
+    for (const page of ['index.html', 'terminal.html']) {
+      const html = readFileSync(resolve(publicDir, page), 'utf8');
+      for (const weight of ['400', '700']) {
+        const core = slices.core[weight];
+        expect(html).toContain(`rel="preload" href="/fonts/tpm/${core}"`);
+        const file = readFileSync(resolve(publicDir, 'fonts/tpm', core));
+        expect(file.subarray(0, 4).toString('ascii')).toBe('wOF2');
+        expect(file.length).toBeLessThan(120_000);
+        expect(fontCss).toContain(`/fonts/tpm/${core}`);
+      }
+      // The full multi-megabyte faces are never preloaded again.
+      expect(html).not.toContain('TmuxPanelMono-Regular.woff2');
+      expect(html).not.toContain('TmuxPanelMono-Bold.woff2');
+    }
+    expect(fontCss).toMatch(/font-family: 'Tmux Panel Mono'[\s\S]*unicode-range: U\+/);
+    for (const slice of slices.slices) {
+      for (const name of Object.values(slice.files)) {
+        expect(readFileSync(resolve(publicDir, 'fonts/tpm', name)).subarray(0, 4).toString('ascii')).toBe('wOF2');
+      }
+    }
+    // The 3755 common hanzi are spread over the han-a slices, declared last so they win.
+    const common = slices.slices.filter((s) => s.id.startsWith('han-a'));
+    expect(common.reduce((n, s) => n + [...s.chars].length, 0)).toBe(3755);
+    expect(slices.slices.at(-1).id).toMatch(/^han-a/);
     expect(license).toContain('SIL OPEN FONT LICENSE Version 1.1');
   });
 

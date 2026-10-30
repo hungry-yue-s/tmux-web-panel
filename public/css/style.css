@@ -1,23 +1,11 @@
 /* === Monospace accent font === */
 
 /* === Bundled terminal font ======================================== */
-/* Use one exact Maple Mono build in every browser engine instead of
-   letting Chrome and WKWebView resolve the installed family separately. */
-@font-face {
-  font-family: 'Tmux Panel Mono';
-  src: url('/fonts/TmuxPanelMono-Regular.woff2?v=1') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: block;
-}
-
-@font-face {
-  font-family: 'Tmux Panel Mono';
-  src: url('/fonts/TmuxPanelMono-Bold.woff2?v=1') format('woff2');
-  font-weight: 700;
-  font-style: normal;
-  font-display: block;
-}
+/* One exact Maple Mono build in every browser engine instead of letting
+   Chrome and WKWebView resolve the installed family separately. It is
+   sliced by unicode-range (scripts/build-font-subsets.mjs): the core slice
+   is declared in /css/terminal-fonts.css, CJK and icon slices are loaded on
+   demand by /js/terminal-fonts.js. */
 
 /* === Nerd Font Symbols (icon fallback for terminal) === */
 @font-face {

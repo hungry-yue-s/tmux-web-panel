@@ -4,8 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { constants as zlibConstants } from 'node:zlib';
 import express from 'express';
+import compression from 'compression';
 import { WebSocketServer } from 'ws';
+import { createStaticAssets } from './static-assets.js';
 import {
   verifyPassword,
   createToken,
@@ -132,6 +135,16 @@ app.use(createNodeProxy({
   basic: createBasicHttp({ links }),
 }));
 
+// gzip/brotli for pages, scripts, styles and JSON. Relayed /n/ requests were
+// answered above and keep the node's own encoding. Raw files are streamed
+// with byte ranges (video), so they are sent as they are.
+app.use(compression({
+  threshold: 1024,
+  brotli: { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 5 } },
+  filter: (req, res) => !req.path.startsWith('/api/files/raw') && !req.path.startsWith('/api/upload')
+    && compression.filter(req, res),
+}));
+
 // Share snapshots can be several MB (inlined images) — give /api/share a large
 // JSON limit BEFORE the global 100KB parser (which then no-ops on these requests).
 // The real cap is enforced in ShareStore (MAX_HTML_BYTES) with a clean 413.
@@ -218,7 +231,9 @@ if (config.managedRuntime) {
       .send('window.PANEL_RELAY_PAGE = ' + JSON.stringify(config.relayPage) + ';\n');
   });
 }
-app.use(express.static(join(__dirname, '..', 'public'), { etag: false, maxAge: 0 }));
+// Content-hashed asset URLs are cached for a year; pages always revalidate,
+// so an edited file under public/ shows up on the next refresh.
+app.use(createStaticAssets(join(__dirname, '..', 'public')));
 
 // --- Token auth middleware (protects API routes below) ---
 
@@ -371,6 +386,14 @@ const wss = new WebSocketServer({
   noServer: true,
   // A terminal frame is keystrokes or a paste; nothing legitimate is larger.
   maxPayload: 1024 * 1024,
+  // Terminal output is highly repetitive (escape sequences, redrawn lines):
+  // deflate cuts it several times over on a slow link. Keystroke echoes stay
+  // below the threshold and go out uncompressed.
+  perMessageDeflate: {
+    zlibDeflateOptions: { level: 4, memLevel: 8 },
+    threshold: 256,
+    concurrencyLimit: 8,
+  },
 });
 
 const terminalManager = new TerminalManager({

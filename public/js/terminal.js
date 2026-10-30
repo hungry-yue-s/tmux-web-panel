@@ -620,6 +620,59 @@ var MOBILE_BASE_FONT_SIZE = 13;
 var MOBILE_MIN_FONT_SIZE = 11;
 var DESKTOP_BASE_FONT_SIZE = 14;
 var TERMINAL_FONT_FAMILY = "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
+/** How long a new terminal waits for the core font slice before drawing with the fallback. */
+var CORE_FONT_WAIT_MS = 1500;
+
+/** The core font arrived after the terminal started: measure cells again and refit. */
+function _remeasureTerminalFont(term, fitAddon, ws, termContainer) {
+  // Setting the same family is a no-op in xterm; toggling forces a new measurement.
+  term.options.fontFamily = 'monospace';
+  term.options.fontFamily = TERMINAL_FONT_FAMILY;
+  if (typeof term.clearTextureAtlas === 'function') term.clearTextureAtlas();
+  if (termContainer.clientWidth > 0 && termContainer.clientHeight > 0) {
+    fitAddon.fit();
+    _syncTerminalSize(ws, term, true);
+  }
+  term.refresh(0, term.rows - 1);
+}
+
+/**
+ * The canvas never triggers unicode-range font loads, so look at what is on
+ * screen and load the CJK / icon slices it needs, then rebuild the glyph
+ * cache once a slice arrives.
+ */
+function _watchFontSlices(term) {
+  if (typeof TerminalFonts === 'undefined') return;
+  var scheduled = null;
+  function scan() {
+    scheduled = null;
+    if (terminalState.term !== term) return;
+    var buffer = term.buffer.active;
+    var regular = '';
+    var bold = '';
+    var cell;
+    for (var y = buffer.viewportY; y < buffer.viewportY + term.rows; y++) {
+      var line = buffer.getLine(y);
+      if (!line || !/[^\x00-ჿ]/.test(line.translateToString(true))) continue;
+      for (var x = 0; x < line.length; x++) {
+        cell = line.getCell(x, cell);
+        var chars = cell && cell.getChars();
+        if (!chars || chars.charCodeAt(0) < 0x1100) continue;
+        if (cell.isBold()) bold += chars; else regular += chars;
+      }
+    }
+    Promise.all([TerminalFonts.ensure(regular, 400), TerminalFonts.ensure(bold, 700)]).then(function (loaded) {
+      if ((loaded[0] || loaded[1]) && terminalState.term === term) {
+        if (typeof term.clearTextureAtlas === 'function') term.clearTextureAtlas();
+        term.refresh(0, term.rows - 1);
+      }
+    });
+  }
+  function schedule() { if (!scheduled) scheduled = setTimeout(scan, 120); }
+  term.onWriteParsed(schedule);
+  term.onScroll(schedule);
+  schedule();
+}
 
 function _isMobileTerminal() {
   return window.MobileUI ? window.MobileUI.isMobile() : window.innerWidth < 768;
@@ -732,9 +785,38 @@ function connectTerminalWs(paneId, term, nozoom) {
   var _suppressMouseMove = false;
   var _sgrMoveRe = /^\x1b\[<(35|32|33|34);\d+;\d+[Mm]$/;
 
+  // Mouse reports (wheel ticks, drags) come in bursts. Over a slow link each
+  // one costs a frame and a tmux redraw, so a burst goes out as one message a
+  // frame later; consecutive motion reports keep only the latest position.
+  // Keys flush pending mouse reports first, so the order never changes.
+  var _pendingMouse = [];
+  var _mouseTimer = null;
+  var _sgrMouseRe = /^(?:\x1b\[<\d+;\d+;\d+[Mm])+$/;
+  function _flushMouse() {
+    if (_mouseTimer) { clearTimeout(_mouseTimer); _mouseTimer = null; }
+    if (!_pendingMouse.length) return;
+    var batch = _pendingMouse.join('');
+    _pendingMouse = [];
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: batch }));
+  }
+  function _queueMouse(data) {
+    data.match(/\x1b\[<\d+;\d+;\d+[Mm]/g).forEach(function (seq) {
+      var last = _pendingMouse[_pendingMouse.length - 1];
+      var button = seq.slice(3, seq.indexOf(';'));
+      if (last && _sgrMoveRe.test(seq) && _sgrMoveRe.test(last) && last.slice(3, last.indexOf(';')) === button) {
+        _pendingMouse[_pendingMouse.length - 1] = seq;
+      } else {
+        _pendingMouse.push(seq);
+      }
+    });
+    if (!_mouseTimer) _mouseTimer = setTimeout(_flushMouse, 16);
+  }
+
   term.onData(function (data) {
     if (ws.readyState !== WebSocket.OPEN) return;
     if (_suppressMouseMove && _sgrMoveRe.test(data)) return;
+    if (_sgrMouseRe.test(data)) { _queueMouse(data); return; }
+    _flushMouse();
 
     // --- IME composition guard ---
     // During active composition, suppress onData — intermediate text is
@@ -1192,11 +1274,16 @@ function _mountTerminal(termContainer, nozoom) {
   // A slow webfont can finish after WebGL has built its glyph atlas, leaving
   // the buffer populated but the canvas blank (most visible on phones). Keep
   // the default renderer until fonts settle, then enable WebGL and repaint.
-  var fontsReady = (document.fonts && document.fonts.load)
-    ? Promise.all([
-      document.fonts.load("400 14px 'Tmux Panel Mono'"),
-      document.fonts.load("700 14px 'Tmux Panel Mono'")
-    ]).then(function () { return true; }, function () { return false; }) : Promise.resolve(false);
+  // Only the small core slice is awaited, and only briefly: on a slow link the
+  // terminal starts in the fallback monospace and re-measures when the core
+  // arrives (null = timed out). CJK and icon slices load on demand.
+  var fontsReady = typeof TerminalFonts !== 'undefined'
+    ? TerminalFonts.coreReady(CORE_FONT_WAIT_MS)
+    : (document.fonts && document.fonts.load)
+      ? Promise.all([
+        document.fonts.load("400 14px 'Tmux Panel Mono'"),
+        document.fonts.load("700 14px 'Tmux Panel Mono'")
+      ]).then(function () { return true; }, function () { return false; }) : Promise.resolve(false);
   var fontWriteCleanup;
   var firstWrite = new Promise(function (resolve) {
     var listener = term.onWriteParsed(function () {
@@ -1207,7 +1294,12 @@ function _mountTerminal(termContainer, nozoom) {
   });
   Promise.all([fontsReady, firstWrite]).then(function (ready) {
     if (terminalState.term !== term) return;
-    if (ready[0]) term.options.fontFamily = TERMINAL_FONT_FAMILY;
+    if (ready[0] !== false) term.options.fontFamily = TERMINAL_FONT_FAMILY;
+    if (ready[0] === null) {
+      TerminalFonts.coreReady(0).then(function (loaded) {
+        if (loaded && terminalState.term === term) _remeasureTerminalFont(term, fitAddon, ws, termContainer);
+      });
+    }
     if (typeof WebglAddon !== 'undefined') {
       try {
         var webglAddon = new WebglAddon.WebglAddon();
@@ -1231,6 +1323,8 @@ function _mountTerminal(termContainer, nozoom) {
       _syncTerminalSize(ws, term, true);
     }
     term.refresh(0, term.rows - 1);
+    // Last: a slice problem must never cost the terminal its renderer.
+    _watchFontSlices(term);
   }).catch(function () { /* keep the working default renderer and font */ });
 
 

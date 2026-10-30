@@ -9,8 +9,11 @@
   <title>Tmux Panel</title>
   <style>html { -webkit-text-size-adjust: 100%; }</style>
   <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=6.0.0">
-  <link rel="preload" href="/fonts/TmuxPanelMono-Regular.woff2?v=1" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="/fonts/TmuxPanelMono-Bold.woff2?v=1" as="font" type="font/woff2" crossorigin>
+  <!-- terminal-font-preload -->
+  <link rel="preload" href="/fonts/tpm/tpm-400-core.c21636df8e.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/tpm/tpm-700-core.540225bef8.woff2" as="font" type="font/woff2" crossorigin>
+  <!-- /terminal-font-preload -->
+  <link rel="stylesheet" href="/css/terminal-fonts.css">
   <script src="/vendor/xterm/xterm.js?v=6.0.0"></script>
   <script src="/vendor/xterm/addon-fit.js?v=0.11.0"></script>
   <script src="/vendor/xterm/addon-webgl.js?v=0.19.0"></script>
@@ -101,6 +104,8 @@
   <div class="ms-toast" id="ms-toast" role="status" aria-live="polite"></div>
   <script src="/js/auth.js?v=2"></script>
   <script src="/js/theme.js?v=7"></script>
+  <script src="/js/terminal-fonts-data.js"></script>
+  <script src="/js/terminal-fonts.js"></script>
   <script src="/js/router.js?v=4"></script>
   <script src="/js/store.js?v=4"></script>
   <script src="/js/api.js?v=3"></script>

@@ -38,5 +38,5 @@
 继续复用仓库现有资源；本轮未额外复制其源代码、字体文件或主题集合，也未升级版本。
 
 - **xterm.js、Fit addon、WebGL addon**：现有资源位于 `public/vendor/xterm/`，各自完整许可为 `LICENSE.xterm`、`LICENSE.addon-fit`、`LICENSE.addon-webgl`（MIT）。[官方项目](https://github.com/xtermjs/xterm.js)、[官方终端选项](https://xtermjs.org/docs/api/terminal/interfaces/iterminaloptions/)。现有接入位于 `public/js/terminal.js`。
-- **Maple Mono 派生本地字体**：现有 `public/fonts/TmuxPanelMono-Regular.woff2`、`TmuxPanelMono-Bold.woff2` 由 `public/css/style.css` 以 `Tmux Panel Mono` 声明；沿用现有 `public/fonts/OFL-MapleMono.txt`。Maple Mono 上游采用 SIL OFL-1.1，[官方项目](https://github.com/subframe7536/maple-font)、[官方许可](https://github.com/subframe7536/maple-font/blob/v7/OFL.txt)。本轮未重新生成或替换这些字体。
+- **Maple Mono 派生本地字体**：`public/fonts/TmuxPanelMono-Regular.woff2`、`TmuxPanelMono-Bold.woff2` 是切片的源文件；`public/fonts/tpm/` 下的子集由 `scripts/build-font-subsets.mjs` 生成（开发依赖 `subset-font`、`fontkit`），以 `Tmux Panel Mono` 声明；沿用现有 `public/fonts/OFL-MapleMono.txt`。Maple Mono 上游采用 SIL OFL-1.1，[官方项目](https://github.com/subframe7536/maple-font)、[官方许可](https://github.com/subframe7536/maple-font/blob/v7/OFL.txt)。
 - **主题**：继续使用 `public/js/theme.js` 已有的终端主题数据；未额外引入开源主题仓库。界面新材质与终端 ANSI 语义色分别处理。

@@ -81,6 +81,49 @@ export function extractOsc52(buf) {
   return { clipboard, cleaned, pending: '' };
 }
 
+// A redraw reaches node-pty as dozens of small chunks. Each would become its
+// own WebSocket frame (and its own xterm write), which on a slow link costs
+// more in framing and round trips than the bytes themselves.
+const OUTPUT_IDLE_FLUSH_MS = 0;
+const OUTPUT_BURST_FLUSH_MS = 4;
+const OUTPUT_MAX_CHARS = 64 * 1024;
+const OUTPUT_IDLE_AFTER_MS = 30;
+
+/**
+ * Coalesces output chunks into fewer messages. The first chunk after a quiet
+ * spell goes out on the next timer tick, so a keystroke echo is not delayed;
+ * chunks inside a burst are gathered for a few milliseconds.
+ */
+export function createOutputBatcher(send, { now = Date.now } = {}) {
+  let buffer = '';
+  let timer = null;
+  let lastFlush = 0;
+  function flush() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (!buffer) return;
+    const data = buffer;
+    buffer = '';
+    lastFlush = now();
+    send(data);
+  }
+  return {
+    push(text) {
+      if (!text) return;
+      buffer += text;
+      if (buffer.length >= OUTPUT_MAX_CHARS) { flush(); return; }
+      if (timer) return;
+      const idle = now() - lastFlush > OUTPUT_IDLE_AFTER_MS;
+      timer = setTimeout(flush, idle ? OUTPUT_IDLE_FLUSH_MS : OUTPUT_BURST_FLUSH_MS);
+    },
+    flush,
+    dispose() {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      buffer = '';
+    },
+  };
+}
+
 /** Builds the tmux attach command line that runs under `sh -c` on Unix. */
 export function buildTmuxAttachCommand(paneId, { nozoom = false } = {}) {
   // xterm.js supports UTF-8 even when SSH does not forward a UTF-8 locale.
@@ -233,6 +276,9 @@ export class TerminalManager {
       dataDisposable: null,
       alive: true,
       osc52Pending: '', // carry-over for OSC 52 split across PTY chunks
+      output: createOutputBatcher((data) => {
+        if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'output', data }));
+      }),
     };
     this.connections.set(connectionId, conn);
     this.paneConnectionCount.set(quotaKey, currentCount + 1);
@@ -248,15 +294,16 @@ export class TerminalManager {
       conn.osc52Pending = pending;
 
       for (const text of clipboard) {
+        // Output before the copy stays before it.
+        conn.output.flush();
         ws.send(JSON.stringify({ type: 'clipboard', data: text }));
       }
-      if (cleaned.length > 0) {
-        ws.send(JSON.stringify({ type: 'output', data: cleaned }));
-      }
+      if (cleaned.length > 0) conn.output.push(cleaned);
     });  // disposable stored in conn.dataDisposable
 
     // PTY exit → close WebSocket + cleanup
     term.onExit(({ exitCode, signal }) => {
+      conn.output.flush();
       // The new server-scoped entry point emits a structured exit frame here so
       // tmux and SSH panes speak the same protocol; the legacy caller passes
       // nothing and keeps the original close-only behavior.
@@ -423,6 +470,7 @@ export class TerminalManager {
       conn.dataDisposable.dispose();
       conn.dataDisposable = null;
     }
+    if (conn.output) conn.output.dispose();
 
     const key = conn.quotaKey || conn.paneId;
     const count = this.paneConnectionCount.get(key) ?? 0;

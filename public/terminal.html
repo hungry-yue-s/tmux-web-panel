@@ -5,28 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Terminal</title>
   <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=6.0.0">
-  <link rel="preload" href="/fonts/TmuxPanelMono-Regular.woff2?v=1" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="/fonts/TmuxPanelMono-Bold.woff2?v=1" as="font" type="font/woff2" crossorigin>
+  <!-- terminal-font-preload -->
+  <link rel="preload" href="/fonts/tpm/tpm-400-core.c21636df8e.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/tpm/tpm-700-core.540225bef8.woff2" as="font" type="font/woff2" crossorigin>
+  <!-- /terminal-font-preload -->
+  <link rel="stylesheet" href="/css/terminal-fonts.css">
   <script src="/vendor/xterm/xterm.js?v=6.0.0"></script>
   <script src="/vendor/xterm/addon-fit.js?v=0.11.0"></script>
   <script src="/js/theme.js?v=7"></script>
+  <script src="/js/terminal-fonts-data.js"></script>
+  <script src="/js/terminal-fonts.js"></script>
   <script src="/js/link-detect.js"></script>
   <script src="/js/file-preview.js?v=51"></script>
   <style>
-    @font-face {
-      font-family: 'Tmux Panel Mono';
-      src: url('/fonts/TmuxPanelMono-Regular.woff2?v=1') format('woff2');
-      font-weight: 400;
-      font-style: normal;
-      font-display: block;
-    }
-    @font-face {
-      font-family: 'Tmux Panel Mono';
-      src: url('/fonts/TmuxPanelMono-Bold.woff2?v=1') format('woff2');
-      font-weight: 700;
-      font-style: normal;
-      font-display: block;
-    }
     @font-face {
       font-family: 'Symbols Nerd Font Mono';
       src: url('/fonts/SymbolsNerdFontMono-Regular.ttf') format('truetype');
@@ -90,16 +81,48 @@
           resolve();
         });
       });
-      var fontsReady = (document.fonts && document.fonts.load)
-        ? Promise.all([
-          document.fonts.load("400 14px 'Tmux Panel Mono'"),
-          document.fonts.load("700 14px 'Tmux Panel Mono'")
-        ]) : Promise.resolve();
-      Promise.all([fontsReady, firstWrite]).then(function () {
-        term.options.fontFamily = "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
+      var FONT_FAMILY = "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
+      function applyFont() {
+        // Toggling forces xterm to measure the cells again.
+        term.options.fontFamily = 'monospace';
+        term.options.fontFamily = FONT_FAMILY;
+        if (typeof term.clearTextureAtlas === 'function') term.clearTextureAtlas();
         fitAddon.fit();
         term.refresh(0, term.rows - 1);
+      }
+      // Wait briefly for the small core font slice; a slow link starts with the
+      // fallback monospace and switches when the core arrives.
+      Promise.all([TerminalFonts.coreReady(1500), firstWrite]).then(function (ready) {
+        if (ready[0] === false) return;
+        applyFont();
+        if (ready[0] === null) TerminalFonts.coreReady(0).then(function (loaded) { if (loaded) applyFont(); });
       }).catch(function () { /* keep the working default font */ });
+
+      // The canvas never triggers unicode-range loads: fetch the CJK / icon
+      // slices for what is on screen, then rebuild the glyph cache.
+      var slicesScan = null;
+      function scanSlices() {
+        slicesScan = null;
+        var buffer = term.buffer.active, regular = '', bold = '', cell;
+        for (var y = buffer.viewportY; y < buffer.viewportY + term.rows; y++) {
+          var line = buffer.getLine(y);
+          if (!line || !/[^\x00-ჿ]/.test(line.translateToString(true))) continue;
+          for (var x = 0; x < line.length; x++) {
+            cell = line.getCell(x, cell);
+            var chars = cell && cell.getChars();
+            if (!chars || chars.charCodeAt(0) < 0x1100) continue;
+            if (cell.isBold()) bold += chars; else regular += chars;
+          }
+        }
+        Promise.all([TerminalFonts.ensure(regular, 400), TerminalFonts.ensure(bold, 700)]).then(function (loaded) {
+          if (!loaded[0] && !loaded[1]) return;
+          if (typeof term.clearTextureAtlas === 'function') term.clearTextureAtlas();
+          term.refresh(0, term.rows - 1);
+        });
+      }
+      function scheduleSlices() { if (!slicesScan) slicesScan = setTimeout(scanSlices, 120); }
+      term.onWriteParsed(scheduleSlices);
+      term.onScroll(scheduleSlices);
 
       if (term.textarea) {
         term.textarea.setAttribute('autocapitalize', 'off');
