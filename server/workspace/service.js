@@ -10,6 +10,7 @@
  */
 
 import { TmuxProvider } from './tmux-provider.js';
+import { AppError, ErrorCode } from '../servers/errors.js';
 
 export class WorkspaceService {
   /**
@@ -37,10 +38,18 @@ export class WorkspaceService {
 
   /** Full tree. `actions` is what the UI renders from. */
   async getWorkspace() {
+    const instanceId = await this.provider.tmux.getServerInstance();
     const sessions = await this.provider.getTree();
+    // A restart during the read must not stamp the old tree with a new identity.
+    if (instanceId !== await this.provider.tmux.getServerInstance()) {
+      throw new AppError(ErrorCode.WORKSPACE_UNAVAILABLE, 'tmux restarted while reading the workspace; retry');
+    }
     return {
       provider: this.provider.provider,
       persistence: this.provider.persistence,
+      instanceId,
+      complete: sessions.every((session) => session.windowsComplete !== false
+        && session.windows.length === session.windowCount),
       revision: this._revision,
       actions: this.provider.actions,
       sessions,

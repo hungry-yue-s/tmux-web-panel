@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
 
+const INSTANCE = '1873:1700000000';
+
 const previewSource = fs.readFileSync('public/js/file-preview.js', 'utf8');
 const hostSource = fs.readFileSync('public/js/block-host.js', 'utf8');
 
@@ -40,7 +42,7 @@ function setup({ context = ['local', '@0'], storage = {}, width = 1440, terminal
       return { el, onShow: () => shown.push(api.params.name) };
     },
   });
-  if (context) win.FilePreview.switchDockContext(context[0], context[1]);
+  if (context) win.FilePreview.switchDockContext(context[0], context[1], context[2] || INSTANCE);
   return { win, doc: win.document, host: win.BlockHost, preview: win.FilePreview, shown };
 }
 
@@ -129,7 +131,7 @@ describe('one sidebar for files and tool blocks', () => {
     const { win, host, preview } = setup();
     await dockFile(preview, '/tmp/one.md');
     host.open('tool', { name: 'git' });
-    const saved = JSON.parse(win.localStorage.getItem(preview._test.dockStateKey('local', '@0')));
+    const saved = JSON.parse(win.localStorage.getItem(preview._test.dockStateKey('local', '@0', INSTANCE)));
     expect(saved.tabs).toEqual([{ path: '/tmp/one.md', paneId: '%1' }]);
     expect(saved.activePath).toBeNull();
     expect(saved.activeBlock).toBe('tool:git');
@@ -140,14 +142,27 @@ describe('one sidebar for files and tool blocks', () => {
     await dockFile(preview, '/tmp/one.md');
     host.open('tool', { name: 'git' });
 
-    await preview.switchDockContext('local', '@1');
+    await preview.switchDockContext('local', '@1', INSTANCE);
     expect(tabNames(doc)).toEqual(['Tool']);
     expect(doc.querySelector('.fp-dock-panels > .blk-frame').hidden).toBe(false);
 
-    await preview.switchDockContext('local', '@0');
+    await preview.switchDockContext('local', '@0', INSTANCE);
     await vi.waitFor(() => expect(tabNames(doc)).toEqual(['one.md', 'Tool']));
     // It was on top when that window's dock was last saved.
     expect(activeTab(doc)).toBe('Tool');
+  });
+
+  it('forgets a deleted window without destroying server-scoped tool blocks', async () => {
+    const { win, doc, host, preview } = setup();
+    await dockFile(preview, '/tmp/deleted.md');
+    host.open('tool', { name: 'git' });
+    const frame = doc.querySelector('.blk-frame');
+    preview.forgetWindow('local', '@0', INSTANCE);
+    expect(host.list()).toHaveLength(1);
+    expect(win.localStorage.getItem(preview._test.dockStateKey('local', '@0', INSTANCE))).toBeNull();
+    await preview.switchDockContext('local', '@1', INSTANCE);
+    expect(tabNames(doc)).toEqual(['Tool']);
+    expect(doc.querySelector('.fp-dock-panels > .blk-frame')).toBe(frame);
   });
 
   it('parks docked blocks away from the terminal and brings them back', async () => {
@@ -160,7 +175,7 @@ describe('one sidebar for files and tool blocks', () => {
     expect(frame.isConnected).toBe(false);
     expect(host.list()).toHaveLength(1);
 
-    await preview.switchDockContext('local', '@0');
+    await preview.switchDockContext('local', '@0', INSTANCE);
     expect(tabNames(doc)).toEqual(['Tool']);
     expect(doc.querySelector('.fp-dock-panels > .blk-frame')).toBe(frame);
   });

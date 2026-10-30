@@ -22,6 +22,7 @@ function tmuxTreeExecutor() {
         return { stdout: ['%12', '0', '0', '80', '24', '1', 'zsh', ''].join(SEP) + '\n', stderr: '' };
       }
       if (sub === 'display-message') {
+        if (args[2] === '#{pid}:#{start_time}') return { stdout: '1873:1700000000\n', stderr: '' };
         if (args[3] === '%99') {
           throw Object.assign(new Error("can't find pane: %99"), { stderr: "can't find pane: %99" });
         }
@@ -54,7 +55,8 @@ describe('WorkspaceService', () => {
   it('returns this machine\'s tree with stable ids and tmux actions', async () => {
     const result = await workspace.getWorkspace();
 
-    expect(result).toMatchObject({ provider: 'tmux', persistence: 'tmux', revision: 0 });
+    expect(result).toMatchObject({ provider: 'tmux', persistence: 'tmux', revision: 0,
+      instanceId: '1873:1700000000', complete: true });
     // A machine's own API never names a server; the hub's /n/:serverId does.
     expect(result).not.toHaveProperty('serverId');
     expect(result.actions).toEqual(TMUX_ACTIONS);
@@ -73,6 +75,19 @@ describe('WorkspaceService', () => {
     });
     await expect(workspace.resolvePane('%99')).rejects.toMatchObject({ code: ErrorCode.PANE_NOT_FOUND });
     await expect(workspace.resolvePane('not-a-pane')).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR });
+  });
+
+  it('marks a partial window listing as unsafe for cache cleanup', async () => {
+    workspace.provider.tmux.listWindows = async () => { throw new Error('temporary failure'); };
+    const result = await workspace.getWorkspace();
+    expect(result.complete).toBe(false);
+    expect(result.sessions[0].windows).toEqual([]);
+  });
+
+  it('rejects a snapshot spanning a tmux restart', async () => {
+    workspace.provider.tmux.getServerInstance = vi.fn()
+      .mockResolvedValueOnce('1873:1700000000').mockResolvedValueOnce('1874:1700000010');
+    await expect(workspace.getWorkspace()).rejects.toMatchObject({ code: ErrorCode.WORKSPACE_UNAVAILABLE });
   });
 
   it('reads one window by stable id without rebuilding the tree', async () => {

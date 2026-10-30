@@ -23,6 +23,31 @@ function fakeExecutor(responses = {}) {
 const SEP = '=:=';
 
 describe('createTmuxApi', () => {
+  it('reads a tmux lifetime identity without caching it across restarts', async () => {
+    let instance = '1873:1700000000';
+    const { executor, calls } = fakeExecutor({
+      'display-message': () => ({ stdout: instance + '\n' }),
+    });
+    const api = createTmuxApi(executor);
+    expect(await api.getServerInstance()).toBe(instance);
+    instance = '1873:1700000100'; // even a reused PID belongs to a new lifetime
+    expect(await api.getServerInstance()).toBe(instance);
+    expect(calls[0].args).toEqual(['display-message', '-p', '#{pid}:#{start_time}']);
+  });
+
+  it('handles an absent or empty server without starting one', async () => {
+    for (const stderr of ['no server running', 'no sessions', 'error connecting to /tmp/tmux/default (No such file or directory)']) {
+      const fail = () => { throw Object.assign(new Error(stderr), { stderr }); };
+      const { executor, calls } = fakeExecutor({ 'display-message': fail, 'list-sessions': fail });
+      const api = createTmuxApi(executor);
+      expect(await api.getServerInstance()).toBeNull();
+      expect(await api.listSessions()).toEqual([]);
+      expect(calls.map(({ args }) => args[0])).toEqual(['display-message', 'list-sessions']);
+    }
+    const { executor } = fakeExecutor({ 'display-message': 'invalid' });
+    await expect(createTmuxApi(executor).getServerInstance()).rejects.toThrow('Invalid tmux server instance');
+  });
+
   it('rejects an executor without exec()', () => {
     expect(() => createTmuxApi(null)).toThrow(/requires an executor/);
     expect(() => createTmuxApi({})).toThrow(/requires an executor/);

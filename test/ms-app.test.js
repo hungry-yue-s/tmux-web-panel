@@ -967,7 +967,7 @@ describe('MsApp status mode routing', () => {
 
     await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'api-linux', section: 'performance' } });
 
-    expect(calls).toEqual([[null, null]]);
+    expect(calls).toEqual([[null, null, undefined]]);
     expect(ctx.document.getElementById('ms-view').querySelector('.server-hero')).toBeTruthy();
   });
 
@@ -976,6 +976,7 @@ describe('MsApp status mode routing', () => {
     const calls = [];
     const workspace = {
       provider: 'ssh',
+      instanceId: '1873:1700000000',
       sessions: [{
         id: 'session_1', name: 'remote', windows: [
           { id: 'win_7', index: 1, name: 'replacement', panes: [{ id: 'pane_1' }] },
@@ -992,7 +993,40 @@ describe('MsApp status mode routing', () => {
       sessionId: 'session_1', windowId: 'win_7', paneId: 'pane_1',
     });
 
-    expect(calls).toEqual([['api-linux', 'win_7']]);
+    expect(calls).toEqual([['api-linux', 'win_7', workspace.instanceId]]);
+  });
+
+  it('reconciles only successful current workspace responses', async () => {
+    const ctx = loadStatusShell();
+    const reconcileWorkspace = vi.fn();
+    ctx.win.FilePreview = { reconcileWorkspace };
+    const snapshot = { provider: 'tmux', instanceId: '1873:1700000000', complete: true, sessions: [] };
+    let release;
+    ctx.win.Api.get = vi.fn().mockImplementationOnce(() => new Promise(resolve => { release = resolve; }))
+      .mockResolvedValueOnce(snapshot).mockRejectedValueOnce(new Error('network failure'));
+    const stale = ctx.MsApp.refreshWorkspace('local');
+    await ctx.MsApp.refreshWorkspace('local');
+    release(snapshot);
+    await stale;
+    await ctx.MsApp.refreshWorkspace('local');
+    expect(reconcileWorkspace).toHaveBeenCalledExactlyOnceWith('local', snapshot);
+    ctx.win.close();
+  });
+
+  it('forgets a closed window even when the following refresh fails, but keeps failed deletions', async () => {
+    const ctx = loadStatusShell();
+    const forgetWindow = vi.fn();
+    ctx.win.FilePreview = { forgetWindow };
+    ctx.Store.setWorkspace('local', { instanceId: '1873:1700000000', sessions: [] });
+    ctx.win.showConfirm = async () => true;
+    ctx.MsApp.refreshWorkspace = vi.fn(async () => null);
+    ctx.MsApp._correctRouteAfterClose = vi.fn();
+    await ctx.MsApp._closeWindow('local', '@6');
+    expect(forgetWindow).toHaveBeenCalledExactlyOnceWith('local', '@6', '1873:1700000000');
+    ctx.win.Api.del = async () => { throw new Error('delete failed'); };
+    await expect(ctx.MsApp._closeWindow('local', '@7')).rejects.toThrow('delete failed');
+    expect(forgetWindow).toHaveBeenCalledTimes(1);
+    ctx.win.close();
   });
 
   it('replaces the bare servers route with a server detail, with no list in between', async () => {

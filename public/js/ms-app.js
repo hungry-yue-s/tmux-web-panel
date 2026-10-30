@@ -75,6 +75,9 @@
       try {
         const workspace = await global.Api.get(global.Api.workspaceUrl(serverId));
         if (!global.Store.isCurrentRequest('workspace', serverId, token)) return null;
+        if (global.FilePreview && typeof global.FilePreview.reconcileWorkspace === 'function') {
+          global.FilePreview.reconcileWorkspace(serverId, workspace);
+        }
         global.Store.setWorkspace(serverId, workspace);
         return workspace;
       } catch (err) {
@@ -111,9 +114,9 @@
      * The dock reads the panel host's own filesystem, so leaving a stale one up
      * after switching machines would show local files under a remote server.
      */
-    _setDockContext(serverId, windowId) {
+    _setDockContext(serverId, windowId, instanceId) {
       if (!global.FilePreview || typeof global.FilePreview.switchDockContext !== 'function') return;
-      global.FilePreview.switchDockContext(serverId, windowId);
+      global.FilePreview.switchDockContext(serverId, windowId, instanceId);
     },
 
     async _onRoute(route) {
@@ -330,7 +333,7 @@
       }
       // renderTerminal calls embedTerminalChrome itself, on every render.
       global.renderTerminal(host);
-      this._setDockContext(serverId, win.id);
+      this._setDockContext(serverId, win.id, workspace.instanceId);
     },
 
     /**
@@ -1300,6 +1303,7 @@
 
     async _closeWindow(serverId, windowId, context = {}) {
       if (!windowId) return;
+      const workspace = global.AppShell.workspace(serverId);
       const label = context.name || '这个 Window';
       if (!await confirmDialog({
         title: '关闭 Window',
@@ -1308,6 +1312,9 @@
         danger: true,
       })) return;
       await global.Api.del(global.Api.workspaceUrl(serverId, '/windows/' + encodeURIComponent(windowId)));
+      if (global.FilePreview && typeof global.FilePreview.forgetWindow === 'function') {
+        global.FilePreview.forgetWindow(serverId, windowId, workspace && workspace.instanceId);
+      }
       await this.refreshWorkspace(serverId);
       this._correctRouteAfterClose(serverId, { windowId });
     },

@@ -45,7 +45,7 @@ var FilePreview = (function () {
   var _dockContextKey = null;
   var _dockContextGeneration = 0;
   var AUTO_REFRESH_MS = 1500;
-  var DOCK_STATE_PREFIX = 'tmux_file_preview_dock_v3:';
+  var DOCK_STATE_PREFIX = 'tmux_file_preview_dock_v4:';
   var LEGACY_DOCK_STATE_KEY = 'tmux_file_preview_dock_v1';
   var LEGACY_DOCK_WIDTH_KEY = 'tmux_file_preview_side_width';
   var DOCK_STATE_VERSION = 1;
@@ -63,17 +63,17 @@ var FilePreview = (function () {
   /**
    * Identifies one window's dock state.
    *
-   * Window indices are display-only and can be reused after a window closes;
-   * stable IDs prevent a replacement window from inheriting that snapshot.
+   * tmux IDs survive renames and moves, but restart their sequence with each
+   * server process. Missing instance IDs allow an in-memory dock only (old Nodes).
    */
-  function _makeDockContextKey(serverId, windowId) {
+  function _makeDockContextKey(serverId, windowId, instanceId) {
     if (typeof serverId !== 'string' || !serverId) return null;
     if (typeof windowId !== 'string' || !windowId) return null;
-    return serverId + '\u0000' + windowId;
+    return serverId + '\u0000' + (typeof instanceId === 'string' ? instanceId : '') + '\u0000' + windowId;
   }
 
   function _dockStateStorageKey(contextKey) {
-    return contextKey ? DOCK_STATE_PREFIX + encodeURIComponent(contextKey) : null;
+    return contextKey && contextKey.split('\u0000')[1] ? DOCK_STATE_PREFIX + encodeURIComponent(contextKey) : null;
   }
 
   function _currentDockStateKey() {
@@ -159,23 +159,58 @@ var FilePreview = (function () {
     try { window.localStorage.setItem(key, JSON.stringify(state)); } catch (_) {}
   }
 
-  function _migrateLegacyDockState() {
-    var key = _currentDockStateKey();
-    if (!key) return;
-    try {
-      if (window.localStorage.getItem(key) != null) return;
-      var raw = window.localStorage.getItem(LEGACY_DOCK_STATE_KEY);
-      if (!raw) return;
-      var parsed = JSON.parse(raw);
-      if ((!parsed.width || Number(parsed.width) <= 0)) {
-        var legacyWidth = parseFloat(window.localStorage.getItem(LEGACY_DOCK_WIDTH_KEY)) || 0;
-        if (legacyWidth > 0) parsed.width = legacyWidth;
+  /** Only a complete, successful snapshot can prove a window has gone away. */
+  function reconcileWorkspace(serverId, workspace) {
+    if (!serverId || !workspace || workspace.provider !== 'tmux' || workspace.complete !== true
+      || !Array.isArray(workspace.sessions)
+      || !(typeof workspace.instanceId === 'string' && workspace.instanceId
+        || workspace.instanceId === null && workspace.sessions.length === 0)) return;
+    var live = new Set();
+    workspace.sessions.forEach(function (session) {
+      session.windows.forEach(function (win) {
+        live.add(_makeDockContextKey(serverId, win.id, workspace.instanceId));
+      });
+    });
+    if (_dockContextKey) {
+      var current = _dockContextKey.split('\u0000');
+      if (current[0] === serverId && !live.has(_dockContextKey)) {
+        // Invalidate pending restores before deleting; switching must not save
+        // the removed window back into localStorage later.
+        var replacement = _makeDockContextKey(serverId, current[2], workspace.instanceId);
+        switchDockContext(serverId, live.has(replacement) ? current[2] : null, workspace.instanceId);
       }
-      window.localStorage.setItem(key, JSON.stringify(parsed));
-      window.localStorage.removeItem(LEGACY_DOCK_STATE_KEY);
-    } catch (_) {
-      try { window.localStorage.removeItem(LEGACY_DOCK_STATE_KEY); } catch (_ignored) {}
     }
+    try {
+      var storage = window.localStorage;
+      for (var i = storage.length - 1; i >= 0; i--) {
+        var key = storage.key(i);
+        if (key === LEGACY_DOCK_STATE_KEY || key === LEGACY_DOCK_WIDTH_KEY
+          || key.indexOf('tmux_file_preview_dock_v2:') === 0) {
+          storage.removeItem(key);
+          continue;
+        }
+        var prefix = key.indexOf(DOCK_STATE_PREFIX) === 0 ? DOCK_STATE_PREFIX
+          : key.indexOf('tmux_file_preview_dock_v3:') === 0 ? 'tmux_file_preview_dock_v3:' : null;
+        if (!prefix) continue;
+        var context;
+        try { context = decodeURIComponent(key.slice(prefix.length)); } catch (_) { continue; }
+        if (context.split('\u0000')[0] === serverId && (prefix !== DOCK_STATE_PREFIX || !live.has(context))) {
+          storage.removeItem(key);
+        }
+      }
+    } catch (_) { /* storage may be unavailable */ }
+  }
+
+  /** A successful DELETE is enough evidence even if the next tree fetch fails. */
+  function forgetWindow(serverId, windowId, instanceId) {
+    var context = _makeDockContextKey(serverId, windowId, instanceId);
+    if (!context) return;
+    if (context === _dockContextKey) switchDockContext(null, null);
+    var key = _dockStateStorageKey(context);
+    try {
+      if (key) window.localStorage.removeItem(key);
+      window.localStorage.removeItem('tmux_file_preview_dock_v3:' + encodeURIComponent(serverId + '\u0000' + windowId));
+    } catch (_) { /* storage may be unavailable */ }
   }
 
   function _dockLayout() {
@@ -998,8 +1033,8 @@ var FilePreview = (function () {
       && generation === _dockContextGeneration;
   }
 
-  function switchDockContext(serverId, windowId) {
-    var nextContextKey = _makeDockContextKey(serverId, windowId);
+  function switchDockContext(serverId, windowId, instanceId) {
+    var nextContextKey = _makeDockContextKey(serverId, windowId, instanceId);
     if (nextContextKey === _dockContextKey) {
       if (!nextContextKey) return Promise.resolve(false);
       if (_fileTabs().length > 0) {
@@ -1021,7 +1056,6 @@ var FilePreview = (function () {
     _dockContextKey = nextContextKey;
 
     if (!nextContextKey) return Promise.resolve(false);
-    _migrateLegacyDockState();
     return restoreDocked(_dockContextGeneration);
   }
 
@@ -4875,6 +4909,8 @@ var FilePreview = (function () {
     registerLinkProvider: registerLinkProvider, openFile: openFile,
     openFromBuffer: openFromBuffer, close: close, closeModal: closeModal, closeDocked: closeDocked,
     restoreDocked: restoreDocked, switchDockContext: switchDockContext, hitTest: hitTest,
+    reconcileWorkspace: reconcileWorkspace,
+    forgetWindow: forgetWindow,
     activateHit: _activateLink,
     // Lets BlockHost put tool blocks in this dock's tab strip.
     blockDock: {
@@ -4923,8 +4959,8 @@ var FilePreview = (function () {
       setLanHost: function (host) { _lanHost = host; },
       loadDockState: _loadDockState,
       persistDockState: _persistDockState,
-      dockStateKey: function (serverId, windowId) {
-        return _dockStateStorageKey(_makeDockContextKey(serverId, windowId));
+      dockStateKey: function (serverId, windowId, instanceId) {
+        return _dockStateStorageKey(_makeDockContextKey(serverId, windowId, instanceId));
       },
       legacyDockStateKey: LEGACY_DOCK_STATE_KEY,
       dockContextKey: function () { return _dockContextKey; },

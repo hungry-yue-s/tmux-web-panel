@@ -354,6 +354,18 @@ export function createTmuxApi(executor) {
     return stdout;
   }
 
+  /** Window IDs are unique only within this tmux server's lifetime. */
+  async function getServerInstance() {
+    try {
+      const value = (await run(['display-message', '-p', '#{pid}:#{start_time}'])).trim();
+      if (!/^\d+:\d+$/.test(value)) throw new Error('Invalid tmux server instance');
+      return value;
+    } catch (err) {
+      if (/no server running|no sessions|error connecting[^\n]*No such file/i.test(err?.stderr || '')) return null;
+      throw err;
+    }
+  }
+
   async function listSessions() {
     try {
       const stdout = await run([
@@ -366,7 +378,7 @@ export function createTmuxApi(executor) {
       // tmux server not running yet → treat as "no sessions" rather than error.
       // The web panel intentionally does not auto-start tmux; recovery is the
       // job of tmux-server.service + session protection (see CLAUDE.md).
-      if (typeof err?.stderr === 'string' && err.stderr.includes('no server running')) {
+      if (/no server running|no sessions|error connecting[^\n]*No such file/i.test(err?.stderr || '')) {
         return [];
       }
       throw err;
@@ -676,6 +688,7 @@ export function createTmuxApi(executor) {
   return {
     executor,
     run,
+    getServerInstance,
     readTree,
     listSessions,
     listWindows,

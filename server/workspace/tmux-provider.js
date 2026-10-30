@@ -7,8 +7,8 @@
  *
  * Identity rules: sessions use #{session_id} ($N), windows #{window_id} (@N) and
  * panes #{pane_id} (%N). These are stable across renames; index is display only.
- * They are unique only within one machine; the hub's /n/:serverId prefix is
- * what makes them globally addressable.
+ * They are unique only within one tmux server lifetime. The hub's /n/:serverId
+ * scopes the machine; persistent clients also need the workspace's instanceId.
  */
 
 import { AppError, ErrorCode } from '../servers/errors.js';
@@ -154,6 +154,7 @@ export class TmuxProvider {
       entry.windows = await Promise.all(windows.map(render));
     } catch {
       // Keep the session visible with no windows.
+      entry.windowsComplete = false;
     }
     return entry;
   }

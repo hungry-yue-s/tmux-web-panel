@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 
+const INSTANCE = '1873:1700000000';
+
 const source = readFileSync('public/js/file-preview.js', 'utf8');
 
 function setup(width = 1440) {
@@ -28,7 +30,7 @@ function setup(width = 1440) {
   new Function('window', 'document', 'fetch', 'Auth', source)(window, window.document, fetch, {
     headers: () => headers, wsTokenParam: () => 'token=document-test',
   });
-  window.FilePreview.switchDockContext('remote', '@0');
+  window.FilePreview.switchDockContext('remote', '@0', INSTANCE);
   return { window, preview: window.FilePreview, fetch, headers, setContent(next) { content = next; revision++; } };
 }
 

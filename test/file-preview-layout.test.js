@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
 
+const INSTANCE = '1873:1700000000';
+
 const source = fs.readFileSync('public/js/file-preview.js', 'utf8');
 const appSource = fs.readFileSync('public/js/app.js', 'utf8');
 const msAppSource = fs.readFileSync('public/js/ms-app.js', 'utf8');
@@ -43,7 +45,7 @@ function createPreview({ storage = {}, missingPaths = [], context = ['local', '@
 
   new Function('window', 'document', 'fetch', 'Auth', source)(dom.window, dom.window.document, fetch, auth);
   const preview = dom.window.FilePreview;
-  if (context) preview.switchDockContext(context[0], context[1]);
+  if (context) preview.switchDockContext(context[0], context[1], context[2] || INSTANCE);
   return { dom, preview, fetch };
 }
 
@@ -113,7 +115,7 @@ function createLivePreview({ visible = false } = {}) {
   });
 
   new Function('window', 'document', 'fetch', source)(dom.window, dom.window.document, fetch);
-  dom.window.FilePreview.switchDockContext('local', '@0');
+  dom.window.FilePreview.switchDockContext('local', '@0', INSTANCE);
   return {
     dom,
     preview: dom.window.FilePreview,
@@ -740,7 +742,7 @@ describe('file preview dock tabs', () => {
         : { success: true, data: { absPath: '/tmp/one.md', parent: '/', entries: [], truncated: false } }),
     }));
     new Function('window', 'document', 'fetch', source)(dom.window, dom.window.document, fetch);
-    dom.window.FilePreview.switchDockContext('local', '@0');
+    dom.window.FilePreview.switchDockContext('local', '@0', INSTANCE);
     dom.window.FilePreview.openFile('/tmp/one.md', '%1');
     await flush();
     dockCurrent(dom);
@@ -847,7 +849,7 @@ describe('file preview dock tabs', () => {
     dom.window.dispatchEvent(new dom.window.Event('resize'));
     expect(doc.querySelector('.fp-dock')).toBeNull();
     expect(doc.querySelector('.fp-dock-restore')).not.toBeNull();
-    const key = preview._test.dockStateKey('local', '@0');
+    const key = preview._test.dockStateKey('local', '@0', INSTANCE);
     expect(JSON.parse(dom.window.localStorage.getItem(key)).tabs).toHaveLength(1);
     await preview.openFile('/tmp/live.csv', '%1');
     expect(doc.querySelector('.fp-title').textContent).toBe('live.csv');
@@ -1051,7 +1053,7 @@ describe('file preview dock tabs', () => {
     expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
     expect(dom.window.document.querySelector('[aria-label="展开右侧文件预览"]')).toBeNull();
     expect(dom.window.document.body.classList.contains('fp-side-open')).toBe(false);
-    expect(dom.window.localStorage.getItem(preview._test.dockStateKey('local', '@0'))).toBeNull();
+    expect(dom.window.localStorage.getItem(preview._test.dockStateKey('local', '@0', INSTANCE))).toBeNull();
   });
 
   it('hides and restores the entire dock while retaining tabs', async () => {
@@ -1080,7 +1082,7 @@ describe('file preview dock tabs', () => {
       .querySelector('[aria-label="在右侧分栏打开"]').click();
     first.dom.window.document.querySelectorAll('.fp-dock-tab')[0].click();
 
-    const key = first.preview._test.dockStateKey('local', '@0');
+    const key = first.preview._test.dockStateKey('local', '@0', INSTANCE);
     const saved = JSON.parse(first.dom.window.localStorage.getItem(key));
     saved.width = 510;
     const serialized = JSON.stringify(saved);
@@ -1109,7 +1111,7 @@ describe('file preview dock tabs', () => {
       .querySelector('[aria-label="在右侧分栏打开"]').click();
     first.dom.window.document.querySelector('[aria-label="隐藏右侧预览"]').click();
 
-    const key = first.preview._test.dockStateKey('local', '@0');
+    const key = first.preview._test.dockStateKey('local', '@0', INSTANCE);
     const serialized = first.dom.window.localStorage.getItem(key);
     expect(JSON.parse(serialized).hidden).toBe(true);
 
@@ -1129,7 +1131,7 @@ describe('file preview dock tabs', () => {
     const reusedIndex = 1;
     const { dom, preview } = createPreview({ context: ['local', '@41'] });
     preview.openFile('/tmp/window-one.md', '%1'); await flush(); dockCurrent(dom);
-    const firstKey = preview._test.dockStateKey('local', '@41');
+    const firstKey = preview._test.dockStateKey('local', '@41', INSTANCE);
     dom.window.document.querySelector('.fp-dock').style.flexBasis = '410px';
     dom.window.document.querySelector('.fp-dock').style.width = '410px';
     preview._test.persistDockState(410);
@@ -1137,31 +1139,31 @@ describe('file preview dock tabs', () => {
 
     // tmux can reuse this display index after @41 is closed, but @42 is new.
     expect(reusedIndex).toBe(1);
-    expect(await preview.switchDockContext('local', '@42')).toBe(false);
+    expect(await preview.switchDockContext('local', '@42', INSTANCE)).toBe(false);
     expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
     expect(JSON.parse(dom.window.localStorage.getItem(firstKey)).tabs[0].path)
       .toBe('/tmp/window-one.md');
 
     preview.openFile('/tmp/window-two.md', '%2'); await flush(); dockCurrent(dom);
-    const secondKey = preview._test.dockStateKey('local', '@42');
+    const secondKey = preview._test.dockStateKey('local', '@42', INSTANCE);
     dom.window.document.querySelector('.fp-dock').style.flexBasis = '650px';
     dom.window.document.querySelector('.fp-dock').style.width = '650px';
     preview._test.persistDockState(650);
     expect(secondKey).not.toBe(firstKey);
 
-    expect(await preview.switchDockContext('local', '@41')).toBe(true);
+    expect(await preview.switchDockContext('local', '@41', INSTANCE)).toBe(true);
     expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
     dom.window.document.querySelector('[aria-label="展开右侧文件预览"]').click();
     expect(dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('window-one.md');
     expect(dom.window.document.querySelector('.fp-dock').style.width).toBe('410px');
 
-    expect(await preview.switchDockContext('local', '@42')).toBe(true);
+    expect(await preview.switchDockContext('local', '@42', INSTANCE)).toBe(true);
     expect(dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('window-two.md');
     expect(dom.window.document.querySelector('.fp-dock').style.width).toBe('650px');
 
     expect(await preview.switchDockContext(null, null)).toBe(false);
     expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
-    expect(await preview.switchDockContext('local', '@42')).toBe(true);
+    expect(await preview.switchDockContext('local', '@42', INSTANCE)).toBe(true);
     expect(dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('window-two.md');
   });
 
@@ -1170,17 +1172,17 @@ describe('file preview dock tabs', () => {
     preview.openFile('/tmp/local-only.md', '%1'); await flush(); dockCurrent(dom);
     expect(dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('local-only.md');
 
-    expect(await preview.switchDockContext('api-linux', 'win_1')).toBe(false);
+    expect(await preview.switchDockContext('api-linux', 'win_1', INSTANCE)).toBe(false);
     expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
     expect(dom.window.document.querySelector('[aria-label="展开右侧文件预览"]')).toBeNull();
-    expect(preview._test.dockStateKey('api-linux', 'win_1'))
-      .not.toBe(preview._test.dockStateKey('local', 'win_1'));
+    expect(preview._test.dockStateKey('api-linux', 'win_1', INSTANCE))
+      .not.toBe(preview._test.dockStateKey('local', 'win_1', INSTANCE));
 
-    expect(await preview.switchDockContext('local', 'win_1')).toBe(true);
+    expect(await preview.switchDockContext('local', 'win_1', INSTANCE)).toBe(true);
     expect(dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('local-only.md');
   });
 
-  it('migrates the previous global dock snapshot into the first active window', async () => {
+  it('does not assign an unscoped legacy snapshot to a new window', async () => {
     const legacyKey = 'tmux_file_preview_dock_v1';
     const legacy = JSON.stringify({
       version: 1, tabs: [{ path: '/tmp/legacy.md', paneId: '%1' }],
@@ -1190,12 +1192,129 @@ describe('file preview dock tabs', () => {
       storage: { [legacyKey]: legacy }, context: ['local', '@3'],
     });
 
-    expect(await migrated.preview.restoreDocked()).toBe(true);
-    const scopedKey = migrated.preview._test.dockStateKey('local', '@3');
+    expect(await migrated.preview.restoreDocked()).toBe(false);
+    migrated.preview.reconcileWorkspace('local', { provider: 'tmux', instanceId: INSTANCE, complete: true,
+      sessions: [{ windows: [{ id: '@3' }] }] });
+    const scopedKey = migrated.preview._test.dockStateKey('local', '@3', INSTANCE);
     expect(migrated.dom.window.localStorage.getItem(legacyKey)).toBeNull();
-    expect(JSON.parse(migrated.dom.window.localStorage.getItem(scopedKey)).tabs[0].path)
-      .toBe('/tmp/legacy.md');
-    expect(migrated.dom.window.document.querySelector('.fp-dock').style.width).toBe('470px');
+    expect(migrated.dom.window.localStorage.getItem(scopedKey)).toBeNull();
+    expect(migrated.dom.window.document.querySelector('.fp-dock')).toBeNull();
+  });
+
+  it('isolates reused window IDs across tmux restarts and keeps ordinary reloads', async () => {
+    const first = createPreview({ context: ['local', '@6', INSTANCE] });
+    await first.preview.openFile('/tmp/sensor.md', '%61'); dockCurrent(first.dom);
+    const oldKey = first.preview._test.dockStateKey('local', '@6', INSTANCE);
+    const serialized = first.dom.window.localStorage.getItem(oldKey);
+    const oldV3 = 'tmux_file_preview_dock_v3:' + encodeURIComponent('local\u0000@6');
+    const nextInstance = '1873:1700000100';
+    const next = createPreview({ context: ['local', '@6', nextInstance],
+      storage: { [oldKey]: serialized, [oldV3]: serialized } });
+    expect(await next.preview.restoreDocked()).toBe(false);
+    expect(next.fetch).not.toHaveBeenCalled();
+    next.preview.reconcileWorkspace('local', { provider: 'tmux', instanceId: nextInstance, complete: true,
+      sessions: [{ windows: [{ id: '@6' }] }] });
+    expect(next.dom.window.localStorage.getItem(oldKey)).toBeNull();
+    expect(next.dom.window.localStorage.getItem(oldV3)).toBeNull();
+    // A browser/Node restart with the same tmux instance still restores its tabs.
+    const reload = createPreview({ context: ['local', '@6', INSTANCE], storage: { [oldKey]: serialized } });
+    expect(await reload.preview.restoreDocked()).toBe(true);
+    expect(reload.dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('sensor.md');
+    first.dom.window.close(); next.dom.window.close(); reload.dom.window.close();
+  });
+
+  it('prunes deleted windows across sessions without touching live windows, other servers or tools', async () => {
+    const { dom, preview } = createPreview({ context: ['local', '@6', INSTANCE] });
+    await preview.openFile('/tmp/deleted.md', '%61'); dockCurrent(dom);
+    const dead = preview._test.dockStateKey('local', '@6', INSTANCE);
+    const live = preview._test.dockStateKey('local', '@7', INSTANCE);
+    const remote = preview._test.dockStateKey('remote', '@6', INSTANCE);
+    const state = dom.window.localStorage.getItem(dead);
+    dom.window.localStorage.setItem(live, state);
+    dom.window.localStorage.setItem(remote, state);
+    dom.window.localStorage.setItem('twp_blocks_v1:local', 'tool-state');
+    preview.reconcileWorkspace('local', { provider: 'tmux', instanceId: INSTANCE, complete: true,
+      sessions: [{ id: '$other', windows: [{ id: '@7' }] }] });
+    expect(dom.window.localStorage.getItem(dead)).toBeNull();
+    expect(dom.window.localStorage.getItem(live)).toBe(state);
+    expect(dom.window.localStorage.getItem(remote)).toBe(state);
+    expect(dom.window.localStorage.getItem('twp_blocks_v1:local')).toBe('tool-state');
+    expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
+    await preview.switchDockContext('local', '@8', INSTANCE);
+    expect(dom.window.localStorage.getItem(dead)).toBeNull(); // switching cannot recreate it
+    // Closing a session or its last pane removes every now-absent window too.
+    preview.reconcileWorkspace('local', { provider: 'tmux', instanceId: INSTANCE, complete: true, sessions: [] });
+    expect(dom.window.localStorage.getItem(live)).toBeNull();
+    expect(dom.window.localStorage.getItem(remote)).toBe(state);
+    dom.window.close();
+  });
+
+  it('does not prune a partial, failed or older-node snapshot', async () => {
+    const { dom, preview } = createPreview();
+    await preview.openFile('/tmp/keep.md', '%1'); dockCurrent(dom);
+    const key = preview._test.dockStateKey('local', '@0', INSTANCE);
+    const state = dom.window.localStorage.getItem(key);
+    for (const workspace of [null, { provider: 'tmux', instanceId: INSTANCE, complete: false, sessions: [] },
+      { provider: 'tmux', sessions: [] }, { provider: 'unavailable', complete: true, sessions: [] }]) {
+      preview.reconcileWorkspace('local', workspace);
+      expect(dom.window.localStorage.getItem(key)).toBe(state);
+      expect(dom.window.document.querySelector('.fp-dock')).not.toBeNull();
+    }
+    dom.window.close();
+  });
+
+  it('forgets a confirmed deletion immediately without recreating its state on a switch', async () => {
+    const { dom, preview } = createPreview();
+    await preview.openFile('/tmp/deleted.md', '%1'); dockCurrent(dom);
+    const key = preview._test.dockStateKey('local', '@0', INSTANCE);
+    preview.forgetWindow('local', '@0', INSTANCE);
+    expect(dom.window.localStorage.getItem(key)).toBeNull();
+    expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
+    expect(await preview.switchDockContext('local', '@1', INSTANCE)).toBe(false);
+    expect(dom.window.localStorage.getItem(key)).toBeNull();
+    dom.window.close();
+  });
+
+  it('keeps a live window cache when it is renamed or moved to another session', async () => {
+    const { dom, preview } = createPreview();
+    await preview.openFile('/tmp/keep.md', '%1'); dockCurrent(dom);
+    const key = preview._test.dockStateKey('local', '@0', INSTANCE);
+    preview.reconcileWorkspace('local', { provider: 'tmux', instanceId: INSTANCE, complete: true,
+      sessions: [{ id: '$new', windows: [{ id: '@0', name: 'renamed', index: 9 }] }] });
+    expect(JSON.parse(dom.window.localStorage.getItem(key)).tabs[0].path).toBe('/tmp/keep.md');
+    expect(dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('keep.md');
+    // An observed restart also discards the old in-memory tabs for the reused ID.
+    preview.reconcileWorkspace('local', { provider: 'tmux', instanceId: '1874:1700000010', complete: true,
+      sessions: [{ windows: [{ id: '@0' }] }] });
+    expect(dom.window.localStorage.getItem(key)).toBeNull();
+    expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
+    dom.window.close();
+  });
+
+  it('allows an in-memory dock on older Nodes without restoring or saving ambiguous IDs', async () => {
+    const { dom, preview } = createPreview({ context: null });
+    await preview.switchDockContext('local', '@6');
+    await preview.openFile('/tmp/temporary.md', '%1'); dockCurrent(dom);
+    expect(dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('temporary.md');
+    expect(dom.window.localStorage.length).toBe(0);
+    dom.window.close();
+  });
+
+  it('does not let a pending restore recreate a deleted window cache', async () => {
+    const key = 'tmux_file_preview_dock_v4:' + encodeURIComponent('local\u0000' + INSTANCE + '\u0000@6');
+    const { dom, preview, fetch } = createPreview({ context: null, storage: {
+      [key]: JSON.stringify({ version: 1, tabs: [{ path: '/tmp/deleted.md', paneId: '%61' }] }),
+    } });
+    let release;
+    fetch.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const restoring = preview.switchDockContext('local', '@6', INSTANCE);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    preview.reconcileWorkspace('local', { provider: 'tmux', instanceId: INSTANCE, complete: true, sessions: [] });
+    release({ status: 200, json: async () => ({ success: true, data: { isDirectory: true, absPath: '/tmp/deleted.md' } }) });
+    expect(await restoring).toBe(false);
+    expect(dom.window.localStorage.getItem(key)).toBeNull();
+    expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
+    dom.window.close();
   });
 
   it('does not restore an index-keyed v2 snapshot into a new stable window', async () => {
@@ -1212,7 +1331,7 @@ describe('file preview dock tabs', () => {
   });
 
   it('skips missing files and prunes them from persisted dock state', async () => {
-    const key = 'tmux_file_preview_dock_v3:' + encodeURIComponent('local\u0000@0');
+    const key = 'tmux_file_preview_dock_v4:' + encodeURIComponent('local\u0000' + INSTANCE + '\u0000@0');
     const state = JSON.stringify({
       version: 1,
       tabs: [
@@ -1238,12 +1357,12 @@ describe('file preview dock tabs', () => {
     expect(appSource).toContain("if (document.querySelector('.ms-app')) return;");
     expect(appSource).toContain("'legacy-local'");
     expect(appSource).toContain('FilePreview.switchDockContext(null, null)');
-    expect(msAppSource).toContain('this._setDockContext(serverId, win.id)');
+    expect(msAppSource).toContain('this._setDockContext(serverId, win.id, workspace.instanceId)');
     expect(msAppSource.match(/_setDockContext\(null, null\)/g).length).toBeGreaterThanOrEqual(5);
   });
 
   it('ignores and removes a corrupted persisted dock snapshot', async () => {
-    const key = 'tmux_file_preview_dock_v3:' + encodeURIComponent('local\u0000@0');
+    const key = 'tmux_file_preview_dock_v4:' + encodeURIComponent('local\u0000' + INSTANCE + '\u0000@0');
     const restored = createPreview({ storage: { [key]: '{broken-json' } });
     expect(await restored.preview.restoreDocked()).toBe(false);
     expect(restored.dom.window.localStorage.getItem(key)).toBeNull();
@@ -1263,7 +1382,7 @@ describe('file preview dock tabs', () => {
   it('clamps a stale saved width to the current desktop space', async () => {
     const { dom, preview } = createPreview();
     preview.openFile('/tmp/one.md', '%1'); await flush();
-    const key = preview._test.dockStateKey('local', '@0');
+    const key = preview._test.dockStateKey('local', '@0', INSTANCE);
     dom.window.localStorage.setItem(key, JSON.stringify({
       version: 1, tabs: [{ path: '/tmp/one.md', paneId: '%1' }],
       activePath: '/tmp/one.md', hidden: false, width: 5000,
@@ -1306,7 +1425,7 @@ describe('file preview dock tabs', () => {
     main.appendChild(doc.querySelector('.terminal-view')); app.appendChild(main); doc.body.appendChild(app);
     let workstageWidth = 952;
     main.getBoundingClientRect = () => ({ width: workstageWidth });
-    const key = preview._test.dockStateKey('local', '@0');
+    const key = preview._test.dockStateKey('local', '@0', INSTANCE);
     dom.window.localStorage.setItem(key, JSON.stringify({
       version: 1, tabs: [{ path: '/tmp/one.md', paneId: '%1' }],
       activePath: '/tmp/one.md', hidden: false, width: 1600,
@@ -1452,7 +1571,7 @@ describe('file preview dock tabs', () => {
     const doc = dom.window.document;
     const dock = doc.querySelector('.fp-dock');
     const grip = dock.querySelector('[role="separator"]');
-    const key = preview._test.dockStateKey('local', '@0');
+    const key = preview._test.dockStateKey('local', '@0', INSTANCE);
     const press = (key, shiftKey = false) => grip.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
       key, shiftKey, bubbles: true, cancelable: true,
     }));
@@ -1556,7 +1675,7 @@ describe('file preview dock tabs', () => {
     expect(dock.style.flexBasis).toBe('500px');
     expect(dock.style.width).toBe('500px');
     dom.window.dispatchEvent(new dom.window.MouseEvent('pointerup', { clientX: 920, bubbles: true }));
-    const key = preview._test.dockStateKey('local', '@0');
+    const key = preview._test.dockStateKey('local', '@0', INSTANCE);
     expect(JSON.parse(dom.window.localStorage.getItem(key)).width).toBe(500);
   });
 
