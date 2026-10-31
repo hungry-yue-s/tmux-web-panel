@@ -12,6 +12,8 @@ export const DEFAULT_COLS = 80;
 export const DEFAULT_ROWS = 24;
 /** One keystroke burst or paste; anything larger is abuse, not typing. */
 export const MAX_INPUT_BYTES = 64 * 1024;
+/** In total, what may wait for a client that is not there yet: one frame at the socket's limit. */
+export const MAX_HELD_INPUT_BYTES = 1024 * 1024;
 
 /** Query keys a client is allowed to influence. Anything else is ignored. */
 export const ALLOWED_QUERY_KEYS = Object.freeze(['cols', 'rows', 'nozoom', 'token']);

@@ -10,7 +10,9 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { TMUX_BIN, msysExecArgs } from './msys.js';
+import { AppError, ErrorCode } from './servers/errors.js';
 import { ConsoleReaper, trackConsoleSpawn } from './terminal/console-reaper.js';
+import { MAX_HELD_INPUT_BYTES } from './terminal/protocol.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -24,6 +26,25 @@ const CLIENT_START_WAIT_MS = 1500;
 // How long a Windows client stays after it has started before it may be replaced.
 // With about 300ms to start, that is the 1100ms lifetime measured clean.
 const CLIENT_SETTLE_MS = 800;
+// How long an ended client may take to go. Past that nothing starts: see _clearForStart.
+const CLIENT_GONE_WAIT_MS = 1500;
+const CLIENT_GONE_POLL_MS = 5;
+// The server reads what is written to a client's console a byte at a time, and what it
+// has not read goes with the client. Nothing reports when it is done, so this is an
+// estimate: 3 bytes lost nothing from 40ms, and 64 bytes still lost some at 6ms a byte.
+// A long paste written right before the client ends can still be cut short by the limit.
+const INPUT_READ_BASE_MS = 40;
+const INPUT_READ_PER_BYTE_MS = 8;
+const INPUT_READ_WAIT_MAX_MS = 1500;
+const TERMINAL_BUSY_MESSAGE = 'An earlier terminal client has not gone yet; retry';
+
+const pause = (ms) => new Promise((resolve) => {
+  const timer = setTimeout(resolve, ms);
+  if (timer.unref) timer.unref();
+});
+
+const sizeChanging = ({ wantedSize, size }) => Boolean(wantedSize)
+  && (wantedSize.cols !== size.cols || wantedSize.rows !== size.rows);
 
 // Cap the carry-over buffer so a runaway/never-terminated OSC 52 can't grow
 // unbounded. tmux's set-clipboard payload caps well under this.
@@ -189,10 +210,37 @@ export function localAttachSpawnSpec(paneId, { nozoom = false, platform = proces
 }
 
 export class TerminalManager {
-  /** @param {{ maxConnectionsPerPane?: number, platform?: string, tmux?: (args: string[]) => Promise<string>, consoleReaper?: ConsoleReaper }} [options] */
+  /** @param {{ maxConnectionsPerPane?: number, platform?: string, tmux?: (args: string[]) => Promise<string>, consoleReaper?: ConsoleReaper, isRunning?: (pid: number) => boolean }} [options] */
   constructor(options = {}) {
     this.platform = options.platform ?? process.platform;
     this._consoleReaper = options.consoleReaper ?? new ConsoleReaper();
+    this._isRunning = options.isRunning ?? ((pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+    // Windows tmux clients change one at a time; see whenClientCanStart.
+    /** @type {Map<import('node-pty').IPty, { over: Promise<void>, finish: () => void }>} clients reading their terminal's answers */
+    this._starting = new Map();
+    /** @type {Set<import('node-pty').IPty>} clients to end once nothing is starting */
+    this._waitingToEnd = new Set();
+    /** @type {Map<import('node-pty').IPty, Promise<void>>} clients ended and not yet gone */
+    this._leaving = new Map();
+    /** @type {WeakSet<import('node-pty').IPty>} clients told to end. Once only: a pid may be reused after it has gone */
+    this._endedClients = new WeakSet();
+    /** @type {WeakSet<import('node-pty').IPty>} clients whose exit was reported: their pid may be someone else's */
+    this._exitedClients = new WeakSet();
+    /** @type {Set<import('node-pty').IPty>} clients that did not go when ended, so nothing may start */
+    this._stillRunning = new Set();
+    /** @type {WeakMap<import('node-pty').IPty, number>} when the server should have read what was written to a client */
+    this._inputReadBy = new WeakMap();
+    this._clientTurn = Promise.resolve();
+    this._shuttingDown = false;
+
     this._tmux = options.tmux ?? (async (args) => String((await execFileAsync(
       TMUX_BIN, ...msysExecArgs(args, { timeout: 5000, windowsHide: true }),
     )).stdout));
@@ -333,6 +381,8 @@ export class TerminalManager {
       size: { cols: cols || 80, rows: rows || 24 },
       wantedSize: null,
       resizing: false,
+      heldInput: null,
+      heldBytes: 0,
       sessionTarget: options.sessionTarget || null,
     };
     this.connections.set(connectionId, conn);
@@ -342,6 +392,8 @@ export class TerminalManager {
 
     // WebSocket → PTY
     ws.on('message', (raw) => {
+      // A closing socket can still deliver, and this connection is over.
+      if (this.connections.get(connectionId) !== conn) return;
       let msg;
       try {
         msg = JSON.parse(raw.toString());
@@ -352,7 +404,8 @@ export class TerminalManager {
       switch (msg.type) {
         case 'input':
           if (typeof msg.data === 'string') {
-            conn.pty.write(msg.data);
+            if (conn.heldInput) this._holdInput(connectionId, conn, msg.data);
+            else this._writeInput(conn, conn.pty, msg.data);
           }
           break;
         case 'resize':
@@ -432,12 +485,20 @@ export class TerminalManager {
       if (settle.unref) settle.unref();
     }));
     // A connection that ends stops waiting: nothing is left to replace.
-    conn.releaseStartup = () => {
+    const finishStartup = () => {
       released = true;
       started();
       clearTimeout(settle);
       settleDone();
     };
+    conn.releaseStartup = finishStartup;
+    if (conn.replaceToResize) {
+      const over = conn.settled.then(() => {
+        this._starting.delete(term);
+        for (const waiting of [...this._waitingToEnd]) this._endClient(waiting);
+      });
+      this._starting.set(term, { over, finish: finishStartup });
+    }
     const sawStart = createMarkerWatch(CLIENT_STARTED_MARKER);
 
     // PTY → WebSocket
@@ -461,7 +522,10 @@ export class TerminalManager {
 
     // PTY exit → close WebSocket + cleanup
     term.onExit(({ exitCode, signal }) => {
-      started();
+      finishStartup();
+      this._exitedClients.add(term);
+      this._waitingToEnd.delete(term);
+      this._stillRunning.delete(term);
       if (conn.replaceToResize) {
         // Too late for this to close the console, which is safe: it releases
         // node-pty's reader, and the console gets ended once tmux has let go of it.
@@ -470,7 +534,8 @@ export class TerminalManager {
         if (spawnWindow) this._consoleReaper.clientEnded(spawnWindow);
       }
       // A client replaced at a new size is meant to leave; the connection goes on.
-      if (conn.pty !== term) return;
+      // One taken over or closed already ended without waiting for this.
+      if (conn.pty !== term || conn.replacing === term || this.connections.get(connectionId) !== conn) return;
       conn.ptyExited = true;
       conn.output.flush();
       // The new server-scoped entry point emits a structured exit frame here so
@@ -496,22 +561,26 @@ export class TerminalManager {
    * MSYS2 tmux on Windows: resizing the ConPTY under a running client can end the
    * tmux server and every session with it, and a resize that does arrive is lost
    * during client startup (docs/known-issues.md). So the size of a running client
-   * never changes. A new one starts at the new size and `attach-session -d`
-   * replaces the old. One at a time; the latest size wins.
+   * never changes. The old one ends and a new one starts at the new size. One at a
+   * time; the latest size wins.
    * @private
    */
   async _setClientSize(connectionId, conn, cols, rows) {
     conn.wantedSize = { cols, rows };
+    // What is typed from here on is for the client at this size: this one may be
+    // ended before it has passed anything on.
+    if (sizeChanging(conn)) conn.heldInput = conn.heldInput || [];
     if (conn.resizing) return;
     conn.resizing = true;
     try {
       await conn.settled;
-      while (this.connections.get(connectionId) === conn
-        && (conn.wantedSize.cols !== conn.size.cols || conn.wantedSize.rows !== conn.size.rows)) {
+      while (this.connections.get(connectionId) === conn && sizeChanging(conn)) {
         await this._replaceClient(connectionId, conn, conn.wantedSize);
       }
     } finally {
       conn.resizing = false;
+      // Back at the size it has, so this client stays after all.
+      if (this.connections.get(connectionId) === conn) this._sendHeldInput(conn, conn.pty);
     }
   }
 
@@ -529,24 +598,175 @@ export class TerminalManager {
       if (this.connections.get(connectionId) !== conn) return;
     }
 
-    const previous = conn.pty;
-    let next;
-    try {
-      next = conn.spawnPty(buildTmuxReattachArgs(conn.sessionTarget || conn.paneId), size);
-    } catch {
-      conn.wantedSize = conn.size;
-      conn.ws.close(1011, 'Terminal process could not be started');
-      return;
-    }
+    await this._inClientTurn(async () => {
+      if (this.connections.get(connectionId) !== conn) return;
+      const target = conn.sessionTarget || conn.paneId;
+      // 1011, so the page reconnects and asks again.
+      const giveUp = (reason) => this._retire(connectionId, conn, 1011, reason);
+      try {
+        await this._clearForStart(target, conn, () => this.connections.get(connectionId) !== conn);
+      } catch (err) {
+        giveUp(err.message);
+        return;
+      }
+      if (this.connections.get(connectionId) !== conn) return;
 
-    if (conn.dataDisposable) conn.dataDisposable.dispose();
-    conn.pty = next;
-    conn.size = size;
-    conn.osc52Pending = '';
-    this._bindPty(connectionId, conn, next);
-    this._endClient(previous);
+      const previous = conn.pty;
+      // This one leaving is not a disconnect.
+      conn.replacing = previous;
+      conn.heldInput = conn.heldInput || [];
+      this._endClient(previous);
+      await this._leaving.get(previous);
+      if (this.connections.get(connectionId) !== conn) return;
+      if (this._stillRunning.has(previous)) {
+        giveUp(TERMINAL_BUSY_MESSAGE);
+        return;
+      }
+
+      let next;
+      try {
+        next = conn.spawnPty(buildTmuxReattachArgs(target), size);
+      } catch {
+        giveUp('Terminal process could not be started');
+        return;
+      }
+
+      if (conn.dataDisposable) conn.dataDisposable.dispose();
+      conn.pty = next;
+      conn.replacing = null;
+      conn.size = size;
+      conn.osc52Pending = '';
+      this._bindPty(connectionId, conn, next);
+      this._sendHeldInput(conn, next);
+      // Yet another size was asked for meanwhile.
+      if (sizeChanging(conn)) conn.heldInput = [];
+    });
 
     await conn.settled;
+  }
+
+  /** @private */
+  _sendHeldInput(conn, term) {
+    const held = conn.heldInput || [];
+    conn.heldInput = null;
+    conn.heldBytes = 0;
+    for (const data of held) this._writeInput(conn, term, data);
+  }
+
+  /** @private */
+  _writeInput(conn, term, data) {
+    term.write(data);
+    if (!conn.replaceToResize) return;
+    const from = Math.max(Date.now() + INPUT_READ_BASE_MS, this._inputReadBy.get(term) ?? 0);
+    this._inputReadBy.set(term, from + Buffer.byteLength(data) * INPUT_READ_PER_BYTE_MS);
+  }
+
+  /** @private */
+  _holdInput(connectionId, conn, data) {
+    conn.heldBytes += Buffer.byteLength(data);
+    if (conn.heldBytes > MAX_HELD_INPUT_BYTES) {
+      this._retire(connectionId, conn, 1009, 'Too much input while the terminal was changing');
+      return;
+    }
+    conn.heldInput.push(data);
+  }
+
+  /**
+   * Another client gets the session. The page sees what `attach-session -d` always
+   * showed it: an exit frame and a clean close, which it does not reconnect from.
+   * @private
+   */
+  _takeOver(connectionId, conn) {
+    conn.output.flush();
+    if (typeof conn.onPtyExit === 'function') {
+      try {
+        conn.onPtyExit({ code: 0, signal: null, reason: 'tmux_client_exit' });
+      } catch {
+        // A reporting failure must not block cleanup.
+      }
+    }
+    this._retire(connectionId, conn, 1000, 'Taken over by another client');
+  }
+
+  /**
+   * Ends a connection now, not when its client's exit is reported, which can come a
+   * second after the client has gone. Until then its socket could still ask for a new
+   * client and take the session back from whoever has it. Only the connection ends
+   * here: the wait in _endClient and the release in _bindPty go on regardless.
+   * @private
+   */
+  _retire(connectionId, conn, closeCode, reason) {
+    this._endClient(conn.pty);
+    if (conn.ws.readyState === conn.ws.OPEN || conn.ws.readyState === conn.ws.CONNECTING) {
+      conn.ws.close(closeCode, reason);
+    }
+    this._cleanup(connectionId);
+  }
+
+  /**
+   * Windows tmux clients change one at a time. The server reads a new client's
+   * terminal answers byte by byte, and a client that leaves meanwhile, even one on
+   * another session, costs it some of those bytes: what remains is no longer an
+   * answer, and the pane receives it as typing (docs/known-issues.md ENV-3). So
+   * nothing here starts while anything is leaving, and nothing leaves while anything
+   * is starting. `attach-session -d` is left with nobody of ours to detach.
+   *
+   * @param {string} sessionTarget the session the new client is for
+   * @param {() => T} attach starts the client; runs once it is safe to
+   * @param {{ cancelled?: () => boolean }} [options] the caller no longer wants it
+   * @returns {Promise<T>} rejects with TERMINAL_BUSY, which is worth retrying, when
+   *   a client ended earlier is still running
+   * @template T
+   */
+  whenClientCanStart(sessionTarget, attach, { cancelled = () => false } = {}) {
+    if (this.platform !== 'win32') return Promise.resolve().then(attach);
+    return this._inClientTurn(async () => {
+      await this._clearForStart(sessionTarget, null, cancelled);
+      return cancelled() ? null : attach();
+    });
+  }
+
+  /** @private */
+  _inClientTurn(fn) {
+    const turn = this._clientTurn.then(fn, fn);
+    this._clientTurn = turn.catch(() => {});
+    return turn;
+  }
+
+  /**
+   * Ends our other clients on the session, as `-d` would, and waits until no client
+   * is starting or leaving. Bounded: a start ends by its own timers, a leave by
+   * CLIENT_GONE_WAIT_MS.
+   * @private
+   */
+  async _clearForStart(sessionTarget, except, cancelled) {
+    // A request that waited in line may be long out of date by now. Nothing it asked
+    // for may cost the terminal the user has since moved to.
+    if (cancelled()) return;
+    for (const term of [...this._stillRunning]) {
+      if (!this._endedClients.has(term)) {
+        // Its pid never came, so it has not been told yet.
+        this._stillRunning.delete(term);
+        this._endClient(term);
+      } else if (!this._isRunning(term.pid)) {
+        // Never told twice: a running pid only says some process has that number, and
+        // by now it may not be this client. Only this, or its exit, ends the wait.
+        this._stillRunning.delete(term);
+      }
+    }
+    for (const [connectionId, conn] of this.connections) {
+      if (conn !== except && conn.replaceToResize && !conn.ptyExited && conn.sessionTarget === sessionTarget) {
+        this._takeOver(connectionId, conn);
+      }
+    }
+    while (!cancelled()) {
+      const busy = [...this._starting.values()].map((entry) => entry.over).concat([...this._leaving.values()]);
+      if (busy.length === 0) {
+        if (this._stillRunning.size > 0) throw new AppError(ErrorCode.TERMINAL_BUSY, TERMINAL_BUSY_MESSAGE);
+        return;
+      }
+      await Promise.all(busy);
+    }
   }
 
   /**
@@ -554,17 +774,54 @@ export class TerminalManager {
    * kill ends every process on the console and closes it, and the tmux server,
    * attached at that moment, goes with it and leaves no trace (docs/known-issues.md).
    * What is left of the client is released when it exits; see _bindPty.
+   * If another client is starting, it waits its turn: see whenClientCanStart.
    * @private
    */
-  _endClient(term, attempts = 0) {
-    if (term.pid > 0) {
-      try { process.kill(term.pid); } catch { /* already gone */ }
+  _endClient(term) {
+    if (this._endedClients.has(term) || this._exitedClients.has(term)) return;
+    const othersStarting = [...this._starting.keys()].some((other) => other !== term);
+    if (othersStarting && !this._shuttingDown) {
+      this._waitingToEnd.add(term);
       return;
     }
+    this._waitingToEnd.delete(term);
+    this._endedClients.add(term);
+    // It no longer has anything to wait for, and nobody needs to wait for it.
+    const own = this._starting.get(term);
+    if (own) own.finish();
+    const leaving = this._killClient(term).then((gone) => {
+      this._leaving.delete(term);
+      if (gone) return;
+      this._stillRunning.add(term);
+      console.warn(`[terminal] client ${term.pid} has not gone after being ended; new clients wait for it`);
+    });
+    this._leaving.set(term, leaving);
+  }
+
+  /**
+   * @returns {Promise<boolean>} whether the client is known to have gone
+   * @private
+   */
+  async _killClient(term) {
+    const exited = () => this._exitedClients.has(term);
     // Still starting. The pid is 0 until then, and process.kill(0) ends this process.
-    if (attempts >= 500) return;
-    const retry = setTimeout(() => this._endClient(term, attempts + 1), 10);
-    if (retry.unref) retry.unref();
+    for (let attempts = 0; term.pid <= 0; attempts += 1) {
+      if (exited()) return true;
+      if (attempts >= 500) {
+        this._endedClients.delete(term);
+        return false;
+      }
+      await pause(10);
+    }
+    const readBy = Math.min(this._inputReadBy.get(term) ?? 0, Date.now() + INPUT_READ_WAIT_MAX_MS);
+    while (Date.now() < readBy && !this._shuttingDown && !exited()) await pause(CLIENT_GONE_POLL_MS);
+    if (exited()) return true;
+    try { process.kill(term.pid); } catch { /* already gone */ }
+    for (let waited = 0; waited < CLIENT_GONE_WAIT_MS; waited += CLIENT_GONE_POLL_MS) {
+      if (exited() || !this._isRunning(term.pid)) return true;
+      await pause(CLIENT_GONE_POLL_MS);
+    }
+    return exited() || !this._isRunning(term.pid);
   }
 
   /**
@@ -591,6 +848,8 @@ export class TerminalManager {
    */
   destroyAll() {
     this.stopReaper();
+    // Nothing will start after this, and the process may be gone before a turn comes.
+    this._shuttingDown = true;
     for (const connectionId of [...this.connections.keys()]) {
       this.destroy(connectionId);
     }
@@ -663,6 +922,7 @@ export class TerminalManager {
     }
     if (conn.output) conn.output.dispose();
     if (conn.releaseStartup) conn.releaseStartup();
+    conn.heldInput = null;
 
     const key = conn.quotaKey || conn.paneId;
     const count = this.paneConnectionCount.get(key) ?? 0;

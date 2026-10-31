@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 
 import {
   MAX_DIMENSION,
+  MAX_HELD_INPUT_BYTES,
   MAX_INPUT_BYTES,
   ServerMessage,
   clampDimension,
@@ -150,7 +151,11 @@ describe('TerminalGateway', () => {
         provider: 'tmux', persistence: 'tmux', sessionId: '$1', windowId: '@5', paneId,
       })),
     };
-    terminalManager = { maxConnectionsPerPane: 5, create: vi.fn(() => 'conn-1') };
+    terminalManager = {
+      maxConnectionsPerPane: 5,
+      create: vi.fn(() => 'conn-1'),
+      whenClientCanStart: vi.fn(async (_session, attach) => attach()),
+    };
     gateway = new TerminalGateway({ workspace, terminalManager });
   });
 
@@ -255,6 +260,144 @@ describe('TerminalGateway', () => {
     await expect(handled).resolves.toBeNull();
     expect(terminalManager.create).not.toHaveBeenCalled();
     expect(ws.sent).toEqual([]);
+  });
+
+  describe('waiting for its turn to start a client', () => {
+    function holdTurn() {
+      let go;
+      terminalManager.whenClientCanStart = vi.fn((_session, attach, options) => new Promise((resolve) => {
+        go = () => resolve(attach());
+        terminalManager.lastOptions = options;
+      }));
+      return () => go();
+    }
+    const settled = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+
+    it('asks for the session the pane is in', async () => {
+      const ws = new FakeWs();
+      await gateway.handle(ws, '/ws/terminal/%2512', new URLSearchParams());
+      expect(terminalManager.whenClientCanStart.mock.calls[0][0]).toBe('$1');
+    });
+
+    it('starts nothing for a socket that closed during the wait, and says the wait can stop', async () => {
+      const go = holdTurn();
+      const ws = new FakeWs();
+      const handled = gateway.handle(ws, '/ws/terminal/%2512', new URLSearchParams());
+      await settled();
+      expect(terminalManager.lastOptions.cancelled()).toBe(false);
+
+      ws.readyState = 3;
+      expect(terminalManager.lastOptions.cancelled()).toBe(true);
+      go();
+
+      await expect(handled).resolves.toBeNull();
+      expect(terminalManager.create).not.toHaveBeenCalled();
+    });
+
+    it('keeps what was typed during the wait, in order, for the client that starts', async () => {
+      const go = holdTurn();
+      const received = [];
+      terminalManager.create = vi.fn((ws) => {
+        ws.on('message', (raw) => received.push(String(raw)));
+        return 'conn-1';
+      });
+      const ws = new FakeWs();
+      const handled = gateway.handle(ws, '/ws/terminal/%2512', new URLSearchParams());
+      await settled();
+      ws.emit('message', Buffer.from('one'));
+      ws.emit('message', Buffer.from('two'));
+      go();
+      await handled;
+      ws.emit('message', Buffer.from('three'));
+
+      expect(received).toEqual(['one', 'two', 'three']);
+    });
+
+    it('holds nothing back once it is over', async () => {
+      const ws = new FakeWs();
+      await gateway.handle(ws, '/ws/terminal/%2512', new URLSearchParams());
+      expect(ws.listenerCount('message')).toBe(0);
+    });
+
+    it('stops holding when the pane does not exist', async () => {
+      workspace.resolvePane.mockRejectedValue(new AppError(ErrorCode.PANE_NOT_FOUND, 'nope'));
+      const ws = new FakeWs();
+      await gateway.handle(ws, '/ws/terminal/%2599', new URLSearchParams());
+      expect(ws.closed).toBeTruthy();
+      expect(ws.listenerCount('message')).toBe(0);
+    });
+
+    it('tells the page to try again when an earlier client has not gone yet', async () => {
+      terminalManager.whenClientCanStart = vi.fn(async () => {
+        throw new AppError(ErrorCode.TERMINAL_BUSY, 'not gone yet');
+      });
+      const ws = new FakeWs();
+      await expect(gateway.handle(ws, '/ws/terminal/%2512', new URLSearchParams())).resolves.toBeNull();
+      expect(ws.framesOfType('error')[0]).toMatchObject({ code: ErrorCode.TERMINAL_BUSY, retryable: true });
+      // Not 1008 or 1013, which the page treats as final.
+      expect(ws.closed.code).toBe(1011);
+      expect(terminalManager.create).not.toHaveBeenCalled();
+      expect(ws.listenerCount('message')).toBe(0);
+    });
+
+    it('delivers everything held up to the limit', async () => {
+      const go = holdTurn();
+      const received = [];
+      terminalManager.create = vi.fn((socket) => {
+        socket.on('message', (raw) => received.push(raw.length));
+        return 'conn-1';
+      });
+      const ws = new FakeWs();
+      const handled = gateway.handle(ws, '/ws/terminal/%2512', new URLSearchParams());
+      await settled();
+      ws.emit('message', Buffer.alloc(MAX_HELD_INPUT_BYTES - 1));
+      ws.emit('message', Buffer.from('x'));
+      go();
+      await handled;
+
+      expect(received).toEqual([MAX_HELD_INPUT_BYTES - 1, 1]);
+      expect(ws.closed).toBeNull();
+    });
+
+    it('closes rather than hold more than the limit, and starts nothing', async () => {
+      const go = holdTurn();
+      const ws = new FakeWs();
+      const handled = gateway.handle(ws, '/ws/terminal/%2512', new URLSearchParams());
+      await settled();
+      ws.emit('message', Buffer.alloc(MAX_HELD_INPUT_BYTES));
+      expect(ws.closed).toBeNull();
+      ws.emit('message', Buffer.from('x'));
+
+      expect(ws.closed.code).toBe(1009);
+      expect(ws.framesOfType('error')[0].code).toBe(ErrorCode.VALIDATION_ERROR);
+      expect(ws.listenerCount('message')).toBe(0);
+      go();
+      await expect(handled).resolves.toBeNull();
+      expect(terminalManager.create).not.toHaveBeenCalled();
+    });
+
+    it('stops holding when the socket closes during the pane check', async () => {
+      let answer;
+      workspace.resolvePane.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+      const ws = new FakeWs();
+      const handled = gateway.handle(ws, '/ws/terminal/%2512', new URLSearchParams());
+      ws.emit('message', Buffer.from('typed'));
+      ws.readyState = 3;
+      answer({ provider: 'tmux', persistence: 'tmux', sessionId: '$1', windowId: '@5', paneId: '%12' });
+
+      await expect(handled).resolves.toBeNull();
+      expect(ws.listenerCount('message')).toBe(0);
+    });
+
+    it('is not brought down by a frame the socket refuses during the wait', async () => {
+      const go = holdTurn();
+      const ws = new FakeWs();
+      const handled = gateway.handle(ws, '/ws/terminal/%2512', new URLSearchParams());
+      await settled();
+      expect(() => ws.emit('error', new RangeError('Max payload size exceeded'))).not.toThrow();
+      go();
+      await handled;
+    });
   });
 
   it('still checks the pane with the server before attaching', async () => {

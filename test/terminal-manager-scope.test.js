@@ -5,6 +5,7 @@ const { spawn } = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock('node-pty', () => ({ default: { spawn } }));
 
 import { TerminalManager, buildTmuxAttachCommand, buildTmuxAttachArgs, createMarkerWatch, localAttachSpawnSpec } from '../server/terminal.js';
+import { MAX_HELD_INPUT_BYTES } from '../server/terminal/protocol.js';
 
 function fakeTerm() {
   const handlers = {};
@@ -95,7 +96,7 @@ describe('TerminalManager PTY termination', () => {
 
   describe('on Windows', () => {
     let reaper;
-    const windows = () => new TerminalManager({ platform: 'win32', tmux: async () => '$7\n', consoleReaper: reaper });
+    const windows = (options = {}) => new TerminalManager({ platform: 'win32', tmux: async () => '$7\n', consoleReaper: reaper, isRunning: () => false, ...options });
     let processKill;
 
     beforeEach(() => {
@@ -277,6 +278,7 @@ describe('TerminalManager PTY termination', () => {
       const manager = new TerminalManager({
         platform: 'win32',
         consoleReaper: reaper,
+        isRunning: () => false,
         tmux: async () => {
           if (answers.length) return answers.shift();
           throw new Error("can't find pane");
@@ -312,7 +314,7 @@ describe('TerminalManager PTY termination', () => {
       spawn.mockImplementation(() => terms[next++]);
       const tmux = vi.fn(async () => '$7\n');
       const ws = fakeWs();
-      new TerminalManager({ platform: 'win32', tmux, consoleReaper: reaper }).create(ws, '%1', 100, 30, false, { sessionTarget: '$3' });
+      windows({ tmux }).create(ws, '%1', 100, 30, false, { sessionTarget: '$3' });
       started(terms[0]);
       message(ws, { type: 'resize', cols: 120, rows: 40 });
       await vi.advanceTimersByTimeAsync(800);
@@ -399,6 +401,755 @@ describe('TerminalManager PTY termination', () => {
       expect(spawn).toHaveBeenCalledTimes(2);
     });
 
+    describe('changing one client at a time', () => {
+      /** Hands out fake clients with their own pids, and says which are still running. */
+      function clients() {
+        const running = new Set();
+        const terms = [];
+        spawn.mockImplementation(() => {
+          const term = fakeTerm();
+          term.pid = 5000 + terms.length;
+          terms.push(term);
+          running.add(term.pid);
+          return term;
+        });
+        processKill.mockImplementation((pid, signal) => {
+          if (signal === undefined) running.delete(pid);
+          return true;
+        });
+        return { terms, running, manager: windows({ isRunning: (pid) => running.has(pid) }) };
+      }
+      const on = (session) => ({ sessionTarget: session });
+      const killed = () => processKill.mock.calls.filter(([, signal]) => signal === undefined).map(([pid]) => pid);
+      const settle = (term) => { started(term); return vi.advanceTimersByTimeAsync(800); };
+
+      it('replaces a client by ending the old one first, and starts the next once it is gone', async () => {
+        const { terms, running, manager } = clients();
+        const ws = fakeWs();
+        manager.create(ws, '%1', 100, 30, false, on('$1'));
+        await settle(terms[0]);
+
+        running.add(terms[0].pid);
+        processKill.mockImplementation(() => true);
+        message(ws, { type: 'resize', cols: 120, rows: 40 });
+        await vi.advanceTimersByTimeAsync(50);
+        expect(killed()).toEqual([terms[0].pid]);
+        expect(spawn).toHaveBeenCalledTimes(1);
+
+        running.delete(terms[0].pid);
+        await vi.advanceTimersByTimeAsync(5);
+        expect(spawn).toHaveBeenCalledTimes(2);
+        expect(spawn.mock.calls[1][2]).toMatchObject({ cols: 120, rows: 40 });
+      });
+
+      it('keeps what is typed during a replacement, in order, for the next client', async () => {
+        const { terms, running, manager } = clients();
+        const ws = fakeWs();
+        manager.create(ws, '%1', 100, 30, false, on('$1'));
+        await settle(terms[0]);
+
+        running.add(terms[0].pid);
+        processKill.mockImplementation(() => true);
+        message(ws, { type: 'resize', cols: 120, rows: 40 });
+        await vi.advanceTimersByTimeAsync(20);
+        message(ws, { type: 'input', data: 'one' });
+        message(ws, { type: 'input', data: 'two' });
+        expect(terms[0].write).not.toHaveBeenCalled();
+
+        running.delete(terms[0].pid);
+        await vi.advanceTimersByTimeAsync(5);
+        expect(terms[1].write.mock.calls).toEqual([['one'], ['two']]);
+        message(ws, { type: 'input', data: 'three' });
+        expect(terms[1].write).toHaveBeenLastCalledWith('three');
+      });
+
+      it('does not take the old client leaving for a disconnect, whenever its exit arrives', async () => {
+        const { terms, running, manager } = clients();
+        const ws = fakeWs();
+        const id = manager.create(ws, '%1', 100, 30, false, on('$1'));
+        await settle(terms[0]);
+
+        running.add(terms[0].pid);
+        processKill.mockImplementation(() => true);
+        message(ws, { type: 'resize', cols: 120, rows: 40 });
+        await vi.advanceTimersByTimeAsync(20);
+        // Still between clients when the exit comes in.
+        terms[0].handlers.exit({ exitCode: 0 });
+        expect(ws.close).not.toHaveBeenCalled();
+        expect(manager.connections.has(id)).toBe(true);
+
+        running.delete(terms[0].pid);
+        await vi.advanceTimersByTimeAsync(5);
+        expect(spawn).toHaveBeenCalledTimes(2);
+        terms[1].handlers.exit({ exitCode: 0 });
+        expect(ws.close).toHaveBeenCalledWith(1000, expect.any(String));
+      });
+
+      it('starts nothing when the connection closes while the old client is leaving', async () => {
+        const { terms, running, manager } = clients();
+        const ws = fakeWs();
+        manager.create(ws, '%1', 100, 30, false, on('$1'));
+        await settle(terms[0]);
+
+        running.add(terms[0].pid);
+        processKill.mockImplementation(() => true);
+        message(ws, { type: 'resize', cols: 120, rows: 40 });
+        await vi.advanceTimersByTimeAsync(20);
+        ws.listeners.close();
+        running.delete(terms[0].pid);
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(spawn).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not let a client leave while another is reading its answers, even on another session', async () => {
+        const { terms, manager } = clients();
+        const a = fakeWs();
+        manager.create(a, '%1', 100, 30, false, on('$1'));
+        await settle(terms[0]);
+        manager.create(fakeWs(), '%2', 100, 30, false, on('$2'));
+
+        a.listeners.close();
+        await vi.advanceTimersByTimeAsync(400);
+        expect(killed()).toEqual([]);
+
+        await settle(terms[1]);
+        expect(killed()).toEqual([terms[0].pid]);
+      });
+
+      it('ends a client of ours on the session before starting another, as -d would', async () => {
+        const { terms, running, manager } = clients();
+        const a = fakeWs();
+        manager.create(a, '%1', 100, 30, false, on('$1'));
+        await settle(terms[0]);
+        running.add(terms[0].pid);
+        processKill.mockImplementation(() => true);
+
+        const attach = vi.fn(() => 'started');
+        const result = manager.whenClientCanStart('$1', attach);
+        await vi.advanceTimersByTimeAsync(50);
+        expect(killed()).toEqual([terms[0].pid]);
+        expect(attach).not.toHaveBeenCalled();
+
+        running.delete(terms[0].pid);
+        await vi.advanceTimersByTimeAsync(5);
+        await expect(result).resolves.toBe('started');
+
+        // The other side is told, as it was when tmux detached it.
+        terms[0].handlers.exit({ exitCode: 0 });
+        expect(a.close).toHaveBeenCalledWith(1000, expect.any(String));
+      });
+
+      it('leaves clients on other sessions attached', async () => {
+        const { terms, manager } = clients();
+        manager.create(fakeWs(), '%1', 100, 30, false, on('$1'));
+        await settle(terms[0]);
+        await expect(manager.whenClientCanStart('$2', () => 'started')).resolves.toBe('started');
+        expect(killed()).toEqual([]);
+      });
+
+      it('waits for a client that is starting, then starts the next', async () => {
+        const { terms, manager } = clients();
+        manager.create(fakeWs(), '%1', 100, 30, false, on('$1'));
+        const attach = vi.fn();
+        manager.whenClientCanStart('$2', attach);
+        await vi.advanceTimersByTimeAsync(300);
+        expect(attach).not.toHaveBeenCalled();
+        await settle(terms[0]);
+        expect(attach).toHaveBeenCalledOnce();
+      });
+
+      it('holds nobody up for a client that is already being ended', async () => {
+        const { manager } = clients();
+        const a = fakeWs();
+        manager.create(a, '%1', 100, 30, false, on('$1'));
+        const attach = vi.fn();
+        a.listeners.close();
+        manager.whenClientCanStart('$2', attach);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(attach).toHaveBeenCalledOnce();
+      });
+
+      it('holds nobody up for a client that exits by itself', async () => {
+        const { terms, manager } = clients();
+        manager.create(fakeWs(), '%1', 100, 30, false, on('$1'));
+        const attach = vi.fn();
+        manager.whenClientCanStart('$2', attach);
+        await vi.advanceTimersByTimeAsync(100);
+        terms[0].handlers.exit({ exitCode: 1 });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(attach).toHaveBeenCalledOnce();
+      });
+
+      const attachOn = (manager, ws, pane) => () => (ws.readyState === 1 ? manager.create(ws, pane, 100, 30, false, on('$1')) : null);
+
+      it('takes requests in order: each ends the one before it once, and one client is left', async () => {
+        const { terms, running, manager } = clients();
+        await Promise.all(['%1', '%2', '%1'].map((pane) => manager.whenClientCanStart('$1', attachOn(manager, fakeWs(), pane))));
+
+        expect(spawn.mock.calls.map(([, args]) => args.at(-1))).toEqual(['%1', '%2', '%1']);
+        // Once each: a pid may belong to something else after it has gone.
+        expect(killed()).toEqual([terms[0].pid, terms[1].pid]);
+        expect(running.has(terms[2].pid)).toBe(true);
+      });
+
+      it('ends a client only once, however many things ask', async () => {
+        const { terms, manager } = clients();
+        const ws = fakeWs();
+        manager.create(ws, '%1', 100, 30, false, on('$1'));
+        await settle(terms[0]);
+        await manager.whenClientCanStart('$1', () => null);
+        await manager.whenClientCanStart('$1', () => null);
+        ws.listeners.close();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(killed()).toEqual([terms[0].pid]);
+      });
+
+      it('starts nothing for requests the user has already moved on from', async () => {
+        const { manager } = clients();
+        const sockets = [fakeWs(), fakeWs(), fakeWs()];
+        sockets[0].readyState = 3;
+        sockets[1].readyState = 3;
+        const results = await Promise.all([
+          manager.whenClientCanStart('$1', attachOn(manager, sockets[0], '%1')),
+          manager.whenClientCanStart('$1', attachOn(manager, sockets[1], '%2')),
+          manager.whenClientCanStart('$1', attachOn(manager, sockets[2], '%1')),
+        ]);
+        expect(results.slice(0, 2)).toEqual([null, null]);
+        expect(spawn).toHaveBeenCalledOnce();
+        expect(killed()).toEqual([]);
+      });
+
+      it('stops waiting and starts nothing as soon as the caller no longer wants it', async () => {
+        const { manager } = clients();
+        manager.create(fakeWs(), '%1', 100, 30, false, on('$1'));
+        const attach = vi.fn();
+        await expect(manager.whenClientCanStart('$2', attach, { cancelled: () => true })).resolves.toBeNull();
+        expect(attach).not.toHaveBeenCalled();
+      });
+
+      describe('a client whose exit has been reported', () => {
+        it('is left alone if it was waiting for another client to finish starting', async () => {
+          const { terms, manager } = clients();
+          const ws = fakeWs();
+          manager.create(ws, '%2', 100, 30, false, on('$2'));
+          await settle(terms[0]);
+          await manager.whenClientCanStart('$1', () => manager.create(fakeWs(), '%1', 100, 30, false, on('$1')));
+
+          ws.listeners.close();
+          expect(killed()).toEqual([]);
+          terms[0].handlers.exit({ exitCode: 0 });
+          // What is left of it is still released.
+          expect(terms[0].kill).toHaveBeenCalledOnce();
+          expect(reaper.clientEnded).toHaveBeenCalledOnce();
+
+          await settle(terms[1]);
+          expect(killed()).toEqual([]);
+        });
+
+        it('is not ended by anything that asks later', async () => {
+          const { terms, manager } = clients();
+          const ws = fakeWs();
+          manager.create(ws, '%1', 100, 30, false, on('$1'));
+          await settle(terms[0]);
+          terms[0].handlers.exit({ exitCode: 0 });
+          manager._endClient(terms[0]);
+          await vi.advanceTimersByTimeAsync(100);
+          expect(killed()).toEqual([]);
+        });
+
+        it('is not counted as stuck when the wait for it runs out, though its pid still answers', async () => {
+          const { terms, running, manager } = clients();
+          const ws = fakeWs();
+          manager.create(ws, '%1', 100, 30, false, on('$1'));
+          await settle(terms[0]);
+          running.add(terms[0].pid);
+          processKill.mockImplementation(() => true);
+          ws.listeners.close();
+          await vi.advanceTimersByTimeAsync(100);
+          expect(killed()).toEqual([terms[0].pid]);
+
+          terms[0].handlers.exit({ exitCode: 1 });
+          await vi.advanceTimersByTimeAsync(1600);
+          await expect(manager.whenClientCanStart('$2', () => 'started')).resolves.toBe('started');
+          expect(killed()).toEqual([terms[0].pid]);
+        });
+
+        it('is not ended after the wait for what was written to it', async () => {
+          const { terms, manager } = clients();
+          const ws = fakeWs();
+          manager.create(ws, '%1', 100, 30, false, on('$1'));
+          await settle(terms[0]);
+          message(ws, { type: 'input', data: 'abc' });
+          ws.listeners.close();
+          await vi.advanceTimersByTimeAsync(10);
+          terms[0].handlers.exit({ exitCode: 0 });
+          await vi.advanceTimersByTimeAsync(100);
+          expect(killed()).toEqual([]);
+        });
+      });
+
+      describe('what was written to a client just before it ends', () => {
+        const typeInto = async (context) => {
+          const ws = fakeWs();
+          context.manager.create(ws, '%1', 100, 30, false, on('$1'));
+          await settle(context.terms[0]);
+          return ws;
+        };
+
+        it('gets time to be read before a replacement ends the client, and the next one waits', async () => {
+          const context = clients();
+          const ws = await typeInto(context);
+          message(ws, { type: 'input', data: 'abc' });
+          message(ws, { type: 'resize', cols: 120, rows: 40 });
+
+          await vi.advanceTimersByTimeAsync(50);
+          expect(killed()).toEqual([]);
+          expect(spawn).toHaveBeenCalledOnce();
+
+          await vi.advanceTimersByTimeAsync(20);
+          expect(killed()).toEqual([context.terms[0].pid]);
+          expect(spawn).toHaveBeenCalledTimes(2);
+          expect(context.terms[0].write.mock.calls).toEqual([['abc']]);
+        });
+
+        it('gets longer the more was written, in bytes', async () => {
+          const context = clients();
+          const ws = await typeInto(context);
+          message(ws, { type: 'input', data: '中'.repeat(10) });
+          message(ws, { type: 'input', data: 'x'.repeat(30) });
+          ws.listeners.close();
+
+          await vi.advanceTimersByTimeAsync(40 + 60 * 8 - 10);
+          expect(killed()).toEqual([]);
+          await vi.advanceTimersByTimeAsync(20);
+          expect(killed()).toEqual([context.terms[0].pid]);
+        });
+
+        it('stops waiting at the limit, however much it was', async () => {
+          const context = clients();
+          const ws = await typeInto(context);
+          message(ws, { type: 'input', data: 'x'.repeat(60000) });
+          ws.listeners.close();
+
+          await vi.advanceTimersByTimeAsync(1490);
+          expect(killed()).toEqual([]);
+          await vi.advanceTimersByTimeAsync(20);
+          expect(killed()).toEqual([context.terms[0].pid]);
+        });
+
+        it('does not wait for it at shutdown', async () => {
+          const context = clients();
+          const ws = await typeInto(context);
+          message(ws, { type: 'input', data: 'x'.repeat(100) });
+          context.manager.destroyAll();
+          expect(killed()).toEqual([context.terms[0].pid]);
+        });
+
+        it('does not delay a client that nothing was written to', async () => {
+          const context = clients();
+          const ws = await typeInto(context);
+          ws.listeners.close();
+          expect(killed()).toEqual([context.terms[0].pid]);
+        });
+      });
+
+      it('holds what is typed from the moment a new size is asked for', async () => {
+        const { terms, running, manager } = clients();
+        const ws = fakeWs();
+        manager.create(ws, '%1', 100, 30, false, on('$1'));
+        await settle(terms[0]);
+
+        running.add(terms[0].pid);
+        processKill.mockImplementation(() => true);
+        message(ws, { type: 'resize', cols: 120, rows: 40 });
+        // In the same tick: the old client is ended a moment later and would lose it.
+        message(ws, { type: 'input', data: 'same tick' });
+        expect(terms[0].write).not.toHaveBeenCalled();
+
+        running.delete(terms[0].pid);
+        await vi.advanceTimersByTimeAsync(10);
+        expect(terms[1].write.mock.calls).toEqual([['same tick']]);
+      });
+
+      it('gives what it held to the current client when the size goes back before it changed', async () => {
+        const { terms, manager } = clients();
+        const ws = fakeWs();
+        manager.create(ws, '%1', 100, 30, false, on('$1'));
+        started(terms[0]);
+        await vi.advanceTimersByTimeAsync(100);
+
+        message(ws, { type: 'resize', cols: 120, rows: 40 });
+        message(ws, { type: 'input', data: 'a' });
+        message(ws, { type: 'resize', cols: 100, rows: 30 });
+        message(ws, { type: 'input', data: 'b' });
+        expect(terms[0].write).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(800);
+        expect(spawn).toHaveBeenCalledOnce();
+        expect(terms[0].write.mock.calls).toEqual([['a'], ['b']]);
+        message(ws, { type: 'input', data: 'c' });
+        expect(terms[0].write).toHaveBeenLastCalledWith('c');
+      });
+
+      it('writes straight through for a resize to the size it already has', async () => {
+        const { terms, manager } = clients();
+        const ws = fakeWs();
+        manager.create(ws, '%1', 100, 30, false, on('$1'));
+        message(ws, { type: 'resize', cols: 100, rows: 30 });
+        message(ws, { type: 'input', data: 'now' });
+        expect(terms[0].write).toHaveBeenCalledWith('now');
+      });
+
+      it('keeps holding for the next size when one more was asked for during a replacement', async () => {
+        const { terms, running, manager } = clients();
+        const ws = fakeWs();
+        manager.create(ws, '%1', 100, 30, false, on('$1'));
+        await settle(terms[0]);
+
+        running.add(terms[0].pid);
+        processKill.mockImplementation(() => true);
+        message(ws, { type: 'resize', cols: 120, rows: 40 });
+        await vi.advanceTimersByTimeAsync(20);
+        message(ws, { type: 'input', data: 'first' });
+        message(ws, { type: 'resize', cols: 130, rows: 40 });
+        running.delete(terms[0].pid);
+        await vi.advanceTimersByTimeAsync(5);
+        expect(terms[1].write.mock.calls).toEqual([['first']]);
+
+        // Client 1 will go as soon as it has settled, and this is for client 2.
+        message(ws, { type: 'input', data: 'second' });
+        expect(terms[1].write).toHaveBeenCalledOnce();
+        await settle(terms[1]);
+        running.delete(terms[1].pid);
+        await vi.advanceTimersByTimeAsync(5);
+        expect(spawn).toHaveBeenCalledTimes(3);
+        expect(terms[1].write).toHaveBeenCalledOnce();
+        expect(terms[2].write.mock.calls).toEqual([['second']]);
+      });
+
+      it('keeps everything held across a later size asked for before the first change happened', async () => {
+        const { terms, running, manager } = clients();
+        const ws = fakeWs();
+        manager.create(ws, '%1', 100, 30, false, on('$1'));
+        started(terms[0]);
+        await vi.advanceTimersByTimeAsync(100);
+
+        message(ws, { type: 'resize', cols: 120, rows: 40 });
+        message(ws, { type: 'input', data: 'a' });
+        message(ws, { type: 'resize', cols: 130, rows: 40 });
+        message(ws, { type: 'input', data: 'b' });
+        await vi.advanceTimersByTimeAsync(800);
+
+        // One replacement for both sizes, at the latest, with both inputs once.
+        expect(spawn).toHaveBeenCalledTimes(2);
+        expect(spawn.mock.calls[1][2]).toMatchObject({ cols: 130, rows: 40 });
+        expect(terms[0].write).not.toHaveBeenCalled();
+        expect(terms[1].write.mock.calls).toEqual([['a'], ['b']]);
+        expect(running.has(terms[1].pid)).toBe(true);
+      });
+
+      it('drops what it held when the connection closes first, and starts nothing', async () => {
+        const { terms, manager } = clients();
+        const ws = fakeWs();
+        manager.create(ws, '%1', 100, 30, false, on('$1'));
+        started(terms[0]);
+        await vi.advanceTimersByTimeAsync(100);
+
+        message(ws, { type: 'resize', cols: 120, rows: 40 });
+        message(ws, { type: 'input', data: 'typed' });
+        ws.readyState = 3;
+        ws.listeners.close();
+        await vi.advanceTimersByTimeAsync(3000);
+
+        expect(spawn).toHaveBeenCalledOnce();
+        expect(terms[0].write).not.toHaveBeenCalled();
+      });
+
+      describe('a connection another client takes over', () => {
+        // The client is gone at once; node-pty reports its exit about a second later.
+        async function takenOver() {
+          const context = clients();
+          const { terms, manager } = context;
+          const oldWs = fakeWs();
+          const onPtyExit = vi.fn();
+          const oldId = manager.create(oldWs, '%1', 100, 30, false, { ...on('$1'), onPtyExit });
+          await settle(terms[0]);
+          const newWs = fakeWs();
+          const newId = await manager.whenClientCanStart('$1', () => manager.create(newWs, '%1', 100, 30, false, on('$1')));
+          await settle(terms[1]);
+          return { ...context, oldWs, oldId, onPtyExit, newWs, newId };
+        }
+
+        it('ends at once, the way `-d` always showed it, without waiting for the exit', async () => {
+          const { manager, oldWs, oldId, onPtyExit, newId } = await takenOver();
+          expect(oldWs.close).toHaveBeenCalledWith(1000, expect.any(String));
+          expect(onPtyExit).toHaveBeenCalledOnce();
+          expect(manager.connections.has(oldId)).toBe(false);
+          expect(manager.connections.has(newId)).toBe(true);
+          expect(manager.paneConnectionCount.get('%1')).toBe(1);
+        });
+
+        it('cannot take the session back: a resize from its socket starts and ends nothing', async () => {
+          const { terms, running, oldWs, newWs } = await takenOver();
+          message(oldWs, { type: 'resize', cols: 120, rows: 40 });
+          await vi.advanceTimersByTimeAsync(3000);
+
+          expect(spawn).toHaveBeenCalledTimes(2);
+          expect(killed()).toEqual([terms[0].pid]);
+          expect(running.has(terms[1].pid)).toBe(true);
+          expect(newWs.close).not.toHaveBeenCalled();
+        });
+
+        it('drops what its socket still delivers', async () => {
+          const { terms, oldWs } = await takenOver();
+          message(oldWs, { type: 'input', data: 'late' });
+          expect(terms[0].write).not.toHaveBeenCalled();
+          expect(terms[1].write).not.toHaveBeenCalled();
+        });
+
+        it('still releases its client when the exit does arrive, and nothing more', async () => {
+          const { terms, manager, oldWs, onPtyExit, newWs, newId } = await takenOver();
+          terms[0].handlers.exit({ exitCode: 1 });
+
+          expect(terms[0].kill).toHaveBeenCalledOnce();
+          expect(reaper.clientEnded).toHaveBeenCalledOnce();
+          expect(onPtyExit).toHaveBeenCalledOnce();
+          expect(oldWs.close).toHaveBeenCalledOnce();
+          expect(manager.connections.has(newId)).toBe(true);
+          expect(terms[1].kill).not.toHaveBeenCalled();
+          expect(newWs.close).not.toHaveBeenCalled();
+        });
+
+        it('still holds the next client back until its client has gone', async () => {
+          const { terms, running, manager } = clients();
+          const oldWs = fakeWs();
+          manager.create(oldWs, '%1', 100, 30, false, on('$1'));
+          await settle(terms[0]);
+          processKill.mockImplementation(() => true);
+
+          const attach = vi.fn(() => null);
+          manager.whenClientCanStart('$1', attach);
+          await vi.advanceTimersByTimeAsync(50);
+          expect(oldWs.close).toHaveBeenCalledWith(1000, expect.any(String));
+          expect(attach).not.toHaveBeenCalled();
+
+          running.delete(terms[0].pid);
+          await vi.advanceTimersByTimeAsync(5);
+          expect(attach).toHaveBeenCalledOnce();
+        });
+
+        it('cancels a replacement already in line behind the client taking over', async () => {
+          const { terms, running, manager } = clients();
+          const oldWs = fakeWs();
+          manager.create(oldWs, '%1', 100, 30, false, on('$1'));
+          await settle(terms[0]);
+
+          let finishFirst;
+          manager.whenClientCanStart('$2', () => new Promise((resolve) => { finishFirst = resolve; }));
+          await vi.advanceTimersByTimeAsync(0);
+          const newWs = fakeWs();
+          const starting = manager.whenClientCanStart('$1', () => manager.create(newWs, '%1', 100, 30, false, on('$1')));
+          message(oldWs, { type: 'resize', cols: 120, rows: 40 });
+          await vi.advanceTimersByTimeAsync(0);
+          finishFirst();
+          await starting;
+          await settle(terms[1]);
+          await vi.advanceTimersByTimeAsync(3000);
+
+          expect(spawn).toHaveBeenCalledTimes(2);
+          expect(killed()).toEqual([terms[0].pid]);
+          expect(running.has(terms[1].pid)).toBe(true);
+          expect(newWs.close).not.toHaveBeenCalled();
+        });
+
+        it('cancels a resize still waiting for its client to settle', async () => {
+          const { terms, running, manager } = clients();
+          const oldWs = fakeWs();
+          manager.create(oldWs, '%1', 100, 30, false, on('$1'));
+          started(terms[0]);
+          await vi.advanceTimersByTimeAsync(100);
+          message(oldWs, { type: 'resize', cols: 120, rows: 40 });
+
+          const newWs = fakeWs();
+          await manager.whenClientCanStart('$1', () => manager.create(newWs, '%1', 100, 30, false, on('$1')));
+          await settle(terms[1]);
+          await vi.advanceTimersByTimeAsync(3000);
+
+          expect(spawn).toHaveBeenCalledTimes(2);
+          expect(killed()).toEqual([terms[0].pid]);
+          expect(running.has(terms[1].pid)).toBe(true);
+          expect(newWs.close).not.toHaveBeenCalled();
+        });
+      });
+
+      it('closes rather than hold more input than the limit while a client changes', async () => {
+        const { terms, running, manager } = clients();
+        const ws = fakeWs();
+        const id = manager.create(ws, '%1', 100, 30, false, on('$1'));
+        await settle(terms[0]);
+        processKill.mockImplementation(() => true);
+        message(ws, { type: 'resize', cols: 120, rows: 40 });
+        await vi.advanceTimersByTimeAsync(20);
+
+        message(ws, { type: 'input', data: 'x'.repeat(MAX_HELD_INPUT_BYTES) });
+        expect(ws.close).not.toHaveBeenCalled();
+        message(ws, { type: 'input', data: 'y' });
+        expect(ws.close).toHaveBeenCalledWith(1009, expect.any(String));
+        expect(manager.connections.has(id)).toBe(false);
+
+        running.delete(terms[0].pid);
+        await vi.advanceTimersByTimeAsync(5);
+        expect(spawn).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not touch the current terminal for a request cancelled while it waited in line', async () => {
+        const { terms, running, manager } = clients();
+        const current = fakeWs();
+        manager.create(current, '%1', 100, 30, false, on('$1'));
+        await settle(terms[0]);
+
+        // Ahead of it in line, something is taking a while.
+        let cancelled = false;
+        let finishFirst;
+        manager.whenClientCanStart('$2', () => new Promise((resolve) => { finishFirst = resolve; }));
+        await vi.advanceTimersByTimeAsync(0);
+        const attach = vi.fn(() => null);
+        const queued = manager.whenClientCanStart('$1', attach, { cancelled: () => cancelled });
+
+        cancelled = true;
+        finishFirst();
+        await queued;
+
+        expect(killed()).toEqual([]);
+        expect(running.has(terms[0].pid)).toBe(true);
+        expect(current.close).not.toHaveBeenCalled();
+      });
+
+      describe('a client that does not go when ended', () => {
+        function stuck() {
+          const context = clients();
+          const { terms, running, manager } = context;
+          const ws = fakeWs();
+          manager.create(ws, '%1', 100, 30, false, on('$1'));
+          return { ...context, ws, settleFirst: async () => { await settle(terms[0]); running.add(terms[0].pid); processKill.mockImplementation(() => true); } };
+        }
+
+        it('starts nothing next to it: the attach fails with something worth retrying', async () => {
+          const { manager, settleFirst } = stuck();
+          await settleFirst();
+          const attach = vi.fn();
+          const result = manager.whenClientCanStart('$1', attach).catch((err) => err);
+          await vi.advanceTimersByTimeAsync(1600);
+          const err = await result;
+          expect(err.code).toBe('TERMINAL_BUSY');
+          expect(err.retryable).toBe(true);
+          expect(attach).not.toHaveBeenCalled();
+        });
+
+        it('blocks a client for another session too, as leaving hurts any of them', async () => {
+          const { manager, settleFirst, ws } = stuck();
+          await settleFirst();
+          ws.listeners.close();
+          await vi.advanceTimersByTimeAsync(1600);
+          const attach = vi.fn();
+          const result = manager.whenClientCanStart('$2', attach).catch((err) => err);
+          await vi.advanceTimersByTimeAsync(1600);
+          expect((await result).code).toBe('TERMINAL_BUSY');
+          expect(attach).not.toHaveBeenCalled();
+        });
+
+        it('goes ahead on the next try once it has really gone, leaving its pid alone', async () => {
+          const { terms, running, manager, settleFirst } = stuck();
+          await settleFirst();
+          const first = manager.whenClientCanStart('$1', vi.fn()).catch((err) => err);
+          await vi.advanceTimersByTimeAsync(1600);
+          expect((await first).code).toBe('TERMINAL_BUSY');
+          expect(killed()).toEqual([terms[0].pid]);
+
+          running.delete(terms[0].pid);
+          await expect(manager.whenClientCanStart('$1', () => 'started')).resolves.toBe('started');
+          expect(killed()).toEqual([terms[0].pid]);
+        });
+
+        it('never ends that pid again, as it may be someone else\'s by now: it only keeps waiting', async () => {
+          const { terms, manager, settleFirst } = stuck();
+          await settleFirst();
+          const first = manager.whenClientCanStart('$1', vi.fn()).catch((err) => err);
+          await vi.advanceTimersByTimeAsync(1600);
+          await first;
+
+          const attach = vi.fn();
+          // No second wait either: nothing new was asked of it.
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            const again = await manager.whenClientCanStart('$1', attach).catch((err) => err);
+            expect(again.code).toBe('TERMINAL_BUSY');
+          }
+          await vi.advanceTimersByTimeAsync(5000);
+          expect(killed()).toEqual([terms[0].pid]);
+          expect(attach).not.toHaveBeenCalled();
+        });
+
+        it('goes ahead once its exit is reported, whatever the pid looks like by then', async () => {
+          const { terms, manager, settleFirst } = stuck();
+          await settleFirst();
+          const first = manager.whenClientCanStart('$1', vi.fn()).catch((err) => err);
+          await vi.advanceTimersByTimeAsync(1600);
+          expect((await first).code).toBe('TERMINAL_BUSY');
+
+          terms[0].handlers.exit({ exitCode: 1 });
+          await expect(manager.whenClientCanStart('$1', () => 'started')).resolves.toBe('started');
+          expect(killed()).toEqual([terms[0].pid]);
+        });
+
+        it('treats a client that never got a pid the same way', async () => {
+          const term = { ...fakeTerm(), pid: 0 };
+          term.onData = vi.fn((fn) => { term.handlers.data = fn; return { dispose: vi.fn() }; });
+          spawn.mockReturnValue(term);
+          const ws = fakeWs();
+          const manager = windows();
+          manager.create(ws, '%1', 100, 30, false, on('$1'));
+          ws.listeners.close();
+          await vi.advanceTimersByTimeAsync(5100);
+          expect(processKill).not.toHaveBeenCalled();
+          const attach = vi.fn();
+          const result = manager.whenClientCanStart('$1', attach).catch((err) => err);
+          await vi.advanceTimersByTimeAsync(5100);
+          expect((await result).code).toBe('TERMINAL_BUSY');
+          expect(attach).not.toHaveBeenCalled();
+
+          // Not told yet, so this is not a second time: once the pid comes, it can be.
+          term.pid = 7000;
+          await expect(manager.whenClientCanStart('$1', () => 'started')).resolves.toBe('started');
+          expect(killed()).toEqual([7000]);
+        });
+
+        it('replaces nothing during a resize: the connection closes so the page tries again', async () => {
+          const { terms, ws, settleFirst } = stuck();
+          await settleFirst();
+          message(ws, { type: 'resize', cols: 120, rows: 40 });
+          await vi.advanceTimersByTimeAsync(1600);
+          expect(spawn).toHaveBeenCalledTimes(1);
+          expect(ws.close).toHaveBeenCalledWith(1011, expect.any(String));
+          expect(terms[0].kill).not.toHaveBeenCalled();
+        });
+      });
+
+      it('does not hold back the clients when the panel shuts down', async () => {
+        const { terms, manager } = clients();
+        manager.create(fakeWs(), '%1', 100, 30, false, on('$1'));
+        await settle(terms[0]);
+        manager.create(fakeWs(), '%2', 100, 30, false, on('$2'));
+        manager.destroyAll();
+        expect(killed().sort()).toEqual([terms[0].pid, terms[1].pid].sort());
+      });
+
+      it('keeps a failure in one attach from blocking the next', async () => {
+        const { manager } = clients();
+        await expect(manager.whenClientCanStart('$1', () => { throw new Error('no conpty'); })).rejects.toThrow('no conpty');
+        await expect(manager.whenClientCanStart('$1', () => 'started')).resolves.toBe('started');
+      });
+    });
+
     it('ends up on the original size with no new client when a burst returns to it', async () => {
       const term = fakeTerm();
       spawn.mockReturnValue(term);
@@ -410,6 +1161,13 @@ describe('TerminalManager PTY termination', () => {
       await vi.advanceTimersByTimeAsync(5000);
       expect(spawn).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('needs no turn off Windows', async () => {
+    const manager = new TerminalManager({ platform: 'linux' });
+    const attach = vi.fn(() => 'started');
+    await expect(manager.whenClientCanStart('$1', attach)).resolves.toBe('started');
+    expect(attach).toHaveBeenCalledOnce();
   });
 
   it('starts nothing for a socket that has already closed: nothing would ever end it', () => {
