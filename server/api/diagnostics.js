@@ -20,7 +20,8 @@ export function createDiagnosticsRouter({ diagnostics }) {
     try { path = diagnostics.capturePath(req.params.id); }
     catch { res.status(400).json({ success: false, data: null, error: { code: 'invalid_capture_id' } }); return; }
     res.setHeader('Cache-Control', 'no-store');
-    res.download(path, req.params.id + '.jsonl', (err) => {
+    // The UUID is validated above; only this capture directory is reachable.
+    res.download(path, req.params.id + '.jsonl', { dotfiles: 'allow' }, (err) => {
       if (err && !res.headersSent) res.status(err.code === 'ENOENT' ? 404 : 500).json({
         success: false, data: null, error: { code: 'capture_unavailable' },
       });

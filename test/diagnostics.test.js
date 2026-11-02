@@ -201,7 +201,8 @@ describe('HTTP and client boundaries', () => {
   });
 
   it('rejects oversized client batches, uses strict download ids and keeps control endpoints uncached', async () => {
-    const { diagnostics } = await capture();
+    const { diagnostics, directory } = await capture();
+    diagnostics.configure({ configDir: join(directory, '.config', 'tmux-web-panel') });
     const app = express();
     app.use(express.json({ limit: '200kb' }));
     app.use('/api/diagnostics', createDiagnosticsRouter({ diagnostics }));
