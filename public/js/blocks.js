@@ -339,11 +339,20 @@ var Blocks = (function () {
 
   // --- requests ---------------------------------------------------------------
 
+  // Reads in flight, by address: the same read asked for again joins the one under
+  // way. A write that finishes on a server starts a new generation there, so a read
+  // asked for after it never gets an answer from before it. Joined callers share the
+  // result and must not change it.
+  var _readsInFlight = {};
+  var _writeGeneration = {};
+
   /** Requests to one server's node; `serverId` defaults to the server in view. */
   function client(serverId) {
+    function server() {
+      return serverId || Api.activeServerId();
+    }
     function url(path) {
-      var sid = serverId || Api.activeServerId();
-      return Api.nodeUrl(sid, path);
+      return Api.nodeUrl(server(), path);
     }
     function qs(params) {
       return Object.keys(params || {}).filter(function (k) { return params[k] != null && params[k] !== ''; })
@@ -351,8 +360,25 @@ var Blocks = (function () {
     }
     return {
       url: url,
-      get: function (path, params) { var q = qs(params); return Api.get(url(path) + (q ? '?' + q : '')); },
-      send: function (method, path, body) { return Api.request(method, url(path), body); },
+      get: function (path, params) {
+        var q = qs(params);
+        var address = url(path) + (q ? '?' + q : '');
+        var key = (_writeGeneration[server()] || 0) + ' ' + address;
+        if (_readsInFlight[key]) return _readsInFlight[key];
+        var read = Api.get(address);
+        _readsInFlight[key] = read;
+        var forget = function () { if (_readsInFlight[key] === read) delete _readsInFlight[key]; };
+        read.then(forget, forget);
+        return read;
+      },
+      send: function (method, path, body) {
+        var sid = server();
+        var sent = Api.request(method, url(path), body);
+        // Before the caller hears of it, so the read it asks for next is a new one.
+        var done = function () { _writeGeneration[sid] = (_writeGeneration[sid] || 0) + 1; };
+        sent.then(done, done);
+        return sent;
+      },
     };
   }
 

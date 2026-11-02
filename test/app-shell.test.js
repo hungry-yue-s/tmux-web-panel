@@ -554,6 +554,24 @@ describe('AppShell window bar', () => {
       ctx.win.close();
     });
 
+    it('keeps the chip, dimmed, when a refresh fails for a reason that should pass', async () => {
+      const { ctx, repos } = focusSetup();
+      ctx.document.dispatchEvent(new ctx.win.Event('visibilitychange'));
+      await vi.waitFor(() => expect(chip(ctx).hidden).toBe(false));
+
+      repos['%95'] = Object.assign(new Error('Network request failed'), { code: 'NETWORK_ERROR' });
+      ctx.document.dispatchEvent(new ctx.win.Event('visibilitychange'));
+      await vi.waitFor(() => expect(chip(ctx).classList.contains('is-stale')).toBe(true));
+      expect(chip(ctx).hidden).toBe(false);
+      expect(chip(ctx).title).toContain('刷新失败');
+      expect(chip(ctx).title).toContain('/repo/first');
+
+      repos['%95'] = repo('/repo/first');
+      ctx.document.dispatchEvent(new ctx.win.Event('visibilitychange'));
+      await vi.waitFor(() => expect(chip(ctx).classList.contains('is-stale')).toBe(false));
+      ctx.win.close();
+    });
+
     it('opens nothing when tmux cannot say which pane has focus, and does not guess the first one', async () => {
       const { ctx, get, focus, open } = focusSetup();
       focus.pane = new Error('tmux 没有报告活动窗格');

@@ -47,7 +47,10 @@ function setup(answers = {}) {
     ],
   };
   const diffs = { 'logo.png': LOGO_DIFF, 'notes.md': NOTES_DIFF, 'new.txt': NEW_DIFF };
+  // A path listed here fails with that error until it is taken out again.
+  const fail = {};
   const get = vi.fn(async (path, query) => {
+    if (fail[path]) throw fail[path];
     if (answers[path]) return answers[path](query);
     if (path === '/api/git/status') return JSON.parse(JSON.stringify(status));
     if (path === '/api/git/diff') return { diff: diffs[query.file] };
@@ -84,7 +87,7 @@ function setup(answers = {}) {
   };
   const buttonFor = (label, scope = frame()) => [...scope.querySelectorAll('button')].find((b) => b.textContent.trim() === label);
   const fileQueries = () => get.mock.calls.filter(([path]) => path === '/api/git/file').map(([, query]) => query);
-  return { win, doc, get, frame, press, buttonFor, renderInto, fileQueries, status };
+  return { win, doc, get, frame, press, buttonFor, renderInto, fileQueries, status, fail };
 }
 
 const settled = async () => { for (let i = 0; i < 6; i += 1) await new Promise((resolve) => { setTimeout(resolve, 0); }); };
@@ -340,5 +343,174 @@ describe('a large commit in the Git history', () => {
     expect(rows()).toBe(300);
     context.press('显示其余 50 个文件', detail(context));
     expect(rows()).toBe(350);
+  });
+});
+
+describe('a Git refresh that fails', () => {
+  const failure = () => Object.assign(new Error('Network request failed'), { code: 'NETWORK_ERROR' });
+  const note = (context) => context.frame().querySelector('.git-refresh-failed');
+  const refresh = (context) => context.frame().querySelector('[aria-label="刷新"]').click();
+  const backgroundRefresh = (context) => context.win.dispatchEvent(new context.win.Event('focus'));
+  const select = async (context, path, staged) => {
+    context.frame().querySelector(`.git-file[data-path="${path}"][data-staged="${staged ? 1 : 0}"]`).click();
+    await settled();
+  };
+
+  it('leaves the changes and the diff on screen, says so, and clears that once one works', async () => {
+    const context = setup();
+    await settled();
+    await select(context, 'notes.md', false);
+    const diffLines = () => context.frame().querySelectorAll('.git-diff-scroll .blk-line').length;
+    expect(diffLines()).toBeGreaterThan(0);
+    expect(note(context).hidden).toBe(true);
+
+    context.fail['/api/git/status'] = failure();
+    backgroundRefresh(context);
+    await settled();
+    expect(context.frame().querySelectorAll('.git-file')).toHaveLength(3);
+    expect(diffLines()).toBeGreaterThan(0);
+    expect(context.frame().querySelector('.git-state').hidden).toBe(true);
+    expect(note(context).hidden).toBe(false);
+    expect(note(context).title).toContain('Network request failed');
+
+    delete context.fail['/api/git/status'];
+    backgroundRefresh(context);
+    await settled();
+    expect(note(context).hidden).toBe(true);
+  });
+
+  it('leaves the diff on screen when only its refresh fails', async () => {
+    const context = setup();
+    await settled();
+    await select(context, 'notes.md', false);
+    context.fail['/api/git/diff'] = failure();
+    context.status.branch = 'changed';
+    backgroundRefresh(context);
+    await settled();
+    expect(context.frame().querySelector('.git-diff-scroll').textContent).toContain('# Two');
+    expect(note(context).hidden).toBe(false);
+  });
+
+  it('still says what went wrong when there was nothing to keep', async () => {
+    const context = setup({ '/api/git/status': () => Promise.reject(failure()) });
+    await settled();
+    const state = context.frame().querySelector('.git-state');
+    expect(state.hidden).toBe(false);
+    expect(state.textContent).toContain('Network request failed');
+    expect(note(context).hidden).toBe(true);
+  });
+
+  it('keeps the history and the commit open in it, through a refresh that changed nothing and one that failed', async () => {
+    const context = setup();
+    await settled();
+    context.press('历史');
+    await settled();
+    context.frame().querySelector('.git-log-row.has-commit').click();
+    await settled();
+    const card = () => context.frame().querySelector('.git-log-detail .git-commit-card');
+    const log = context.frame().querySelector('.git-log');
+    expect(card()).not.toBeNull();
+
+    refresh(context);
+    await settled();
+    expect(context.frame().querySelector('.git-log')).toBe(log);
+    expect(card()).not.toBeNull();
+
+    context.fail['/api/git/log'] = failure();
+    refresh(context);
+    await settled();
+    expect(context.frame().querySelector('.git-log')).toBe(log);
+    expect(card()).not.toBeNull();
+    expect(note(context).hidden).toBe(false);
+  });
+
+  it('keeps the commit open when the history it is in has changed, as a relative date does', async () => {
+    let date = 'now';
+    const context = setup({
+      '/api/git/log': () => ({ rows: [{ graph: '* ', commit: { hash: COMMIT, short: 'c1c1c1c', refs: [], subject: 'second', author: 'T', date } }] }),
+    });
+    await settled();
+    context.press('历史');
+    await settled();
+    context.frame().querySelector('.git-log-row.has-commit').click();
+    await settled();
+    const shows = () => context.get.mock.calls.filter(([path]) => path === '/api/git/show').length;
+    const detail = context.frame().querySelector('.git-log-detail');
+    expect(shows()).toBe(1);
+
+    date = 'a minute ago';
+    context.frame().querySelector('[aria-label="刷新"]').click();
+    await settled();
+    // The list is new; the open commit is the same, not read again.
+    expect(context.frame().querySelector('.git-log-row').textContent).toContain('a minute ago');
+    expect(context.frame().querySelector('.git-log-detail')).toBe(detail);
+    expect(detail.querySelector('.git-commit-card h3').textContent).toBe('second');
+    expect(context.frame().querySelector('.git-log-row.is-active')).not.toBeNull();
+    expect(shows()).toBe(1);
+  });
+});
+
+describe('Git reads asked for more than once', () => {
+  /** /api/git/status answers held until let go. */
+  function heldStatus(context) {
+    const held = [];
+    return {
+      held,
+      answer: () => new Promise((resolve) => { held.push(() => resolve(JSON.parse(JSON.stringify(context.status)))); }),
+      release: async () => { while (held.length) held.shift()(); await settled(); },
+    };
+  }
+  const statusReads = (context) => context.get.mock.calls.filter(([path]) => path === '/api/git/status').length;
+
+  it('asks once while a refresh is under way, however many ask', async () => {
+    const answers = {};
+    const context = setup(answers);
+    // The first read answers at once; from here on, they are held.
+    await settled();
+    const status = heldStatus(context);
+    answers['/api/git/status'] = () => status.answer();
+    const before = statusReads(context);
+    context.frame().querySelector('[aria-label="刷新"]').click();
+    context.frame().querySelector('[aria-label="刷新"]').click();
+    context.win.dispatchEvent(new context.win.Event('focus'));
+    await settled();
+    expect(statusReads(context) - before).toBe(1);
+    await status.release();
+  });
+
+  it('asks again after a write, rather than take an answer from before it', async () => {
+    const answers = {};
+    const context = setup(answers);
+    await settled();
+    const status = heldStatus(context);
+    answers['/api/git/status'] = () => status.answer();
+    context.win.dispatchEvent(new context.win.Event('focus'));
+    await settled();
+    const before = statusReads(context);
+    expect(status.held).toHaveLength(1);
+
+    // Staging finishes while that read is still out.
+    context.frame().querySelector('.git-file[data-path="notes.md"] [aria-label="暂存"]').click();
+    await settled();
+    expect(statusReads(context)).toBe(before);
+    await status.release();
+    expect(statusReads(context)).toBe(before + 1);
+    await status.release();
+  });
+
+  it('shows the diff of the file picked last, whatever order the answers come in', async () => {
+    const answers = {};
+    const context = setup({
+      '/api/git/diff': (query) => new Promise((resolve) => { answers[query.file] = resolve; }),
+    });
+    await settled();
+    context.frame().querySelector('.git-file[data-path="notes.md"]').click();
+    context.frame().querySelector('.git-file[data-path="new.txt"]').click();
+    answers['new.txt']({ diff: NEW_DIFF });
+    await settled();
+    answers['notes.md']({ diff: NOTES_DIFF });
+    await settled();
+    const shown = context.frame().querySelector('.git-diff-title strong').textContent;
+    expect(shown).toBe('new.txt');
   });
 });

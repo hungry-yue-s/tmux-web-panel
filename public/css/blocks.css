@@ -250,6 +250,8 @@ body.blk-dragging iframe, body.blk-resizing iframe, body.fp-side-resizing iframe
 .git-branch-caret .blk-svg { width: 13px; height: 13px; }
 .git-branch-btn[aria-expanded="true"] { background: var(--b-hover); }
 .git-track { display: inline-flex; gap: 4px; align-items: center; }
+.git-refresh-failed.blk-btn { color: var(--b-yellow); }
+.git-refresh-failed[hidden] { display: none; }
 .git-state { flex: 1; min-height: 0; overflow: auto; }
 .git-changes { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(240px, 34%) minmax(0, 1fr); }
 .git-changes[hidden], .git-history[hidden], .git-state[hidden] { display: none; }
@@ -346,6 +348,7 @@ body.blk-dragging iframe, body.blk-resizing iframe, body.fp-side-resizing iframe
 .pane-git-chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; min-width: 0; max-width: min(320px, 60%); margin-left: 10px; padding: 0 8px; border: 1px solid var(--b-line); border-radius: 12px; background: transparent; color: var(--b-muted); font: 500 12px var(--b-font-mono); cursor: pointer; flex: 0 1 auto; white-space: nowrap; transition: background .12s, color .12s; }
 .pane-git-chip:hover { background: var(--b-hover); color: var(--b-text); }
 .pane-git-chip[hidden] { display: none; }
+.pane-git-chip.is-stale { opacity: .55; }
 .pane-git-chip .blk-svg { width: 13px; height: 13px; }
 .pane-git-chip .blk-svg,.pane-git-separator,.pane-git-dirty,.pane-git-track { flex-shrink: 0; }
 .pane-git-project,.pane-git-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

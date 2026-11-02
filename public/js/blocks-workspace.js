@@ -70,8 +70,11 @@
     branchBtn.setAttribute('aria-haspopup', 'listbox');
     branchBtn.appendChild(el('span', 'git-branch-caret')).innerHTML = icon('chevronDown');
     var trackBox = el('span', 'git-track');
+    // A refresh that failed leaves what was there and says so here; the next one that works clears it.
+    var refreshFailed = button('刷新失败', function () { load(true); }, { icon: 'refresh', className: 'blk-btn-ghost blk-btn-small git-refresh-failed' });
+    refreshFailed.hidden = true;
     var left = el('div', 'blk-row git-bar-left');
-    left.append(branchBtn, trackBox);
+    left.append(branchBtn, trackBox, refreshFailed);
     var segmented = el('div', 'blk-segmented');
     var changesTab = button('更改', function () { show('changes'); }, { icon: 'changes', className: 'is-active' });
     var historyTab = button('历史', function () { show('history'); }, { icon: 'history' });
@@ -128,8 +131,32 @@
     var statusJson = '';
     var selection = null; // { path, staged }
     var lastDiffKey = '';
-    var loading = null;
+    var loading = null; // { writes, force, promise }
+    var diffAsked = null;
+    var historyLoading = null;
+    var historyJson = '';
     var historyLoaded = false;
+    // Writes finished so far: a read from before one is no answer after it.
+    var writes = 0;
+    var send = c.send;
+    c = Object.assign({}, c, {
+      send: function () {
+        var sent = send.apply(null, arguments);
+        var done = function () { writes += 1; };
+        sent.then(done, done);
+        return sent;
+      },
+    });
+
+    var failures = {};
+    function refreshFailedFor(kind, err) {
+      if (err) failures[kind] = errorText(err);
+      else delete failures[kind];
+      var reasons = Object.keys(failures).map(function (k) { return failures[k]; });
+      refreshFailed.hidden = reasons.length === 0;
+      refreshFailed.title = reasons.length ? '刷新失败，显示的是上次的内容：' + reasons.join('；') + '\n点击重试' : '';
+      refreshFailed.setAttribute('aria-label', refreshFailed.title);
+    }
     var pollTimer = null;
     // A file is shown as its diff or as the file itself, the way the file preview
     // shows it, before or after the change. The choice carries over to the next file.
@@ -190,9 +217,10 @@
       var name = rootPath(version.path);
       if (version.rev === 'WORKTREE') return Promise.resolve({ path: name, machine: api.url('') });
       var query = Object.assign({ rev: version.rev, file: version.path }, target);
-      return c.get('/api/git/file', query).then(function (info) {
-        if (info.tooLarge) throw new Error('文件太大，无法预览（' + (info.size / 1048576).toFixed(1) + ' MB）');
-        info.absPath = name;
+      return c.get('/api/git/file', query).then(function (answer) {
+        if (answer.tooLarge) throw new Error('文件太大，无法预览（' + (answer.size / 1048576).toFixed(1) + ' MB）');
+        // A copy: the answer may be shared with another caller that asked the same.
+        var info = Object.assign({}, answer, { absPath: name });
         var token = window.Auth && Auth.wsTokenParam ? Auth.wsTokenParam() : '';
         return {
           info: info, name: name, content: info.content, language: info.language, versioned: true,
@@ -266,13 +294,26 @@
     }
 
     // --- loading ---
+    /**
+     * One status read at a time. Asked for again while one is under way, it joins it,
+     * as a forced refresh if this one is; unless a write has finished since that one
+     * began, in which case a new read follows it.
+     */
     function load(force) {
-      if (loading) return loading;
+      if (loading && loading.writes === writes) {
+        if (force) loading.force = true;
+        return loading.promise;
+      }
+      if (loading) return loading.promise.then(function () { return load(force); });
+      var entry = { writes: writes, force: !!force, promise: null };
+      loading = entry;
       var diagnostic = window.Diagnostics && window.Diagnostics.beginGit(api.serverId);
       var rendering = false, renderAt = 0;
-      loading = c.get('/api/git/status', target).then(function (data) {
+      entry.promise = c.get('/api/git/status', target).then(function (data) {
+        force = entry.force;
         rendering = true;
         if (diagnostic) renderAt = performance.now();
+        refreshFailedFor('status', null);
         var json = JSON.stringify(data);
         var changed = json !== statusJson;
         status = data;
@@ -304,18 +345,22 @@
         if (!historyView.hidden && (force || changed)) loadHistory();
         if (diagnostic) diagnostic({ code: 'GIT_LOAD_OK', renderMs: performance.now() - renderAt, count: data.files.length });
       }).catch(function (err) {
-        if (diagnostic) diagnostic({ code: rendering ? 'GIT_RENDER_ERROR' : (err.message === 'not_a_git_repository' ? 'GIT_NOT_REPO' : 'GIT_API_ERROR'), status: err.status });
-        status = null;
+        var notRepo = err.message === 'not_a_git_repository';
+        if (diagnostic) diagnostic({ code: rendering ? 'GIT_RENDER_ERROR' : (notRepo ? 'GIT_NOT_REPO' : 'GIT_API_ERROR'), status: err.status });
+        // Something is already on screen: it stays, and the bar says the refresh failed.
+        if (status) {
+          refreshFailedFor('status', notRepo ? new Error('这里已经不是 Git 仓库') : err);
+          return;
+        }
         stateBox.hidden = false;
         changesView.hidden = true;
         historyView.hidden = true;
-        var notRepo = err.message === 'not_a_git_repository';
         stateBox.replaceChildren(notRepo
           ? ui.emptyState('git', '这里不是 Git 仓库', '在仓库目录里的窗格中打开 Git，或者先运行 git init。')
           : ui.errorBox(err));
         api.setSubtitle('');
-      }).finally(function () { loading = null; });
-      return loading;
+      }).finally(function () { if (loading === entry) loading = null; });
+      return entry.promise;
     }
 
     function renderBar() {
@@ -466,10 +511,15 @@
       var query = Object.assign({ file: file.path, staged: staged ? '1' : '0', untracked: !staged && file.untracked ? '1' : '0' }, target);
       var diagnostic = window.Diagnostics && window.Diagnostics.beginGit(api.serverId);
       var rendering = false, renderAt = 0;
+      var fileKey = file.path + '\u0000' + staged;
+      // Only the latest file asked for lands: another one picked meanwhile wins.
+      var asked = {};
+      diffAsked = asked;
       c.get('/api/git/diff', query).then(function (data) {
+        if (diffAsked !== asked) return;
         rendering = true;
         if (diagnostic) renderAt = performance.now();
-        var fileKey = file.path + '\u0000' + staged;
+        refreshFailedFor('diff', null);
         var mode = modeFor(isBinaryDiff(data.diff), fileKey);
         var versions = changeVersions(file, staged);
         var side = sideFor(versions);
@@ -529,7 +579,14 @@
         box.scrollTop = top;
         if (diagnostic) diagnostic({ code: 'GIT_DIFF_OK', renderMs: performance.now() - renderAt });
       }).catch(function (err) {
+        if (diffAsked !== asked) return;
         if (diagnostic) diagnostic({ code: rendering ? 'GIT_RENDER_ERROR' : 'GIT_DIFF_ERROR', status: err.status });
+        // This file is already on screen: it stays, and the bar says the refresh failed.
+        if (lastDiffKey.indexOf(fileKey + '\u0000') === 0) {
+          refreshFailedFor('diff', err);
+          return;
+        }
+        lastDiffKey = '';
         main.replaceChildren(ui.errorBox(err));
       });
     }
@@ -714,22 +771,44 @@
       return node;
     }
 
+    /**
+     * One history read at a time; asked again for the same, it joins it. The same
+     * history again draws nothing, so a commit open in it stays open, and a failed
+     * refresh leaves it on screen.
+     */
     function loadHistory(limit) {
       historyLoaded = true;
       limit = limit || 300;
+      if (historyLoading && historyLoading.limit === limit && historyLoading.writes === writes) return historyLoading.promise;
       if (!historyView.firstChild) historyView.appendChild(ui.spinnerLine('读取提交历史'));
-      c.get('/api/git/log', Object.assign({ limit: limit }, target)).then(function (data) {
+      var entry = { limit: limit, writes: writes, promise: null };
+      historyLoading = entry;
+      entry.promise = c.get('/api/git/log', Object.assign({ limit: limit }, target)).then(function (data) {
+        if (historyLoading !== entry) return;
+        refreshFailedFor('history', null);
+        var json = limit + '\u0000' + JSON.stringify(data.rows);
+        if (json === historyJson && historyView.querySelector('.git-log')) return;
+        historyJson = json;
         var log = el('div', 'git-log');
         log.setAttribute('role', 'listbox');
         log.tabIndex = 0;
         var detail = el('div', 'git-log-detail');
         detail.appendChild(ui.emptyState('commit', '选择一个提交', '查看它的说明和改动。'));
+        // A commit open before stays open, as it was, while it is still in the history:
+        // its detail is kept rather than read and drawn again. So is where the list was.
+        var previousLog = historyView.querySelector('.git-log');
+        var previousDetail = historyView.querySelector('.git-log-detail');
+        var listTop = previousLog ? previousLog.scrollTop : 0;
+        var openHash = previousDetail && previousDetail.__openCommit;
+        if (openHash && data.rows.some(function (row) { return row.commit && row.commit.hash === openHash; })) detail = previousDetail;
+        else openHash = null;
         var commitRows = [];
         data.rows.forEach(function (row) {
           var line = el('div', 'git-log-row' + (row.commit ? ' has-commit' : ''));
           line.appendChild(graphNode(row.graph));
           if (row.commit) {
             commitRows.push(line);
+            if (row.commit.hash === openHash) line.classList.add('is-active');
             line.setAttribute('role', 'option');
             line.appendChild(el('span', 'git-hash', row.commit.short));
             row.commit.refs.forEach(function (ref) {
@@ -755,6 +834,7 @@
           if (next) { e.preventDefault(); next.click(); next.scrollIntoView({ block: 'nearest' }); }
         });
         historyView.replaceChildren(log, detail);
+        log.scrollTop = listTop;
 
         function openCommit(commit, line) {
           commitRows.forEach(function (r) { r.classList.toggle('is-active', r === line); });
@@ -762,6 +842,7 @@
           // A large commit can answer after the next one was picked: only the latest lands.
           var asked = {};
           detail.__commit = asked;
+          detail.__openCommit = commit.hash;
           detail.replaceChildren(ui.spinnerLine('读取提交'));
           c.get('/api/git/show', Object.assign({ commit: commit.hash }, target)).then(function (res) {
             if (detail.__commit !== asked) return;
@@ -991,7 +1072,17 @@
             detail.scrollTop = 0;
           }).catch(function (err) { detail.replaceChildren(ui.errorBox(err)); });
         }
-      }).catch(function (err) { historyView.replaceChildren(ui.errorBox(err)); });
+      }).catch(function (err) {
+        if (historyLoading !== entry) return;
+        if (historyView.querySelector('.git-log')) {
+          refreshFailedFor('history', err);
+          return;
+        }
+        historyView.replaceChildren(ui.errorBox(err));
+      }).finally(function () {
+        if (historyLoading === entry) historyLoading = null;
+      });
+      return entry.promise;
     }
 
     function show(which) {
@@ -1577,7 +1668,23 @@
     if (data.behind) node.appendChild(el('span', 'pane-git-track', '↓' + data.behind));
     node.title = data.root + (data.files.length ? ' · ' + data.files.length + ' 个改动' : ' · 干净') + '\n点击打开 Git (' + ui.keysText('Alt+Shift+G') + ')';
     node.setAttribute('aria-label', 'Git 项目 ' + project + '，分支 ' + branch + '，' + data.files.length + ' 个改动，打开 Git');
+    node.dataset.title = node.title;
+    node.classList.remove('is-stale');
     node.hidden = false;
+  }
+
+  /**
+   * Outside a repository the chip goes. Any other failure is likely to pass: what it
+   * showed stays, dimmed, and says why it may be out of date.
+   */
+  function chipRefreshFailed(err) {
+    if (err && err.message === 'not_a_git_repository') {
+      hideChip();
+      return;
+    }
+    if (!chip || chip.hidden) return;
+    chip.classList.add('is-stale');
+    chip.title = '刷新失败，显示的是上次的状态：' + errorText(err) + '\n' + (chip.dataset.title || '');
   }
 
   function hideChip() {
@@ -1602,8 +1709,11 @@
       return ui.client(ctx.serverId).get('/api/git/status', { path: '.', paneId: ctx.paneId }).then(function (data) {
         // The user moved on while this was running: it describes another repository.
         if (!isStale() && asked === chipAsked) showChip(data);
+      }, function (err) {
+        if (!isStale() && asked === chipAsked) chipRefreshFailed(err);
       });
     }).catch(function () {
+      // tmux could not say which pane: what the chip shows may be another pane's.
       if (!isStale() && asked === chipAsked) hideChip();
     }).finally(function () {
       chipBusy = false;
@@ -1662,9 +1772,9 @@
         if (asked === chipAsked) showChip(data);
         phase = 'render';
         BlockHost.open('git', { path: data.root });
-      }, function () {
+      }, function (err) {
         if (moved()) return;
-        if (asked === chipAsked) hideChip();
+        if (asked === chipAsked) chipRefreshFailed(err);
         // Keyed by the pane, and it says itself that this is not a repository, or what went wrong.
         BlockHost.open('git', { path: '.', paneId: ctx.paneId });
       });
