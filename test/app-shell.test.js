@@ -359,6 +359,10 @@ describe('AppShell window bar', () => {
     ctx.document.dispatchEvent(new ctx.win.Event('DOMContentLoaded'));
     await vi.waitFor(() => expect(ctx.document.querySelector('.pane-git-chip')?.hidden).toBe(false), { timeout: 3000 });
     const chip = ctx.document.querySelector('.pane-git-chip');
+    expect(chip.querySelector('.pane-git-project').textContent).toBe('repo');
+    expect(chip.querySelector('.pane-git-branch').textContent).toBe('feat/header-copy');
+    expect(chip.getAttribute('aria-label')).toContain('项目 repo，分支 feat/header-copy');
+    expect(chip.title).toContain('/tmp/repo');
     chip.click();
     await vi.waitFor(() => expect(ctx.win.BlockHost.open).toHaveBeenCalledExactlyOnceWith('git', { path: '/tmp/repo' }));
     expect(ctx.win._copyToClipboard).not.toHaveBeenCalled();

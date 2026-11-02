@@ -1193,14 +1193,20 @@
   function showChip(data) {
     var node = ensureChip();
     if (!node) return;
+    var project = data.root.split(/[\\/]/).filter(Boolean).pop() || data.root;
+    var branch = data.detached ? 'HEAD' : (data.branch || '—');
     node.replaceChildren();
     node.innerHTML = icon('branch');
-    node.appendChild(el('span', 'pane-git-branch', data.detached ? 'HEAD' : (data.branch || '—')));
+    node.appendChild(el('span', 'pane-git-project', project));
+    var separator = el('span', 'pane-git-separator', '/');
+    separator.setAttribute('aria-hidden', 'true');
+    node.appendChild(separator);
+    node.appendChild(el('span', 'pane-git-branch', branch));
     if (data.files.length) node.appendChild(el('span', 'pane-git-dirty', '●' + data.files.length));
     if (data.ahead) node.appendChild(el('span', 'pane-git-track', '↑' + data.ahead));
     if (data.behind) node.appendChild(el('span', 'pane-git-track', '↓' + data.behind));
     node.title = data.root + (data.files.length ? ' · ' + data.files.length + ' 个改动' : ' · 干净') + '\n点击打开 Git (' + ui.keysText('Alt+Shift+G') + ')';
-    node.setAttribute('aria-label', 'Git 分支 ' + (data.branch || '') + '，' + data.files.length + ' 个改动，打开 Git');
+    node.setAttribute('aria-label', 'Git 项目 ' + project + '，分支 ' + branch + '，' + data.files.length + ' 个改动，打开 Git');
     node.hidden = false;
   }
 
