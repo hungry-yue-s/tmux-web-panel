@@ -6,7 +6,7 @@ const INSTANCE = '1873:1700000000';
 
 const source = readFileSync('public/js/file-preview.js', 'utf8');
 
-function setup(width = 1440) {
+function setup(width = 1440, native = false) {
   const dom = new JSDOM('<div id="main-layout"><div class="terminal-view"></div></div>', { url: 'https://panel.test/', runScripts: 'outside-only' });
   const { window } = dom;
   Object.defineProperty(window, 'innerWidth', { value: width });
@@ -27,6 +27,10 @@ function setup(width = 1440) {
     throw new Error('Unexpected fetch: ' + url);
   });
   window.Api = { activeServerId: () => 'remote', nodeUrl: (_serverId, path) => '/n/remote' + path };
+  if (native) {
+    window.__tmuxPanelTransparency = true;
+    window.webkit = { messageHandlers: { tmuxPanelAppearance: { postMessage: vi.fn() } } };
+  }
   window.eval(readFileSync('public/js/theme.js', 'utf8'));
   window.eval(readFileSync('public/js/panel-presentation.js', 'utf8'));
   new Function('window', 'document', 'fetch', 'Auth', source)(window, window.document, fetch, {
@@ -37,6 +41,30 @@ function setup(width = 1440) {
 }
 
 describe('HTML and PDF previews', () => {
+  it('syncs both native sliders into docked pages without changing srcdoc and exports an opaque snapshot', async () => {
+    const { window, preview, setContent } = setup(1440, true);
+    setContent('<meta name="tmux-panel-presentation" content="1"><h1>Native report</h1>');
+    await preview.openFile('/tmp/native.html');
+    window.document.querySelector('.fp-btn-placement').click();
+    const frame = window.document.querySelector('.fp-html-wrap iframe');
+    const original = frame.srcdoc;
+    const post = vi.spyOn(frame.contentWindow, 'postMessage');
+    window.Theme.setTransparency(40);
+    expect(post).toHaveBeenLastCalledWith(expect.objectContaining({
+      appearance: { material: 'native-glass', transparency: 40, glassIntensity: 100 },
+    }), '*');
+    window.Theme.setGlassIntensity(25);
+    expect(post).toHaveBeenLastCalledWith(expect.objectContaining({
+      appearance: { material: 'native-glass', transparency: 40, glassIntensity: 25 },
+    }), '*');
+    expect(frame.srcdoc).toBe(original);
+    const exported = new JSDOM((await preview._test.buildStandaloneDoc()).html);
+    const reader = new JSDOM(exported.window.document.querySelector('iframe').srcdoc, { runScripts: 'dangerously' });
+    expect(reader.window.PanelPresentation.getTheme().appearance.material).toBe('solid');
+    reader.window.close(); exported.window.close();
+    preview.closeDocked(); window.close();
+  });
+
   it('syncs opt-in modal and detached dock tabs and exports the current palette while preserving raw source', async () => {
     const { window, preview, setContent } = setup();
     const content = '<meta name="tmux-panel-presentation" content="1"><h1>Themed report</h1>';

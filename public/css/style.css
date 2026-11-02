@@ -3826,6 +3826,9 @@ body.fp-side-resizing { cursor: col-resize; user-select: none; }
 .fp-html-wrap iframe, .fp-pdf-wrap iframe {
   flex: 1 1 0; width: 100%; min-height: 0; border: none; background: #fff;
 }
+/* Opt-in pages choose their own surface; do not hide the native glass behind
+   an additional white iframe backing. Opaque modal and PDF surfaces stay local. */
+.fp-html-wrap iframe[data-panel-presentation="1"] { background: transparent; }
 .fp-html-wrap [hidden] { display: none; }
 .fp-html-source { flex: 1 1 0; min-height: 0; overflow: auto; }
 .fp-document-toolbar {

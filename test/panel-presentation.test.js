@@ -11,9 +11,15 @@ const html = '<!doctype html><meta name="tmux-panel-presentation" content="1">'
 const windows = [];
 afterEach(() => { windows.splice(0).forEach((win) => win.close()); });
 
-function host() {
+function host({ native = false, transparency = 0, glass = 100 } = {}) {
   const win = new JSDOM('', { url: 'https://panel.test', runScripts: 'outside-only' }).window;
   windows.push(win);
+  if (native) {
+    win.__tmuxPanelTransparency = true;
+    win.webkit = { messageHandlers: { tmuxPanelAppearance: { postMessage: vi.fn() } } };
+  }
+  win.localStorage.setItem('tmux_native_transparency', String(transparency));
+  win.localStorage.setItem('tmux_native_glass_intensity', String(glass));
   win.eval(themes);
   win.eval(engine);
   const frame = win.document.createElement('iframe');
@@ -37,6 +43,54 @@ function deliver(win, parent, data, overrides = {}) {
 }
 
 describe('panel presentation protocol', () => {
+  it('reuses native glass only in the dock, keeps modal and export backgrounds solid, and never fades text', () => {
+    const { win, frame, engine } = host({ native: true, transparency: 35, glass: 65 });
+    engine.mount(frame, html);
+    const modal = child(frame.srcdoc, win);
+    expect(modal.PanelPresentation.getTheme().appearance.material).toBe('solid');
+    const dock = win.document.createElement('div');
+    dock.className = 'fp-dock';
+    win.document.body.appendChild(dock);
+    dock.appendChild(frame);
+    engine.mount(frame, html);
+    const reader = child(frame.srcdoc, win);
+    const root = reader.document.documentElement;
+    expect(reader.PanelPresentation.getTheme().appearance).toEqual({ material: 'native-glass', transparency: 35, glassIntensity: 65 });
+    expect(root.style.getPropertyValue('--pp-page-bg')).toBe('transparent');
+    expect(root.style.getPropertyValue('--pp-bg')).toBe(engine.getTheme().tokens['--pp-bg']);
+    expect(root.style.getPropertyValue('--pp-glass-surface')).toMatch(/^rgba\(.+, 0.16\)$/);
+    expect(root.style.opacity).toBe('');
+    expect(root.style.backdropFilter).toBe('');
+    const note = reader.document.querySelector('input');
+    note.value = 'still here';
+    const original = frame.srcdoc;
+    win.Theme.setGlassIntensity(20);
+    deliver(reader, win, engine.getTheme(frame));
+    expect(reader.PanelPresentation.getTheme().appearance.glassIntensity).toBe(20);
+    win.Theme.setTransparency(0);
+    deliver(reader, win, engine.getTheme(frame));
+    expect(root.style.getPropertyValue('--pp-page-bg')).toBe(engine.getTheme().tokens['--pp-bg']);
+    expect(reader.PanelPresentation.getTheme().appearance.material).toBe('solid');
+    expect(note.value).toBe('still here');
+    expect(frame.srcdoc).toBe(original);
+    win.Theme.setTransparency(50);
+    const exported = child(engine.snapshot(frame), win);
+    expect(exported.PanelPresentation.getTheme().appearance).toEqual({ material: 'solid', transparency: 0, glassIntensity: 0 });
+    expect(exported.document.documentElement.style.getPropertyValue('--pp-page-bg')).toBe(engine.getTheme().tokens['--pp-bg']);
+  });
+
+  it('keeps ordinary browser docks opaque even with stored native preferences', () => {
+    const { win, frame, engine } = host({ transparency: 50, glass: 40 });
+    const dock = win.document.createElement('div');
+    dock.className = 'fp-dock';
+    win.document.body.appendChild(dock);
+    dock.appendChild(frame);
+    engine.mount(frame, html);
+    const reader = child(frame.srcdoc, win);
+    expect(reader.PanelPresentation.getTheme().appearance).toEqual({ material: 'solid', transparency: 0, glassIntensity: 0 });
+    expect(reader.document.documentElement.style.getPropertyValue('--pp-page-bg')).not.toBe('transparent');
+  });
+
   it('leaves ordinary HTML, unsupported versions and unrelated metadata untouched', () => {
     const { frame, engine } = host();
     for (const content of ['<h1>Own design</h1>', html.replace('content="1"', 'content="2"'),
@@ -93,10 +147,20 @@ describe('panel presentation protocol', () => {
     deliver(reader, win, next, { origin: 'https://other.test' });
     deliver(reader, win, { ...next, version: 2 });
     deliver(reader, win, { ...next, tokens: { ...next.tokens, '--pp-bg': 'url(https://other.test)' } });
+    for (const appearance of [
+      { material: 'url(https://other.test)', transparency: 25, glassIntensity: 20 },
+      { material: 'native-glass', transparency: 0, glassIntensity: 20 },
+      { material: 'native-glass', transparency: 51, glassIntensity: 20 },
+      { material: 'native-glass', transparency: NaN, glassIntensity: 20 },
+      { material: 'native-glass', transparency: 25, glassIntensity: 101 },
+    ]) deliver(reader, win, { ...next, appearance });
     deliver(reader, win, null);
     expect(reader.PanelPresentation.getTheme()).toBe(initial);
     deliver(reader, win, next);
     expect(reader.PanelPresentation.getTheme().themeId).toBe('github-light');
+    const { appearance: _appearance, ...legacy } = next;
+    deliver(reader, win, legacy);
+    expect(reader.PanelPresentation.getTheme().appearance.material).toBe('solid');
   });
 
   it('sends the latest palette after load and snapshots the current theme without modifying the source', () => {
@@ -109,7 +173,7 @@ describe('panel presentation protocol', () => {
     const exported = child(engine.snapshot(frame), win);
     expect(exported.PanelPresentation.getTheme().themeId).toBe('oyster');
     expect(frame.__panelPresentationSource).toBe(html);
-    expect(Object.keys(engine.getTheme()).sort()).toEqual(['colorScheme', 'themeId', 'tokens', 'type', 'version']);
+    expect(Object.keys(engine.getTheme()).sort()).toEqual(['appearance', 'colorScheme', 'themeId', 'tokens', 'type', 'version']);
     expect(Object.values(engine.getTheme().tokens).every((value) => /^#[\da-f]{6}$/i.test(value))).toBe(true);
   });
 

@@ -2127,6 +2127,15 @@ var FilePreview = (function () {
     });
   }
 
+  function _refreshPresentationTheme() {
+    if (!window.PanelPresentation) return;
+    // Inactive file tabs live off-DOM; load also syncs their eventual placement.
+    window.PanelPresentation.sync(_overlay);
+    _dockTabs.forEach(function (tab) {
+      if (!_overlay || !_overlay.contains(tab.modal)) window.PanelPresentation.sync(tab.modal);
+    });
+  }
+
   function _refreshMermaidTheme() {
     if (!window.mermaid || typeof window.mermaid.render !== 'function') {
       return Promise.resolve([]);
@@ -4939,13 +4948,8 @@ var FilePreview = (function () {
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', _syncAutoRefresh);
     document.addEventListener('tmux-theme-change', _refreshMermaidTheme);
-    document.addEventListener('tmux-theme-change', function () {
-      if (!window.PanelPresentation) return;
-      // Inactive file tabs live off-DOM; they must receive the new palette too.
-      window.PanelPresentation.sync(_overlay);
-      _dockTabs.forEach(function (tab) {
-        if (!_overlay || !_overlay.contains(tab.modal)) window.PanelPresentation.sync(tab.modal);
-      });
+    ['tmux-theme-change', 'tmux-transparency-change', 'tmux-glass-change'].forEach(function (event) {
+      document.addEventListener(event, _refreshPresentationTheme);
     });
     window.addEventListener('resize', function () {
       if (_overlay) _setPreviewTitle((_currentFile && _currentFile.absPath) || _currentOpenPath || '/');

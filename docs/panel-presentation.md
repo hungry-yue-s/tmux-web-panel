@@ -19,13 +19,21 @@ flowchart LR
 网页在 head 声明 `<meta name="tmux-panel-presentation" content="1">` 即表示愿意接收主题。
 未声明的 HTML 按原样预览，不尝试猜测或替换其颜色。
 
-引擎 `public/js/panel-presentation.js` 将现有 `--workspace-*` 和状态颜色映射为稳定的 `--pp-*` 语义变量；映射详见源码和 [skill](../skills/panel-presentation/SKILL.md)。这复用主题模块已有的对比度处理，不维护第二份调色板。引擎只设置变量、`color-scheme` 和 `data-panel-theme`，不注入布局、组件、字体、reset CSS 或动画。
+引擎 `public/js/panel-presentation.js` 将现有 `--workspace-*` 和状态颜色映射为稳定的 `--pp-*` 语义变量；映射详见源码和 [skill](../skills/panel-presentation/SKILL.md)。这复用主题模块已有的对比度处理，不维护第二份调色板。引擎只设置变量、`color-scheme`、`data-panel-theme` 和 `data-panel-material`，不注入布局、组件、字体、reset CSS 或动画。
 
-文件预览载入时，将当前主题及一个接收桥放入 srcdoc 的首个脚本，在网页自身脚本运行前建立 `window.PanelPresentation.getTheme()`。CSS 声明和 SVG 直接引用变量；Canvas、WebGL 或第三方图表通过 `document` 上的 `panel-theme-change` 获取变化通知，事件 detail 为 `{version: 1, themeId, colorScheme, tokens}`。初次绘制应读取当前值；后续只更新需要重绘的颜色。
+文件预览载入时，将当前主题及一个接收桥放入 srcdoc 的首个脚本，在网页自身脚本运行前建立 `window.PanelPresentation.getTheme()`。CSS 声明和 SVG 直接引用变量；Canvas、WebGL 或第三方图表通过 `document` 上的 `panel-theme-change` 获取变化通知，事件 detail 为 `{version: 1, themeId, colorScheme, tokens, appearance}`。初次绘制应读取当前值；后续只更新需要重绘的颜色。
 
 主题切换链路为 `Theme.apply()` → `tmux-theme-change` → 预览遍历当前 modal 和所有文件 Tab（包括脱离 DOM 的 Tab）→ `postMessage` → iframe 更新变量并发出 `panel-theme-change`。不重新赋值 srcdoc、不刷新 iframe。iframe load 后再发送一次最新主题，覆盖加载过程中发生的切换；重新挂回的 Tab 同样通过 load 接收当前主题。
 
 原文件、源码视图不因接入而改写。导出、分享、新标签页使用导出时主题重新构建隔离快照。下载原文件保留原始内容；离开面板后由网页自己的 CSS fallback 保证可读，不能感知不存在的宿主主题。
+
+## 透明度与毛玻璃
+
+`appearance` 是 v1 的可选扩展，包含 `material`（`solid` / `native-glass`）、`transparency`（0–50）与 `glassIntensity`（0–100）。颜色 token 仍为实色，不把透明度乘到文字或数据颜色上。新增的 `--pp-page-bg` 是容器适配后的页面背景，`--pp-glass-surface` 是可选表面轻染色；页面按需要使用，已有只使用实色变量的网页仍保持原来的背景选择。
+
+跟随现有工具的容器规则：有原生透明能力、透明度大于零的桌面分栏采用 `native-glass`，页面背景透明，复用主窗口已有的单层 `--native-window-background` 与 AppKit `NSVisualEffectView`。框架清除接入 iframe 原来的白色底，但不对网页叠加 opacity 或 backdrop-filter。可选的局部表面为内容提供层次；字号、形状、布局等仍由网页决定。
+
+弹窗、普通浏览器与不支持原生透明的客户端使用 `solid`，保持阅读背景；导出和分享强制实色快照，脱离宿主后仍可读。`tmux-transparency-change`、`tmux-glass-change` 与主题变化共用同一条消息链路，接收桥校验材料枚举与数字范围。玻璃强度仍由原生窗口负责实际渲染，网页只收到外观状态；修改滑块不需要刷新 HTML，也不需要网页再次调用原生桥。
 
 ## Skill 与设置
 
@@ -37,7 +45,7 @@ Skill 的作用限于选择合适的个人信息网页并接入配色。它不�
 
 ## 隔离与范围
 
-预览继续使用 `sandbox="allow-scripts"`，不开放同源、父页数据、凭据、原生桥或顶层导航。宿主只发送版本号、主题 ID、深浅模式和限定的十六进制颜色；接收桥校验父窗口身份、宿主 origin、协议版本与颜色格式。发向 opaque-origin iframe 必须使用 `targetOrigin: '*'`，其中没有凭据。宿主不接受来自网页的指令或数据。
+预览继续使用 `sandbox="allow-scripts"`，不开放同源、父页数据、凭据、原生桥或顶层导航。宿主只发送版本号、主题 ID、深浅模式、限定的十六进制颜色及材料状态；接收桥校验父窗口身份、宿主 origin、协议版本、颜色格式和外观参数。发向 opaque-origin iframe 必须使用 `targetOrigin: '*'`，其中没有凭据。宿主不接受来自网页的指令或数据。
 
 接入仅作用于面板的 HTML 文件预览，远程文件经已有 Node 文件 API 读取后同样适用。普通浏览器 block 中任意外部网站不属于此协议。引擎不承诺把已有的硬编码视觉作品自动重配色。
 

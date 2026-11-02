@@ -19,8 +19,10 @@ description: 为用户个人阅读的报告、说明、对比或可视化 HTML �
 
 | 变量 | 语义 |
 | --- | --- |
-| `--pp-bg` | 页面背景 |
+| `--pp-bg` | 实色背景，适合图表等需要固定底色的区域 |
+| `--pp-page-bg` | 当前容器的页面背景；桌面透明分栏中透出宿主，弹窗和普通浏览器中为实色 |
 | `--pp-surface` / `--pp-surface-alt` | 内容表面 / 次级表面 |
+| `--pp-glass-surface` | 可选的玻璃表面轻染色；不支持原生玻璃时退回实色表面 |
 | `--pp-fg` / `--pp-muted` | 正文 / 次级文字 |
 | `--pp-border` | 可见边界 |
 | `--pp-accent` / `--pp-accent-fg` | 强调色 / 强调底色上的文字 |
@@ -31,11 +33,13 @@ description: 为用户个人阅读的报告、说明、对比或可视化 HTML �
 
 ```css
 :root { color-scheme: light dark; }
-body { background: var(--pp-bg, Canvas); color: var(--pp-fg, CanvasText); }
+body { background: var(--pp-page-bg, var(--pp-bg, Canvas)); color: var(--pp-fg, CanvasText); }
 a { color: var(--pp-accent, LinkText); }
 ```
 
-提供变量 fallback，使原文件脱离面板仍可阅读。CSS、SVG 使用变量即可自动更新。Canvas、图表库等把颜色固化到像素的内容，可读取 `window.PanelPresentation?.getTheme()`，并监听 `document` 的 `panel-theme-change` 事件（`event.detail` 为 `{version, themeId, colorScheme, tokens}`），只更新图表颜色，保留交互状态。首次绘制时读取当前值，事件负责后续更新。
+提供变量 fallback，使原文件脱离面板仍可阅读。CSS、SVG 使用变量即可自动更新。Canvas、图表库等把颜色固化到像素的内容，可读取 `window.PanelPresentation?.getTheme()`，并监听 `document` 的 `panel-theme-change` 事件（`event.detail` 为 `{version, themeId, colorScheme, tokens, appearance}`），只更新图表颜色，保留交互状态。首次绘制时读取当前值，事件负责后续更新。
+
+`appearance` 提供 `material`（`solid` / `native-glass`）、`transparency`（0–50）和 `glassIntensity`（0–100），变化同样触发上述事件。页面背景可使用 `--pp-page-bg`，局部表面按内容需要选择实色或 `--pp-glass-surface`。宿主已经实现窗口毛玻璃，无须再次按滑块值叠加整页 opacity、半透明背景或全页 backdrop-filter；保持文字不透明。固定实色图表可继续使用 `--pp-bg`。所有材料变量都可按设计需要选用，不要求玻璃卡片。
 
 ## 设计自由
 

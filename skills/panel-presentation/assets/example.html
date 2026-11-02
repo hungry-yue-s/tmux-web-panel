@@ -8,16 +8,16 @@
   <style>
     :root { color-scheme: light dark; }
     * { box-sizing: border-box; }
-    body { margin: 0; background: var(--pp-bg, Canvas); color: var(--pp-fg, CanvasText); font: 16px/1.7 system-ui, sans-serif; }
+    body { margin: 0; background: var(--pp-page-bg, var(--pp-bg, Canvas)); color: var(--pp-fg, CanvasText); font: 16px/1.7 system-ui, sans-serif; }
     main { width: min(960px, 100%); margin: auto; padding: clamp(24px, 6vw, 64px); }
     .eyebrow, a { color: var(--pp-accent, LinkText); }
     .eyebrow { letter-spacing: .12em; font-size: 13px; }
     h1 { margin: 12px 0; font-size: clamp(32px, 5vw, 50px); line-height: 1.2; letter-spacing: -.03em; }
     .muted { color: var(--pp-muted, GrayText); }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 18px; margin: 32px 0; }
-    article { padding: 24px; border: 1px solid var(--pp-border, GrayText); border-radius: 16px; background: var(--pp-surface, Canvas); }
+    article { padding: 24px; border: 1px solid var(--pp-border, GrayText); border-radius: 16px; background: var(--pp-glass-surface, var(--pp-surface, Canvas)); }
     h2 { font-size: 18px; margin: 0 0 12px; }
-    input { width: 100%; padding: 12px; color: inherit; background: var(--pp-bg, Canvas); border: 1px solid var(--pp-border, GrayText); border-radius: 8px; font: inherit; }
+    input { width: 100%; padding: 12px; color: inherit; background: var(--pp-page-bg, var(--pp-bg, Canvas)); border: 1px solid var(--pp-border, GrayText); border-radius: 8px; font: inherit; }
     input:focus-visible { outline: 2px solid var(--pp-accent, Highlight); outline-offset: 3px; }
     canvas, svg { display: block; width: 100%; height: 100px; }
     summary { cursor: pointer; padding: 12px 0; }
