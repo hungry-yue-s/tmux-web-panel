@@ -519,9 +519,14 @@ var Blocks = (function () {
     return code;
   }
 
+  // Lines drawn at once. A diff of tens of thousands of lines would hold the page for
+  // seconds; the rest is drawn when asked for, from where it stopped.
+  var DIFF_RENDER_LINES = 1000;
+
   /**
    * Renders a unified diff. `options.actions(file, hunk, selection)` returns
    * buttons for each hunk header and makes changed lines selectable.
+   * `options.maxLines` is how many lines are drawn at first and per "show more".
    */
   function renderDiffInto(container, text, options) {
     options = options || {};
@@ -534,7 +539,13 @@ var Blocks = (function () {
       container.appendChild(empty);
       return files;
     }
-    files.forEach(function (file) {
+    var budget = options.maxLines || DIFF_RENDER_LINES;
+    var total = files.reduce(function (n, f) {
+      return n + f.hunks.reduce(function (m, h) { return m + h.lines.length; }, 0);
+    }, 0);
+    var drawn = 0;
+
+    function openFile(file) {
       var fileBox = el('section', 'blk-diff-filebox');
       if (options.fileHeaders !== false && files.length > 1) {
         var head = el('button', 'blk-diff-filehead');
@@ -551,49 +562,98 @@ var Blocks = (function () {
         });
         fileBox.appendChild(head);
       }
-      file.hunks.forEach(function (hunk) {
-        var box = el('div', 'blk-hunk');
-        var bar = el('div', 'blk-hunk-head');
-        var range = /^(@@[^@]*@@)(.*)$/.exec(hunk.header);
-        bar.appendChild(el('code', 'blk-hunk-range', range ? range[1] : hunk.header));
-        if (range && range[2].trim()) bar.appendChild(el('span', 'blk-hunk-context', range[2].trim()));
-        var selected = {};
-        if (options.actions) {
-          var actionsBox = el('div', 'blk-hunk-actions');
-          options.actions(file, hunk, function () {
-            return Object.keys(selected).some(function (k) { return selected[k]; }) ? selected : null;
-          }).forEach(function (b) { actionsBox.appendChild(b); });
-          bar.appendChild(actionsBox);
-        }
-        box.appendChild(bar);
-        var rows = el('div', 'blk-hunk-lines');
-        var oldNo = 0, newNo = 0;
-        var m = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(hunk.header);
-        if (m) { oldNo = Number(m[1]); newNo = Number(m[2]); }
-        var pairs = pairChanges(hunk.lines);
-        hunk.lines.forEach(function (line, i) {
-          var kind = line.charAt(0);
-          var row = el('div', 'blk-line' + (kind === '+' ? ' is-add' : kind === '-' ? ' is-del' : kind === '\\' ? ' is-meta' : ''));
-          var a = kind === '+' || kind === '\\' ? '' : oldNo++;
-          var b = kind === '-' || kind === '\\' ? '' : newNo++;
-          row.appendChild(el('span', 'blk-ln', String(a)));
-          row.appendChild(el('span', 'blk-ln', String(b)));
-          row.appendChild(codeWithSpan(line, pairs[i]));
-          if (options.actions && (kind === '+' || kind === '-')) {
-            row.classList.add('is-selectable');
-            row.addEventListener('click', function () {
-              selected[i] = !selected[i];
-              row.classList.toggle('is-selected', selected[i]);
-              box.classList.toggle('has-selection', Object.keys(selected).some(function (k) { return selected[k]; }));
-            });
-          }
-          rows.appendChild(row);
-        });
-        box.appendChild(rows);
-        fileBox.appendChild(box);
-      });
       container.appendChild(fileBox);
-    });
+      return fileBox;
+    }
+
+    function openHunk(fileBox, file, hunk) {
+      var box = el('div', 'blk-hunk');
+      var bar = el('div', 'blk-hunk-head');
+      var range = /^(@@[^@]*@@)(.*)$/.exec(hunk.header);
+      bar.appendChild(el('code', 'blk-hunk-range', range ? range[1] : hunk.header));
+      if (range && range[2].trim()) bar.appendChild(el('span', 'blk-hunk-context', range[2].trim()));
+      var selected = {};
+      if (options.actions) {
+        var actionsBox = el('div', 'blk-hunk-actions');
+        options.actions(file, hunk, function () {
+          return Object.keys(selected).some(function (k) { return selected[k]; }) ? selected : null;
+        }).forEach(function (b) { actionsBox.appendChild(b); });
+        bar.appendChild(actionsBox);
+      }
+      box.appendChild(bar);
+      var rows = el('div', 'blk-hunk-lines');
+      box.appendChild(rows);
+      fileBox.appendChild(box);
+      var m = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(hunk.header);
+      return {
+        hunk: hunk, box: box, rows: rows, selected: selected, pairs: pairChanges(hunk.lines),
+        oldNo: m ? Number(m[1]) : 0, newNo: m ? Number(m[2]) : 0,
+      };
+    }
+
+    function addRows(h, from, to) {
+      for (var i = from; i < to; i++) addRow(h, i);
+    }
+
+    function addRow(h, i) {
+      var line = h.hunk.lines[i];
+      var kind = line.charAt(0);
+      var row = el('div', 'blk-line' + (kind === '+' ? ' is-add' : kind === '-' ? ' is-del' : kind === '\\' ? ' is-meta' : ''));
+      var a = kind === '+' || kind === '\\' ? '' : h.oldNo++;
+      var b = kind === '-' || kind === '\\' ? '' : h.newNo++;
+      row.appendChild(el('span', 'blk-ln', String(a)));
+      row.appendChild(el('span', 'blk-ln', String(b)));
+      row.appendChild(codeWithSpan(line, h.pairs[i]));
+      if (options.actions && (kind === '+' || kind === '-')) {
+        row.classList.add('is-selectable');
+        row.addEventListener('click', function () {
+          h.selected[i] = !h.selected[i];
+          row.classList.toggle('is-selected', h.selected[i]);
+          h.box.classList.toggle('has-selection', Object.keys(h.selected).some(function (k) { return h.selected[k]; }));
+        });
+      }
+      h.rows.appendChild(row);
+    }
+
+    // Where drawing stopped: which file, which hunk, which line.
+    var fileIndex = 0, hunkIndex = 0, lineIndex = 0;
+    var fileBox = null, current = null, more = null;
+    function draw(limit) {
+      if (more) { more.remove(); more = null; }
+      var used = 0;
+      while (fileIndex < files.length && used < limit) {
+        var file = files[fileIndex];
+        if (!fileBox) fileBox = openFile(file);
+        if (hunkIndex >= file.hunks.length) {
+          fileIndex++;
+          hunkIndex = 0;
+          fileBox = null;
+          continue;
+        }
+        if (!current) current = openHunk(fileBox, file, file.hunks[hunkIndex]);
+        var end = Math.min(current.hunk.lines.length, lineIndex + limit - used);
+        addRows(current, lineIndex, end);
+        used += end - lineIndex;
+        drawn += end - lineIndex;
+        lineIndex = end;
+        if (lineIndex >= current.hunk.lines.length) {
+          hunkIndex++;
+          lineIndex = 0;
+          current = null;
+        }
+      }
+      // Files after the last line drawn that have nothing to draw still get their box.
+      while (fileIndex < files.length && drawn >= total) {
+        if (!fileBox) openFile(files[fileIndex]);
+        fileIndex++;
+        fileBox = null;
+      }
+      if (fileIndex < files.length) {
+        more = button('显示剩余 ' + (total - drawn) + ' 行', function () { draw(budget); }, { className: 'blk-btn-ghost blk-btn-small blk-diff-more' });
+        container.appendChild(more);
+      }
+    }
+    draw(budget);
     return files;
   }
 

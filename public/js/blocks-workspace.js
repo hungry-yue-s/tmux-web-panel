@@ -51,6 +51,13 @@
   var STATUS_LABEL = { M: '已修改', A: '新增', D: '已删除', R: '重命名', C: '复制', U: '冲突', '?': '未跟踪', T: '类型变化' };
 
   var RESTORED_LOAD_DELAY_MS = 800;
+  // A large commit, drawn as lazygit would: only what is near the screen, a little at a time.
+  var LAZY_DIFFS_AT_ONCE = 3;
+  var LAZY_DIFF_LINES = 400;
+  var INLINE_DIFF_LINES = 600;
+  var LAZY_DIFF_ASK_LINES = 2000;
+  var FILE_LIST_SHOWN = 300;
+  var DIFF_LINE_PX = 20;
 
   function gitBlock(api) {
     var c = ui.client(api.serverId);
@@ -130,6 +137,13 @@
     var viewSide = 'after';
     // Binary files have no diff worth reading and open as the file, unless asked.
     var diffAskedFor = null;
+    // A large commit's per-file diffs, loaded as they come near the screen.
+    var lazyObserver = null;
+
+    function stopLazyDiffs() {
+      if (lazyObserver) lazyObserver.disconnect();
+      lazyObserver = null;
+    }
 
     function rootPath(rel) { return status.root.replace(/\/$/, '') + '/' + rel; }
 
@@ -744,8 +758,13 @@
 
         function openCommit(commit, line) {
           commitRows.forEach(function (r) { r.classList.toggle('is-active', r === line); });
+          stopLazyDiffs();
+          // A large commit can answer after the next one was picked: only the latest lands.
+          var asked = {};
+          detail.__commit = asked;
           detail.replaceChildren(ui.spinnerLine('读取提交'));
           c.get('/api/git/show', Object.assign({ commit: commit.hash }, target)).then(function (res) {
+            if (detail.__commit !== asked) return;
             var at = res.diff.indexOf('\ndiff --git ');
             var headText = at === -1 ? res.diff : res.diff.slice(0, at);
             var lines = headText.split('\n');
@@ -782,14 +801,103 @@
               if (preview) preview.style.height = Math.max(320, detail.clientHeight - bar.offsetHeight - 28) + 'px';
             }
 
+            // A file's part of the diff: cut from the whole one when it came along, otherwise
+            // asked for, once.
+            var fileDiffs = {};
+            function loadFileDiff(file) {
+              if (!res.diffOmitted) return Promise.resolve(fileDiff(diffText, file.path));
+              if (!fileDiffs[file.path]) {
+                var query = Object.assign({ commit: commit.hash, file: file.path, from: file.from || null }, target);
+                fileDiffs[file.path] = c.get('/api/git/show-file', query).then(function (data) { return data.diff; });
+                fileDiffs[file.path].catch(function () { delete fileDiffs[file.path]; });
+              }
+              return fileDiffs[file.path];
+            }
+
             function showAll() {
               markFile(null);
+              stopLazyDiffs();
               disposePreviews(diffs);
-              ui.renderDiffInto(diffs, diffText, { emptyTitle: '没有文本改动', emptyText: '这个提交只改了二进制文件或文件权限。' });
+              if (res.diffOmitted) {
+                showAllLazily();
+                return;
+              }
+              ui.renderDiffInto(diffs, diffText, {
+                maxLines: INLINE_DIFF_LINES,
+                emptyTitle: '没有文本改动', emptyText: '这个提交只改了二进制文件或文件权限。',
+              });
+            }
+
+            /**
+             * A commit too large to draw at once: a section per file, each filled in as it
+             * comes near the screen, a few at a time. A file with a great many changed
+             * lines waits to be asked for, and a binary one has nothing to show here.
+             */
+            function showAllLazily() {
+              diffs.replaceChildren();
+              var waiting = [];
+              var running = 0;
+              var pump = function () {
+                while (running < LAZY_DIFFS_AT_ONCE && waiting.length) {
+                  running += 1;
+                  waiting.shift()().then(function () { running -= 1; pump(); });
+                }
+              };
+              var want = function (load) { waiting.push(load); pump(); };
+              var observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(function (entries) {
+                entries.forEach(function (entry) {
+                  if (!entry.isIntersecting) return;
+                  observer.unobserve(entry.target);
+                  want(entry.target.__loadDiff);
+                });
+              }, { root: detail, rootMargin: '800px 0px' }) : null;
+              lazyObserver = observer;
+              files.forEach(function (file) {
+                var section = el('section', 'blk-diff-filebox git-lazy-file');
+                var head = el('button', 'blk-diff-filehead');
+                head.type = 'button';
+                head.title = '单独查看这个文件';
+                head.appendChild(el('span', 'blk-diff-filename', file.path));
+                var stats = el('span', 'blk-diff-stats');
+                if (file.binary) stats.appendChild(el('span', 'blk-muted', '二进制'));
+                else stats.append(el('span', 'is-add', '+' + file.added), el('span', 'is-del', '−' + file.removed));
+                head.appendChild(stats);
+                head.addEventListener('click', function () { showFile(file); });
+                var body = el('div', 'git-lazy-body');
+                section.append(head, body);
+                diffs.appendChild(section);
+                var load = function () {
+                  body.replaceChildren(ui.spinnerLine('读取差异'));
+                  return loadFileDiff(file).then(function (text) {
+                    if (!body.isConnected) return;
+                    body.style.minHeight = '';
+                    ui.renderDiffInto(body, text, {
+                      fileHeaders: false, maxLines: LAZY_DIFF_LINES,
+                      emptyTitle: '没有文本差异', emptyText: '只改了文件名或权限。',
+                    });
+                  }, function (err) {
+                    if (body.isConnected) body.replaceChildren(ui.errorBox(err));
+                  });
+                };
+                if (file.binary) {
+                  body.appendChild(el('div', 'blk-muted git-lazy-note', '二进制文件，单独查看时可以预览。'));
+                } else if (file.added + file.removed > LAZY_DIFF_ASK_LINES) {
+                  body.appendChild(button('改动较多（+' + file.added + ' −' + file.removed + '），点击加载', function () { want(load); }, { className: 'blk-btn-ghost blk-btn-small git-lazy-note' }));
+                } else if (observer) {
+                  // Roughly the room it will take, so only sections near the screen are
+                  // near the screen: a column of empty ones would all load at once.
+                  body.style.minHeight = (Math.min(file.added + file.removed + 8, LAZY_DIFF_LINES) * DIFF_LINE_PX + 44) + 'px';
+                  section.__loadDiff = load;
+                  observer.observe(section);
+                } else {
+                  want(load);
+                }
+              });
             }
 
             function showFile(file) {
               markFile(file);
+              stopLazyDiffs();
               var fileKey = commit.hash + '\u0000' + file.path;
               var versions = {
                 before: file.status === 'A' ? null : { rev: commit.hash + '^', path: file.from || file.path },
@@ -820,13 +928,24 @@
                 return;
               }
               var one = el('div', 'git-commit-file-diff');
-              ui.renderDiffInto(one, fileDiff(diffText, file.path), {
-                fileHeaders: false,
-                emptyTitle: '没有文本差异',
-                emptyText: file.binary ? '这是二进制文件，切到“预览”查看。' : '只改了文件名或权限。',
-              });
+              var draw = function (text) {
+                ui.renderDiffInto(one, text, {
+                  fileHeaders: false,
+                  emptyTitle: '没有文本差异',
+                  emptyText: file.binary ? '这是二进制文件，切到“预览”查看。' : '只改了文件名或权限。',
+                });
+              };
+              // Already here with the commit: drawn now, with no flash of loading.
+              if (!res.diffOmitted) draw(fileDiff(diffText, file.path));
+              else one.appendChild(ui.spinnerLine('读取差异'));
               diffs.replaceChildren(bar, one);
               bringUp(bar, null);
+              if (!res.diffOmitted) return;
+              loadFileDiff(file).then(function (text) {
+                if (one.isConnected) draw(text);
+              }, function (err) {
+                if (one.isConnected) one.replaceChildren(ui.errorBox(err));
+              });
             }
 
             var list = el('div', 'git-commit-files');
@@ -837,7 +956,7 @@
               var rowsBox = el('div', 'git-commit-file-list');
               rowsBox.setAttribute('role', 'listbox');
               rowsBox.setAttribute('aria-label', '这个提交改动的文件');
-              files.forEach(function (file) {
+              var addRow = function (file) {
                 var row = el('div', 'git-file');
                 row.setAttribute('role', 'option');
                 row.setAttribute('aria-selected', 'false');
@@ -855,8 +974,17 @@
                 row.addEventListener('click', function () { showFile(file); });
                 fileRows.push({ row: row, file: file });
                 rowsBox.appendChild(row);
-              });
+              };
+              // Thousands of rows cost as much as a diff: the rest come when asked for.
+              files.slice(0, FILE_LIST_SHOWN).forEach(addRow);
               list.appendChild(rowsBox);
+              if (files.length > FILE_LIST_SHOWN) {
+                var restOfFiles = button('显示其余 ' + (files.length - FILE_LIST_SHOWN) + ' 个文件', function () {
+                  restOfFiles.remove();
+                  files.slice(FILE_LIST_SHOWN).forEach(addRow);
+                }, { className: 'blk-btn-ghost blk-btn-small git-more' });
+                list.appendChild(restOfFiles);
+              }
             }
             detail.replaceChildren(card, list, diffs);
             showAll();
@@ -911,6 +1039,7 @@
         clearTimeout(firstLoad);
         window.removeEventListener('focus', onFocus);
         closeBranchMenu();
+        stopLazyDiffs();
         disposePreviews(root);
       },
     };

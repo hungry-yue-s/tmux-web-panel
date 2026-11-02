@@ -220,6 +220,40 @@ describe('git block API', () => {
       expect(Buffer.compare(res.body, PNG)).toBe(0);
     });
 
+    it('leaves a large commit\'s diff out, to be asked for file by file', async () => {
+      const git = (...args) => execFileSync('git', ['-C', history, '-c', 'user.name=T', '-c', 'user.email=t@e', ...args], { encoding: 'utf8' });
+      const big = Array.from({ length: 9000 }, (_, i) => `line ${i} ${'x'.repeat(30)}`).join('\n') + '\n';
+      await writeFile(join(history, 'big.txt'), big);
+      await writeFile(join(history, 'small.txt'), 'small\n');
+      git('add', 'big.txt', 'small.txt');
+      // Only these: notes.md stays staged for the other tests.
+      git('commit', '-q', '-m', 'large one', '--', 'big.txt', 'small.txt');
+      const large = hashOf('large one');
+
+      let res = await request(app).get('/api/git/show').query({ path, commit: large });
+      expect(res.body.data.diffOmitted).toBe(true);
+      expect(res.body.data.diff).not.toContain('diff --git');
+      expect(res.body.data.diff).toContain('large one');
+      expect(res.body.data.files.map((f) => [f.path, f.added])).toEqual([['big.txt', 9000], ['small.txt', 1]]);
+
+      res = await request(app).get('/api/git/show-file').query({ path, commit: large, file: 'small.txt' });
+      expect(res.body.data.diff).toContain('diff --git a/small.txt b/small.txt');
+      expect(res.body.data.diff).toContain('+small');
+      expect(res.body.data.diff).not.toContain('big.txt');
+    });
+
+    it('gives one file of a commit, a renamed one under both its names', async () => {
+      const second = hashOf('second');
+      const res = await request(app).get('/api/git/show-file').query({ path, commit: second, file: 'new name.txt', from: 'old name.txt' });
+      expect(res.body.data.diff).toContain('rename from old name.txt');
+      expect(res.body.data.diff).toContain('rename to new name.txt');
+      expect(res.body.data.diff).not.toContain('notes.md');
+      for (const query of [{ file: '../x' }, { file: 'a', from: '/etc/passwd' }, { file: '' }, { commit: 'HEAD', file: 'a' }]) {
+        const bad = await request(app).get('/api/git/show-file').query({ path, commit: second, ...query });
+        expect(bad.status, JSON.stringify(query)).toBe(400);
+      }
+    });
+
     it('says when that version has no such file, and refuses anything but a version and a path in it', async () => {
       const second = hashOf('second');
       let res = await request(app).get('/api/git/file').query({ path, rev: second + '^', file: 'logo.png' });

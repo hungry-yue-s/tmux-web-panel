@@ -18,7 +18,7 @@ let dom;
 afterEach(() => dom?.window.close());
 
 /** The real file preview, BlockHost and Git block, with the git API answered here. */
-function setup() {
+function setup(answers = {}) {
   dom = new JSDOM(
     '<!doctype html><body><div class="ms-app mode-terminal"><main class="ms-main"><div class="terminal-view"></div></main></div></body>',
     { url: 'https://panel.test/', runScripts: 'outside-only' },
@@ -48,6 +48,7 @@ function setup() {
   };
   const diffs = { 'logo.png': LOGO_DIFF, 'notes.md': NOTES_DIFF, 'new.txt': NEW_DIFF };
   const get = vi.fn(async (path, query) => {
+    if (answers[path]) return answers[path](query);
     if (path === '/api/git/status') return JSON.parse(JSON.stringify(status));
     if (path === '/api/git/diff') return { diff: diffs[query.file] };
     if (path === '/api/git/log') {
@@ -224,5 +225,120 @@ describe('a changed file in the Git block', () => {
     await settled();
     expect(context.get.mock.calls.filter(([path]) => path === '/api/git/status').length).toBeGreaterThan(1);
     expect(context.renderInto.mock.calls.length).toBe(drawn);
+  });
+});
+
+describe('a large commit in the Git history', () => {
+  const HEADER = COMMIT + '\nT <t@e>\nnow\n\nbig one\n';
+  const text = (name, n = 2) => `diff --git a/${name} b/${name}\nindex 1..2 100644\n--- a/${name}\n+++ b/${name}\n@@ -1,${n} +1,${n} @@\n`
+    + Array.from({ length: n }, (_, i) => `-old ${i}\n+new ${name} ${i}\n`).join('');
+  const file = (path, added, removed, extra = {}) => ({ path, from: null, status: 'M', added, removed, binary: false, ...extra });
+
+  /** /show-file answers held until let go, counting how many wait at once. */
+  function heldFiles() {
+    const held = [];
+    let waiting = 0;
+    let most = 0;
+    const answer = (query) => new Promise((resolve) => {
+      waiting += 1;
+      most = Math.max(most, waiting);
+      held.push({ file: query.file, query, go: () => { waiting -= 1; resolve({ diff: text(query.file) }); } });
+    });
+    return { held, answer, most: () => most, releaseAll: async () => { while (held.some((h) => !h.done)) { held.filter((h) => !h.done).forEach((h) => { h.done = true; h.go(); }); await settled(); } } };
+  }
+
+  async function openCommit(context) {
+    await settled();
+    context.press('历史');
+    await settled();
+    context.frame().querySelector('.git-log-row.has-commit').click();
+    await settled();
+  }
+  const detail = (context) => context.frame().querySelector('.git-log-detail');
+  const sections = (context) => [...detail(context).querySelectorAll('.git-lazy-file')];
+  const sectionFor = (context, path) => sections(context).find((s) => s.querySelector('.blk-diff-filename').textContent === path);
+
+  it('lists its files at once and loads each file\'s diff on its own, a few at a time', async () => {
+    const files = heldFiles();
+    const small = ['a.js', 'b.js', 'c.js', 'd.js', 'e.js'];
+    const context = setup({
+      '/api/git/show': () => ({
+        diff: HEADER, diffOmitted: true,
+        files: [...small.map((p) => file(p, 2, 2)), file('huge.js', 3000, 0), file('logo.png', 0, 0, { binary: true })],
+      }),
+      '/api/git/show-file': files.answer,
+    });
+    await openCommit(context);
+
+    expect(detail(context).querySelector('.git-commit-card h3').textContent).toBe('big one');
+    expect(sections(context)).toHaveLength(7);
+    expect(files.held.map((h) => h.file)).toEqual(['a.js', 'b.js', 'c.js']);
+    await files.releaseAll();
+    expect(files.most()).toBe(3);
+    expect(files.held.map((h) => h.file).sort()).toEqual(small);
+    expect(files.held[0].query).toMatchObject({ commit: COMMIT, path: '/repo' });
+    expect(sectionFor(context, 'a.js').querySelectorAll('.blk-line')).toHaveLength(4);
+
+    // Not loaded unless asked: a file with a great many changed lines, and a binary one.
+    expect(sectionFor(context, 'logo.png').textContent).toContain('二进制文件');
+    const ask = sectionFor(context, 'huge.js').querySelector('button.git-lazy-note');
+    expect(ask.textContent).toBe('改动较多（+3000 −0），点击加载');
+    ask.click();
+    await settled();
+    expect(files.held.at(-1).file).toBe('huge.js');
+  });
+
+  it('reuses a diff it already has when a file is picked on its own, and asks only once otherwise', async () => {
+    const files = heldFiles();
+    const context = setup({
+      '/api/git/show': () => ({ diff: HEADER, diffOmitted: true, files: [file('a.js', 2, 2), file('huge.js', 3000, 0)] }),
+      '/api/git/show-file': files.answer,
+    });
+    await openCommit(context);
+    await files.releaseAll();
+    const asked = () => files.held.map((h) => h.file);
+    expect(asked()).toEqual(['a.js']);
+
+    const rows = [...detail(context).querySelectorAll('.git-commit-file-list .git-file')];
+    rows[0].click();
+    await settled();
+    expect(asked()).toEqual(['a.js']);
+    expect(detail(context).querySelector('.git-commit-file-diff').textContent).toContain('new a.js 0');
+
+    rows[1].click();
+    await files.releaseAll();
+    context.press('全部文件', detail(context));
+    rows[1].click();
+    await settled();
+    expect(asked()).toEqual(['a.js', 'huge.js']);
+  });
+
+  it('shows the commit picked last, whatever order the answers come in', async () => {
+    const answers = {};
+    const context = setup({
+      '/api/git/log': () => ({ rows: ['first', 'second'].map((subject, i) => ({ graph: '* ', commit: { hash: 'ab' + i + 'cdef0', short: 'ab' + i, refs: [], subject, author: 'T', date: 'now' } })) }),
+      '/api/git/show': (query) => new Promise((resolve) => { answers[query.commit] = resolve; }),
+    });
+    await settled();
+    context.press('历史');
+    await settled();
+    const commits = [...context.frame().querySelectorAll('.git-log-row.has-commit')];
+    commits[0].click();
+    commits[1].click();
+    answers.ab1cdef0({ diff: 'ab1cdef0\nT <t@e>\nnow\n\nsecond\n', files: [] });
+    await settled();
+    answers.ab0cdef0({ diff: 'ab0cdef0\nT <t@e>\nnow\n\nfirst\n', files: [] });
+    await settled();
+    expect(detail(context).querySelector('.git-commit-card h3').textContent).toBe('second');
+  });
+
+  it('lists the first 300 files, and the rest when asked', async () => {
+    const many = Array.from({ length: 350 }, (_, i) => file(`f${i}.txt`, 1, 0));
+    const context = setup({ '/api/git/show': () => ({ diff: HEADER, diffOmitted: true, files: many }) });
+    await openCommit(context);
+    const rows = () => detail(context).querySelectorAll('.git-commit-file-list .git-file').length;
+    expect(rows()).toBe(300);
+    context.press('显示其余 50 个文件', detail(context));
+    expect(rows()).toBe(350);
   });
 });

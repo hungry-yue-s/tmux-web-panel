@@ -213,6 +213,8 @@ body.blk-dragging iframe, body.blk-resizing iframe, body.fp-side-resizing iframe
 .blk-diff-filehead .blk-svg { color: var(--b-muted); transition: transform .15s; }
 .blk-diff-filebox.is-collapsed .blk-diff-filehead .blk-svg { transform: rotate(-90deg); }
 .blk-diff-filebox.is-collapsed .blk-hunk { display: none; }
+.blk-diff-more { margin: 2px 0 12px; }
+.git-lazy-note { margin: 2px 2px 10px; font-size: 12px; }
 .blk-diff-filename { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .blk-hunk { border: 1px solid var(--b-line); border-radius: 9px; margin-bottom: 10px; overflow: hidden; background: var(--b-bg); }
 .blk-hunk-head { display: flex; align-items: center; gap: 10px; min-height: 32px; padding: 3px 6px 3px 10px; border-bottom: 1px solid var(--b-line); background: var(--b-sunken); color: var(--b-muted); font-size: 12px; }

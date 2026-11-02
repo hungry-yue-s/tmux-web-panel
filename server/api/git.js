@@ -14,6 +14,11 @@ const READ_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT = 32 * 1024 * 1024;
 const MAX_DIFF_FOR_MESSAGE = 60 * 1024;
 const LOG_LIMIT_MAX = 1000;
+// A commit's whole diff comes with it only up to this size; past it, file by file.
+const SHOW_INLINE_BYTES = 256 * 1024;
+const SHOW_HEADER = '%H%n%an <%ae>%n%ad%n%n%B';
+// A merge is shown against its first parent, as its own commit's changes.
+const SHOW_CHANGES = ['-M', '--diff-merges=first-parent'];
 
 class GitError extends Error {
   constructor(message, status = 400) {
@@ -24,9 +29,10 @@ class GitError extends Error {
 
 /**
  * Runs git and resolves its stdout; `allowExit` lists non-zero codes that still count as success.
- * `raw` resolves the bytes instead of text.
+ * `raw` resolves the bytes instead of text. Past `outputLimit` bytes git is stopped and
+ * the call fails with `output_too_large`.
  */
-export function runGit(cwd, args, { input = null, allowExit = [], timeout = READ_TIMEOUT_MS, env = {}, raw = false } = {}) {
+export function runGit(cwd, args, { input = null, allowExit = [], timeout = READ_TIMEOUT_MS, env = {}, raw = false, outputLimit = MAX_OUTPUT } = {}) {
   const began = performance.now();
   return new Promise((resolve, reject) => {
     const child = spawn('git', ['--literal-pathspecs', '-c', 'core.quotepath=off', ...args], {
@@ -51,7 +57,7 @@ export function runGit(cwd, args, { input = null, allowExit = [], timeout = READ
     const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeout);
     child.stdout.on('data', (chunk) => {
       size += chunk.length;
-      if (size > MAX_OUTPUT) { maxOutput = true; child.kill(); }
+      if (size > outputLimit) { maxOutput = true; child.kill(); }
       else out.push(chunk);
     });
     child.stderr.on('data', (chunk) => { errSize += chunk.length; err.push(chunk); });
@@ -63,6 +69,7 @@ export function runGit(cwd, args, { input = null, allowExit = [], timeout = READ
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       report(code, signal);
+      if (maxOutput) return reject(new GitError('output_too_large', 413));
       const bytes = Buffer.concat(out);
       if (code === 0 || allowExit.includes(code)) return resolve(raw ? bytes : bytes.toString('utf8'));
       const message = Buffer.concat(err).toString('utf8').trim() || `git exited with ${code}`;
@@ -257,15 +264,21 @@ export function parseCommitFiles(nameStatus, numstat) {
   return files;
 }
 
+/** A path inside the repository, as git names it: relative, and never above the root. */
+export function repoPath(file) {
+  const path = String(file || '');
+  if (!path || path.startsWith('/') || /[\0\n]/.test(path) || path.split('/').includes('..')) {
+    throw new GitError('invalid_path');
+  }
+  return path;
+}
+
 /**
  * `git cat-file` name for a file as one version has it: `INDEX` for the staging
  * area, otherwise HEAD or a commit id, either with `^` for its first parent.
  */
 export function blobSpec(rev, file) {
-  const path = String(file || '');
-  if (!path || path.startsWith('/') || /[\0\n]/.test(path) || path.split('/').includes('..')) {
-    throw new GitError('invalid_path');
-  }
+  const path = repoPath(file);
   const version = String(rev || '');
   if (version === 'INDEX') return `:${path}`;
   if (!/^(HEAD|[0-9a-f]{4,64})\^?$/i.test(version)) throw new GitError('invalid_revision');
@@ -365,14 +378,33 @@ export function createGitRouter({ pathGuard, generateMessage = generateWithClaud
     const { root } = await repo(req);
     const commit = String(req.query.commit || '');
     if (!/^[0-9a-f]{4,64}$/i.test(commit)) throw new GitError('invalid_commit');
-    // A merge is shown against its first parent, as its own commit's changes.
-    const changes = ['-M', '--diff-merges=first-parent'];
-    const [diff, nameStatus, numstat] = await Promise.all([
-      runGit(root, ['show', '--no-color', '--no-ext-diff', ...changes, '--format=%H%n%an <%ae>%n%ad%n%n%B', commit]),
-      runGit(root, ['show', '--format=', ...changes, '--name-status', '-z', commit]),
-      runGit(root, ['show', '--format=', ...changes, '--numstat', '-z', commit]),
+    // All at once: the whole diff is cut off past its limit, so a small commit still
+    // takes one round and a large one costs no more than that much of it.
+    const [header, nameStatus, numstat, whole] = await Promise.all([
+      runGit(root, ['show', '-s', `--format=${SHOW_HEADER}`, commit]),
+      runGit(root, ['show', '--format=', ...SHOW_CHANGES, '--name-status', '-z', commit]),
+      runGit(root, ['show', '--format=', ...SHOW_CHANGES, '--numstat', '-z', commit]),
+      runGit(root, ['show', '--no-color', '--no-ext-diff', ...SHOW_CHANGES, `--format=${SHOW_HEADER}`, commit], { outputLimit: SHOW_INLINE_BYTES })
+        .catch((error) => {
+          if (error.message === 'output_too_large') return null;
+          throw error;
+        }),
     ]);
-    return { diff, files: parseCommitFiles(nameStatus, numstat) };
+    const files = parseCommitFiles(nameStatus, numstat);
+    if (whole !== null) return { diff: whole, files };
+    // Too much to send and draw at once: the page asks for each file as it comes into view.
+    return { diff: header, files, diffOmitted: true };
+  }));
+
+  // One file's part of a commit. A rename names both paths, so it is still found as one.
+  router.get('/show-file', route(async (req) => {
+    const { root } = await repo(req);
+    const commit = String(req.query.commit || '');
+    if (!/^[0-9a-f]{4,64}$/i.test(commit)) throw new GitError('invalid_commit');
+    const paths = [repoPath(req.query.file)];
+    if (req.query.from) paths.push(repoPath(req.query.from));
+    const diff = await runGit(root, ['show', '--no-color', '--no-ext-diff', ...SHOW_CHANGES, '--format=', commit, '--', ...paths]);
+    return { diff };
   }));
 
   // One version of a file, for the file preview's renderers: what kind of file it

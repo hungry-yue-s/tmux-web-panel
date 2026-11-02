@@ -133,5 +133,6 @@ Git、浏览器等工具 block 与文件共用这个分窗（同一个标签条�
 - 文件 Tab 和窗口级 block 的持久化键包含服务器 ID、tmux 服务实例（PID + 启动时间）和窗口 ID；不恢复缺少实例信息的旧缓存。删除窗口成功时立即清理；成功且完整的工作区快照还会回收已消失窗口和旧实例的记录，失败或不完整的读取不得触发回收。
 - 默认 Git 入口（顶栏 chip、快捷键、命令面板）跟随实际聚焦的窗格，每次都现查：原生分屏看 tmux active pane，Tab 和移动端看 `state.currentPane`，不看路由和 attach 用的窗格（`Blocks.ui.selectedContext` / `focusedContext`）。tmux 答不出就报错，不得回退到 attach 窗格；终端还没跟上路由时没有答案，不得拿旧窗格去问新服务器。查询期间换了服务器、窗口、窗格或模式，结果不得落地。先查到仓库根再按根打开或激活标签：已绑定仓库的标签不会改投别的仓库，草稿和写操作都留在原仓库；不在仓库里就开一个说明情况的标签，不沿用旧仓库。文件预览里的 Git 是显式路径，不跟随焦点。
 - Git block 预览文件用的就是文件预览的渲染器，经 `FilePreview.renderInto` 只读渲染，不另写一套：不出 TODO 看板，任务勾选框禁用，不加 git gutter。磁盘上的版本照常走 `/api/files`，暂存区和提交里的版本走 `/api/git/file` 与 `/api/git/raw`（`rev` 只接受 `INDEX`、`HEAD` 或提交号，可带 `^`）。SQLite 和压缩包只能按磁盘上的文件预览，其它版本只给下载。
+- 大提交不能一次取完、一次画完：`/api/git/show` 并行取文件列表和整份 diff，整份超过 `SHOW_INLINE_BYTES` 就中止（`runGit` 的 `outputLimit`），返回 `diffOmitted`。页面按文件经 `/api/git/show-file` 在区块接近可视区时加载，同时最多 3 个，改动特别多的文件和二进制文件不自动加载。`renderDiffInto` 一次最多画 `maxLines` 行，其余点“显示剩余”接着画。不要改回整份 diff 一次渲染，那样两万行的提交会卡住页面好几秒。
 - 关闭最后一个文件 Tab 时，只要还有 block 标签，分窗就保留；所有标签都没了才销毁。
 - 分窗只存在于终端旁：离开终端页时 block 暂存（frame 脱离 DOM），回来再挂上；在其它页面打开 block 时用浮动窗口。
