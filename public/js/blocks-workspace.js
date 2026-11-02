@@ -144,6 +144,8 @@
         stateBox.hidden = true;
         changesView.hidden = historyTab.classList.contains('is-active');
         if (target.path !== data.root) {
+          // That repository already has its block here, maybe with a draft in it.
+          if (api.yieldToTwin({ path: data.root })) return;
           target = { path: data.root };
           api.setParams({ path: data.root, paneId: null });
         }
@@ -1171,7 +1173,8 @@
 
   var chip = null;
   var chipBusy = false;
-  var chipData = null;
+  // Only the newest answer may be shown: opening Git asks too, and can overtake a refresh.
+  var chipAsked = 0;
 
   function ensureChip() {
     var crumbs = document.querySelector('.ms-topbar .crumbs');
@@ -1180,46 +1183,52 @@
       chip = el('button', 'pane-git-chip');
       chip.type = 'button';
       chip.hidden = true;
-      chip.addEventListener('click', function () {
-        if (chipData) BlockHost.open('git', { path: chipData.root });
-      });
+      // What it shows can be 15 seconds old, so it is not what gets opened.
+      chip.addEventListener('click', function () { openGit(); });
     }
     if (chip.parentNode !== crumbs) crumbs.appendChild(chip);
     return chip;
+  }
+
+  function showChip(data) {
+    var node = ensureChip();
+    if (!node) return;
+    node.replaceChildren();
+    node.innerHTML = icon('branch');
+    node.appendChild(el('span', 'pane-git-branch', data.detached ? 'HEAD' : (data.branch || '—')));
+    if (data.files.length) node.appendChild(el('span', 'pane-git-dirty', '●' + data.files.length));
+    if (data.ahead) node.appendChild(el('span', 'pane-git-track', '↑' + data.ahead));
+    if (data.behind) node.appendChild(el('span', 'pane-git-track', '↓' + data.behind));
+    node.title = data.root + (data.files.length ? ' · ' + data.files.length + ' 个改动' : ' · 干净') + '\n点击打开 Git (' + ui.keysText('Alt+Shift+G') + ')';
+    node.setAttribute('aria-label', 'Git 分支 ' + (data.branch || '') + '，' + data.files.length + ' 个改动，打开 Git');
+    node.hidden = false;
+  }
+
+  function hideChip() {
+    if (chip) chip.hidden = true;
   }
 
   function refreshChip() {
     var node = ensureChip();
     if (!node) return;
     var terminal = document.querySelector('.ms-app.mode-terminal');
-    var ctx = ui.currentContext();
-    if (!terminal || !ctx.paneId || document.visibilityState !== 'visible') {
+    var selected = ui.selectedContext();
+    if (!terminal || !selected.paneId || document.visibilityState !== 'visible') {
       if (!terminal) node.hidden = true;
       return;
     }
     if (chipBusy) return;
     chipBusy = true;
-    var isStale = function () {
-      var now = ui.currentContext();
-      return now.serverId !== ctx.serverId || now.paneId !== ctx.paneId;
-    };
-    ui.client(ctx.serverId).get('/api/git/status', { path: '.', paneId: ctx.paneId }).then(function (data) {
-      // The user moved on while this was running: it describes another repository.
-      if (isStale()) return;
-      chipData = data;
-      node.replaceChildren();
-      node.innerHTML = icon('branch');
-      node.appendChild(el('span', 'pane-git-branch', data.detached ? 'HEAD' : (data.branch || '—')));
-      if (data.files.length) node.appendChild(el('span', 'pane-git-dirty', '●' + data.files.length));
-      if (data.ahead) node.appendChild(el('span', 'pane-git-track', '↑' + data.ahead));
-      if (data.behind) node.appendChild(el('span', 'pane-git-track', '↓' + data.behind));
-      node.title = data.root + (data.files.length ? ' · ' + data.files.length + ' 个改动' : ' · 干净') + '\n点击打开 Git (' + ui.keysText('Alt+Shift+G') + ')';
-      node.setAttribute('aria-label', 'Git 分支 ' + (data.branch || '') + '，' + data.files.length + ' 个改动，打开 Git');
-      node.hidden = false;
+    var asked = ++chipAsked;
+    var isStale = function () { return ui.selectedContext().key !== selected.key; };
+    ui.focusedContext().then(function (ctx) {
+      if (isStale()) return null;
+      return ui.client(ctx.serverId).get('/api/git/status', { path: '.', paneId: ctx.paneId }).then(function (data) {
+        // The user moved on while this was running: it describes another repository.
+        if (!isStale() && asked === chipAsked) showChip(data);
+      });
     }).catch(function () {
-      if (isStale()) return;
-      chipData = null;
-      node.hidden = true;
+      if (!isStale() && asked === chipAsked) hideChip();
     }).finally(function () {
       chipBusy = false;
       if (isStale()) scheduleChip();
@@ -1249,9 +1258,39 @@
       .catch(function (err) { toast(errorText(err), { error: true }); });
   }
 
+  var gitOpens = 0;
+
+  /**
+   * Git for the pane in focus, as it is now: focus and the pane's directory both move
+   * without telling anyone, so this asks every time. The repository is found first and
+   * opened by its root, so a block already showing it comes up with its draft, and a
+   * block showing another repository is never pointed somewhere else.
+   */
   function openGit() {
-    var ctx = ui.currentContext();
-    BlockHost.open('git', chipData && chipData.root ? { path: chipData.root } : { path: '.', paneId: ctx.paneId });
+    var open = ++gitOpens;
+    var selected = ui.selectedContext();
+    var moved = function () { return open !== gitOpens || ui.selectedContext().key !== selected.key; };
+    if (!selected.paneId) {
+      if (selected.onTerminal) toast('这个窗口还没打开好，稍后再试');
+      else BlockHost.open('git', { path: '.' });
+      return;
+    }
+    ui.focusedContext().then(function (ctx) {
+      if (moved()) return null;
+      var asked = ++chipAsked;
+      return ui.client(ctx.serverId).get('/api/git/status', { path: '.', paneId: ctx.paneId }).then(function (data) {
+        if (moved()) return;
+        if (asked === chipAsked) showChip(data);
+        BlockHost.open('git', { path: data.root });
+      }, function () {
+        if (moved()) return;
+        if (asked === chipAsked) hideChip();
+        // Keyed by the pane, and it says itself that this is not a repository, or what went wrong.
+        BlockHost.open('git', { path: '.', paneId: ctx.paneId });
+      });
+    }).catch(function (err) {
+      if (!moved()) toast('无法确定当前窗格：' + errorText(err), { error: true });
+    });
   }
 
   function openPalette(prefix) {
@@ -1349,7 +1388,13 @@
     scheduleChip();
   }
   window.addEventListener('hashchange', scheduleChip);
-  window.addEventListener('terminal-target-server', function () { chipData = null; scheduleChip(); });
+  // Another machine: what is on the chip and on its way to it is about the last one.
+  window.addEventListener('terminal-target-server', function () {
+    chipAsked += 1;
+    hideChip();
+    scheduleChip();
+  });
+  window.addEventListener('terminal-pane-selected', scheduleChip);
   document.addEventListener('visibilitychange', refreshChip);
   setInterval(refreshChip, 15000);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

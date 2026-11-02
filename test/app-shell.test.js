@@ -335,6 +335,13 @@ describe('AppShell sidebar preferences', () => {
   });
 });
 
+/** The terminal has caught up with the seeded route, with this pane selected. */
+function terminalIn(ctx, paneId) {
+  ctx.win.TerminalTarget = { serverId: 'local', sessionId: '$0', windowId: '@0' };
+  ctx.win.state = { currentPane: paneId };
+  ctx.win.Api = { activeServerId: () => ctx.win.TerminalTarget.serverId, nodeUrl: (_id, path) => path };
+}
+
 describe('AppShell window bar', () => {
   it('opens Git from its chip without triggering the title copy action', async () => {
     const ctx = loadShell();
@@ -346,14 +353,14 @@ describe('AppShell window bar', () => {
     ctx.win.BlockHost = { register: vi.fn(), render: vi.fn(), open: vi.fn() };
     const data = { root: '/tmp/repo', branch: 'feat/header-copy', files: [], detached: false };
     ctx.win.Blocks.ui.client = () => ({ get: async () => data });
-    ctx.win.Blocks.ui.currentContext = () => ({ serverId: 'local', paneId: '%95' });
+    terminalIn(ctx, '%95');
     Object.defineProperty(ctx.document, 'visibilityState', { value: 'visible' });
     ctx.win.eval(WORKSPACE_BLOCKS);
     ctx.document.dispatchEvent(new ctx.win.Event('DOMContentLoaded'));
     await vi.waitFor(() => expect(ctx.document.querySelector('.pane-git-chip')?.hidden).toBe(false), { timeout: 3000 });
     const chip = ctx.document.querySelector('.pane-git-chip');
     chip.click();
-    expect(ctx.win.BlockHost.open).toHaveBeenCalledExactlyOnceWith('git', { path: '/tmp/repo' });
+    await vi.waitFor(() => expect(ctx.win.BlockHost.open).toHaveBeenCalledExactlyOnceWith('git', { path: '/tmp/repo' }));
     expect(ctx.win._copyToClipboard).not.toHaveBeenCalled();
     expect(chip.title).toContain('点击打开 Git');
     ctx.document.getElementById('ms-page-title').click();
@@ -372,21 +379,20 @@ describe('AppShell window bar', () => {
       const answers = [];
       const get = vi.fn((_path, query) => new Promise((resolve, reject) => { answers.push({ query, resolve, reject }); }));
       ctx.win.Blocks.ui.client = () => ({ get });
-      const place = { serverId: 'local', paneId: '%1' };
-      ctx.win.Blocks.ui.currentContext = () => ({ ...place });
+      terminalIn(ctx, '%1');
       Object.defineProperty(ctx.document, 'visibilityState', { value: 'visible', configurable: true });
       ctx.win.eval(WORKSPACE_BLOCKS);
-      return { ctx, answers, get, place };
+      return { ctx, answers, get };
     }
     const repo = (root) => ({ root, branch: root, files: [], detached: false });
     const chipText = (ctx) => ctx.document.querySelector('.pane-git-chip')?.textContent;
 
     it('does not show the repository of a pane the user has left, and asks again for the new one', async () => {
-      const { ctx, answers, get, place } = chipSetup();
+      const { ctx, answers, get } = chipSetup();
       ctx.document.dispatchEvent(new ctx.win.Event('DOMContentLoaded'));
       await vi.waitFor(() => expect(get).toHaveBeenCalledOnce(), { timeout: 3000 });
 
-      place.paneId = '%2';
+      ctx.win.state.currentPane = '%2';
       answers[0].resolve(repo('first-repo'));
       await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2), { timeout: 3000 });
       expect(chipText(ctx) || '').not.toContain('first-repo');
@@ -398,7 +404,7 @@ describe('AppShell window bar', () => {
     });
 
     it('keeps the current chip when a request for a pane it left fails', async () => {
-      const { ctx, answers, get, place } = chipSetup();
+      const { ctx, answers, get } = chipSetup();
       ctx.document.dispatchEvent(new ctx.win.Event('DOMContentLoaded'));
       await vi.waitFor(() => expect(get).toHaveBeenCalledOnce(), { timeout: 3000 });
       answers[0].resolve(repo('first-repo'));
@@ -406,7 +412,7 @@ describe('AppShell window bar', () => {
 
       ctx.document.dispatchEvent(new ctx.win.Event('visibilitychange'));
       await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2));
-      place.paneId = '%2';
+      ctx.win.state.currentPane = '%2';
       answers[1].reject(new Error('gone'));
       await new Promise((resolve) => { setTimeout(resolve, 0); });
       expect(ctx.document.querySelector('.pane-git-chip').hidden).toBe(false);
@@ -448,6 +454,268 @@ describe('AppShell window bar', () => {
       const { ctx, get } = chipSetup();
       ctx.document.dispatchEvent(new ctx.win.Event('DOMContentLoaded'));
       await new Promise((resolve) => { setTimeout(resolve, 200); });
+      expect(get).not.toHaveBeenCalled();
+      ctx.win.close();
+    });
+  });
+
+  describe('Git following the pane in focus', () => {
+    const repo = (root) => ({ root, branch: root, files: [], detached: false });
+    const notARepo = () => Object.assign(new Error('not_a_git_repository'), { status: 404 });
+
+    /** Every default entry on the real blocks code. The route stays on %95 throughout. */
+    function focusSetup({ selected = '%95', focused = selected } = {}) {
+      const ctx = loadShell();
+      seedLocalTmux(ctx.Store);
+      ctx.Shell.render();
+      ctx.Shell.setTerminalHeader('local', ctx.Shell.workspace('local'), { sessionId: '$0', windowId: '@0' });
+      ctx.win.eval(BLOCKS);
+      ctx.win.BlockHost = { register: vi.fn(), render: vi.fn(), open: vi.fn() };
+      const repos = { '%95': repo('/repo/first'), '%7': repo('/repo/focused') };
+      const get = vi.fn(async (_path, query) => {
+        const answer = repos[query.paneId];
+        if (answer instanceof Error) throw answer;
+        return answer || Promise.reject(notARepo());
+      });
+      ctx.win.Blocks.ui.client = vi.fn(() => ({ get }));
+      terminalIn(ctx, selected);
+      const focus = { pane: focused, split: true };
+      ctx.win._focusFollowsTmux = () => focus.split;
+      ctx.win._resolveFocusedPaneId = vi.fn(() => (focus.pane instanceof Error ? Promise.reject(focus.pane) : Promise.resolve(focus.pane)));
+      Object.defineProperty(ctx.document, 'visibilityState', { value: 'visible', configurable: true });
+      ctx.win.eval(WORKSPACE_BLOCKS);
+      const open = ctx.win.BlockHost.open;
+      const toasts = () => ctx.document.querySelector('.blk-toasts, .blk-toast-host')?.textContent || ctx.document.body.textContent;
+      return { ctx, get, repos, focus, open, toasts };
+    }
+    const settled = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+    const chip = (ctx) => ctx.document.querySelector('.pane-git-chip');
+    const entries = (ctx) => ({
+      'the shortcut': () => ctx.document.dispatchEvent(new ctx.win.KeyboardEvent('keydown', { altKey: true, shiftKey: true, code: 'KeyG', bubbles: true })),
+      'the command palette': () => ctx.win.Blocks.commands().find((command) => command.id === 'git').run(),
+      'Blocks.openGit': () => ctx.win.Blocks.openGit(),
+    });
+
+    it('asks about the tmux active pane, not the pane in the route or the one attached with', async () => {
+      const { ctx, get, open } = focusSetup({ focused: '%7' });
+      ctx.win.Blocks.openGit();
+      await vi.waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith('git', { path: '/repo/focused' }));
+      expect(get.mock.calls[0][1]).toEqual({ path: '.', paneId: '%7' });
+      ctx.win.close();
+    });
+
+    it('reaches the same repository from every default entry', async () => {
+      for (const name of ['the shortcut', 'the command palette', 'Blocks.openGit']) {
+        const { ctx, open } = focusSetup({ focused: '%7' });
+        entries(ctx)[name]();
+        await vi.waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith('git', { path: '/repo/focused' }));
+        ctx.win.close();
+      }
+    });
+
+    it('uses the selected pane when the route is left behind, as tabs and phones do', async () => {
+      const { ctx, get, open } = focusSetup({ selected: '%7', focused: '%7' });
+      expect(ctx.Store.getState().route.params.paneId).toBe('%95');
+      ctx.win.Blocks.openGit();
+      await vi.waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith('git', { path: '/repo/focused' }));
+      expect(get.mock.calls[0][1].paneId).toBe('%7');
+      ctx.win.close();
+    });
+
+    it('opens what the pane is in now, not what the chip last saw', async () => {
+      const { ctx, repos, open } = focusSetup();
+      ctx.win.Blocks.openGit();
+      await vi.waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith('git', { path: '/repo/first' }));
+      expect(chip(ctx).title).toContain('/repo/first');
+
+      // cd in the same pane, with nothing to announce it.
+      repos['%95'] = repo('/repo/moved');
+      open.mockClear();
+      chip(ctx).click();
+      await vi.waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith('git', { path: '/repo/moved' }));
+      expect(chip(ctx).title).toContain('/repo/moved');
+      ctx.win.close();
+    });
+
+    it('never falls back to the last repository outside one: the block says so itself', async () => {
+      const { ctx, repos, open } = focusSetup();
+      ctx.win.Blocks.openGit();
+      await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
+      open.mockClear();
+
+      repos['%95'] = notARepo();
+      chip(ctx).click();
+      await vi.waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith('git', { path: '.', paneId: '%95' }));
+      expect(chip(ctx).hidden).toBe(true);
+      ctx.win.close();
+    });
+
+    it('opens nothing when tmux cannot say which pane has focus, and does not guess the first one', async () => {
+      const { ctx, get, focus, open } = focusSetup();
+      focus.pane = new Error('tmux 没有报告活动窗格');
+      ctx.win.Blocks.openGit();
+      await vi.waitFor(() => expect(ctx.document.body.textContent).toContain('无法确定当前窗格'));
+      expect(get).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
+      ctx.win.close();
+    });
+
+    it('hides the chip rather than show a repository for the wrong pane when tmux cannot say', async () => {
+      const { ctx, get, focus } = focusSetup();
+      ctx.document.dispatchEvent(new ctx.win.Event('visibilitychange'));
+      await vi.waitFor(() => expect(chip(ctx).hidden).toBe(false));
+      get.mockClear();
+
+      focus.pane = new Error('gone');
+      ctx.document.dispatchEvent(new ctx.win.Event('visibilitychange'));
+      await vi.waitFor(() => expect(chip(ctx).hidden).toBe(true));
+      expect(get).not.toHaveBeenCalled();
+      ctx.win.close();
+    });
+
+    describe('moving on during the lookup', () => {
+      const moves = {
+        'another pane': (ctx) => { ctx.win.state.currentPane = '%9'; },
+        'tabs from a split, on the same pane': (ctx) => { ctx.win._focusFollowsTmux = () => false; },
+        'another window': (ctx) => {
+          ctx.Store.setRoute({ name: 'terminal', params: { serverId: 'local', sessionId: '$0', windowId: '@2' } });
+        },
+        'another server': (ctx) => {
+          ctx.Store.setRoute({ name: 'terminal', params: { serverId: 'remote', sessionId: '$5', windowId: '@8' } });
+        },
+        'another page': (ctx) => {
+          ctx.Store.setRoute({ name: 'settings', params: {} });
+          ctx.win.state.currentPane = null;
+        },
+      };
+
+      for (const [name, move] of Object.entries(moves)) {
+        it(`drops the answer about focus after moving to ${name}`, async () => {
+          const { ctx, get, open } = focusSetup({ focused: '%7' });
+          let answer;
+          ctx.win._resolveFocusedPaneId.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+          ctx.win.Blocks.openGit();
+          await settled();
+          move(ctx);
+          answer('%7');
+          await settled();
+          expect(get).not.toHaveBeenCalled();
+          expect(open).not.toHaveBeenCalled();
+          ctx.win.close();
+        });
+
+        it(`drops the repository found after moving to ${name}`, async () => {
+          const { ctx, open } = focusSetup({ focused: '%7' });
+          let answer;
+          ctx.win.Blocks.ui.client = () => ({ get: () => new Promise((resolve) => { answer = resolve; }) });
+          ctx.win.Blocks.openGit();
+          await settled();
+          move(ctx);
+          answer(repo('/repo/focused'));
+          await settled();
+          expect(open).not.toHaveBeenCalled();
+          expect(chip(ctx)?.hidden ?? true).toBe(true);
+          ctx.win.close();
+        });
+      }
+
+      it('only the latest request opens anything', async () => {
+        const { ctx, open } = focusSetup({ focused: '%7' });
+        const answers = [];
+        ctx.win.Blocks.ui.client = () => ({ get: () => new Promise((resolve) => { answers.push(resolve); }) });
+        ctx.win.Blocks.openGit();
+        await settled();
+        ctx.win.Blocks.openGit();
+        await settled();
+        answers[1](repo('/repo/second'));
+        answers[0](repo('/repo/first'));
+        await settled();
+        expect(open).toHaveBeenCalledExactlyOnceWith('git', { path: '/repo/second' });
+        expect(chip(ctx).title).toContain('/repo/second');
+        ctx.win.close();
+      });
+
+      it('does not overwrite a newer answer with a slower chip refresh', async () => {
+        const { ctx } = focusSetup({ focused: '%7' });
+        const answers = [];
+        ctx.win.Blocks.ui.client = () => ({ get: () => new Promise((resolve) => { answers.push(resolve); }) });
+        ctx.document.dispatchEvent(new ctx.win.Event('visibilitychange'));
+        await settled();
+        ctx.win.Blocks.openGit();
+        await settled();
+        answers[1](repo('/repo/opened'));
+        await settled();
+        answers[0](repo('/repo/older'));
+        await settled();
+        expect(chip(ctx).title).toContain('/repo/opened');
+        ctx.win.close();
+      });
+    });
+
+    it('hides the chip on another server, and a late answer from the last one stays out', async () => {
+      const { ctx } = focusSetup();
+      ctx.document.dispatchEvent(new ctx.win.Event('visibilitychange'));
+      await vi.waitFor(() => expect(chip(ctx).hidden).toBe(false));
+
+      let answer;
+      ctx.win.Blocks.ui.client = () => ({ get: () => new Promise((resolve) => { answer = resolve; }) });
+      ctx.document.dispatchEvent(new ctx.win.Event('visibilitychange'));
+      await settled();
+
+      ctx.win.dispatchEvent(new ctx.win.CustomEvent('terminal-target-server'));
+      expect(chip(ctx).hidden).toBe(true);
+      answer(repo('/repo/on-the-last-server'));
+      await settled();
+      expect(chip(ctx).hidden).toBe(true);
+      ctx.win.close();
+    });
+
+    describe('while the terminal has not caught up with the route', () => {
+      it('never sends the old server\'s pane to the new server', async () => {
+        const { ctx, get, open } = focusSetup({ focused: '%7' });
+        // MsApp has set the server the route names; the window comes with the mount.
+        ctx.Store.setRoute({ name: 'terminal', params: { serverId: 'remote', sessionId: '$5', windowId: '@8' } });
+        ctx.win.TerminalTarget = { serverId: 'remote', sessionId: null, windowId: null };
+
+        ctx.win.Blocks.openGit();
+        ctx.document.dispatchEvent(new ctx.win.Event('visibilitychange'));
+        await settled();
+
+        expect(ctx.win._resolveFocusedPaneId).not.toHaveBeenCalled();
+        expect(get).not.toHaveBeenCalled();
+        expect(open).not.toHaveBeenCalled();
+        expect(ctx.document.body.textContent).toContain('还没打开好');
+        ctx.win.close();
+      });
+
+      it('does not ask about the window being left either', async () => {
+        const { ctx, get, open } = focusSetup({ focused: '%7' });
+        ctx.Store.setRoute({ name: 'terminal', params: { serverId: 'local', sessionId: '$0', windowId: '@2' } });
+        ctx.win.Blocks.openGit();
+        await settled();
+        expect(ctx.win._resolveFocusedPaneId).not.toHaveBeenCalled();
+        expect(get).not.toHaveBeenCalled();
+        expect(open).not.toHaveBeenCalled();
+        ctx.win.close();
+      });
+
+      it('picks up once the terminal has mounted, with no route change to go by', async () => {
+        const { ctx, get } = focusSetup({ focused: '%12' });
+        ctx.Store.setRoute({ name: 'terminal', params: { serverId: 'local', sessionId: '$0', windowId: '@2' } });
+        ctx.win.TerminalTarget = { serverId: 'local', sessionId: '$0', windowId: '@2' };
+        ctx.win.state.currentPane = '%12';
+        ctx.win.dispatchEvent(new ctx.win.CustomEvent('terminal-pane-selected'));
+        await vi.waitFor(() => expect(get.mock.calls.at(-1)?.[1]?.paneId).toBe('%12'), { timeout: 3000 });
+        ctx.win.close();
+      });
+    });
+
+    it('leaves an explicit path from a file alone', async () => {
+      const { ctx, get, open } = focusSetup({ focused: '%7' });
+      const items = ctx.win.Blocks.previewActions({ isDirectory: false, absPath: '/elsewhere/repo/a.txt' }, { paneId: '%3' });
+      items.find((item) => item.label === 'Git').run();
+      expect(open).toHaveBeenCalledExactlyOnceWith('git', { path: '/elsewhere/repo', paneId: '%3' });
+      expect(ctx.win._resolveFocusedPaneId).not.toHaveBeenCalled();
       expect(get).not.toHaveBeenCalled();
       ctx.win.close();
     });

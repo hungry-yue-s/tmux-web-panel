@@ -433,6 +433,183 @@ describe('blocks bound to a window', () => {
     expect(activeTab(doc)).toBe('one.md');
   });
 
+  describe('giving way to a block that is already what this one would become', () => {
+    it('goes, and brings that one up with what was typed in it', () => {
+      const { doc, host, apis, disposed } = setup();
+      host.open('repo', { name: 'one' });
+      const first = doc.querySelector('.fp-dock-panels > .blk-frame');
+      first.querySelector('.repo-body').value = 'half a commit message';
+      host.open('repo', { name: 'two' });
+
+      expect(apis.two.yieldToTwin({ name: 'one' })).toBe(true);
+
+      expect(disposed).toEqual(['two']);
+      expect(host._test.instances().map((instance) => instance.key)).toEqual(['repo:one']);
+      expect(first.hidden).toBe(false);
+      expect(first.querySelector('.repo-body').value).toBe('half a commit message');
+      expect(saved(dom.window, '@0').blocks).toHaveLength(1);
+    });
+
+    it('stays when nothing here is that', () => {
+      const { host, apis, disposed } = setup();
+      host.open('repo', { name: 'one' });
+      expect(apis.one.yieldToTwin({ name: 'two' })).toBe(false);
+      expect(apis.one.yieldToTwin({ name: 'one' })).toBe(false);
+      expect(disposed).toEqual([]);
+      expect(host.list()).toHaveLength(1);
+    });
+
+    it('does not count the same repository in another window', async () => {
+      const { host, preview, apis, disposed } = setup();
+      host.open('repo', { name: 'one' });
+      await preview.switchDockContext('local', '@1', INSTANCE);
+      host.open('repo', { name: 'two' });
+      expect(apis.two.yieldToTwin({ name: 'one' })).toBe(false);
+      expect(disposed).toEqual([]);
+    });
+
+    it('takes nothing to the front when it was not on screen', () => {
+      const { doc, host, apis } = setup();
+      host.open('repo', { name: 'one' });
+      const one = doc.querySelector('.fp-dock-panels > .blk-frame');
+      host.open('repo', { name: 'two' });
+      host.open('repo', { name: 'three' });
+      const front = [...doc.querySelectorAll('.fp-dock-panels > .blk-frame')].find((frame) => !frame.hidden);
+      expect(front).not.toBe(one);
+
+      expect(apis.two.yieldToTwin({ name: 'one' })).toBe(true);
+
+      expect(front.hidden).toBe(false);
+      expect(one.hidden).toBe(true);
+    });
+  });
+
+  describe('the real Git block, with focus moving between repositories', () => {
+    const BLOCKS = fs.readFileSync('public/js/blocks.js', 'utf8');
+    const WORKSPACE_BLOCKS = fs.readFileSync('public/js/blocks-workspace.js', 'utf8');
+    const staged = (root) => ({
+      root, branch: 'main', files: [{ path: 'a.txt', staged: true, unstaged: false, index: 'M', worktree: ' ' }],
+      detached: false, head: { hash: 'abc', subject: 'x' },
+    });
+    const settled = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+
+    function gitSetup() {
+      const context = setup();
+      const { win, doc, host } = context;
+      win.TerminalTarget = { serverId: 'local', sessionId: '$0', windowId: '@0' };
+      win.state = { currentPane: '%1' };
+      win.eval(BLOCKS);
+      const focus = { pane: '%1' };
+      win._resolveFocusedPaneId = () => Promise.resolve(focus.pane);
+      const where = { '%1': '/repo/a', '%2': '/repo/b' };
+      const posts = [];
+      const statusFor = (query) => {
+        const root = query.paneId ? where[query.paneId] : query.path;
+        if (!root) return Promise.reject(new Error('not_a_git_repository'));
+        return Promise.resolve(staged(root));
+      };
+      win.Blocks.ui.client = () => ({
+        get: (path, query) => (path === '/api/git/status' ? statusFor(query) : Promise.resolve({ diff: '', files: [] })),
+        send: (method, path, body) => {
+          posts.push({ path, body });
+          return Promise.resolve({ hash: 'def', subject: body.message });
+        },
+      });
+      Object.defineProperty(doc, 'visibilityState', { value: 'visible', configurable: true });
+      win.eval(WORKSPACE_BLOCKS);
+      const repos = () => host._test.instances().filter((instance) => instance.windowKey?.endsWith(win.TerminalTarget.windowId)).map((instance) => instance.key);
+      const shown = () => [...doc.querySelectorAll('.fp-dock-panels > .blk-frame')].find((frame) => !frame.hidden);
+      const open = async () => {
+        win.Blocks.openGit();
+        await settled();
+        await settled();
+      };
+      return { ...context, focus, where, posts, repos, shown, open };
+    }
+
+    it('gives each repository its block, and brings the first back with its draft', async () => {
+      const { focus, repos, shown, open } = gitSetup();
+      await open();
+      const first = shown();
+      first.querySelector('.git-message').value = 'half a commit message';
+
+      focus.pane = '%2';
+      await open();
+      expect(repos()).toEqual(['git:/repo/a', 'git:/repo/b']);
+      expect(shown()).not.toBe(first);
+
+      focus.pane = '%1';
+      await open();
+      expect(repos()).toEqual(['git:/repo/a', 'git:/repo/b']);
+      expect(shown()).toBe(first);
+      expect(first.querySelector('.git-message').value).toBe('half a commit message');
+    });
+
+    it('still commits the first repository from its own block after focus moved away', async () => {
+      const { focus, posts, shown, open } = gitSetup();
+      await open();
+      const first = shown();
+      first.querySelector('.git-message').value = 'for the first repository';
+
+      focus.pane = '%2';
+      await open();
+      first.querySelector('.git-commit-btn').click();
+      await settled();
+
+      expect(posts).toHaveLength(1);
+      expect(posts[0].body).toMatchObject({ path: '/repo/a', message: 'for the first repository' });
+      expect(posts[0].body.paneId).toBeUndefined();
+    });
+
+    it('shows that a pane is outside any repository, and leaves the block it had alone', async () => {
+      const { focus, where, repos, shown, open } = gitSetup();
+      await open();
+      const first = shown();
+      first.querySelector('.git-message').value = 'kept';
+
+      delete where['%1'];
+      await open();
+
+      expect(repos()).toEqual(['git:/repo/a', 'git:pane:%1']);
+      expect(shown()).not.toBe(first);
+      expect(shown().textContent).toContain('这里不是 Git 仓库');
+      expect(first.querySelector('.git-message').value).toBe('kept');
+      void focus;
+    });
+
+    it('merges into the repository\'s block when a pane outside one moves into it', async () => {
+      const { where, repos, shown, open, win } = gitSetup();
+      await open();
+      const first = shown();
+      first.querySelector('.git-message').value = 'kept';
+
+      delete where['%1'];
+      await open();
+      expect(repos()).toEqual(['git:/repo/a', 'git:pane:%1']);
+
+      // cd back: the waiting block finds the repository on its next look.
+      where['%1'] = '/repo/a';
+      win.dispatchEvent(new win.Event('focus'));
+      await settled();
+      await settled();
+
+      expect(repos()).toEqual(['git:/repo/a']);
+      expect(shown()).toBe(first);
+      expect(first.querySelector('.git-message').value).toBe('kept');
+    });
+
+    it('keeps a block per window: the same repository elsewhere is a separate one', async () => {
+      const { preview, repos, shown, open, win } = gitSetup();
+      await open();
+      const first = shown();
+      await preview.switchDockContext('local', '@1', INSTANCE);
+      win.TerminalTarget.windowId = '@1';
+      await open();
+      expect(repos()).toEqual(['git:/repo/a']);
+      expect(shown()).not.toBe(first);
+    });
+  });
+
   it('keeps a separate block per window for the same repository', async () => {
     const { doc, host, preview } = setup();
     host.open('repo', { name: 'one' });

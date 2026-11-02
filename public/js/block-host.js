@@ -298,6 +298,20 @@ var BlockHost = (function () {
         syncSidebar();
       },
       setParams: function (next) { instance.params = Object.assign({}, instance.params, next || {}); instance.key = keyOf(kind, instance.params); persist(scopeOf(instance)); },
+      /** If a block here already is what `next` would make this one, that one stays and this one goes. */
+      yieldToTwin: function (next) {
+        var key = keyOf(kind, next);
+        var twin = key && instances.find(function (i) {
+          return i !== instance && i.serverId === instance.serverId && i.windowKey === instance.windowKey && i.key === key;
+        });
+        if (!twin) return false;
+        var shown = isVisible(instance);
+        discard(instance);
+        render();
+        persist(scopeOf(instance));
+        if (shown) activate(twin.id);
+        return true;
+      },
       setBusy: function (busy) { instance.busy = !!busy; instance.frame.classList.toggle('is-busy', instance.busy); syncSidebar(); },
       close: function () { close(instance.id); },
       isVisible: function () { return isVisible(instance); },

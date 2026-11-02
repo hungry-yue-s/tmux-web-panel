@@ -457,24 +457,34 @@ document.addEventListener('fullscreenchange', function () {
 
 // === Pane Switching ===
 
+function _focusFollowsTmux() {
+  return _terminalMode === 'split' && !_isMobileTerminal() && TerminalTarget.supportsTmuxActions();
+}
+
 // state.currentPane identifies the pane used to attach the terminal client.
 // In native split mode that client renders the entire window, so currentPane
 // may remain the first pane even after tmux focus moves elsewhere. Resolve the
 // live active pane before any action whose relative paths depend on pane cwd.
-function _resolvePreviewPaneId() {
-  var fallback = state.currentPane;
-  var useSplit = _terminalMode === 'split' && state.panes && state.panes.length > 1
-    && !_isMobileTerminal() && TerminalTarget.supportsTmuxActions();
-  if (!useSplit || !state.currentSession || state.currentWindow == null) {
-    return Promise.resolve(fallback);
+// state.panes is not consulted: it is as old as the mount, and tmux may have split
+// the window since. Rejects when tmux cannot say: the attach pane is not an answer.
+function _resolveFocusedPaneId() {
+  if (!_focusFollowsTmux()) return Promise.resolve(state.currentPane);
+  if (!state.currentSession || state.currentWindow == null) {
+    return Promise.reject(new Error('没有打开的窗口'));
   }
 
   return TerminalTarget.listPanes(state.currentSession, state.currentWindow).then(function (panes) {
     for (var i = 0; i < panes.length; i++) {
       if (panes[i].active) return panes[i].id;
     }
-    return fallback;
-  }).catch(function () {
+    throw new Error('tmux 没有报告活动窗格');
+  });
+}
+
+// A relative path in a preview can still be tried against the attach pane.
+function _resolvePreviewPaneId() {
+  var fallback = state.currentPane;
+  return _resolveFocusedPaneId().catch(function () {
     return fallback;
   });
 }
@@ -1273,6 +1283,8 @@ function _mountTerminal(termContainer, nozoom) {
   var fitAddon = new FitAddon.FitAddon();
   var paneId = state.currentPane;
   if (typeof TerminalTrace !== 'undefined') term._trace = TerminalTrace.attach(term);
+  // Selecting a pane changes no route, and what follows it needs to hear about that.
+  if (window.CustomEvent) window.dispatchEvent(new window.CustomEvent('terminal-pane-selected'));
 
   term.loadAddon(fitAddon);
   // URL + file-path links are both handled by FilePreview's unified provider

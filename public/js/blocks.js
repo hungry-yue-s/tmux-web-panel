@@ -351,7 +351,7 @@ var Blocks = (function () {
     };
   }
 
-  /** The pane in view: its cwd anchors git, quick-open and new files. */
+  /** The pane in view: its cwd anchors quick-open and new files. Git follows focus instead. */
   function currentContext() {
     var snapshot = typeof Store !== 'undefined' && Store.getState ? Store.getState() : null;
     var params = (snapshot && snapshot.route && snapshot.route.params) || {};
@@ -362,6 +362,46 @@ var Blocks = (function () {
       windowId: params.windowId || null,
       paneId: params.paneId || legacy.currentPane || null,
     };
+  }
+
+  /**
+   * The pane selected in the terminal in view. The route only says which pane it
+   * opened with, and pane pills leave it behind. Until the terminal has caught up
+   * with a new route there is no answer: all it knows is about the window being left.
+   * `key` changes whenever an answer found for this one no longer applies.
+   */
+  function selectedContext() {
+    var snapshot = typeof Store !== 'undefined' && Store.getState ? Store.getState() : null;
+    var route = (snapshot && snapshot.route) || {};
+    var params = route.params || {};
+    var target = window.TerminalTarget;
+    var legacy = typeof state !== 'undefined' ? state : {};
+    var settled = !!target && !!target.windowId
+      && (!params.serverId || params.serverId === target.serverId)
+      && (!params.sessionId || params.sessionId === target.sessionId)
+      && (!params.windowId || params.windowId === target.windowId);
+    var paneId = settled ? legacy.currentPane || null : null;
+    var serverId = Api.activeServerId();
+    var followsTmux = typeof _focusFollowsTmux === 'function' && _focusFollowsTmux();
+    return {
+      serverId: serverId,
+      paneId: paneId,
+      onTerminal: route.name === 'terminal',
+      key: [route.name, serverId, params.serverId, params.sessionId, params.windowId, paneId, followsTmux].join('\u0000'),
+    };
+  }
+
+  /**
+   * The same, for what has to follow where the user is working: in a native split tmux
+   * moves focus with neither the route nor state.currentPane knowing. Rejects when tmux
+   * cannot say, as the pane the terminal attached with would be the wrong answer.
+   */
+  function focusedContext() {
+    var ctx = selectedContext();
+    if (!ctx.paneId || typeof _resolveFocusedPaneId !== 'function') return Promise.resolve(ctx);
+    return _resolveFocusedPaneId().then(function (paneId) {
+      return Object.assign({}, ctx, { paneId: paneId });
+    });
   }
 
   // --- unified diffs -----------------------------------------------------------
@@ -1549,6 +1589,7 @@ var Blocks = (function () {
       kbd: kbd, keysText: keysText, keyParts: keyParts, isMac: IS_MAC, busy: busy, spinnerLine: spinnerLine,
       toast: toast, errorText: errorText, errorBox: errorBox, confirmAction: confirmAction, promptText: promptText,
       emptyState: emptyState, isDark: isDark, client: client, currentContext: currentContext,
+      selectedContext: selectedContext, focusedContext: focusedContext,
       renderDiffInto: renderDiffInto, buildPatch: buildPatch, parseUnifiedDiff: parseUnifiedDiff, downloadText: downloadText,
     },
     _test: {
