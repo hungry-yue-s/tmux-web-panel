@@ -14,7 +14,9 @@ const DEFAULT_CONFIG = '# Managed by Tmux Web Panel\nset -g exit-empty off\nset 
 const SKILLS = {
   'tmux-agent': 'plugins/tmux-agent/skills/tmux-agent',
   'tmux-panel': 'skills/tmux-panel',
+  'panel-presentation': 'skills/panel-presentation',
 };
+const SKILL_TARGETS = { codex: '.codex', claude: '.claude' };
 
 async function readOptional(file) {
   try { return await readFile(file, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
@@ -74,7 +76,7 @@ export class ManagedResources {
     const userConfig = this.userConfig ? await readOptional(this.userConfig) || '' : '';
     const skills = [];
     for (const [name, relative] of Object.entries(SKILLS)) {
-      for (const target of ['codex', 'claude']) {
+      for (const target of Object.keys(SKILL_TARGETS)) {
         const path = this.skillPath(name, target);
         let status = 'not_installed';
         try {
@@ -150,27 +152,33 @@ export class ManagedResources {
   }
 
   skillPath(name, target) {
-    if (!SKILLS[name] || !['codex', 'claude'].includes(target)) throw new AppError(ErrorCode.VALIDATION_ERROR, 'Unknown skill or agent');
-    return join(this.home, target === 'codex' ? '.codex' : '.claude', 'skills', name);
+    if (!Object.hasOwn(SKILLS, name) || !Object.hasOwn(SKILL_TARGETS, target)) throw new AppError(ErrorCode.VALIDATION_ERROR, 'Unknown skill or agent');
+    return join(this.home, SKILL_TARGETS[target], 'skills', name);
   }
 
   async changeSkill(name, target, install) {
     return this.exclusive(async () => {
-      const path = this.skillPath(name, target);
+      const targets = target === 'all' ? Object.keys(SKILL_TARGETS) : [target];
+      const entries = targets.map((agent) => ({ target: agent, path: this.skillPath(name, agent) }));
       const source = join(this.projectDir, SKILLS[name]);
       await readFile(join(source, 'SKILL.md'), 'utf8');
-      let exists = false;
-      try {
-        const info = await lstat(path);
-        exists = true;
-        if (!info.isSymbolicLink() || await readlink(path) !== source) throw new AppError(ErrorCode.SERVER_IN_USE, 'This skill path is not managed by the panel; it will not be overwritten');
-      } catch (error) { if (error.code !== 'ENOENT') throw error; }
-      if (install && !exists) {
-        await mkdir(join(path, '..'), { recursive: true });
-        await symlink(source, path, 'dir');
+      // Check every destination before a bulk operation touches any of them.
+      for (const entry of entries) {
+        entry.exists = false;
+        try {
+          const info = await lstat(entry.path);
+          entry.exists = true;
+          if (!info.isSymbolicLink() || await readlink(entry.path) !== source) throw new AppError(ErrorCode.SERVER_IN_USE, 'This skill path is not managed by the panel; it will not be overwritten');
+        } catch (error) { if (error.code !== 'ENOENT') throw error; }
       }
-      if (!install && exists) await unlink(path);
-      return { name, target, path, installed: install };
+      for (const entry of entries) {
+        if (install && !entry.exists) {
+          await mkdir(join(entry.path, '..'), { recursive: true });
+          await symlink(source, entry.path, 'dir');
+        }
+        if (!install && entry.exists) await unlink(entry.path);
+      }
+      return { name, target, path: target === 'all' ? undefined : entries[0].path, installed: install };
     });
   }
 

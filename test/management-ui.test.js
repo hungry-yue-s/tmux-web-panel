@@ -2,6 +2,33 @@ import { it, expect, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 
+it('offers individual and all-agent presentation skill installation and refreshes actual state after errors', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { runScripts: 'outside-only', url: 'http://localhost' });
+  const win = dom.window;
+  let installed = false;
+  win.AppShell = { escape: String, toast: vi.fn() };
+  win.Api = {
+    get: vi.fn(async (path) => path === '/api/plugins' ? { plugins: [] } : {
+      runtime: { path: '/managed/tmux' },
+      skills: ['codex', 'claude'].map((target) => ({ name: 'panel-presentation', target,
+        path: '/skills/' + target, status: installed ? 'managed' : 'not_installed' })),
+    }),
+    post: vi.fn(async () => { installed = true; }),
+  };
+  win.eval(readFileSync('public/js/management.js', 'utf8'));
+  const root = win.document.getElementById('root');
+  await win.ManagementPage.mount(root);
+  expect(root.querySelectorAll('[data-name="panel-presentation"][data-managed="skill-install"]')).toHaveLength(3);
+  root.querySelector('[data-target="all"]').click();
+  await vi.waitFor(() => expect(root.querySelector('[data-target="all"]').textContent).toBe('从全部 Agent 移除'));
+  expect(win.Api.post).toHaveBeenCalledWith('/api/managed-resources/skills/panel-presentation/all/install');
+  win.Api.post.mockImplementation(async () => { installed = false; throw new Error('Filesystem unavailable'); });
+  root.querySelector('[data-target="all"]').click();
+  await vi.waitFor(() => expect(root.querySelector('#managed-feedback').textContent).toBe('Filesystem unavailable'));
+  expect(root.querySelector('[data-target="all"]').textContent).toBe('为全部 Agent 安装');
+  dom.window.close();
+});
+
 it('shows packaged runtime capabilities without local builds, and sends tmux settings to the session page', async () => {
   const dom = new JSDOM('<div id="root"></div>', { runScripts: 'outside-only', url: 'http://localhost' });
   const win = dom.window;

@@ -2353,7 +2353,9 @@ var FilePreview = (function () {
       // Keep scripts isolated in exports and shares as well as in the panel.
       var frame = _overlay && _overlay.querySelector('.fp-html-wrap iframe');
       if (!frame) return Promise.resolve(null);
+      var snapshot = window.PanelPresentation ? window.PanelPresentation.snapshot(frame) : frame.srcdoc;
       frame = frame.cloneNode(true);
+      frame.srcdoc = snapshot;
       frame.hidden = false;
       return Promise.resolve({
         html: '<!DOCTYPE html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -2900,7 +2902,8 @@ var FilePreview = (function () {
     // origin, credentials, native bridge, top-level navigation or popups.
     frame.setAttribute('sandbox', 'allow-scripts');
     frame.referrerPolicy = 'no-referrer';
-    frame.srcdoc = content;
+    if (window.PanelPresentation) window.PanelPresentation.mount(frame, content);
+    else frame.srcdoc = content;
     var source = document.createElement('div');
     source.className = 'fp-html-source';
     var sourceRendered = false;
@@ -4936,6 +4939,14 @@ var FilePreview = (function () {
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', _syncAutoRefresh);
     document.addEventListener('tmux-theme-change', _refreshMermaidTheme);
+    document.addEventListener('tmux-theme-change', function () {
+      if (!window.PanelPresentation) return;
+      // Inactive file tabs live off-DOM; they must receive the new palette too.
+      window.PanelPresentation.sync(_overlay);
+      _dockTabs.forEach(function (tab) {
+        if (!_overlay || !_overlay.contains(tab.modal)) window.PanelPresentation.sync(tab.modal);
+      });
+    });
     window.addEventListener('resize', function () {
       if (_overlay) _setPreviewTitle((_currentFile && _currentFile.absPath) || _currentOpenPath || '/');
     });

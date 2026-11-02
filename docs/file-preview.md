@@ -46,6 +46,11 @@ dock tabs remain intact when the viewport becomes too narrow for a split.
 | PDF | Authenticated loading into the browser's PDF viewer, with a download fallback (10 MB preview limit) |
 | Others | Images, directory listings |
 
+Personal information pages can opt into live panel colors with the
+[`panel-presentation` skill](panel-presentation.md), installed per Agent from
+**Settings → Management → Information pages**. The engine supplies semantic
+colors and theme-change events; layout and interaction remain the page's choice.
+
 Markdown images support `![Description](images/example.png)` and image tags such
 as `<img src="images/example.png" width="200" alt="Description">`. Tags retain
 `src`, `alt`, `title` and integer `width`/`height` values from 1 to 4096 pixels.

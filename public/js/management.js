@@ -3,6 +3,9 @@
   const api = '/api/managed-resources';
   const button = (label, action, extra = '') => '<button class="ms-btn" data-managed="' + action + '" ' + extra + '>' + esc(label) + '</button>';
   const statusNames = { running: '构建中', completed: '构建完成', failed: '构建失败', interrupted: '结果待核对' };
+  const skillRows = (skills) => skills.map((skill) => '<div class="managed-skill"><div><strong>' + esc(skill.name) + ' · ' + esc(skill.target) + '</strong><small class="mono">'
+    + esc(skill.path) + '</small><small>' + ({ managed: '本项目管理', conflict: '同名路径由其他来源管理', not_installed: '未安装' })[skill.status] + '</small></div>'
+    + button(skill.status === 'managed' ? '移除' : '安装', 'skill-' + (skill.status === 'managed' ? 'uninstall' : 'install'), 'data-name="' + esc(skill.name) + '" data-target="' + esc(skill.target) + '"' + (skill.status === 'conflict' ? ' disabled' : '')) + '</div>').join('');
 
   async function mount(root) {
     if (!root) return;
@@ -18,6 +21,8 @@
     }
     if (!root.isConnected) return;
     const runtime = resources.runtime;
+    const presentationSkills = resources.skills.filter((skill) => skill.name === 'panel-presentation');
+    const presentationInstalled = presentationSkills.length > 0 && presentationSkills.every((skill) => skill.status === 'managed');
     const sessionsRoute = global.Router ? global.Router.serialize({ name: 'server', params: { serverId: 'local', section: 'sessions' } }) : '';
     root.innerHTML = '<div class="intro"><h2>管理中心</h2><p>管理面板所在机器的 tmux、配置、插件和 Agent Skills。</p></div>'
       + '<div class="section"><div class="section-head"><h3>tmux 运行时</h3>' + button('刷新状态', 'refresh') + '</div>'
@@ -40,18 +45,23 @@
         + (plugin.enabled ? button('Agent 接入配置', 'connection', 'data-id="' + esc(plugin.id) + '"') : '')
         + (plugin.installed ? button('更新插件', 'plugin-update', 'data-id="' + esc(plugin.id) + '"') : '')
         + '</div><div data-connection="' + esc(plugin.id) + '"></div></div>').join('') + '</div>'
+      + '<div class="section"><div class="section-head"><h3>信息呈现网页</h3></div><div class="ms-card managed-card">'
+      + '<p>让 Agent 生成的个人报告、说明和可视化网页跟随面板配色，切换主题时即时更新。</p>'
+      + '<p>Skill 只提供主题接入约定，布局、字体、组件和交互由 Agent 自由设计；专门的视觉作品可保留自己的风格。</p>'
+      + '<p>选择 Agent 全局安装，或安装到全部受支持的 Agent（当前为 Codex、Claude）。安装位置为面板所在机器，开启新会话后生效。</p>'
+      + (presentationSkills.length ? '<div class="managed-actions">' + button(presentationInstalled ? '从全部 Agent 移除' : '为全部 Agent 安装',
+        'skill-' + (presentationInstalled ? 'uninstall' : 'install'), 'data-name="panel-presentation" data-target="all"'
+        + (presentationSkills.some((skill) => skill.status === 'conflict') ? ' disabled' : '')) + '</div>' + skillRows(presentationSkills) : '')
+      + '</div></div>'
       + '<div class="section"><div class="section-head"><h3>Agent Skills</h3></div><div class="ms-card managed-card">'
       + '<p>安装为指向本仓库的链接，项目更新后同步生效。已有的同名个人 skill 不会被覆盖；安装后在 agent 中开启新会话。</p>'
-      + resources.skills.map((skill) => '<div class="managed-skill"><div><strong>' + esc(skill.name) + ' · ' + esc(skill.target) + '</strong><small class="mono">'
-        + esc(skill.path) + '</small><small>' + ({ managed: '本项目管理', conflict: '同名路径由其他来源管理', not_installed: '未安装' })[skill.status] + '</small></div>'
-        + button(skill.status === 'managed' ? '移除' : '安装', 'skill-' + (skill.status === 'managed' ? 'uninstall' : 'install'), 'data-name="' + esc(skill.name) + '" data-target="' + esc(skill.target) + '"' + (skill.status === 'conflict' ? ' disabled' : '')) + '</div>').join('')
+      + skillRows(resources.skills.filter((skill) => skill.name !== 'panel-presentation'))
       + '</div></div><p id="managed-feedback" role="status" aria-live="polite"></p>';
 
     root.onclick = async (event) => {
       const target = event.target.closest('[data-managed]');
       if (!target || target.disabled) return;
       const action = target.dataset.managed;
-      const feedback = root.querySelector('#managed-feedback');
       target.disabled = true;
       try {
         if (action === 'refresh') { await mount(root); return; }
@@ -82,7 +92,10 @@
         global.AppShell.toast(action === 'build' ? '构建已启动，可在此查看结果' : '操作完成');
         await mount(root);
       } catch (error) {
-        feedback.textContent = error.message;
+        // A filesystem error may interrupt a bulk operation after one install.
+        await mount(root);
+        const latestFeedback = root.querySelector('#managed-feedback');
+        if (latestFeedback) latestFeedback.textContent = error.message;
         global.AppShell.toast(error.message);
       } finally { target.disabled = false; }
     };

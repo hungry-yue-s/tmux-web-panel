@@ -22,7 +22,7 @@ import { shellQuote } from '../transport/ssh-connection.js';
 export const REMOTE_ARCHIVE = '.cache/tmux-web-panel/panel.tgz';
 export const PORT_CANDIDATES = '7681 7781 7881 7981';
 const LOG_LINES = 400;
-const PACKED = ['package.json', 'package-lock.json', 'server', 'public', 'scripts', 'relay', 'plugins/tmux-agent', 'skills/tmux-panel',
+const PACKED = ['package.json', 'package-lock.json', 'server', 'public', 'scripts', 'relay', 'plugins/tmux-agent', 'skills',
   'vendor/tmux-plugins'];
 const EXCLUDES = ['node_modules', '.git', '*.pem', '*.key', '*.crt', '.env', 'relay-config.js', '*.o', '*.a'];
 

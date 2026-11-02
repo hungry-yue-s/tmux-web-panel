@@ -10,6 +10,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { PluginManager } from '../server/plugins.js';
 import { createPluginsRouter } from '../server/api/plugins.js';
 import { ManagedResources } from '../server/managed-resources.js';
+import { createManagedResourcesRouter } from '../server/api/managed-resources.js';
 import { tokenAuth } from '../server/auth.js';
 
 const cleanup = [];
@@ -70,6 +71,26 @@ describe('panel plugin lifecycle and MCP', () => {
 });
 
 describe('project-managed resources', () => {
+  it('installs the presentation skill globally for one or all agents, preserving personal conflicts', async () => {
+    const home = await temp();
+    const resources = new ManagedResources({ userHome: home, configDir: join(home, 'config'), projectDir: resolve('.'),
+      execProcess: vi.fn(async () => ({ stdout: 'tmux test' })) });
+    await resources.load();
+    const app = express(); app.use('/api/managed-resources', createManagedResourcesRouter(resources));
+    const url = '/api/managed-resources/skills/panel-presentation/';
+    expect((await request(app).post(url + 'all/install').set('Origin', 'https://other.test')).status).toBe(403);
+    expect((await request(app).post(url + 'codex/install')).status).toBe(200);
+    expect((await request(app).post(url + 'all/install')).status).toBe(200);
+    expect((await resources.status()).skills.filter((s) => s.name === 'panel-presentation').map((s) => s.status)).toEqual(['managed', 'managed']);
+    expect((await request(app).post(url + 'all/uninstall')).status).toBe(200);
+    const personal = resources.skillPath('panel-presentation', 'claude');
+    await mkdir(personal); await writeFile(join(personal, 'SKILL.md'), 'personal design');
+    expect((await request(app).post(url + 'all/install')).status).toBe(409);
+    await expect(lstat(resources.skillPath('panel-presentation', 'codex'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(join(personal, 'SKILL.md'), 'utf8')).toBe('personal design');
+    expect((await request(app).post(url + '__proto__/install')).status).toBe(400);
+  });
+
   it('tracks a build failure, rejects duplicate builds and records interrupted builds after restart', async () => {
     const home = await temp();
     const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter();

@@ -149,9 +149,9 @@ for name in server public scripts relay; do
   mkdir -p "$RUNTIME/app/$name"
   rsync -a --delete --exclude='relay-config.js' --exclude='*.pem' --exclude='*.key' --exclude='*.crt' --exclude='.env' "$PROJECT_DIR/$name/" "$RUNTIME/app/$name/"
 done
-mkdir -p "$RUNTIME/app/plugins/tmux-agent" "$RUNTIME/app/skills/tmux-panel"
+mkdir -p "$RUNTIME/app/plugins/tmux-agent" "$RUNTIME/app/skills"
 rsync -a --delete "$PROJECT_DIR/plugins/tmux-agent/" "$RUNTIME/app/plugins/tmux-agent/"
-rsync -a --delete "$PROJECT_DIR/skills/tmux-panel/" "$RUNTIME/app/skills/tmux-panel/"
+rsync -a --delete "$PROJECT_DIR/skills/" "$RUNTIME/app/skills/"
 # tmux-resurrect: session protection saves tmux with it.
 mkdir -p "$RUNTIME/app/vendor/tmux-plugins"
 rsync -a --delete "$PROJECT_DIR/vendor/tmux-plugins/" "$RUNTIME/app/vendor/tmux-plugins/"

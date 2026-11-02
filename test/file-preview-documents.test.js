@@ -7,7 +7,7 @@ const INSTANCE = '1873:1700000000';
 const source = readFileSync('public/js/file-preview.js', 'utf8');
 
 function setup(width = 1440) {
-  const dom = new JSDOM('<div id="main-layout"><div class="terminal-view"></div></div>', { url: 'https://panel.test/' });
+  const dom = new JSDOM('<div id="main-layout"><div class="terminal-view"></div></div>', { url: 'https://panel.test/', runScripts: 'outside-only' });
   const { window } = dom;
   Object.defineProperty(window, 'innerWidth', { value: width });
   window.URL.createObjectURL = vi.fn().mockImplementation(() => 'blob:https://panel.test/' + window.URL.createObjectURL.mock.calls.length);
@@ -27,6 +27,8 @@ function setup(width = 1440) {
     throw new Error('Unexpected fetch: ' + url);
   });
   window.Api = { activeServerId: () => 'remote', nodeUrl: (_serverId, path) => '/n/remote' + path };
+  window.eval(readFileSync('public/js/theme.js', 'utf8'));
+  window.eval(readFileSync('public/js/panel-presentation.js', 'utf8'));
   new Function('window', 'document', 'fetch', 'Auth', source)(window, window.document, fetch, {
     headers: () => headers, wsTokenParam: () => 'token=document-test',
   });
@@ -35,6 +37,36 @@ function setup(width = 1440) {
 }
 
 describe('HTML and PDF previews', () => {
+  it('syncs opt-in modal and detached dock tabs and exports the current palette while preserving raw source', async () => {
+    const { window, preview, setContent } = setup();
+    const content = '<meta name="tmux-panel-presentation" content="1"><h1>Themed report</h1>';
+    setContent(content);
+    await preview.openFile('/tmp/one.html');
+    const first = window.document.querySelector('.fp-html-wrap iframe');
+    window.document.querySelector('.fp-btn-placement').click();
+    await preview.openFile('/tmp/two.html');
+    window.document.querySelector('.fp-overlay:not(.fp-dock) .fp-btn-placement').click();
+    const second = window.document.querySelector('.fp-html-wrap iframe');
+    expect(first.isConnected).toBe(false);
+    const sync = vi.spyOn(window.PanelPresentation, 'sync');
+    const srcdoc = second.srcdoc;
+    window.Theme.apply('github-light');
+    expect(sync.mock.calls.some(([root]) => root?.contains(first))).toBe(true);
+    expect(sync.mock.calls.some(([root]) => root?.contains(second))).toBe(true);
+    expect(second.srcdoc).toBe(srcdoc);
+    window.document.querySelector('.fp-btn-more').click();
+    window.document.querySelector('.fp-menu [aria-label="查看源码"]').click();
+    expect(window.document.querySelector('.fp-html-source code').textContent).toBe(content);
+    const exported = new JSDOM((await preview._test.buildStandaloneDoc()).html);
+    const snapshot = exported.window.document.querySelector('iframe');
+    expect(snapshot.srcdoc).toContain('github-light');
+    expect(snapshot.getAttribute('sandbox')).toBe('allow-scripts');
+    expect(snapshot.hidden).toBe(false);
+    exported.window.close();
+    preview.closeDocked();
+    window.close();
+  });
+
   it.each([['report.html', 1440], ['report.HTM', 390]])('renders %s at width %i with the source toggle in More and preserves it through refresh', async (filename, width) => {
     const { window, preview, setContent } = setup(width);
     await preview.openFile('/tmp/' + filename, '%1');
