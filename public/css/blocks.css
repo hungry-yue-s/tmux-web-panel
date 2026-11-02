@@ -133,9 +133,17 @@
 /* Docked blocks are tabs in the sidebar they share with file previews. A block
    has no file header, so its window controls sit at the end of the tab strip. */
 .fp-dock-panels > .blk-frame { width: 100%; height: 100%; }
-.fp-dock-tab-item.is-block .fp-dock-tab { display: flex; align-items: center; gap: 6px; }
-.fp-dock-tab-item.is-block .blk-svg { width: 14px; height: 14px; opacity: .75; }
-.fp-dock-tab-item.is-block.active .blk-svg { opacity: 1; color: var(--fp-accent, var(--accent-blue)); }
+/* Every tab says what it is: a block by its own icon, a file by its kind. */
+.fp-dock-tab { display: flex; align-items: center; gap: 6px; }
+.fp-dock-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-dock-tab .blk-svg { flex: none; width: 14px; height: 14px; opacity: .8; color: var(--tab-kind, currentColor); }
+.fp-dock-tab-item.active .blk-svg { opacity: 1; }
+.fp-dock-tab-item[data-kind="git"], .fp-dock-tab-item[data-kind="notebook"] { --tab-kind: var(--accent-orange); }
+.fp-dock-tab-item[data-kind="markdown"], .fp-dock-tab-item[data-kind="browser"] { --tab-kind: var(--accent-blue); }
+.fp-dock-tab-item[data-kind="image"], .fp-dock-tab-item[data-kind="video"] { --tab-kind: var(--accent-purple); }
+.fp-dock-tab-item[data-kind="document"] { --tab-kind: var(--accent-red); }
+.fp-dock-tab-item[data-kind="table"], .fp-dock-tab-item[data-kind="changes"], .fp-dock-tab-item[data-kind="board"] { --tab-kind: var(--accent-green); }
+.fp-dock-tab-item[data-kind="database"], .fp-dock-tab-item[data-kind="archive"], .fp-dock-tab-item[data-kind="folder"] { --tab-kind: var(--accent-yellow); }
 .fp-dock-tab-item.is-busy .blk-svg { animation: blk-pulse 1s ease-in-out infinite; }
 .fp-dock-actions { position: absolute; top: 0; right: 0; z-index: 2; display: none; align-items: center; gap: 2px; height: 36px; padding: 0 6px; }
 .fp-dock-has-actions > .fp-dock-actions { display: flex; }

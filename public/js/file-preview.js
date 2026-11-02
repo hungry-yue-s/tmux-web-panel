@@ -53,12 +53,18 @@ var FilePreview = (function () {
   var LEGACY_DOCK_WIDTH_KEY = 'tmux_file_preview_side_width';
   var DOCK_STATE_VERSION = 1;
   var MAX_PERSISTED_DOCK_TABS = 12;
+  var MAX_PERSISTED_TAB_ORDER = 40;
   // Tool blocks (git, browser) share this dock's tab strip, width and hide
   // button. BlockHost owns their lifetime and declares them through `blockDock`;
   // a tab keeps `block` and `modal` (its frame), and no file state of its own.
   var _blockTabs = [];
   var _blockListener = null;
   var _blockWindowListener = null;
+  var _blockOrderListener = null;
+  // The order this window's tabs were saved in, until they are all back.
+  var _savedTabOrder = null;
+  var _draggedTabId = null;
+  var TAB_DRAG_TYPE = 'application/x-tmux-panel-tab';
   var _blockWindowsGoneListener = null;
   var _switchingDockContext = false;
   var _pendingBlockKey = null;
@@ -128,6 +134,9 @@ var FilePreview = (function () {
         width: isFinite(width) && width > 0 ? width : 0,
       };
       if (typeof parsed.activeBlock === 'string') loaded.activeBlock = parsed.activeBlock;
+      if (Array.isArray(parsed.order)) {
+        loaded.order = parsed.order.filter(function (key) { return typeof key === 'string'; }).slice(0, MAX_PERSISTED_TAB_ORDER);
+      }
       return loaded;
     } catch (_) {
       _clearPersistedDock();
@@ -158,6 +167,9 @@ var FilePreview = (function () {
       width: width > 0 ? Math.round(width) : 0,
     };
     if (active && active.block) state.activeBlock = active.block.persistKey;
+    // Files and blocks in the order they are shown, which the user may have dragged.
+    state.order = _dockTabs.map(_tabOrderKey).slice(0, MAX_PERSISTED_TAB_ORDER);
+    _savedTabOrder = state.order;
     if (state.tabs.length === 0) {
       _clearPersistedDock();
       return;
@@ -565,6 +577,134 @@ var FilePreview = (function () {
     return path.split('/').filter(Boolean).pop() || path || 'Preview';
   }
 
+  // What a file is, by name, for its tab's icon. What the server said wins (see _tabKind).
+  var TAB_KIND_BY_NAME = [
+    [/\.(md|markdown|mdx)$/i, 'markdown'],
+    [/\.(png|jpe?g|gif|webp|svg|bmp|ico|avif|heic)$/i, 'image'],
+    [/\.(mp4|webm|mov|m4v|ogv|mkv)$/i, 'video'],
+    [/\.pdf$/i, 'document'],
+    [/\.(csv|tsv|xlsx|xls)$/i, 'table'],
+    [/\.(sqlite3?|db)$/i, 'database'],
+    [/\.ipynb$/i, 'notebook'],
+    [/\.(zip|tar|tgz|gz|bz2|xz|7z|rar|jar)$/i, 'archive'],
+    [/\.(html?|xhtml)$/i, 'browser'],
+    [/\.(diff|patch)$/i, 'changes'],
+    [/\.(js|mjs|cjs|jsx|ts|tsx|py|rb|go|rs|java|kt|swift|c|h|cc|cpp|hpp|cs|php|sh|bash|zsh|fish|ps1|lua|sql|json|jsonc|ya?ml|toml|ini|xml|css|scss|less|vue|svelte|dart|r|pl|ex|exs)$/i, 'code'],
+  ];
+
+  function _tabKind(tab) {
+    if (tab.block) return tab.block.kind || 'block';
+    if (tab.modeDir) return 'folder';
+    var file = tab.currentFile || {};
+    if (file.isImage) return 'image';
+    if (file.isVideo) return 'video';
+    if (file.isPdf) return 'document';
+    if (file.isXlsx) return 'table';
+    if (file.isArchive) return 'archive';
+    var name = tab.path || '';
+    for (var i = 0; i < TAB_KIND_BY_NAME.length; i++) {
+      if (TAB_KIND_BY_NAME[i][0].test(name)) return TAB_KIND_BY_NAME[i][1];
+    }
+    return file.isMarkdown ? 'markdown' : 'file';
+  }
+
+  function _tabIcon(tab) {
+    if (tab.block) return tab.block.icon || '';
+    return window.Blocks && window.Blocks.icon ? window.Blocks.icon(_tabKind(tab)) : '';
+  }
+
+  // --- tab order ---------------------------------------------------------------
+
+  /** A tab's place in a saved order: files by path, blocks by what they show. */
+  function _tabOrderKey(tab) {
+    return tab.block ? 'block:' + tab.block.persistKey : 'file:' + tab.path;
+  }
+
+  /** Puts tabs back in the order they were saved in; ones it does not know stay after. */
+  function _applySavedTabOrder() {
+    if (!_savedTabOrder || _dockTabs.length < 2) return;
+    var rank = {};
+    _savedTabOrder.forEach(function (key, i) { rank[key] = i; });
+    var place = function (tab, i) {
+      var r = rank[_tabOrderKey(tab)];
+      return r == null ? _savedTabOrder.length + i : r;
+    };
+    var placed = _dockTabs.map(function (tab, i) { return { tab: tab, at: place(tab, i) }; });
+    placed.sort(function (a, b) { return a.at - b.at; });
+    _dockTabs = placed.map(function (entry) { return entry.tab; });
+  }
+
+  /** Moves a tab before or after another, or by a step; saves the order. */
+  function _moveDockTab(tabId, targetId, after) {
+    var from = -1;
+    for (var i = 0; i < _dockTabs.length; i++) if (_dockTabs[i].id === tabId) from = i;
+    if (from < 0 || tabId === targetId) return false;
+    var moved = _dockTabs.splice(from, 1)[0];
+    var to = -1;
+    for (var j = 0; j < _dockTabs.length; j++) if (_dockTabs[j].id === targetId) to = j;
+    if (to < 0) {
+      _dockTabs.splice(from, 0, moved);
+      return false;
+    }
+    _dockTabs.splice(after ? to + 1 : to, 0, moved);
+    _renderDockTabs();
+    _persistDockState();
+    // Blocks keep their own order too, for when they come back without a file tab.
+    if (_blockOrderListener) {
+      _blockOrderListener(_dockTabs.filter(function (tab) { return tab.block; }).map(function (tab) { return tab.block.key; }));
+    }
+    return true;
+  }
+
+  function _clearDropMarks(bar) {
+    bar.querySelectorAll('.fp-drop-before, .fp-drop-after, .fp-dragging').forEach(function (node) {
+      node.classList.remove('fp-drop-before', 'fp-drop-after', 'fp-dragging');
+    });
+  }
+
+  /**
+   * Drag a tab onto another to put it before or after it. The data type is the
+   * panel's own, so a tab dropped on the terminal is not pasted into it as text.
+   */
+  function _bindTabDrag(item, tab, bar) {
+    item.draggable = true;
+    var side = function (e) {
+      var rect = item.getBoundingClientRect();
+      return e.clientX > rect.left + rect.width / 2;
+    };
+    item.addEventListener('dragstart', function (e) {
+      _draggedTabId = tab.id;
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData(TAB_DRAG_TYPE, String(tab.id));
+      }
+      item.classList.add('fp-dragging');
+    });
+    item.addEventListener('dragend', function () {
+      _draggedTabId = null;
+      _clearDropMarks(bar);
+    });
+    item.addEventListener('dragover', function (e) {
+      if (_draggedTabId == null || _draggedTabId === tab.id) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      var after = side(e);
+      item.classList.toggle('fp-drop-after', after);
+      item.classList.toggle('fp-drop-before', !after);
+    });
+    item.addEventListener('dragleave', function () {
+      item.classList.remove('fp-drop-before', 'fp-drop-after');
+    });
+    item.addEventListener('drop', function (e) {
+      if (_draggedTabId == null) return;
+      e.preventDefault();
+      var dragged = _draggedTabId;
+      _draggedTabId = null;
+      _clearDropMarks(bar);
+      _moveDockTab(dragged, tab.id, side(e));
+    });
+  }
+
   function _activeDockTab() {
     for (var i = 0; i < _dockTabs.length; i++) {
       if (_dockTabs[i].id === _activeDockTabId) return _dockTabs[i];
@@ -615,18 +755,33 @@ var FilePreview = (function () {
       select.setAttribute('aria-controls', 'fp-panel-' + tab.id);
       select.setAttribute('aria-selected', tab.id === _activeDockTabId ? 'true' : 'false');
       select.title = tab.path || _tabTitle(tab);
-      select.textContent = _tabTitle(tab);
+      item.setAttribute('data-kind', _tabKind(tab));
+      select.innerHTML = _tabIcon(tab);
+      var label = document.createElement('span');
+      label.className = 'fp-dock-tab-label';
+      label.textContent = _tabTitle(tab);
+      select.appendChild(label);
       if (tab.block) {
         item.classList.add('is-block');
         item.classList.toggle('is-busy', !!tab.block.busy);
         if (tab.block.subtitle) select.title = tab.block.title + ' · ' + tab.block.subtitle;
-        select.insertAdjacentHTML('afterbegin', tab.block.icon || '');
         select.addEventListener('dblclick', function () { if (tab.block.onDoubleClick) tab.block.onDoubleClick(); });
         select.addEventListener('auxclick', function (e) { if (e.button === 1) _closeDockTab(tab.id); });
       }
+      _bindTabDrag(item, tab, bar);
       select.addEventListener('click', function () { _activateDockTab(tab.id); });
       select.addEventListener('keydown', function (e) {
         var index = _dockTabs.indexOf(tab), next;
+        // Alt+Shift+←/→ moves the tab, as dragging it would.
+        if (e.altKey && e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+          e.preventDefault();
+          e.stopPropagation();
+          var neighbour = _dockTabs[index + (e.key === 'ArrowRight' ? 1 : -1)];
+          if (neighbour && _moveDockTab(tab.id, neighbour.id, e.key === 'ArrowRight')) {
+            document.getElementById('fp-tab-' + tab.id).focus();
+          }
+          return;
+        }
         if (e.key === 'ArrowRight') next = (index + 1) % _dockTabs.length;
         else if (e.key === 'ArrowLeft') next = (index + _dockTabs.length - 1) % _dockTabs.length;
         else if (e.key === 'Home') next = 0;
@@ -983,6 +1138,7 @@ var FilePreview = (function () {
       block.element.hidden = true;
       _dockTabs.push({ id: id, block: block, path: '', modal: block.element });
     });
+    _applySavedTabOrder();
     if (!_dockOverlay) return;
     if (!_activeDockTabId) {
       var preferred = _blockTabs.filter(function (block) { return block.active; })[0];
@@ -1068,6 +1224,7 @@ var FilePreview = (function () {
     _pendingBlockKey = null;
     _dockContextGeneration++;
     if (_dockContextKey) _persistDockState();
+    _savedTabOrder = null;
     _persistenceSuspended = true;
     _destroyDock(true);
     _restorePromise = null;
@@ -1110,6 +1267,7 @@ var FilePreview = (function () {
     _restoringDock = true;
     _persistenceSuspended = true;
     _restoringHidden = saved.hidden;
+    _savedTabOrder = saved.order || null;
     // The terminal measures itself next, and its tabs take a while to load. Holding
     // the space now means it attaches at the final size, not once more when they arrive.
     if (!saved.hidden) _reserveDockSpace(saved.width);
@@ -1135,6 +1293,7 @@ var FilePreview = (function () {
         _destroyDock();
         return false;
       }
+      _applySavedTabOrder();
       var active = null;
       for (var i = 0; i < _dockTabs.length; i++) {
         if (_dockTabs[i].path === saved.activePath) { active = _dockTabs[i]; break; }
@@ -5088,6 +5247,7 @@ var FilePreview = (function () {
       context: function () { return _dockContextKey; },
       onWindowChange: function (listener) { _blockWindowListener = listener; },
       onWindowsGone: function (listener) { _blockWindowsGoneListener = listener; },
+      onReorder: function (listener) { _blockOrderListener = listener; },
     },
     // Test seam (no DOM): exercised by test/file-preview-links.test.js.
     _test: {
@@ -5095,6 +5255,7 @@ var FilePreview = (function () {
       strOffsetToTermPos: _logicalStrOffsetToTermPos,
       findLinks: _findLinks,
       resolvePaneForAction: _resolvePaneForAction,
+      tabKind: _tabKind,
       refreshCurrent: _refreshCurrent,
       syncAutoRefresh: _syncAutoRefresh,
       hasAutoRefreshTimer: function () { return _autoRefreshTimer != null; },

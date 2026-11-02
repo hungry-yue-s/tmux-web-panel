@@ -67,6 +67,10 @@ body.fp-side-resizing .fp-side-resizer::after { width: 1px; background: var(--fp
 .fp-dock-tab-item:hover { background: var(--fp-hover); color: var(--fp-text); }
 .fp-dock-tab-item.active { background: transparent; color: var(--fp-text); border-color: var(--fp-accent); }
 .fp-dock-tab { padding: 8px 6px; font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; }
+/* Dragging a tab: where it lands, before or after the one under the pointer. */
+.fp-dock-tab-item.fp-dragging { opacity: .45; }
+.fp-dock-tab-item.fp-drop-before { box-shadow: inset 2px 0 0 var(--fp-accent); }
+.fp-dock-tab-item.fp-drop-after { box-shadow: inset -2px 0 0 var(--fp-accent); }
 .fp-dock-tab-close { width: 24px; height: 24px; }
 .fp-overlay.fp-side .fp-header { min-height: 40px; padding: 4px 8px; gap: 6px; }
 .fp-overlay.fp-side .fp-btn { flex-basis: 28px; width: 28px; min-width: 28px; height: 28px; }

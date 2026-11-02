@@ -797,3 +797,142 @@ describe('blocks bound to a window', () => {
     expect(doc.querySelector('.fp-dock')).toBeNull();
   });
 });
+
+describe('tabs in the order the user puts them', () => {
+  const dockKey = (preview) => preview._test.dockStateKey('local', '@0', INSTANCE);
+  const windowBlocks = (win) => JSON.parse(win.localStorage.getItem(
+    'twp_window_blocks_v1:' + encodeURIComponent('local\u0000' + INSTANCE + '\u0000@0'),
+  ));
+  const item = (doc, name) => [...doc.querySelectorAll('.fp-dock-tab-item')]
+    .find((node) => node.querySelector('.fp-dock-tab-label').textContent === name);
+
+  /** Drags one tab onto another, to its left half or its right. */
+  function drag(win, from, to, side) {
+    const doc = win.document;
+    const data = { types: [], setData(type, value) { this.types.push(type); this[type] = value; } };
+    const fire = (node, type, x) => {
+      const event = new win.Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'dataTransfer', { value: data });
+      // jsdom lays nothing out: every tab is a zero-width box at 0.
+      Object.defineProperty(event, 'clientX', { value: x });
+      node.dispatchEvent(event);
+      return event;
+    };
+    const source = item(doc, from);
+    const target = item(doc, to);
+    const x = side === 'after' ? 1 : -1;
+    fire(source, 'dragstart', 0);
+    const over = fire(target, 'dragover', x);
+    const marked = target.classList.contains(side === 'after' ? 'fp-drop-after' : 'fp-drop-before');
+    fire(target, 'drop', x);
+    fire(source, 'dragend', 0);
+    return { data, over, marked };
+  }
+
+  it('puts a file tab where it is dropped, and saves that order', async () => {
+    const { win, doc, preview } = setup();
+    for (const name of ['a.md', 'b.md', 'c.md']) await dockFile(preview, '/tmp/' + name);
+
+    const { data, over, marked } = drag(win, 'c.md', 'a.md', 'before');
+    expect(over.defaultPrevented).toBe(true);
+    expect(marked).toBe(true);
+    expect(tabNames(doc)).toEqual(['c.md', 'a.md', 'b.md']);
+    expect(doc.querySelector('.fp-drop-before, .fp-drop-after, .fp-dragging')).toBeNull();
+
+    drag(win, 'c.md', 'b.md', 'after');
+    expect(tabNames(doc)).toEqual(['a.md', 'b.md', 'c.md']);
+    const saved = JSON.parse(win.localStorage.getItem(dockKey(preview)));
+    expect(saved.tabs.map((tab) => tab.path)).toEqual(['/tmp/a.md', '/tmp/b.md', '/tmp/c.md']);
+    expect(saved.order).toEqual(['file:/tmp/a.md', 'file:/tmp/b.md', 'file:/tmp/c.md']);
+    // Its own type, never text: dropped on the terminal, a tab is not typed into it.
+    expect(data.types).toEqual(['application/x-tmux-panel-tab']);
+  });
+
+  it('moves with Alt+Shift and the arrow keys, keeping focus on the tab', async () => {
+    const { win, doc, preview } = setup();
+    for (const name of ['a.md', 'b.md']) await dockFile(preview, '/tmp/' + name);
+    const tab = item(doc, 'b.md').querySelector('.fp-dock-tab');
+    tab.focus();
+    tab.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, shiftKey: true, bubbles: true }));
+    expect(tabNames(doc)).toEqual(['b.md', 'a.md']);
+    expect(doc.activeElement.textContent).toBe('b.md');
+    // At the end of the strip, there is nowhere further to go.
+    doc.activeElement.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, shiftKey: true, bubbles: true }));
+    expect(tabNames(doc)).toEqual(['b.md', 'a.md']);
+  });
+
+  it('does nothing for a drop that is not a tab, or a tab dropped on itself', async () => {
+    const { win, doc, preview } = setup();
+    for (const name of ['a.md', 'b.md']) await dockFile(preview, '/tmp/' + name);
+    const target = item(doc, 'a.md');
+    const over = new win.Event('dragover', { bubbles: true, cancelable: true });
+    target.dispatchEvent(over);
+    expect(over.defaultPrevented).toBe(false);
+    target.dispatchEvent(new win.Event('drop', { bubbles: true, cancelable: true }));
+    drag(win, 'a.md', 'a.md', 'after');
+    expect(tabNames(doc)).toEqual(['a.md', 'b.md']);
+  });
+
+  it('puts blocks among the files, and keeps blocks in that order themselves', async () => {
+    const { win, doc, host, preview, apis } = setup();
+    await dockFile(preview, '/tmp/a.md');
+    host.open('repo', { name: 'one' });
+    apis.one.setTitle('One');
+    host.open('repo', { name: 'two' });
+    apis.two.setTitle('Two');
+    expect(tabNames(doc)).toEqual(['a.md', 'One', 'Two']);
+
+    drag(win, 'Two', 'a.md', 'before');
+    expect(tabNames(doc)).toEqual(['Two', 'a.md', 'One']);
+    expect(windowBlocks(win).blocks.map((block) => block.params.name)).toEqual(['two', 'one']);
+    expect(JSON.parse(win.localStorage.getItem(dockKey(preview))).order)
+      .toEqual(['block:repo:two', 'file:/tmp/a.md', 'block:repo:one']);
+  });
+
+  it('comes back in that order with its window', async () => {
+    const { win, doc, host, preview, apis } = setup();
+    for (const name of ['a.md', 'b.md']) await dockFile(preview, '/tmp/' + name);
+    host.open('repo', { name: 'one' });
+    apis.one.setTitle('One');
+    drag(win, 'One', 'a.md', 'before');
+    drag(win, 'b.md', 'a.md', 'before');
+    expect(tabNames(doc)).toEqual(['One', 'b.md', 'a.md']);
+
+    await preview.switchDockContext('local', '@1', INSTANCE);
+    await preview.switchDockContext('local', '@0', INSTANCE);
+    await vi.waitFor(() => expect(tabNames(doc)).toEqual(['One', 'b.md', 'a.md']));
+  });
+
+  it('gives each tab an icon for what it shows', async () => {
+    const { win, doc, host, preview } = setup();
+    // The icons are the blocks' own, as on the page.
+    win.eval(fs.readFileSync('public/js/blocks.js', 'utf8'));
+    win.fetch = vi.fn((url) => {
+      const path = new URL(String(url), 'https://panel.test/').searchParams.get('path') || '/tmp';
+      const kind = /\.png$/.test(path) ? { isImage: true } : /\./.test(path) ? { isText: true } : { isDirectory: true };
+      const data = String(url).includes('/api/files/info')
+        ? { absPath: path, mtimeMs: 1, size: 3, ...kind }
+        : String(url).includes('/api/files/content')
+          ? { content: 'a,b\n1,2\n', language: null }
+          : { absPath: path, parent: '/', entries: [], truncated: false };
+      return Promise.resolve({ status: 200, json: () => Promise.resolve({ success: true, data }) });
+    });
+    for (const path of ['/tmp/pic.png', '/tmp/parts.csv', '/tmp/main.ts', '/tmp/folder']) await dockFile(preview, path);
+    host.open('repo', { name: 'one' });
+
+    const items = [...doc.querySelectorAll('.fp-dock-tab-item')];
+    expect(items.map((node) => node.getAttribute('data-kind'))).toEqual(['image', 'table', 'code', 'folder', 'dock']);
+    expect(items.every((node) => node.querySelector('.fp-dock-tab svg'))).toBe(true);
+    expect(tabNames(doc)).toEqual(['pic.png', 'parts.csv', 'main.ts', 'folder', 'Repo']);
+  });
+
+  it('knows a file by its name before the server has said what it is', () => {
+    const { preview } = setup();
+    const kind = (path) => preview._test.tabKind({ path });
+    expect(['/r/a.md', '/r/b.pdf', '/r/c.ipynb', '/r/d.zip', '/r/e.html', '/r/f.patch', '/r/g.sqlite', '/r/h.xlsx', '/r/i.py', '/r/j.mov', '/r/k'].map(kind))
+      .toEqual(['markdown', 'document', 'notebook', 'archive', 'browser', 'changes', 'database', 'table', 'code', 'video', 'file']);
+    // What the server said wins over the name.
+    expect(preview._test.tabKind({ path: '/r/logo', currentFile: { isImage: true } })).toBe('image');
+    expect(preview._test.tabKind({ path: '/r/src', modeDir: true })).toBe('folder');
+  });
+});

@@ -116,6 +116,8 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 `public/js/file-preview.js` 的文件预览分成两个层次：新文件始终先进入 modal；用户点击“在右侧分栏打开”后，才把当前 `.fp-modal` 移入右侧 `.fp-dock` 并新增/激活 Tab。
 
 - 分窗 Tab 按绝对路径去重；同一路径再次加入时激活已有 Tab，不复制。
+- Tab 可以拖拽排序，也可以用 Alt+Shift+←/→ 移动。文件和 block 混排的顺序存在分窗状态的 `order` 里（文件按路径，block 按 `persistKey`），block 之间的顺序同时经 `blockDock.onReorder` 写回 BlockHost，没有文件 Tab 时也能还原。拖拽数据用面板自己的类型，不用 `text/plain`，免得拖到终端上被当成输入。
+- 每个 Tab 都有图标：block 用自己的图标，文件按类型（`_tabKind`，服务端给出的类型优先，其次看扩展名），图标来自 `Blocks.icon`，颜色按 `data-kind` 取主题强调色。
 - 每个 Tab 保存自己的 modal DOM、文件信息、pane ID、目录上下文、滚动和渲染状态；切换 Tab 不重新请求或重新渲染。
 - “隐藏右侧预览”只收起分窗，不销毁 Tab；右侧恢复按钮负责重新展开。关闭最后一个 Tab 才销毁分窗。
 - 分窗最小宽度为 320px，最大为扣除侧栏后可用工作区的 70%，不再设 820px 固定上限；左侧 12px resize 热区负责拖拽，保存值恢复、键盘调宽及窗口缩放时必须统一 clamp，至少为终端保留 30% 的共享空间。

@@ -496,6 +496,7 @@ var BlockHost = (function () {
       return {
         key: instance.id,
         persistKey: instance.key || instance.kind,
+        kind: kinds[instance.kind].icon || instance.kind,
         title: instance.title,
         subtitle: instance.subtitle,
         icon: iconMarkup(kinds[instance.kind].icon || instance.kind),
@@ -507,6 +508,19 @@ var BlockHost = (function () {
         onDoubleClick: function () { setMode(instance.id, 'max'); },
       };
     }));
+  }
+
+  /** The sidebar's tabs were dragged into a new order: blocks are saved, and come back, in it. */
+  function onSidebarReorder(ids) {
+    var rank = {};
+    ids.forEach(function (id, i) { rank[id] = i; });
+    var docked = instances.filter(function (i) { return rank[i.id] != null; })
+      .sort(function (a, b) { return rank[a.id] - rank[b.id]; });
+    var next = 0;
+    instances = instances.map(function (i) { return rank[i.id] != null ? docked[next++] : i; });
+    var scopes = {};
+    docked.forEach(function (i) { scopes[scopeOf(i)] = true; });
+    Object.keys(scopes).forEach(persist);
   }
 
   /** A tab in the sidebar came to the front (null: a file preview did). */
@@ -733,6 +747,7 @@ var BlockHost = (function () {
     window.addEventListener('hashchange', function () { setTimeout(render, 0); });
     if (sidebar()) {
       sidebar().onChange(onSidebarChange);
+    if (sidebar().onReorder) sidebar().onReorder(onSidebarReorder);
       sidebar().onWindowChange(render);
       sidebar().onWindowsGone(forgetWindows);
     }
