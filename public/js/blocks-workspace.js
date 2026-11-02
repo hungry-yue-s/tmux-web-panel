@@ -20,6 +20,30 @@
     return at === -1 ? { dir: '', name: path } : { dir: path.slice(0, at + 1), name: path.slice(at + 1) };
   }
 
+  function queryString(params) {
+    return Object.keys(params).filter(function (k) { return params[k] != null && params[k] !== ''; })
+      .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); }).join('&');
+  }
+
+  /** A diff that names files but has nothing to show for them: binary files. */
+  function isBinaryDiff(text) {
+    var files = ui.parseUnifiedDiff(text);
+    return files.length > 0 && files.every(function (f) { return f.binary && !f.hunks.length; });
+  }
+
+  /** One file's part of a multi-file diff. */
+  function fileDiff(text, path) {
+    return String(text || '').split(/\n(?=diff --git )/).find(function (part) {
+      var parsed = ui.parseUnifiedDiff(part)[0];
+      return parsed && parsed.name === path;
+    }) || '';
+  }
+
+  function disposePreviews(node) {
+    if (!window.FilePreview || !FilePreview.disposeRendered) return;
+    node.querySelectorAll('.fp-embedded').forEach(function (box) { FilePreview.disposeRendered(box); });
+  }
+
   // ===========================================================================
   // Git block
   // ===========================================================================
@@ -100,8 +124,102 @@
     var loading = null;
     var historyLoaded = false;
     var pollTimer = null;
+    // A file is shown as its diff or as the file itself, the way the file preview
+    // shows it, before or after the change. The choice carries over to the next file.
+    var viewMode = 'diff';
+    var viewSide = 'after';
+    // Binary files have no diff worth reading and open as the file, unless asked.
+    var diffAskedFor = null;
 
     function rootPath(rel) { return status.root.replace(/\/$/, '') + '/' + rel; }
+
+    function modeFor(binary, key) {
+      return binary && viewMode === 'diff' && diffAskedFor !== key ? 'preview' : viewMode;
+    }
+
+    function sideFor(versions) {
+      return versions[viewSide] ? viewSide : (versions.after ? 'after' : 'before');
+    }
+
+    /** 差异 | 预览, and when previewing, which version. */
+    function viewSwitch(versions, mode, side, key, rerender) {
+      var box = el('div', 'git-view-switch');
+      var modes = el('div', 'blk-segmented');
+      modes.setAttribute('aria-label', '显示方式');
+      [['diff', '差异'], ['preview', '预览']].forEach(function (pair) {
+        modes.appendChild(button(pair[1], function () {
+          viewMode = pair[0];
+          diffAskedFor = pair[0] === 'diff' ? key : null;
+          rerender();
+        }, { className: mode === pair[0] ? 'is-active' : '', title: pair[0] === 'diff' ? '按行查看改动' : '像文件预览一样显示这个文件' }));
+      });
+      box.appendChild(modes);
+      if (mode === 'preview') {
+        var sides = el('div', 'blk-segmented');
+        sides.setAttribute('aria-label', '版本');
+        [['before', '改动前'], ['after', '改动后']].forEach(function (pair) {
+          var b = button(pair[1], function () { viewSide = pair[0]; rerender(); }, { className: side === pair[0] ? 'is-active' : '' });
+          b.disabled = !versions[pair[0]];
+          if (b.disabled) b.title = pair[0] === 'before' ? '这是新文件' : '这个文件被删除了';
+          sides.appendChild(b);
+        });
+        box.appendChild(sides);
+      }
+      return box;
+    }
+
+    /**
+     * A file as one version has it: WORKTREE (on disk), INDEX, or a commit, rendered
+     * by the file preview. Anything but the disk comes through /api/git/file and /raw.
+     */
+    function versionSource(version) {
+      var name = rootPath(version.path);
+      if (version.rev === 'WORKTREE') return Promise.resolve({ path: name, machine: api.url('') });
+      var query = Object.assign({ rev: version.rev, file: version.path }, target);
+      return c.get('/api/git/file', query).then(function (info) {
+        if (info.tooLarge) throw new Error('文件太大，无法预览（' + (info.size / 1048576).toFixed(1) + ' MB）');
+        info.absPath = name;
+        var token = window.Auth && Auth.wsTokenParam ? Auth.wsTokenParam() : '';
+        return {
+          info: info, name: name, content: info.content, language: info.language, versioned: true,
+          rawUrl: c.url('/api/git/raw') + '?' + queryString(query) + (token ? '&' + token : ''),
+        };
+      });
+    }
+
+    function renderVersion(box, version) {
+      var missing = function () { box.replaceChildren(ui.emptyState('file', '这个版本里没有这个文件', '')); };
+      if (!version) { missing(); return; }
+      if (!window.FilePreview || !FilePreview.renderInto) {
+        box.replaceChildren(ui.emptyState('file', '预览不可用', ''));
+        return;
+      }
+      var asked = {};
+      box.__gitVersion = asked;
+      box.replaceChildren(ui.spinnerLine('读取文件'));
+      versionSource(version).then(function (source) {
+        if (box.__gitVersion === asked) return FilePreview.renderInto(box, source);
+        return null;
+      }).catch(function (err) {
+        if (box.__gitVersion !== asked) return;
+        if (err.message === 'not_in_revision') missing();
+        else box.replaceChildren(ui.errorBox(err));
+      });
+    }
+
+    /** Before and after for a file in the change list; null where there is none. */
+    function changeVersions(file, staged) {
+      if (staged) {
+        return {
+          before: file.index === 'A' ? null : { rev: 'HEAD', path: file.from || file.path },
+          after: file.index === 'D' ? null : { rev: 'INDEX', path: file.path },
+        };
+      }
+      return {
+        before: file.untracked ? null : { rev: 'INDEX', path: file.path },
+        after: file.worktree === 'D' ? null : { rev: 'WORKTREE', path: file.path },
+      };
+    }
 
     function syncCounter() {
       var subject = message.value.split('\n')[0];
@@ -263,6 +381,7 @@
     }
 
     function select(path, staged) {
+      if (!selection || selection.path !== path || selection.staged !== staged) viewSide = 'after';
       selection = { path: path, staged: staged };
       rows().forEach(function (r) {
         var on = r.dataset.path === path && (r.dataset.staged === '1') === staged;
@@ -316,6 +435,7 @@
     // --- diff ---
     function showDiff(force) {
       if (!selection) {
+        disposePreviews(main);
         main.replaceChildren(ui.emptyState('changes', status && status.files.length ? '选择一个文件查看差异' : '没有改动', status && status.files.length ? '点击行可以选中，按块或按行暂存。' : ''));
         lastDiffKey = '';
         return;
@@ -325,8 +445,13 @@
       var staged = selection.staged;
       var query = Object.assign({ file: file.path, staged: staged ? '1' : '0', untracked: !staged && file.untracked ? '1' : '0' }, target);
       c.get('/api/git/diff', query).then(function (data) {
-        var key = file.path + '\u0000' + staged + '\u0000' + data.diff;
-        if (!force && key === lastDiffKey) return; // keep line selections across background refreshes
+        var fileKey = file.path + '\u0000' + staged;
+        var mode = modeFor(isBinaryDiff(data.diff), fileKey);
+        var versions = changeVersions(file, staged);
+        var side = sideFor(versions);
+        // The diff stands in for the file's content: unchanged, nothing is redrawn.
+        var key = [fileKey, mode, side, data.diff].join('\u0000');
+        if (!force && key === lastDiffKey) return; // keep line selections and the preview across background refreshes
         lastDiffKey = key;
         var scroll = main.querySelector('.git-diff-scroll');
         var top = scroll ? scroll.scrollTop : 0;
@@ -337,9 +462,16 @@
         if (parts.dir) title.appendChild(el('span', 'blk-muted', parts.dir.replace(/\/$/, '')));
         var stats = el('span', 'blk-diff-stats');
         var scope = el('span', 'blk-pill', staged ? '已暂存' : (file.untracked ? '新文件' : '工作区'));
-        head.append(title, stats, scope, iconButton('file', '打开文件', function () {
+        head.append(title, stats, scope, viewSwitch(versions, mode, side, fileKey, function () { showDiff(true); }), iconButton('file', '打开文件', function () {
           if (window.FilePreview) FilePreview.openFile(rootPath(file.path), null);
         }));
+        disposePreviews(main);
+        if (mode === 'preview') {
+          var preview = el('div', 'git-preview');
+          main.replaceChildren(head, preview);
+          renderVersion(preview, versions[side]);
+          return;
+        }
         var box = el('div', 'git-diff-scroll');
         var files = ui.renderDiffInto(box, data.diff, {
           fileHeaders: false,
@@ -617,9 +749,103 @@
             }, { icon: 'copy', className: 'blk-btn-ghost blk-btn-small git-hash-btn', title: '复制完整哈希' });
             metaRow.appendChild(hash);
             card.appendChild(metaRow);
+            var diffText = at === -1 ? '' : res.diff.slice(at + 1);
+            var files = res.files || [];
+            var fileRows = [];
             var diffs = el('div', 'git-commit-diffs');
-            ui.renderDiffInto(diffs, at === -1 ? '' : res.diff.slice(at + 1), { emptyTitle: '没有文本改动', emptyText: '这个提交只改了二进制文件或文件权限。' });
-            detail.replaceChildren(card, diffs);
+
+            function markFile(picked) {
+              fileRows.forEach(function (r) {
+                var on = r.file === picked;
+                r.row.classList.toggle('is-active', on);
+                r.row.setAttribute('aria-selected', String(on));
+              });
+            }
+
+            // The file goes to the top of the detail, and a preview takes the height left there.
+            function bringUp(bar, preview) {
+              detail.scrollTop += bar.getBoundingClientRect().top - detail.getBoundingClientRect().top - 8;
+              if (preview) preview.style.height = Math.max(320, detail.clientHeight - bar.offsetHeight - 28) + 'px';
+            }
+
+            function showAll() {
+              markFile(null);
+              disposePreviews(diffs);
+              ui.renderDiffInto(diffs, diffText, { emptyTitle: '没有文本改动', emptyText: '这个提交只改了二进制文件或文件权限。' });
+            }
+
+            function showFile(file) {
+              markFile(file);
+              var fileKey = commit.hash + '\u0000' + file.path;
+              var versions = {
+                before: file.status === 'A' ? null : { rev: commit.hash + '^', path: file.from || file.path },
+                after: file.status === 'D' ? null : { rev: commit.hash, path: file.path },
+              };
+              var mode = modeFor(file.binary, fileKey);
+              var side = sideFor(versions);
+              var bar = el('div', 'git-commit-file-bar');
+              var parts = splitPath(file.path);
+              var title = el('div', 'git-diff-title');
+              title.appendChild(el('strong', '', parts.name));
+              if (parts.dir) title.appendChild(el('span', 'blk-muted', parts.dir.replace(/\/$/, '')));
+              if (file.from) title.title = file.from + ' → ' + file.path;
+              bar.append(
+                button('全部文件', showAll, { icon: 'chevronLeft', className: 'blk-btn-ghost blk-btn-small' }),
+                title,
+                viewSwitch(versions, mode, side, fileKey, function () { showFile(file); }),
+                iconButton('file', '打开磁盘上的这个文件', function () {
+                  if (window.FilePreview) FilePreview.openFile(rootPath(file.path), null);
+                })
+              );
+              disposePreviews(diffs);
+              if (mode === 'preview') {
+                var preview = el('div', 'git-preview');
+                diffs.replaceChildren(bar, preview);
+                bringUp(bar, preview);
+                renderVersion(preview, versions[side]);
+                return;
+              }
+              var one = el('div', 'git-commit-file-diff');
+              ui.renderDiffInto(one, fileDiff(diffText, file.path), {
+                fileHeaders: false,
+                emptyTitle: '没有文本差异',
+                emptyText: file.binary ? '这是二进制文件，切到“预览”查看。' : '只改了文件名或权限。',
+              });
+              diffs.replaceChildren(bar, one);
+              bringUp(bar, null);
+            }
+
+            var list = el('div', 'git-commit-files');
+            if (files.length) {
+              var listHead = el('div', 'git-group-head');
+              listHead.append(el('span', '', '改动的文件'), el('span', 'blk-pill', String(files.length)));
+              list.appendChild(listHead);
+              var rowsBox = el('div', 'git-commit-file-list');
+              rowsBox.setAttribute('role', 'listbox');
+              rowsBox.setAttribute('aria-label', '这个提交改动的文件');
+              files.forEach(function (file) {
+                var row = el('div', 'git-file');
+                row.setAttribute('role', 'option');
+                row.setAttribute('aria-selected', 'false');
+                var badge = el('span', 'git-badge git-badge-' + file.status.toLowerCase(), file.status);
+                badge.title = STATUS_LABEL[file.status] || file.status;
+                var parts = splitPath(file.path);
+                var name = el('span', 'git-file-name');
+                name.appendChild(el('span', 'git-file-base', parts.name));
+                if (parts.dir) name.appendChild(el('span', 'git-file-dir', parts.dir.replace(/\/$/, '')));
+                name.title = (file.from ? file.from + ' → ' : '') + file.path;
+                var stats = el('span', 'blk-diff-stats git-file-stats');
+                if (file.binary) stats.appendChild(el('span', 'blk-muted', '二进制'));
+                else stats.append(el('span', 'is-add', '+' + file.added), el('span', 'is-del', '−' + file.removed));
+                row.append(badge, name, stats);
+                row.addEventListener('click', function () { showFile(file); });
+                fileRows.push({ row: row, file: file });
+                rowsBox.appendChild(row);
+              });
+              list.appendChild(rowsBox);
+            }
+            detail.replaceChildren(card, list, diffs);
+            showAll();
             detail.scrollTop = 0;
           }).catch(function (err) { detail.replaceChildren(ui.errorBox(err)); });
         }
@@ -671,6 +897,7 @@
         clearTimeout(firstLoad);
         window.removeEventListener('focus', onFocus);
         closeBranchMenu();
+        disposePreviews(root);
       },
     };
   }

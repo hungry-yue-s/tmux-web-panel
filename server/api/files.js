@@ -151,7 +151,7 @@ const MIME_MAP = {
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-function getFileInfo(filePath) {
+export function getFileInfo(filePath) {
   const ext = extname(filePath).toLowerCase();
   const base = basename(filePath);
   const mimeType = MIME_MAP[ext] || 'text/plain';
@@ -169,7 +169,7 @@ function getFileInfo(filePath) {
 }
 
 // Detect language from shebang line (e.g. #!/usr/bin/env python3)
-function detectShebangLanguage(content) {
+export function detectShebangLanguage(content) {
   if (!content.startsWith('#!')) return null;
   const firstLine = content.slice(0, content.indexOf('\n'));
   // #!/usr/bin/env python3 → python3
@@ -180,7 +180,7 @@ function detectShebangLanguage(content) {
   return SHEBANG_MAP[cmd] || SHEBANG_MAP[match[1]] || null;
 }
 
-function getSizeLimit(info) {
+export function getSizeLimit(info) {
   if (info.isVideo) return Infinity; // Videos are streamed; /content rejects binary files.
   if (info.isSqlite) return Infinity; // Queried in place by /api/sqlite, never buffered.
   if (info.isImage) return SIZE_LIMITS.image;

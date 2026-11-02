@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFilesRouter, createPathGuard } from '../server/api/files.js';
 import {
-  createGitRouter, parseStatus, parseLineChanges, parseLog, fallbackCommitMessage,
+  createGitRouter, parseStatus, parseLineChanges, parseLog, fallbackCommitMessage, parseCommitFiles, blobSpec,
 } from '../server/api/git.js';
 import { createSqliteRouter, quoteIdent } from '../server/api/sqlite.js';
 import { createOpenRouter, createNotebookRouter } from '../server/api/open.js';
@@ -64,6 +64,26 @@ describe('git parsers', () => {
     expect(rows[0].graph).toBe('* ');
     expect(rows[0].commit).toMatchObject({ short: 'ab', refs: ['HEAD -> main', 'tag: v1'], subject: 'subject' });
     expect(rows[1]).toEqual({ graph: '|\\', commit: null });
+  });
+
+  it('pairs a commit\'s file statuses with their line counts', () => {
+    const names = 'M\0a.js\0R087\0old name.md\0new name.md\0A\0logo.png\0';
+    const stats = '3\t1\ta.js\0' + '2\t2\t\0old name.md\0new name.md\0' + '-\t-\tlogo.png\0';
+    expect(parseCommitFiles(names, stats)).toEqual([
+      { path: 'a.js', from: null, status: 'M', added: 3, removed: 1, binary: false },
+      { path: 'new name.md', from: 'old name.md', status: 'R', added: 2, removed: 2, binary: false },
+      { path: 'logo.png', from: null, status: 'A', added: 0, removed: 0, binary: true },
+    ]);
+    expect(parseCommitFiles('', '')).toEqual([]);
+  });
+
+  it('names a file in the index, HEAD or a commit, and nothing else', () => {
+    expect(blobSpec('INDEX', 'docs/a b.md')).toBe(':docs/a b.md');
+    expect(blobSpec('HEAD^', 'a.md')).toBe('HEAD^:a.md');
+    expect(blobSpec('abc1234', 'a.md')).toBe('abc1234:a.md');
+    for (const [rev, file] of [['HEAD', ''], ['HEAD', '../x'], ['HEAD', 'a/../../x'], ['HEAD', '/x'], ['HEAD', 'a\nb'], ['HEAD~1', 'a'], ['main', 'a'], ['', 'a']]) {
+      expect(() => blobSpec(rev, file), `${rev} ${file}`).toThrow();
+    }
   });
 
   it('summarises staged files when no agent writes the message', () => {
@@ -125,6 +145,93 @@ describe('git block API', () => {
     expect(res.body.data.message).toBe('add four');
     res = await request(app).get('/api/git/status').query({ path });
     expect(res.body.data.files[0]).toMatchObject({ path: 'a.txt', staged: true, unstaged: true });
+  });
+
+  describe('a commit\'s files and their versions', () => {
+    const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+    let history;
+    let path;
+    beforeAll(async () => {
+      history = join(dir, 'history');
+      path = apiPath(history);
+      execFileSync('git', ['init', '-q', '-b', 'main', history]);
+      const git = (...args) => execFileSync('git', ['-C', history, '-c', 'user.name=T', '-c', 'user.email=t@e', ...args], { encoding: 'utf8' });
+      await writeFile(join(history, 'notes.md'), '# One\n\n- [ ] task\n');
+      await writeFile(join(history, 'old name.txt'), 'kept\nas it was\nhere\n');
+      await writeFile(join(history, 'gone.txt'), 'bye\n');
+      git('add', '.');
+      git('commit', '-q', '-m', 'first');
+      await writeFile(join(history, 'notes.md'), '# Two\n\n- [x] task\n');
+      await writeFile(join(history, 'logo.png'), PNG);
+      git('mv', 'old name.txt', 'new name.txt');
+      git('rm', '-q', 'gone.txt');
+      git('add', '.');
+      git('commit', '-q', '-m', 'second');
+      // A merge brings in a file from a branch.
+      git('checkout', '-q', '-b', 'side', 'HEAD~1');
+      await writeFile(join(history, 'side.txt'), 'from the side\n');
+      git('add', '.');
+      git('commit', '-q', '-m', 'side');
+      git('checkout', '-q', 'main');
+      git('merge', '-q', '--no-ff', '-m', 'merge side', 'side');
+      await writeFile(join(history, 'notes.md'), '# Three\n');
+      git('add', 'notes.md');
+    });
+    const hashOf = (subject) => execFileSync('git', ['-C', history, 'log', '--all', '--format=%H %s'], { encoding: 'utf8' })
+      .split('\n').find((line) => line.endsWith(' ' + subject)).split(' ')[0];
+
+    it('lists the files a commit changed, with renames, deletions and binary files', async () => {
+      const res = await request(app).get('/api/git/show').query({ path, commit: hashOf('second') });
+      const byPath = Object.fromEntries(res.body.data.files.map((f) => [f.path, f]));
+      expect(byPath['notes.md']).toMatchObject({ status: 'M', added: 2, removed: 2, binary: false });
+      expect(byPath['logo.png']).toMatchObject({ status: 'A', binary: true });
+      expect(byPath['gone.txt']).toMatchObject({ status: 'D', added: 0, removed: 1 });
+      expect(byPath['new name.txt']).toMatchObject({ status: 'R', from: 'old name.txt', added: 0, removed: 0 });
+      expect(res.body.data.diff).toContain('diff --git a/notes.md b/notes.md');
+    });
+
+    it('shows a merge against its first parent, with its files', async () => {
+      const res = await request(app).get('/api/git/show').query({ path, commit: hashOf('merge side') });
+      expect(res.body.data.files).toEqual([{ path: 'side.txt', from: null, status: 'A', added: 1, removed: 0, binary: false }]);
+      expect(res.body.data.diff).toContain('+from the side');
+    });
+
+    it('reads a text file as a commit, its parent and the index have it', async () => {
+      const second = hashOf('second');
+      let res = await request(app).get('/api/git/file').query({ path, rev: second, file: 'notes.md' });
+      expect(res.body.data).toMatchObject({ isMarkdown: true, isText: true, content: '# Two\n\n- [x] task\n', tooLarge: false });
+      res = await request(app).get('/api/git/file').query({ path, rev: second + '^', file: 'notes.md' });
+      expect(res.body.data.content).toBe('# One\n\n- [ ] task\n');
+      res = await request(app).get('/api/git/file').query({ path, rev: 'INDEX', file: 'notes.md' });
+      expect(res.body.data.content).toBe('# Three\n');
+      res = await request(app).get('/api/git/file').query({ path, rev: 'HEAD', file: 'new name.txt' });
+      expect(res.body.data.content).toBe('kept\nas it was\nhere\n');
+    });
+
+    it('describes a binary file without its content, and serves its bytes as they were', async () => {
+      const second = hashOf('second');
+      let res = await request(app).get('/api/git/file').query({ path, rev: second, file: 'logo.png' });
+      expect(res.body.data).toMatchObject({ isImage: true, isText: false, size: PNG.length });
+      expect(res.body.data.content).toBeUndefined();
+      res = await request(app).get('/api/git/raw').query({ path, rev: second, file: 'logo.png' })
+        .buffer(true).parse((r, done) => { const parts = []; r.on('data', (c) => parts.push(c)); r.on('end', () => done(null, Buffer.concat(parts))); });
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toBe('image/png');
+      expect(Buffer.compare(res.body, PNG)).toBe(0);
+    });
+
+    it('says when that version has no such file, and refuses anything but a version and a path in it', async () => {
+      const second = hashOf('second');
+      let res = await request(app).get('/api/git/file').query({ path, rev: second + '^', file: 'logo.png' });
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('not_in_revision');
+      for (const [rev, file] of [['HEAD', '../outside.txt'], ['HEAD', '/etc/passwd'], ['main', 'notes.md'], ['HEAD~2', 'notes.md'], ['--output=x', 'notes.md']]) {
+        res = await request(app).get('/api/git/file').query({ path, rev, file });
+        expect(res.status, `${rev} ${file}`).toBe(400);
+      }
+      res = await request(app).get('/api/git/raw').query({ path, rev: 'HEAD', file: '../outside.txt' });
+      expect(res.status).toBe(400);
+    });
   });
 
   it('rejects paths outside the allowed roots and non-repositories', async () => {

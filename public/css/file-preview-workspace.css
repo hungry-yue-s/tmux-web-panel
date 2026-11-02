@@ -2,7 +2,8 @@
 .fp-overlay,
 .fp-menu,
 .fp-mermaid-dialog,
-.fp-dock-restore {
+.fp-dock-restore,
+.fp-embedded {
   --fp-panel: var(--workspace-panel, var(--bg-primary));
   --fp-bg: var(--workspace-bg, var(--bg-secondary));
   --fp-hover: var(--workspace-hover, var(--bg-hover));
@@ -14,6 +15,9 @@
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 .fp-modal { background: var(--fp-panel); border: 1px solid var(--fp-line); }
+/* The same renderers outside the modal, as a block shows a file. */
+.fp-embedded { display: flex; flex-direction: column; min-height: 0; background: var(--fp-panel); }
+.fp-embedded-body { flex: 1; min-height: 0; overflow: auto; }
 .fp-header {
   min-height: 44px;
   padding: 6px 10px 6px 16px;

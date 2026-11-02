@@ -3924,7 +3924,7 @@ var FilePreview = (function () {
     });
   }
 
-  function _renderMarkdown(body, content, filePath, paneId) {
+  function _renderMarkdown(body, content, filePath, paneId, readOnly) {
     body.innerHTML = '<div class="fp-loading" role="status">正在排版文档\u2026</div>';
 
     return Promise.all([
@@ -3979,7 +3979,11 @@ var FilePreview = (function () {
         body.appendChild(wrap);
 
         _replaceTaskMarkers(wrap);
-        _bindMarkdownTaskToggles(wrap, filePath);
+        if (readOnly) {
+          wrap.querySelectorAll('.fp-task-checkbox').forEach(function (checkbox) { checkbox.disabled = true; });
+        } else {
+          _bindMarkdownTaskToggles(wrap, filePath);
+        }
         _renderCallouts(wrap);
         _prepareMarkdownNavigation(wrap, filePath, paneId);
 
@@ -4351,10 +4355,151 @@ var FilePreview = (function () {
 
   // --- Open File ---
 
+  function _workingRawUrl(machine, info) {
+    var tokenQs = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
+    var revision = info.mtimeMs != null ? String(Math.round(info.mtimeMs)) : '';
+    return machine + '/api/files/raw?path=' + encodeURIComponent(info.absPath)
+      + (tokenQs ? '&' + tokenQs : '')
+      + (revision ? '&v=' + encodeURIComponent(revision) : '');
+  }
+
+  function _loadWorkingContent(machine, absPath, headers) {
+    return fetch(machine + '/api/files/content?path=' + encodeURIComponent(absPath), {
+      headers: headers, cache: 'no-store',
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (cr) {
+        if (!cr.success) throw new Error(cr.error || '加载文件失败');
+        return cr.data;
+      });
+  }
+
+  /** A file of a kind that only reads from disk, shown as some other version. */
+  function _renderUnavailable(body, message, rawUrl, filename) {
+    body.innerHTML = '';
+    var wrap = document.createElement('div');
+    wrap.className = 'fp-error';
+    var text = document.createElement('div');
+    text.textContent = message;
+    wrap.appendChild(text);
+    if (rawUrl) {
+      var download = document.createElement('button');
+      download.className = 'fp-error-download';
+      download.type = 'button';
+      download.textContent = '下载这个版本';
+      download.addEventListener('click', function () {
+        _blobDownload(rawUrl + '&download=1', filename).catch(function (err) {
+          _notifyFailure('下载失败：' + err.message);
+        });
+      });
+      wrap.appendChild(download);
+    }
+    body.appendChild(wrap);
+  }
+
+  /**
+   * The renderers, given where the file's bytes and text come from. `source.name` is
+   * its path, which decides how it is shown and what its links are relative to.
+   * Resolves false when the request is no longer current.
+   *
+   * options: isCurrent, paneId, targetLine, htmlSource, gitGutter, onContent, and
+   * readOnly, which renders nothing that writes: no TODO board, no task toggles.
+   * `source.versioned` is a version other than the file on disk, which SQLite files
+   * and archives cannot be shown as: they are read in place.
+   */
+  function _renderFileBody(body, info, source, options) {
+    var name = source.name || info.absPath;
+    var filename = name.split('/').pop();
+    var isCurrent = options.isCurrent || function () { return true; };
+    if (info.isImage) {
+      _renderImage(body, source.rawUrl);
+      return Promise.resolve();
+    }
+    if (info.isVideo) {
+      _renderVideo(body, source.rawUrl, filename);
+      return Promise.resolve();
+    }
+    if (info.isPdf) return _renderPdf(body, source.rawUrl, filename);
+    if (info.isXlsx) return _renderXlsx(body, source.rawUrl);
+    if ((info.isArchive || info.isSqlite) && source.versioned) {
+      _renderUnavailable(body, (info.isSqlite ? 'SQLite 数据库' : '压缩包') + '只能按磁盘上的文件预览。', source.rawUrl, filename);
+      return Promise.resolve();
+    }
+    if (info.isArchive) return _renderArchive(body, info);
+    if (info.isSqlite && window.Blocks) return window.Blocks.renderSqlite(body, info);
+    return source.loadContent().then(function (data) {
+      if (!isCurrent()) return false;
+      if (options.onContent) options.onContent(data.content);
+      // Notebooks, patches and TODO.md boards have their own blocks.
+      var block = window.Blocks && window.Blocks.rendererFor(name, options.readOnly);
+      if (block) return block(body, data.content, info);
+      if (info.isMarkdown) {
+        return _renderMarkdown(body, data.content, name, options.paneId, options.readOnly);
+      }
+      if (info.language === 'html' || /\.html?$/i.test(filename)) {
+        _renderHtml(body, data.content, options.targetLine, options.htmlSource);
+      } else if (_isCsvPath(name)) {
+        _renderCsv(body, data.content, name);
+      } else {
+        _renderCode(body, data.content, data.language, options.targetLine);
+        // Git changes in the gutter, like an editor.
+        if (options.gitGutter && window.Blocks) window.Blocks.decorateGitGutter(body, info.absPath);
+      }
+      return true;
+    });
+  }
+
+  /**
+   * The same renderers in a page of its own, outside the modal: the Git block shows a
+   * file as one version or another has it. Read only. `source` is either
+   * { path } for the file on disk, or { info, name, rawUrl, content, language,
+   * versioned } for anything else; `machine` is the server's URL prefix.
+   */
+  function renderInto(container, source) {
+    var token = {};
+    container.__fpRender = token;
+    var isCurrent = function () { return container.__fpRender === token; };
+    _disposePreview(container);
+    container.classList.add('fp-embedded');
+    var body = document.createElement('div');
+    body.className = 'fp-embedded-body';
+    body.innerHTML = '<div class="fp-loading" role="status">正在读取…</div>';
+    container.replaceChildren(body);
+    var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
+    var machine = source.machine != null ? source.machine : _machine();
+    var described = source.info ? Promise.resolve(source) : fetch(machine + '/api/files/info?path=' + encodeURIComponent(source.path), {
+      headers: headers, cache: 'no-store',
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res.success) throw new Error(res.error || '无法读取文件');
+        if (res.data.isDirectory) throw new Error('这是一个目录');
+        return {
+          info: res.data,
+          name: res.data.absPath,
+          rawUrl: _workingRawUrl(machine, res.data),
+          loadContent: function () { return _loadWorkingContent(machine, res.data.absPath, headers); },
+        };
+      });
+    return described.then(function (described) {
+      if (!isCurrent()) return false;
+      var loadContent = described.loadContent || function () {
+        return Promise.resolve({ content: described.content, language: described.language || described.info.language });
+      };
+      return _renderFileBody(body, described.info, {
+        name: described.name, rawUrl: described.rawUrl, loadContent: loadContent, versioned: !!described.versioned,
+      }, { isCurrent: isCurrent, readOnly: true });
+    }).then(function (rendered) {
+      return rendered !== false && isCurrent();
+    }).catch(function (err) {
+      if (isCurrent()) _showError(body, err.message);
+      return false;
+    });
+  }
+
   function _renderResolvedPreview(body, info, targetLine, options) {
     options = options || {};
     var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
-    var tokenQs = typeof Auth !== 'undefined' ? Auth.wsTokenParam() : '';
     var requestId = options.requestId == null ? _previewGeneration : options.requestId;
     var expectedFile = options.expectedFile || null;
     var expectedPath = options.expectedPath || null;
@@ -4400,10 +4545,7 @@ var FilePreview = (function () {
         });
     }
 
-    var revision = info.mtimeMs != null ? String(Math.round(info.mtimeMs)) : '';
-    var rawUrl = _machine() + '/api/files/raw?path=' + encodeURIComponent(info.absPath)
-      + (tokenQs ? '&' + tokenQs : '')
-      + (revision ? '&v=' + encodeURIComponent(revision) : '');
+    var rawUrl = _workingRawUrl(_machine(), info);
     var filename = info.absPath.split('/').pop();
 
     current = {
@@ -4422,50 +4564,19 @@ var FilePreview = (function () {
       size: info.size,
       mtimeMs: info.mtimeMs,
     };
-    var renderPromise;
-    if (info.isImage) {
-      _renderImage(renderedBody, rawUrl);
-      renderPromise = Promise.resolve();
-    } else if (info.isVideo) {
-      _renderVideo(renderedBody, rawUrl, filename);
-      renderPromise = Promise.resolve();
-    } else if (info.isPdf) {
-      renderPromise = _renderPdf(renderedBody, rawUrl, filename);
-    } else if (info.isXlsx) {
-      renderPromise = _renderXlsx(renderedBody, rawUrl);
-    } else if (info.isArchive) {
-      renderPromise = _renderArchive(renderedBody, info);
-    } else if (info.isSqlite && window.Blocks) {
-      renderPromise = window.Blocks.renderSqlite(renderedBody, info);
-    } else {
-      renderPromise = fetch(_machine() + '/api/files/content?path=' + encodeURIComponent(info.absPath), {
-        headers: headers, cache: 'no-store',
-      })
-        .then(function (r) { return r.json(); })
-        .then(function (cr) {
-          if (!cr.success) throw new Error(cr.error || '加载文件失败');
-          if (!isCurrent()) return false;
-          current.rawContent = cr.data.content;
-          // Notebooks, patches and TODO.md boards have their own blocks.
-          var block = window.Blocks && window.Blocks.rendererFor(info.absPath);
-          if (block) return block(renderedBody, cr.data.content, info);
-          if (info.isMarkdown) {
-            return _renderMarkdown(renderedBody, cr.data.content, info.absPath, options.paneId);
-          }
-          if (current.isHtml) {
-            var previousHtml = options.reuseCurrent && body.querySelector('.fp-html-wrap');
-            _renderHtml(renderedBody, cr.data.content, targetLine,
-              targetLine != null || (previousHtml && previousHtml.getAttribute('data-source-visible') === 'true'));
-          } else if (_isCsvPath(info.absPath)) {
-            _renderCsv(renderedBody, cr.data.content, info.absPath);
-          } else {
-            _renderCode(renderedBody, cr.data.content, cr.data.language, targetLine);
-            // Git changes in the gutter, like an editor.
-            if (window.Blocks) window.Blocks.decorateGitGutter(renderedBody, info.absPath);
-          }
-          return true;
-        });
-    }
+    var previousHtml = options.reuseCurrent && body.querySelector('.fp-html-wrap');
+    var renderPromise = _renderFileBody(renderedBody, info, {
+      name: info.absPath,
+      rawUrl: rawUrl,
+      loadContent: function () { return _loadWorkingContent(_machine(), info.absPath, headers); },
+    }, {
+      isCurrent: isCurrent,
+      paneId: options.paneId,
+      targetLine: targetLine,
+      htmlSource: targetLine != null || !!(previousHtml && previousHtml.getAttribute('data-source-visible') === 'true'),
+      gitGutter: true,
+      onContent: function (content) { current.rawContent = content; },
+    });
 
     return Promise.resolve(renderPromise).then(function (rendered) {
       if (rendered === false || !commit(current, 'file')) {
@@ -4958,6 +5069,7 @@ var FilePreview = (function () {
 
   return {
     registerLinkProvider: registerLinkProvider, openFile: openFile,
+    renderInto: renderInto, disposeRendered: _disposePreview,
     openFromBuffer: openFromBuffer, close: close, closeModal: closeModal, closeDocked: closeDocked,
     restoreDocked: restoreDocked, switchDockContext: switchDockContext, hitTest: hitTest,
     reconcileWorkspace: reconcileWorkspace,

@@ -1551,10 +1551,11 @@ var Blocks = (function () {
     return true;
   }
 
-  function rendererFor(path) {
+  /** `readOnly` leaves out the board: it saves what is dragged to the file on disk. */
+  function rendererFor(path, readOnly) {
     if (/\.ipynb$/i.test(path)) return renderNotebook;
     if (/\.(diff|patch)$/i.test(path)) return function (body, content) { return renderDiffFile(body, content); };
-    if (isBoardFile(path) && !_boardOff[path]) return renderBoardFile;
+    if (!readOnly && isBoardFile(path) && !_boardOff[path]) return renderBoardFile;
     return null;
   }
 

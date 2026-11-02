@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { spawn } from 'node:child_process';
-import { dirname } from 'node:path';
+import { basename, dirname } from 'node:path';
 import { IS_WINDOWS, toPosixPath } from '../msys.js';
+import { detectShebangLanguage, getFileInfo, getSizeLimit } from './files.js';
 import { requireSameOrigin } from './same-origin.js';
 
 // The git block: status, diffs, line staging, history and commits for the
@@ -20,8 +21,11 @@ class GitError extends Error {
   }
 }
 
-/** Runs git and resolves its stdout; `allowExit` lists non-zero codes that still count as success. */
-export function runGit(cwd, args, { input = null, allowExit = [], timeout = READ_TIMEOUT_MS, env = {} } = {}) {
+/**
+ * Runs git and resolves its stdout; `allowExit` lists non-zero codes that still count as success.
+ * `raw` resolves the bytes instead of text.
+ */
+export function runGit(cwd, args, { input = null, allowExit = [], timeout = READ_TIMEOUT_MS, env = {}, raw = false } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn('git', ['--literal-pathspecs', '-c', 'core.quotepath=off', ...args], {
       cwd,
@@ -44,8 +48,8 @@ export function runGit(cwd, args, { input = null, allowExit = [], timeout = READ
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      const stdout = Buffer.concat(out).toString('utf8');
-      if (code === 0 || allowExit.includes(code)) return resolve(stdout);
+      const bytes = Buffer.concat(out);
+      if (code === 0 || allowExit.includes(code)) return resolve(raw ? bytes : bytes.toString('utf8'));
       const message = Buffer.concat(err).toString('utf8').trim() || `git exited with ${code}`;
       reject(new GitError(message, 400));
     });
@@ -205,6 +209,62 @@ function generateWithClaude(diff, cwd) {
   });
 }
 
+/**
+ * The files a commit changed, from `--name-status -z` and `--numstat -z` of the same
+ * diff. Binary files have no line counts.
+ */
+export function parseCommitFiles(nameStatus, numstat) {
+  const counts = new Map();
+  const stats = numstat.split('\0');
+  for (let i = 0; i < stats.length;) {
+    const head = stats[i++].replace(/^\n+/, '');
+    if (!head) continue;
+    const [added, removed, path] = head.split('\t');
+    // A rename has no path here: the old and new names follow.
+    let key = path;
+    if (path === '') {
+      i += 1;
+      key = stats[i++];
+    }
+    const binary = added === '-';
+    counts.set(key, { added: binary ? 0 : Number(added), removed: binary ? 0 : Number(removed), binary });
+  }
+  const files = [];
+  const names = nameStatus.split('\0');
+  for (let i = 0; i < names.length;) {
+    const code = names[i++].replace(/^\n+/, '');
+    if (!code) continue;
+    const status = code.charAt(0);
+    const from = status === 'R' || status === 'C' ? names[i++] : null;
+    const path = names[i++];
+    files.push({ path, from, status, ...(counts.get(path) || { added: 0, removed: 0, binary: false }) });
+  }
+  return files;
+}
+
+/**
+ * `git cat-file` name for a file as one version has it: `INDEX` for the staging
+ * area, otherwise HEAD or a commit id, either with `^` for its first parent.
+ */
+export function blobSpec(rev, file) {
+  const path = String(file || '');
+  if (!path || path.startsWith('/') || /[\0\n]/.test(path) || path.split('/').includes('..')) {
+    throw new GitError('invalid_path');
+  }
+  const version = String(rev || '');
+  if (version === 'INDEX') return `:${path}`;
+  if (!/^(HEAD|[0-9a-f]{4,64})\^?$/i.test(version)) throw new GitError('invalid_revision');
+  return `${version}:${path}`;
+}
+
+/** Size of the blob, or 404 when that version has no such file. */
+async function blobSize(root, spec) {
+  const line = (await runGit(root, ['cat-file', '--batch-check'], { input: `${spec}\n` })).trim();
+  const match = /^[0-9a-f]+ blob (\d+)$/.exec(line);
+  if (!match) throw new GitError('not_in_revision', 404);
+  return Number(match[1]);
+}
+
 export function createGitRouter({ pathGuard, generateMessage = generateWithClaude }) {
   const router = Router();
   router.use(requireSameOrigin);
@@ -290,9 +350,52 @@ export function createGitRouter({ pathGuard, generateMessage = generateWithClaud
     const { root } = await repo(req);
     const commit = String(req.query.commit || '');
     if (!/^[0-9a-f]{4,64}$/i.test(commit)) throw new GitError('invalid_commit');
-    const diff = await runGit(root, ['show', '--no-color', '--no-ext-diff', '--format=%H%n%an <%ae>%n%ad%n%n%B', commit]);
-    return { diff };
+    // A merge is shown against its first parent, as its own commit's changes.
+    const changes = ['-M', '--diff-merges=first-parent'];
+    const [diff, nameStatus, numstat] = await Promise.all([
+      runGit(root, ['show', '--no-color', '--no-ext-diff', ...changes, '--format=%H%n%an <%ae>%n%ad%n%n%B', commit]),
+      runGit(root, ['show', '--format=', ...changes, '--name-status', '-z', commit]),
+      runGit(root, ['show', '--format=', ...changes, '--numstat', '-z', commit]),
+    ]);
+    return { diff, files: parseCommitFiles(nameStatus, numstat) };
   }));
+
+  // One version of a file, for the file preview's renderers: what kind of file it
+  // is, and its text when it is text. The bytes come from /raw.
+  router.get('/file', route(async (req) => {
+    const { root } = await repo(req);
+    const file = String(req.query.file || '');
+    const spec = blobSpec(req.query.rev, file);
+    const size = await blobSize(root, spec);
+    const info = getFileInfo(file);
+    const data = { ...info, file, size, tooLarge: size > Math.min(getSizeLimit(info), MAX_OUTPUT) };
+    if (info.isText && !data.tooLarge) {
+      data.content = await runGit(root, ['cat-file', 'blob', spec]);
+      data.language = info.language || detectShebangLanguage(data.content);
+    }
+    return data;
+  }));
+
+  router.get('/raw', async (req, res) => {
+    try {
+      const { root } = await repo(req);
+      const file = String(req.query.file || '');
+      const spec = blobSpec(req.query.rev, file);
+      if (await blobSize(root, spec) > MAX_OUTPUT) throw new GitError('file_too_large', 413);
+      const bytes = await runGit(root, ['cat-file', 'blob', spec], { raw: true });
+      const info = getFileInfo(file);
+      const name = basename(file);
+      // RFC 5987, as /api/files/raw does.
+      const asciiName = name.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '\\"');
+      res.setHeader('Content-Type', info.mimeType);
+      res.setHeader('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+      res.setHeader('Cache-Control', 'no-store');
+      if (info.mimeType === 'image/svg+xml') res.setHeader('Content-Security-Policy', 'sandbox');
+      res.send(bytes);
+    } catch (error) {
+      res.status(error.status || 500).json({ success: false, data: null, error: error.message });
+    }
+  });
 
   router.post('/stage', route(async (req) => {
     const { root } = await repo(req);
