@@ -16,6 +16,7 @@
 import { AppError, ErrorCode, fail } from '../servers/errors.js';
 import { LOCAL_SERVER_ID } from '../servers/registry.js';
 import { watchUpgradeSocket } from './node-link.js';
+import { diagnostics } from '../diagnostics.js';
 
 const PREFIX_RE = /^\/n\/([a-z0-9][a-z0-9._-]{0,63})(\/[^?#]*)?(\?[^#]*)?$/;
 const HUB_ONLY = /^\/api\/(auth|servers|plugins|managed-resources)(\/|$)/;
@@ -65,13 +66,20 @@ export function createNodeProxy({ registry, links, authorize, sameOrigin, basic 
         sendError(res, new AppError(ErrorCode.SERVER_NOT_FOUND, `Server ${target.serverId} is not registered`));
         return;
       }
+      const began = performance.now();
       links.mode(target.serverId)
         .then((mode) => {
+          diagnostics.record('proxy', { ...req.diagnosticContext, serverId: target.serverId, path: target.path,
+            phase: 'mode', durationMs: performance.now() - began, provider: mode });
           if (mode === 'node') return links.link(target.serverId).proxy(req, res, target.path);
           if (!basic) throw new AppError(ErrorCode.NODE_NOT_INSTALLED, 'tmux-web-panel is not running on that machine');
           return basic(req, res, target.serverId, target);
         })
-        .catch((err) => sendError(res, err));
+        .catch((err) => {
+          diagnostics.record('proxy', { ...req.diagnosticContext, serverId: target.serverId, path: target.path,
+            phase: 'dispatch-error', code: err.code, durationMs: performance.now() - began });
+          sendError(res, err);
+        });
     }));
   };
 }

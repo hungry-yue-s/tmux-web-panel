@@ -360,6 +360,7 @@ function _cleanupTerminalResources(preserveMobileControls) {
     terminalState.ws = null;
   }
   if (terminalState.term) {
+    if (window.Diagnostics) window.Diagnostics.releaseTerminal(terminalState.term);
     try { terminalState.term.dispose(); } catch (_e) {}
     terminalState.term = null;
   }
@@ -783,6 +784,8 @@ function connectTerminalWs(paneId, term, nozoom, onReady) {
   term._socketListeners = [];
 
   var ws = new WebSocket(wsUrl);
+  var diagnosticServerId = TerminalTarget.serverId;
+  if (window.Diagnostics) window.Diagnostics.watchSocket(ws, term, diagnosticServerId);
   if (term._trace) term._trace.connecting(term.cols, term.rows);
 
   // A dead link can leave the handshake or the attach hanging. Closing makes that
@@ -806,7 +809,8 @@ function connectTerminalWs(paneId, term, nozoom, onReady) {
       var msg = JSON.parse(e.data);
       if (msg.type === 'output') {
         if (term._trace) term._trace.output(msg.data);
-        term.write(msg.data);
+        if (window.Diagnostics) window.Diagnostics.writeTerminal(term, msg.data, diagnosticServerId);
+        else term.write(msg.data);
       } else if (msg.type === 'clipboard') {
         _copyToClipboard(msg.data);
       } else if (msg.type === 'ready') {

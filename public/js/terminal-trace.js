@@ -118,6 +118,7 @@ var TerminalTrace = (function () {
     if (!current || current.owned) begin('remount');
     var trace = current;
     trace.owned = true;
+    trace.serverId = window.TerminalTarget && window.TerminalTarget.serverId;
     // The end of the last output frame, because the marker can be cut in two. Only
     // ever a few bytes, and outside anything `last()` returns.
     var outputTail = '';
@@ -175,10 +176,12 @@ var TerminalTrace = (function () {
     mark: mark,
     attach: attach,
     enabled: function () { return enabled; },
-    enable: function () {
+    enable: function (options) {
       enabled = true;
       watchClicks();
-      try { window.localStorage.setItem(STORAGE_KEY, '1'); } catch (_) { /* private mode */ }
+      if (!options || options.persist !== false) {
+        try { window.localStorage.setItem(STORAGE_KEY, '1'); } catch (_) { /* private mode */ }
+      }
     },
     disable: function () {
       enabled = false;

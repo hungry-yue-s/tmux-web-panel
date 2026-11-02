@@ -254,7 +254,11 @@
     // --- loading ---
     function load(force) {
       if (loading) return loading;
+      var diagnostic = window.Diagnostics && window.Diagnostics.beginGit(api.serverId);
+      var rendering = false, renderAt = 0;
       loading = c.get('/api/git/status', target).then(function (data) {
+        rendering = true;
+        if (diagnostic) renderAt = performance.now();
         var json = JSON.stringify(data);
         var changed = json !== statusJson;
         status = data;
@@ -284,7 +288,9 @@
         }
         syncCommitButton();
         if (!historyView.hidden && (force || changed)) loadHistory();
+        if (diagnostic) diagnostic({ code: 'GIT_LOAD_OK', renderMs: performance.now() - renderAt, count: data.files.length });
       }).catch(function (err) {
+        if (diagnostic) diagnostic({ code: rendering ? 'GIT_RENDER_ERROR' : (err.message === 'not_a_git_repository' ? 'GIT_NOT_REPO' : 'GIT_API_ERROR'), status: err.status });
         status = null;
         stateBox.hidden = false;
         changesView.hidden = true;
@@ -444,7 +450,11 @@
       if (!file) return;
       var staged = selection.staged;
       var query = Object.assign({ file: file.path, staged: staged ? '1' : '0', untracked: !staged && file.untracked ? '1' : '0' }, target);
+      var diagnostic = window.Diagnostics && window.Diagnostics.beginGit(api.serverId);
+      var rendering = false, renderAt = 0;
       c.get('/api/git/diff', query).then(function (data) {
+        rendering = true;
+        if (diagnostic) renderAt = performance.now();
         var fileKey = file.path + '\u0000' + staged;
         var mode = modeFor(isBinaryDiff(data.diff), fileKey);
         var versions = changeVersions(file, staged);
@@ -503,7 +513,11 @@
         stats.append(el('span', 'is-add', '+' + added), el('span', 'is-del', '−' + removed));
         main.replaceChildren(head, box);
         box.scrollTop = top;
-      }).catch(function (err) { main.replaceChildren(ui.errorBox(err)); });
+        if (diagnostic) diagnostic({ code: 'GIT_DIFF_OK', renderMs: performance.now() - renderAt });
+      }).catch(function (err) {
+        if (diagnostic) diagnostic({ code: rendering ? 'GIT_RENDER_ERROR' : 'GIT_DIFF_ERROR', status: err.status });
+        main.replaceChildren(ui.errorBox(err));
+      });
     }
 
     // --- commit ---
@@ -1503,17 +1517,21 @@
     var open = ++gitOpens;
     var selected = ui.selectedContext();
     var moved = function () { return open !== gitOpens || ui.selectedContext().key !== selected.key; };
+    var diagnostic = window.Diagnostics && window.Diagnostics.beginGit(selected.serverId);
+    var phase = 'focus';
     if (!selected.paneId) {
       if (selected.onTerminal) toast('这个窗口还没打开好，稍后再试');
       else BlockHost.open('git', { path: '.' });
       return;
     }
     ui.focusedContext().then(function (ctx) {
-      if (moved()) return null;
+      if (moved()) { if (diagnostic) diagnostic({ code: 'GIT_STALE' }); return null; }
+      phase = 'status';
       var asked = ++chipAsked;
       return ui.client(ctx.serverId).get('/api/git/status', { path: '.', paneId: ctx.paneId }).then(function (data) {
-        if (moved()) return;
+        if (moved()) { if (diagnostic) diagnostic({ code: 'GIT_STALE' }); return; }
         if (asked === chipAsked) showChip(data);
+        phase = 'render';
         BlockHost.open('git', { path: data.root });
       }, function () {
         if (moved()) return;
@@ -1522,6 +1540,7 @@
         BlockHost.open('git', { path: '.', paneId: ctx.paneId });
       });
     }).catch(function (err) {
+      if (diagnostic) diagnostic({ code: phase === 'focus' ? 'GIT_FOCUS_ERROR' : (phase === 'render' ? 'GIT_RENDER_ERROR' : 'GIT_API_ERROR'), status: err.status });
       if (!moved()) toast('无法确定当前窗格：' + errorText(err), { error: true });
     });
   }

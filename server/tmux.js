@@ -1,11 +1,35 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { TMUX_BIN, msysExecArgs } from './msys.js';
+import { diagnostics } from './diagnostics.js';
 
 const execFileAsync = promisify(execFile);
 
 const EXEC_TIMEOUT = 5000;
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
+
+async function observedExec(command, args, options) {
+  const began = performance.now();
+  let result;
+  let failure;
+  try {
+    result = command === TMUX_BIN
+      ? await execFileAsync(command, ...msysExecArgs(args, options))
+      : await execFileAsync(command, args, options);
+    return result;
+  } catch (err) { failure = err; throw err; }
+  finally {
+    if (diagnostics.status().active) diagnostics.record('command', {
+      provider: command === TMUX_BIN ? 'tmux' : 'process',
+      operation: command === TMUX_BIN ? args[0] : 'exec',
+      durationMs: performance.now() - began, outcome: failure ? 'error' : 'ok',
+      code: typeof failure?.code === 'string' ? failure.code : undefined,
+      exitCode: failure ? (typeof failure.code === 'number' ? failure.code : null) : 0,
+      timedOut: Boolean(failure?.killed),
+      stdoutBytes: Buffer.byteLength(result?.stdout || failure?.stdout || ''), stderrBytes: Buffer.byteLength(result?.stderr || failure?.stderr || ''),
+    });
+  }
+}
 
 // --- Validation ---
 
@@ -294,10 +318,10 @@ const TREE_COMMANDS = [
  * @returns {Promise<string>} stdout
  */
 export async function tmuxExec(args) {
-  const { stdout } = await execFileAsync(TMUX_BIN, ...msysExecArgs(args, {
+  const { stdout } = await observedExec(TMUX_BIN, args, {
     timeout: EXEC_TIMEOUT,
     maxBuffer: EXEC_MAX_BUFFER,
-  }));
+  });
   return stdout;
 }
 
@@ -318,9 +342,7 @@ export const localExecutor = Object.freeze({
       maxBuffer: options.maxBuffer || EXEC_MAX_BUFFER,
     };
     // Only tmux is an MSYS2 program here; anything else gets Node's own quoting.
-    const { stdout, stderr } = command === TMUX_BIN
-      ? await execFileAsync(command, ...msysExecArgs(args, execOptions))
-      : await execFileAsync(command, args, execOptions);
+    const { stdout, stderr } = await observedExec(command, args, execOptions);
     return { stdout, stderr };
   },
 });

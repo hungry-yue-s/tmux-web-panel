@@ -17,6 +17,7 @@ import tls from 'node:tls';
 
 import { AppError, ErrorCode } from '../servers/errors.js';
 import { NODE_PROTOCOL } from '../node/identity.js';
+import { diagnostics } from '../diagnostics.js';
 
 const READY_TIMEOUT_MS = 15_000;
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -156,6 +157,7 @@ export function watchUpgradeSocket(socket) {
  */
 function stallGuard(upstream, { queueMs, connectMs, answerMs, onStall, onConnectStall }) {
   let timer = null;
+  let phase = 'queue';
   const clear = () => {
     clearTimeout(timer);
     timer = null;
@@ -165,7 +167,7 @@ function stallGuard(upstream, { queueMs, connectMs, answerMs, onStall, onConnect
     timer = setTimeout(() => {
       const err = Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' });
       upstream.destroy(err);
-      onStall(err);
+      onStall(err, phase);
       if (deadLink) deadLink();
     }, ms);
     if (timer.unref) timer.unref();
@@ -174,10 +176,11 @@ function stallGuard(upstream, { queueMs, connectMs, answerMs, onStall, onConnect
   upstream.once('socket', (socket) => {
     clear();
     if (!socket.connecting) return;
+    phase = 'connect';
     arm(connectMs, onConnectStall);
     socket.once(socket instanceof tls.TLSSocket ? 'secureConnect' : 'connect', clear);
   });
-  upstream.once('finish', () => arm(answerMs));
+  upstream.once('finish', () => { phase = 'answer'; arm(answerMs); });
   upstream.once('response', clear);
   upstream.once('upgrade', clear);
   upstream.once('close', clear);
@@ -318,16 +321,50 @@ export class NodeLink {
     return this._pairing.tls ? https : http;
   }
 
+  // No listeners or extra request headers while diagnostics are disabled.
+  _diagnosticHeaders(headers) {
+    const context = diagnostics.currentContext();
+    if (diagnostics.status().active && context?.requestId) headers['x-twp-diagnostic-id'] = context.requestId;
+    return headers;
+  }
+
+  _traceRequest(request, path, began, ensureMs) {
+    if (!diagnostics.status().active) return;
+    const context = { ...diagnostics.currentContext(), serverId: this.serverId, path, provider: 'node-link' };
+    const queuedAt = performance.now();
+    const note = (phase, fields = {}) => diagnostics.record('proxy', {
+      ...context, phase, ensureMs, durationMs: performance.now() - began, ...fields,
+    });
+    request.once('socket', (socket) => {
+      const assigned = performance.now();
+      note('socket', { queueMs: assigned - queuedAt, reusedSocket: Boolean(request.reusedSocket) });
+      if (socket.connecting) {
+        socket.once('connect', () => note('connect', { connectMs: performance.now() - assigned }));
+        if (socket instanceof tls.TLSSocket) socket.once('secureConnect', () => note('tls', { tlsMs: performance.now() - assigned }));
+      }
+    });
+    request.once('finish', () => note('sent'));
+    request.once('response', (answer) => note('headers', {
+      status: answer.statusCode, headersMs: performance.now() - queuedAt,
+      traceId: answer.headers['x-twp-diagnostic-id'],
+    }));
+    request.once('upgrade', (answer) => note('upgrade', { status: answer.statusCode, headersMs: performance.now() - queuedAt }));
+    request.once('error', (err) => note('error', { transportCode: err.code, timedOut: err.code === 'ETIMEDOUT' }));
+    request.once('close', () => note('close'));
+  }
+
   /**
    * Small JSON call for the hub's own use (health, plugin forwarding).
    * freshConnection: on a new socket rather than one from the pool. The agent for
    * upgrades never keeps any, is pinned the same way and leaves the pool alone.
    */
   async requestJson(method, path, body = undefined, { timeout = REQUEST_TIMEOUT_MS, freshConnection = false } = {}) {
+    const began = performance.now();
     await this.ensure();
+    const ensureMs = performance.now() - began;
     const tunnel = this._tunnel;
     const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
-    const headers = forwardRequestHeaders({ accept: 'application/json' }, this._pairing.token);
+    const headers = this._diagnosticHeaders(forwardRequestHeaders({ accept: 'application/json' }, this._pairing.token));
     if (payload) {
       headers['content-type'] = 'application/json';
       headers['content-length'] = String(payload.length);
@@ -341,6 +378,7 @@ export class NodeLink {
         res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
         res.on('error', (err) => reject(upstreamError(err)));
       });
+      this._traceRequest(req, path, began, ensureMs);
       req.setTimeout(timeout, () => req.destroy(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })));
       req.on('error', (err) => {
         this._noteUpstreamError(tunnel, err);
@@ -404,18 +442,21 @@ export class NodeLink {
 
   /** Streams one browser request to the node and the answer back. */
   async proxy(req, res, path) {
+    const began = performance.now();
     await this.ensure();
+    const ensureMs = performance.now() - began;
     // The browser may have gone while the forward came up.
     if (res.destroyed || res.writableEnded) return;
     const tunnel = this._tunnel;
     const upstream = this._client().request(
-      this._target(stripTokenParam(path), forwardRequestHeaders(req.headers, this._pairing.token), req.method),
+      this._target(stripTokenParam(path), this._diagnosticHeaders(forwardRequestHeaders(req.headers, this._pairing.token)), req.method),
       (answer) => {
         if (answer.statusCode === 401) this._resetIfCurrent(tunnel, 'auth-rejected', { code: 'HTTP_401' });
         res.writeHead(answer.statusCode, forwardResponseHeaders(answer.headers));
         answer.pipe(res);
       },
     );
+    this._traceRequest(upstream, path, began, ensureMs);
     const fail = (err) => {
       if (res.writableEnded) return;
       if (res.headersSent) { res.destroy(); return; }
@@ -426,7 +467,11 @@ export class NodeLink {
       queueMs: this._stallLimits.queue,
       connectMs: this._stallLimits.connect,
       answerMs: /^(GET|HEAD)$/i.test(req.method) ? this._stallLimits.read : this._stallLimits.write,
-      onStall: fail,
+      onStall: (err, phase) => {
+        diagnostics.record('proxy', { ...req.diagnosticContext, serverId: this.serverId, path,
+          phase, timedOut: true, transportCode: err.code, durationMs: performance.now() - began });
+        fail(err);
+      },
       onConnectStall: () => this._dropDeadTunnel(tunnel),
     });
     upstream.on('error', (err) => {
@@ -440,6 +485,7 @@ export class NodeLink {
 
   /** Relays a WebSocket upgrade byte-for-byte after the node accepts it. */
   async proxyUpgrade(req, socket, head, path) {
+    const began = performance.now();
     watchUpgradeSocket(socket);
     try {
       await this.ensure();
@@ -450,18 +496,22 @@ export class NodeLink {
     // The browser may have gone while the forward came up. Asking the node now
     // would start an attach client for nobody, and it would take the pane over.
     if (socket.destroyed) return;
-    const headers = forwardRequestHeaders(req.headers, this._pairing.token);
+    const ensureMs = performance.now() - began;
+    const headers = this._diagnosticHeaders(forwardRequestHeaders(req.headers, this._pairing.token));
     headers.connection = 'Upgrade';
     headers.upgrade = 'websocket';
     const tunnel = this._tunnel;
     const upstream = this._client().request({ ...this._target(stripTokenParam(path), headers, 'GET'), agent: this._upgradeAgent });
+    this._traceRequest(upstream, path, began, ensureMs);
     const abandon = () => upstream.destroy();
     socket.once('close', abandon);
     stallGuard(upstream, {
       queueMs: this._stallLimits.queue,
       connectMs: this._stallLimits.connect,
       answerMs: this._stallLimits.upgrade,
-      onStall: () => {
+      onStall: (err, phase) => {
+        diagnostics.record('proxy', { serverId: this.serverId, path, phase, timedOut: true,
+          transportCode: err.code, durationMs: performance.now() - began });
         if (!socket.destroyed) socket.end('HTTP/1.1 504 Gateway Timeout\r\nConnection: close\r\n\r\n');
       },
       onConnectStall: () => this._dropDeadTunnel(tunnel),

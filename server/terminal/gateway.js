@@ -9,6 +9,7 @@
 
 import { AppError, ErrorCode } from '../servers/errors.js';
 import { MAX_HELD_INPUT_BYTES, ServerMessage, parseTerminalPath, parseTerminalQuery } from './protocol.js';
+import { diagnostics } from '../diagnostics.js';
 
 export class TerminalGateway {
   constructor({ workspace, terminalManager }) {
@@ -22,6 +23,7 @@ export class TerminalGateway {
    * the server's upgrade listener.
    */
   async handle(ws, pathname, searchParams) {
+    const began = performance.now();
     const target = parseTerminalPath(pathname);
     if (!target) {
       this._fail(ws, 1008, { code: ErrorCode.VALIDATION_ERROR, message: 'Malformed terminal address' });
@@ -48,22 +50,27 @@ export class TerminalGateway {
     ws.on('error', () => {});
     try {
       const resolved = await this.workspace.resolvePane(target.paneId);
+      diagnostics.record('terminal', { serverId: 'local', provider: 'tmux', phase: 'resolve-pane', durationMs: performance.now() - began });
       // Whoever opened this may have moved on during the check. `attach-session -d`
       // for nobody would take the pane from the client they moved on to.
       if (ws.readyState !== ws.OPEN) return null;
       const attach = () => {
         // The same goes for the wait, and this one can be longer.
         if (ws.readyState !== ws.OPEN) return null;
+        diagnostics.record('terminal', { serverId: 'local', provider: 'tmux', phase: 'client-queue', durationMs: performance.now() - began });
         return this._attach(ws, resolved, { cols, rows, nozoom });
       };
       const connectionId = await this.terminalManager.whenClientCanStart(resolved.sessionId, attach, {
         cancelled: () => ws.readyState !== ws.OPEN,
       });
+      diagnostics.record('terminal', { serverId: 'local', provider: 'tmux', phase: 'attached', connectionId,
+        durationMs: performance.now() - began, complete: Boolean(connectionId) });
       ws.off('message', hold);
       if (connectionId) for (const message of early) ws.emit('message', ...message);
       return connectionId;
     } catch (err) {
       const appError = err instanceof AppError ? err : new AppError(ErrorCode.INTERNAL, 'Terminal setup failed');
+      diagnostics.record('terminal', { serverId: 'local', provider: 'tmux', phase: 'attach-error', code: appError.code, durationMs: performance.now() - began });
       // 1013 and 1008 end it for good on the page; 1011 makes it try again.
       const closeCode = appError.code === ErrorCode.CONNECTION_LIMIT ? 1013
         : appError.code === ErrorCode.TERMINAL_BUSY ? 1011 : 1008;

@@ -100,13 +100,14 @@
       });
   }
 
-  function readBody(res) {
+  function readBody(res, diagnostic) {
     if (!res || typeof res.json !== 'function') return readText(res);
     return Promise.resolve()
       .then(function () {
         return res.json();
       })
       .catch(function () {
+        if (diagnostic) diagnostic.parseFailed = true;
         return readText(res);
       });
   }
@@ -168,8 +169,11 @@
       return new ApiError({ code: 'TIMEOUT', message: 'Request timed out', retryable: true, status: 0 });
     }
 
+    var diagnostic = global.Diagnostics && global.Diagnostics.beginApi(init.method, path, init.body);
+    if (diagnostic) headers['X-TWP-Diagnostic-Id'] = diagnostic.id;
     return doFetch(path, init).then(function (res) {
-      return readBody(res).then(function (payload) {
+      if (diagnostic) diagnostic.headers(res);
+      return readBody(res, diagnostic).then(function (payload) {
         // Reading the body swallows its own failure, and a cut-off answer is not an empty one.
         if (timedOut) throw timeoutError();
         var status = typeof res.status === 'number' ? res.status : 0;
@@ -204,6 +208,12 @@
         retryable: true,
         status: 0,
       });
+    }).then(function (value) {
+      if (diagnostic) diagnostic.finish();
+      return value;
+    }, function (error) {
+      if (diagnostic) diagnostic.finish(error);
+      throw error;
     }).finally(function () {
       clearTimeout(timer);
     });

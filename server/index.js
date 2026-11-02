@@ -9,6 +9,9 @@ import express from 'express';
 import compression from 'compression';
 import { WebSocketServer } from 'ws';
 import { createStaticAssets } from './static-assets.js';
+import { diagnostics } from './diagnostics.js';
+import { startPlatformSampler } from './diagnostics-platform.js';
+import { createDiagnosticsRouter } from './api/diagnostics.js';
 import {
   verifyPassword,
   createToken,
@@ -89,6 +92,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
+diagnostics.configure({ configDir, platformSampler: startPlatformSampler });
+// Before the relay and compression: count the actual HTTP response body sent.
+app.use(diagnostics.middleware());
 
 // --- Node identity and hub links ---
 //
@@ -246,6 +252,7 @@ if (apiGuarded) {
 
 const localNodeInfo = () => collectNodeInfo({ tmuxVersion: tmux.tmuxVersion });
 app.get('/api/node/info', handle(async () => localNodeInfo()));
+app.use('/api/diagnostics', createDiagnosticsRouter({ diagnostics }));
 
 // API status route
 app.get('/api/status', async (_req, res) => {
@@ -473,6 +480,13 @@ sessionProtection.start();
 app.use('/api/session-protection', createSessionProtectionRouter({ protection: sessionProtection }));
 
 server.on('upgrade', (req, socket, head) => {
+  const diagnosticPath = req.url.split('?', 1)[0];
+  const diagnosticServer = /^\/n\/([a-z0-9][a-z0-9._-]{0,63})\//.exec(diagnosticPath);
+  let diagnosticWs = null;
+  diagnostics.trackSocket(socket, {
+    serverId: diagnosticServer ? diagnosticServer[1] : 'local',
+    path: diagnosticPath, side: 'client', provider: 'http-ws-framing',
+  }, () => diagnosticWs?.bufferedAmount ?? null);
   // Another server's socket is relayed whole; /n/local/... is rewritten in place.
   const relayed = relayNodeUpgrade(req, socket, head, {
     basic: basicUpgrade,
@@ -496,6 +510,8 @@ server.on('upgrade', (req, socket, head) => {
 
   if (url.pathname.startsWith('/ws/terminal/')) {
     wss.handleUpgrade(req, socket, head, (ws) => {
+      diagnosticWs = ws;
+      diagnostics.record('terminal', { serverId: 'local', phase: 'upgraded', compressed: ws.extensions.includes('permessage-deflate') });
       // The gateway resolves serverId/paneId, verifies ownership and picks the
       // provider. It never throws: a bad address closes just this socket.
       terminalGateway.handle(ws, url.pathname, url.searchParams).catch(() => {
@@ -511,6 +527,7 @@ server.on('upgrade', (req, socket, head) => {
 
   if (url.pathname === '/ws/status') {
     wss.handleUpgrade(req, socket, head, (ws) => {
+      diagnosticWs = ws;
       statusMonitor.subscribe(ws);
       ws.on('close', () => statusMonitor.unsubscribe(ws));
     });
@@ -526,6 +543,9 @@ server.on('upgrade', (req, socket, head) => {
 
 function shutdown(signal) {
   console.log(`\n${signal} received — shutting down...`);
+  const diagnosticsStopped = diagnostics.stop('shutdown').catch(() => {
+    console.warn('[diagnostics] capture close failed');
+  });
 
   // Stop token reaper
   if (tokenReapTimer) clearInterval(tokenReapTimer);
@@ -561,8 +581,9 @@ function shutdown(signal) {
   }
 
   wss.close(() => {
-    server.close(() => {
+    server.close(async () => {
       console.log('Server closed.');
+      await diagnosticsStopped;
       flushTokenPersistence(tokenMap);
       process.exit(0);
     });

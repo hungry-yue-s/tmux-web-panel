@@ -4,6 +4,7 @@ import { basename, dirname } from 'node:path';
 import { IS_WINDOWS, toPosixPath } from '../msys.js';
 import { detectShebangLanguage, getFileInfo, getSizeLimit } from './files.js';
 import { requireSameOrigin } from './same-origin.js';
+import { diagnostics } from '../diagnostics.js';
 
 // The git block: status, diffs, line staging, history and commits for the
 // repository that contains a path the panel can already preview. Every git
@@ -26,6 +27,7 @@ class GitError extends Error {
  * `raw` resolves the bytes instead of text.
  */
 export function runGit(cwd, args, { input = null, allowExit = [], timeout = READ_TIMEOUT_MS, env = {}, raw = false } = {}) {
+  const began = performance.now();
   return new Promise((resolve, reject) => {
     const child = spawn('git', ['--literal-pathspecs', '-c', 'core.quotepath=off', ...args], {
       cwd,
@@ -35,19 +37,32 @@ export function runGit(cwd, args, { input = null, allowExit = [], timeout = READ
     const out = [];
     const err = [];
     let size = 0;
-    const timer = setTimeout(() => child.kill(), timeout);
+    let errSize = 0;
+    let timedOut = false;
+    let maxOutput = false;
+    let reported = false;
+    const report = (code, signal, transportCode) => {
+      if (reported) return;
+      reported = true;
+      diagnostics.record('command', { provider: 'git', operation: args[0], durationMs: performance.now() - began,
+        stdoutBytes: size, stderrBytes: errSize, exitCode: code, signal, code: transportCode,
+        timedOut, maxOutput, outcome: code === 0 || allowExit.includes(code) ? 'ok' : 'error' });
+    };
+    const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeout);
     child.stdout.on('data', (chunk) => {
       size += chunk.length;
-      if (size > MAX_OUTPUT) child.kill();
+      if (size > MAX_OUTPUT) { maxOutput = true; child.kill(); }
       else out.push(chunk);
     });
-    child.stderr.on('data', (chunk) => err.push(chunk));
+    child.stderr.on('data', (chunk) => { errSize += chunk.length; err.push(chunk); });
     child.on('error', (error) => {
       clearTimeout(timer);
+      report(null, null, error.code);
       reject(new GitError(error.code === 'ENOENT' ? 'git_not_installed' : error.message, 500));
     });
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       clearTimeout(timer);
+      report(code, signal);
       const bytes = Buffer.concat(out);
       if (code === 0 || allowExit.includes(code)) return resolve(raw ? bytes : bytes.toString('utf8'));
       const message = Buffer.concat(err).toString('utf8').trim() || `git exited with ${code}`;
