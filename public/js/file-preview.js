@@ -532,7 +532,10 @@ var FilePreview = (function () {
     })
       .then(function (r) {
         if (!_isPreviewRequestCurrent(requestId, body, fileAtStart, pathAtStart)) return null;
-        if (r.status === 401) { close(); return null; }
+        if (r.status === 401) {
+          if (!_previewReady) throw new Error('登录已失效，请重新登录后重试');
+          close(); return null;
+        }
         return r.json();
       })
       .then(function (res) {
@@ -1438,7 +1441,7 @@ var FilePreview = (function () {
       else _dockCurrentPreview();
     });
     btnPlacement.className += ' fp-btn-placement';
-    var btnRefresh = _btn('', '刷新预览', function () { _refreshCurrent(true); });
+    var btnRefresh = _btn('', '刷新预览', function () { _refreshCurrent(true).finally(_syncAutoRefresh); });
     _setSvgIcon(btnRefresh,
       '<path d="M20 6v5h-5"/><path d="M4 18v-5h5"/>'
       + '<path d="M6.1 9a7 7 0 0 1 11.5-2.6L20 9"/>'
@@ -4768,13 +4771,34 @@ var FilePreview = (function () {
       filePath = parsed.path;
       targetLine = parsed.lineRef;
     }
+    var body = _createModal(filePath);
+    // _createModal saves the previous dock tab before the new file owns these.
     _currentPaneId = paneId || _currentPaneId;
     _currentOpenPath = filePath;
     if (!keepDir) _dirContext = null;
-    var body = _createModal(filePath);
     var requestId = ++_previewGeneration;
     _previewReady = false;
     _currentFile = null;
+    var restoring = opts && opts.restoring;
+    var infoStatus = 0;
+
+    // A failed read is still a saved tab. Keep its error view and identity so
+    // later saves cannot silently drop it; only a confirmed missing file is pruned.
+    function keepFailedPreview() {
+      if (!restoring || !_isPreviewRequestCurrent(requestId, body)) return false;
+      _currentFile = {
+        absPath: filePath, filename: filePath.split('/').pop(),
+        rawUrl: _workingRawUrl(_machine(), { absPath: filePath }),
+      };
+      var retry = document.createElement('button');
+      retry.className = 'fp-error-download';
+      retry.type = 'button';
+      retry.textContent = '重试加载';
+      retry.setAttribute('aria-label', '重试加载文件');
+      retry.addEventListener('click', function () { _refreshCurrent(true).finally(_syncAutoRefresh); });
+      body.querySelector('.fp-error').appendChild(retry);
+      return true;
+    }
 
     var qs = '?path=' + encodeURIComponent(filePath);
     if (paneId) qs += '&paneId=' + encodeURIComponent(paneId);
@@ -4784,7 +4808,11 @@ var FilePreview = (function () {
     return fetch(_machine() + '/api/files/info' + qs, { headers: _authHeaders, cache: 'no-store' })
       .then(function (r) {
         if (!_isPreviewRequestCurrent(requestId, body)) return null;
-        if (r.status === 401) { close(); return null; }
+        infoStatus = r.status;
+        if (r.status === 401) {
+          if (!restoring) { close(); return null; }
+          return { success: false, error: '登录已失效，请重新登录后重试' };
+        }
         return r.json();
       })
       .then(function (res) {
@@ -4794,12 +4822,12 @@ var FilePreview = (function () {
           if (res.error === 'File not found' || res.error === 'Path not found') {
             _showError(body, '无法打开 ' + filePath + '：文件不存在或不在允许预览的目录', null);
             _notifyFailure('无法打开：' + filePath);
-            return;
+            return infoStatus === 404 ? false : keepFailedPreview();
           }
           var errorAbsPath = (res.data && res.data.absPath) ? res.data.absPath : null;
           _showError(body, res.error, errorAbsPath);
           _notifyFailure('预览打开失败：' + res.error);
-          return;
+          return keepFailedPreview();
         }
         return _renderResolvedPreview(body, res.data, targetLine, {
           requestId: requestId,
@@ -4820,6 +4848,7 @@ var FilePreview = (function () {
           _previewReady = false;
           _showError(body, err.message);
           _notifyFailure('预览打开失败：' + err.message);
+          return keepFailedPreview();
         }
         return false;
       });
