@@ -62,6 +62,12 @@ var Auth = {
     Auth.setToken(token);
     var theme = fragment.get('theme');
     try {
+      // Old relay deployments omit the flow flag. Android only receives a
+      // handoff through its configured bootstrap; Swift setup handoffs stay direct.
+      if (fragment.get('relay') === '1'
+        || /\bTmuxPanelAndroid\//.test((window.navigator && window.navigator.userAgent) || '')) {
+        localStorage.setItem('tmux_relay_login', '1');
+      }
       if (theme && /^[a-z][a-z0-9-]{0,63}$/.test(theme)) localStorage.setItem('tmux_theme', theme);
     } catch (_e) {}
     window.history.replaceState(null, '', window.location.pathname + window.location.search);

@@ -1353,6 +1353,82 @@ describe('file preview dock tabs', () => {
     expect(pruned.activePath).toBe('/tmp/kept.md');
   });
 
+  it.each(['unavailable', 'network', 'unauthorized', 'content'])(
+    'keeps a saved Markdown tab on %s failure and lets it retry in place', async (failure) => {
+      const path = '/Users/massachusetts/projects/windows-cloud-manager/docs/windows-capabilities-api-design.md';
+      const key = 'tmux_file_preview_dock_v4:' + encodeURIComponent('local\u0000' + INSTANCE + '\u0000@1');
+      const saved = { version: 1, tabs: [{ path, paneId: '%1' }], activePath: path, width: 510, hidden: false };
+      const { dom, preview, fetch } = createPreview({ context: null, storage: { [key]: JSON.stringify(saved) } });
+      let failing = true;
+      const response = (data, status = 200) => Promise.resolve({ status, json: async () => data });
+      fetch.mockImplementation((url) => {
+        const info = String(url).includes('/info');
+        if (failing && (info || failure === 'content')) {
+          if (failure === 'network') return Promise.reject(new Error('Network unavailable'));
+          if (failure !== 'content' || !info) return response({ success: false, error: 'Temporary read failure' }, failure === 'unauthorized' ? 401 : 503);
+        }
+        return response({ success: true, data: info
+          ? { absPath: path, isText: true, isMarkdown: true, size: 20, mtimeMs: 1 }
+          : { content: '# Windows API', language: 'markdown' } });
+      });
+      // An unavailable renderer CDN must still leave the plain-text fallback usable.
+      const append = dom.window.document.head.appendChild.bind(dom.window.document.head);
+      dom.window.document.head.appendChild = (node) => {
+        const result = append(node);
+        queueMicrotask(() => { if (node.onerror) node.onerror(new dom.window.Event('error')); });
+        return result;
+      };
+
+      expect(await preview.switchDockContext('local', '@1', INSTANCE)).toBe(true);
+      expect(JSON.parse(dom.window.localStorage.getItem(key)).tabs).toEqual(saved.tabs);
+      expect(dom.window.document.querySelector('.fp-dock-tab').textContent).toBe('windows-capabilities-api-design.md');
+      expect(dom.window.document.querySelector('.fp-dock').style.width).toBe('510px');
+      const retry = dom.window.document.querySelector('.fp-error [aria-label="重试加载文件"]');
+      expect(retry).not.toBeNull();
+      expect(preview._test.hasAutoRefreshTimer()).toBe(false);
+
+      if (failure === 'unauthorized') {
+        retry.click();
+        await flush();
+        expect(JSON.parse(dom.window.localStorage.getItem(key)).tabs).toEqual(saved.tabs);
+        expect(dom.window.document.querySelectorAll('.fp-dock-tab')).toHaveLength(1);
+        expect(dom.window.document.querySelector('.fp-error')).not.toBeNull();
+      }
+
+      failing = false;
+      retry.click();
+      await flush();
+      expect(dom.window.document.querySelector('.fp-error')).toBeNull();
+      expect(dom.window.document.querySelector('.fp-dock .fp-code-wrap').textContent).toContain('# Windows API');
+      expect(dom.window.document.querySelectorAll('.fp-dock-tab')).toHaveLength(1);
+      expect(JSON.parse(dom.window.localStorage.getItem(key)).tabs).toEqual(saved.tabs);
+      dom.window.close();
+    },
+  );
+
+  it('keeps unavailable tabs alongside successful ones, including their order and collapsed state', async () => {
+    const key = 'tmux_file_preview_dock_v4:' + encodeURIComponent('local\u0000' + INSTANCE + '\u0000@0');
+    const saved = { version: 1, tabs: [{ path: '/tmp/one.md', paneId: '%1' }, { path: '/tmp/two.md', paneId: '%2' }],
+      activePath: '/tmp/two.md', width: 510, hidden: true, order: ['file:/tmp/two.md', 'file:/tmp/one.md'] };
+    const { dom, preview, fetch } = createPreview({ context: null, storage: { [key]: JSON.stringify(saved) } });
+    const normalFetch = fetch.getMockImplementation();
+    fetch.mockImplementation((url) => String(url).includes(encodeURIComponent('/tmp/two.md'))
+      ? Promise.resolve({ status: 503, json: async () => ({ success: false, error: 'Temporary failure' }) })
+      : normalFetch(url));
+
+    expect(await preview.switchDockContext('local', '@0', INSTANCE)).toBe(true);
+    expect(JSON.parse(dom.window.localStorage.getItem(key))).toMatchObject({
+      tabs: [saved.tabs[1], saved.tabs[0]], activePath: saved.activePath, hidden: true, width: 510, order: saved.order,
+    });
+    expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
+    dom.window.document.querySelector('.fp-dock-restore').click();
+    expect([...dom.window.document.querySelectorAll('.fp-dock-tab')].map((node) => node.textContent)).toEqual(['two.md', 'one.md']);
+    const reloaded = createPreview({ context: null, storage: { [key]: dom.window.localStorage.getItem(key) } });
+    expect(await reloaded.preview.switchDockContext('local', '@0', INSTANCE)).toBe(true);
+    expect(JSON.parse(reloaded.dom.window.localStorage.getItem(key)).tabs).toEqual([saved.tabs[1], saved.tabs[0]]);
+    dom.window.close(); reloaded.dom.window.close();
+  });
+
   it('uses stable window IDs in the modern shell without legacy interference', () => {
     expect(appSource).toContain("if (document.querySelector('.ms-app')) return;");
     expect(appSource).toContain("'legacy-local'");

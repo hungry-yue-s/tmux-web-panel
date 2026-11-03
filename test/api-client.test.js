@@ -210,6 +210,94 @@ describe('Api 401 handling', () => {
     expect(err.code).toBe('HTTP_401');
     expect(win.location.href).toBe('http://localhost/index.html');
   });
+
+  it.each(['/n/windows/api/workspace', '/api/agent-hub/provider'])('keeps a trusted hub login when %s rejects its own credentials', async (path) => {
+    const { Api, win, fetchMock } = loadApi();
+    fetchMock.mockResolvedValueOnce(jsonResponse(401, { success: false, error: 'upstream credentials rejected' }))
+      .mockResolvedValueOnce(jsonResponse(200, { success: true, data: {} }));
+    await expect(Api.get(path)).rejects.toMatchObject({ status: 401 });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([path, '/api/status']);
+    expect(win.Auth.clearToken).not.toHaveBeenCalled();
+    expect(win.location.href).toBe('http://localhost/index.html');
+  });
+
+  it.each(['network', 'unavailable'])('keeps login when the hub confirmation has a %s failure', async (failure) => {
+    const { Api, win, fetchMock } = loadApi();
+    fetchMock.mockResolvedValueOnce(jsonResponse(401, null));
+    if (failure === 'network') fetchMock.mockRejectedValueOnce(new Error('offline'));
+    else fetchMock.mockResolvedValueOnce(jsonResponse(503, null));
+    await expect(Api.get('/n/windows/api/workspace')).rejects.toMatchObject({ status: 401 });
+    expect(win.Auth.clearToken).not.toHaveBeenCalled();
+  });
+
+  it('does not let a late rejected request remove a new login', async () => {
+    const { Api, win, fetchMock } = loadApi();
+    let finish;
+    fetchMock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const rejected = Api.get('/api/status').catch(error => error);
+    win.Auth.headers = () => ({ Authorization: 'Bearer newer-fixture-session' });
+    finish(jsonResponse(401, null));
+    expect(await rejected).toMatchObject({ status: 401 });
+    expect(win.Auth.clearToken).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('checks the login generation again when hub confirmation arrives late', async () => {
+    const { Api, win, fetchMock } = loadApi();
+    let finish;
+    fetchMock.mockResolvedValueOnce(jsonResponse(401, null))
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const rejected = Api.get('/n/windows/api/workspace').catch(error => error);
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    win.Auth.headers = () => ({ Authorization: 'Bearer newer-fixture-session' });
+    finish(jsonResponse(401, null));
+    expect(await rejected).toMatchObject({ status: 401 });
+    expect(win.Auth.clearToken).not.toHaveBeenCalled();
+  });
+
+  it('shares a single hub confirmation for concurrent remote 401s', async () => {
+    const { Api, win, fetchMock } = loadApi();
+    let finish;
+    fetchMock.mockImplementation(path => path === '/api/status'
+      ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(jsonResponse(401, null)));
+    const rejected = Promise.all([Api.get('/n/a/api/workspace').catch(error => error), Api.get('/n/b/api/workspace').catch(error => error)]);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    finish(jsonResponse(200, { success: true, data: {} }));
+    expect((await rejected).map(error => error.status)).toEqual([401, 401]);
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/status')).toHaveLength(1);
+    expect(win.Auth.clearToken).not.toHaveBeenCalled();
+  });
+});
+
+describe('legacy API authentication', () => {
+  it.each([true, false])('finishes startup correctly when a rejected startup login has changed: %s', async (changed) => {
+    const { Api, win, fetchMock } = loadApi();
+    const app = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
+    const initSource = app.slice(app.indexOf('function init() {'), app.indexOf('function _startApp() {'));
+    const start = vi.fn();
+    const init = new Function('Api', 'Auth', 'fetch', '_startApp', initSource + '; return init;')(Api, win.Auth, fetchMock, start);
+    let finish;
+    fetchMock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    init();
+    if (changed) win.Auth.headers = () => ({ Authorization: 'Bearer newer-fixture-session' });
+    finish(jsonResponse(401, null));
+    await vi.waitFor(() => expect(changed ? start : win.Auth.clearToken).toHaveBeenCalledOnce());
+    expect(changed ? win.Auth.clearToken : start).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/status');
+  });
+
+  it.each(['get', 'post', 'put', 'delete'])('checks the rejected %s request through the shared hub guard', async (method) => {
+    const { Api, win, fetchMock } = loadApi();
+    const app = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
+    const clientSource = app.slice(app.indexOf('class ApiClient {'), app.indexOf('var api = new ApiClient();'));
+    const client = new Function('Api', 'Auth', 'fetch', clientSource + '; return new ApiClient();')(Api, win.Auth, fetchMock);
+    fetchMock.mockResolvedValueOnce(jsonResponse(401, { success: false, error: 'remote credential rejected' }))
+      .mockResolvedValueOnce(jsonResponse(200, { success: true, data: {} }));
+    win.TerminalTarget = { serverId: 'windows' };
+    await expect(client[method]('/api/example', {})).rejects.toThrow('401');
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/n/windows/api/example', '/api/status']);
+    expect(win.Auth.clearToken).not.toHaveBeenCalled();
+  });
 });
 
 describe('Api never leaks the auth token', () => {

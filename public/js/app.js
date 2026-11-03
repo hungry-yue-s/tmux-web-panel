@@ -192,10 +192,9 @@ function showAlert(opts) {
 // === API Client ===
 
 class ApiClient {
-  _handleAuth(res) {
+  _handleAuth(res, path, headers) {
     if (res.status === 401) {
-      Auth.clearToken();
-      window.location.href = '/login.html';
+      return Api.handleUnauthorized(path, headers);
     }
   }
 
@@ -209,8 +208,9 @@ class ApiClient {
   }
 
   async get(path) {
-    const res = await fetch(Api.activeUrl(path), { headers: Auth.headers() });
-    this._handleAuth(res);
+    const url = Api.activeUrl(path), headers = Auth.headers();
+    const res = await fetch(url, { headers });
+    await this._handleAuth(res, url, headers);
     if (!res.ok) {
       await this._throwWithBody('GET', path, res);
     }
@@ -218,12 +218,13 @@ class ApiClient {
   }
 
   async post(path, body) {
-    const res = await fetch(Api.activeUrl(path), {
+    const url = Api.activeUrl(path), headers = Object.assign({ 'Content-Type': 'application/json' }, Auth.headers());
+    const res = await fetch(url, {
       method: 'POST',
-      headers: Object.assign({ 'Content-Type': 'application/json' }, Auth.headers()),
+      headers,
       body: JSON.stringify(body),
     });
-    this._handleAuth(res);
+    await this._handleAuth(res, url, headers);
     if (!res.ok) {
       await this._throwWithBody('POST', path, res);
     }
@@ -231,12 +232,13 @@ class ApiClient {
   }
 
   async put(path, body) {
-    const res = await fetch(Api.activeUrl(path), {
+    const url = Api.activeUrl(path), headers = Object.assign({ 'Content-Type': 'application/json' }, Auth.headers());
+    const res = await fetch(url, {
       method: 'PUT',
-      headers: Object.assign({ 'Content-Type': 'application/json' }, Auth.headers()),
+      headers,
       body: JSON.stringify(body),
     });
-    this._handleAuth(res);
+    await this._handleAuth(res, url, headers);
     if (!res.ok) {
       await this._throwWithBody('PUT', path, res);
     }
@@ -244,11 +246,12 @@ class ApiClient {
   }
 
   async delete(path) {
-    const res = await fetch(Api.activeUrl(path), {
+    const url = Api.activeUrl(path), headers = Auth.headers();
+    const res = await fetch(url, {
       method: 'DELETE',
-      headers: Auth.headers(),
+      headers,
     });
-    this._handleAuth(res);
+    await this._handleAuth(res, url, headers);
     if (!res.ok) {
       await this._throwWithBody('DELETE', path, res);
     }
@@ -2065,11 +2068,11 @@ window.addEventListener('terminal-target-server', function () { statusSocket.ret
 
 function init() {
   // Auth check: verify token (or detect if auth is enabled)
-  fetch(Api.activeUrl('/api/status'), { headers: Auth.headers() })
-    .then(function (res) {
+  var headers = Auth.headers();
+  fetch('/api/status', { headers: headers })
+    .then(async function (res) {
       if (res.status === 401) {
-        Auth.clearToken();
-        window.location.href = '/login.html';
+        if (!await Api.handleUnauthorized('/api/status', headers)) _startApp();
         return;
       }
       _startApp();
