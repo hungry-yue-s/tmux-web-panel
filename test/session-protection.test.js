@@ -198,7 +198,7 @@ function fakeTmux({ running = true, sessions = [], options = {} } = {}) {
   return { state, exec };
 }
 
-function setup({ tmux = fakeTmux(), now = 1_000_000, snapshot = SNAPSHOT } = {}) {
+function setup({ tmux = fakeTmux(), now = 1_000_000, snapshot = SNAPSHOT, projectDir = resolve('.') } = {}) {
   const home = temp();
   const configDir = join(home, 'config');
   const dir = join(home, '.local', 'share', 'tmux', 'resurrect');
@@ -211,7 +211,7 @@ function setup({ tmux = fakeTmux(), now = 1_000_000, snapshot = SNAPSHOT } = {})
   tmux.state.home = home;
   const clock = { now };
   const protection = new SessionProtection({
-    configDir, projectDir: resolve('.'), windows: false, exec: tmux.exec, now: () => clock.now, home,
+    configDir, projectDir, windows: false, exec: tmux.exec, now: () => clock.now, home,
     intervalMs: 300_000,
   });
   return { protection, tmux, clock, home, dir, configDir };
@@ -234,14 +234,18 @@ describe('SessionProtection', () => {
     expect(tmux.state.sessions.length).toBe(count);
   });
 
-  it('leaves a server that already has sessions alone, then saves on schedule', async () => {
+  it.each(['panel', 'panel workspace'])('leaves existing sessions alone and saves on schedule from %s', async (name) => {
     const tmux = fakeTmux({ sessions: ['main'] });
-    const { protection, clock } = setup({ tmux });
+    const projectDir = join(temp(), name);
+    const { protection, clock } = setup({ tmux, projectDir });
     await protection.tick();
     expect(tmux.state.sessions).toEqual(['main']);
     const saves = () => tmux.state.commands.filter((args) => args[0] === 'run-shell' && args[1].includes('save.sh'));
     expect(saves()).toHaveLength(1);
-    expect(saves()[0][1]).toMatch(/^bash '.*tmux-resurrect[\\/]scripts[\\/]save\.sh' quiet$/);
+    const script = join(projectDir, 'vendor', 'tmux-plugins', 'tmux-resurrect', 'scripts', 'save.sh');
+    const commands = [`bash '${script}' quiet`, `bash "${script}" quiet`];
+    if (!/[\s\\]/.test(script)) commands.push(`bash ${script} quiet`);
+    expect(commands).toContain(saves()[0][1]);
     await protection.tick();
     expect(saves()).toHaveLength(1);
     clock.now += 300_000;

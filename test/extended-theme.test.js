@@ -5,6 +5,7 @@ import { JSDOM } from 'jsdom';
 const themeSource = readFileSync('public/js/theme.js', 'utf8');
 const terminalSource = readFileSync('public/js/terminal.js', 'utf8');
 const serversSource = readFileSync('public/js/servers.js', 'utf8');
+const appShellSource = readFileSync('public/js/app-shell.js', 'utf8');
 const msAppSource = readFileSync('public/js/ms-app.js', 'utf8');
 const indexSource = readFileSync('public/index.html', 'utf8');
 
@@ -28,8 +29,9 @@ function loadTheme(themeId, { native = false, transparency, legacyNative = false
 }
 
 function renderSettings() {
-  dom.window.AppShell = { escape: String, setHeader: vi.fn() };
   dom.window.Store = { getState: () => ({ ui: { showPerformance: true } }) };
+  dom.window.eval(appShellSource);
+  dom.window.AppShell.setHeader = vi.fn();
   dom.window.eval(serversSource);
   dom.window.document.body.innerHTML = dom.window.ServersPage.renderSettings();
 }
@@ -107,11 +109,19 @@ describe('extended terminal themes', () => {
     expect(listener.mock.calls[0][0].detail.themeId).toBe('github-light');
   });
 
-  it('bumps browser caches for the theme-aware Mermaid scripts', () => {
-    expect(indexSource).toContain('/js/theme.js?v=7');
-    expect(indexSource).toContain('/js/terminal.js?v=22');
-    expect(indexSource).toContain('/css/style.css?v=51');
-    expect(indexSource).toContain('/js/file-preview.js?v=45');
+  it('loads the theme before its terminal and preview consumers', () => {
+    const page = new JSDOM(indexSource, { url: 'https://tmux-panel.test/' });
+    try {
+      // Content-hash caching is verified by weak-network.test.js; asset presence
+      // and load order must not depend on a historical manual ?v= counter.
+      const scripts = [...page.window.document.querySelectorAll('script[src]')].map((script) => new URL(script.src).pathname);
+      const styles = [...page.window.document.querySelectorAll('link[rel="stylesheet"]')].map((link) => new URL(link.href).pathname);
+      expect(scripts).toEqual(expect.arrayContaining(['/js/theme.js', '/js/terminal.js', '/js/file-preview.js']));
+      expect(styles).toContain('/css/style.css');
+      for (const consumer of ['/js/terminal.js', '/js/file-preview.js']) {
+        expect(scripts.indexOf('/js/theme.js')).toBeLessThan(scripts.indexOf(consumer));
+      }
+    } finally { page.window.close(); }
   });
 });
 

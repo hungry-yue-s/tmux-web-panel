@@ -1465,7 +1465,7 @@ describe('MsApp status mode routing', () => {
     for (const serverId of ['local', 'api-linux']) {
       await ctx.MsApp._onRoute({ name: 'server', params: { serverId, section: 'performance' } });
       expect([...ctx.document.querySelectorAll('.tabs .tab')].map((n) => n.textContent))
-        .toEqual(['性能', 'Agent 控制台', '连接']);
+        .toEqual(['性能', 'Agent 控制台', '会话', '连接']);
     }
   });
 
