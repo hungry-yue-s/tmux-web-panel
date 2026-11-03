@@ -175,6 +175,24 @@ node-pty 报告退出比进程消失晚约 1 秒（中位 1.0 到 1.4 秒），�
 - pcon 内层的应答路径不受面板控制。
 - 现场再出现时，先看 `tmux -vv` 日志里 `keys are` 的内容和当时有没有客户端变更，判断属于哪一条。
 
+### ENV-4 Windows：系统自带 ssh.exe 的端口转发每次往返多约 30ms（2026-11-03）
+
+**现象。** 在 Windows 上作为 Hub 时，经 SSH 转发的每次往返比直连慢约 30ms。
+
+**证据。** 同一台 Windows Server 2025，同一个 sshd（OpenSSH_for_Windows_9.5），同一个 Node（HTTPS，7681），已打开的 `/ws/status` 上随机交错的 WebSocket ping，每条 300 个样本，一次只有一个在途：
+
+| 路径 | p50 | p95 | p99 |
+|------|-----|-----|-----|
+| `C:\Windows\System32\OpenSSH\ssh.exe -N -L` | 32.6ms | 46.0ms | 62.8ms |
+| Git for Windows 的 MSYS `ssh.exe`（OpenSSH 10.6p1）`-N -L` | 1.7ms | 10.2ms | 25.7ms |
+| 直连内网地址 | 1.0ms | 6.1ms | 20.4ms |
+
+另一轮（`scripts/measure-node-paths.mjs`，500 个样本）系统 ssh.exe 转发 p50 32.8ms、直连 1.1ms。
+
+**结论。** 已证实：多出的约 30ms 来自 Windows 自带的 ssh **客户端**，sshd 一侧只多约 0.8ms。原因（例如计时器粒度约 15.6ms 的两倍）未证实。所以 Mac 作 Hub、Windows 作 Node 时，这条不适用，直连在 Windows 一侧几乎省不出时间。
+
+**还没处理。** 面板在 Windows 上仍用系统 ssh.exe。换客户端会引入对 Git for Windows 或 MSYS2 openssh 的依赖，需要另行决定。
+
 ## 捕获环境备注
 
 两条和产物无关但值得记下来的事。CDP 的 `Page.startScreencast` 在这台共享 Chrome 上返回的帧偶发无样式，所以所有动画改成定时 `page.screenshot` 静帧合成，脚本在 `.playwright-mcp/readme-shot/shot.mjs`。截图里的主机名、内网和公网 IP、服务器名、进程名都在捕获期做了 DOM 文本替换脱敏，tmux 状态栏的主机名用 session 级 `status-right` 覆盖掉，规则见同目录 `shot.mjs` 的 `SANITIZE_RULES`。
