@@ -1300,8 +1300,22 @@
         + '<div class="field full"><label for="ms-edit-user">Username</label>'
         + '<input id="ms-edit-user" autocomplete="username" value="' + global.AppShell.escape(address.user || '') + '"></div>'
         + this._sshAuthFields('ms-edit', ssh)
+        + this._transportFields('ms-edit', server.transport || {})
         + '</div>',
         '<button class="ms-btn primary" data-action="submit-edit-server">保存并检测</button>');
+    },
+
+    /** Which way terminals, and everything else, take to the node. SSH unless asked otherwise. */
+    _transportFields(prefix, transport) {
+      const select = (id, label, current) => '<div class="field"><label for="' + prefix + '-' + id + '">' + label + '</label>'
+        + '<select id="' + prefix + '-' + id + '">'
+        + '<option value="ssh"' + (current !== 'direct' ? ' selected' : '') + '>SSH 隧道</option>'
+        + '<option value="direct"' + (current === 'direct' ? ' selected' : '') + '>直连 HTTPS（实验）</option>'
+        + '</select></div>';
+      return select('transport-terminal', '终端通道', transport.terminal)
+        + select('transport-api', '文件 / Git / 监控', transport.api)
+        + '<p class="field full muted">直连使用那台面板自己的 HTTPS 端口，证书同样固定、令牌不离开本机；'
+        + '只在检测通过后使用，连不上时自动回到 SSH 隧道。经跳板机或未启用 HTTPS 的主机不会直连。</p>';
     },
 
     async _submitEditServer(serverId) {
@@ -1351,6 +1365,11 @@
       if (connectionChanged) {
         body.address = { host, port, user: user || null };
         body.ssh = ssh;
+      }
+      const transport = { terminal: value('ms-edit-transport-terminal') || 'ssh', api: value('ms-edit-transport-api') || 'ssh' };
+      const savedTransport = server.transport || {};
+      if (transport.terminal !== (savedTransport.terminal || 'ssh') || transport.api !== (savedTransport.api || 'ssh')) {
+        body.transport = transport;
       }
 
       try {

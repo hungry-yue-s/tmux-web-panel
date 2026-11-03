@@ -48,6 +48,26 @@ describe('ServerRegistry', () => {
     expect(registry.list().map((s) => s.id)).toEqual([LOCAL_SERVER_ID, 'api-linux']);
   });
 
+  it('keeps the SSH forward for every kind of traffic unless told otherwise, per kind and across reloads', async () => {
+    const created = await registry.create(REMOTE);
+    expect(created.transport).toEqual({ api: 'ssh', terminal: 'ssh' });
+    expect(registry.toPublic(created).transport).toEqual({ api: 'ssh', terminal: 'ssh' });
+
+    const updated = await registry.update(created.id, { transport: { terminal: 'direct' } });
+    expect(updated.transport).toEqual({ api: 'ssh', terminal: 'direct' });
+    // An edit that does not mention it leaves it alone.
+    expect((await registry.update(created.id, { name: 'renamed' })).transport).toEqual({ api: 'ssh', terminal: 'direct' });
+
+    const reloaded = new ServerRegistry({ configDir: dir });
+    await reloaded.load();
+    expect(reloaded.get(created.id).transport).toEqual({ api: 'ssh', terminal: 'direct' });
+
+    for (const transport of [{ terminal: 'udp' }, { api: 'mosh' }, 'direct', ['ssh']]) {
+      await expect(registry.update(created.id, { transport })).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR });
+    }
+    expect(registry.toPublic(registry.get(LOCAL_SERVER_ID)).transport).toBeUndefined();
+  });
+
   it('deduplicates generated ids', async () => {
     const a = await registry.create(REMOTE);
     const b = await registry.create(REMOTE);

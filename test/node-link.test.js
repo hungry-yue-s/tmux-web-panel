@@ -61,11 +61,13 @@ function attachEcho(server) {
 }
 
 /** An SshConnection stand-in whose "forward" is simply the node's real port. */
-function fakeConnection(pairing, { fetchPairing } = {}) {
+function fakeConnection(pairing, { fetchPairing, transport, resolveTarget } = {}) {
   const children = [];
   return {
     id: 'node-1',
     children,
+    server: { id: 'node-1', transport },
+    resolveTarget: resolveTarget || vi.fn(async () => ({ host: '127.0.0.1', port: 22, proxied: false })),
     fetchPairing: fetchPairing || vi.fn(async () => pairing),
     openForward: vi.fn(() => {
       const child = new EventEmitter();
@@ -1354,6 +1356,216 @@ describe.skipIf(!OPENSSL)('NodeLink over HTTPS', () => {
       hub.server.close();
       link.close();
       node.close();
+    });
+  });
+
+  describe('the direct way to the node', () => {
+    let warn;
+    const cleanups = [];
+    beforeEach(() => { warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+    afterEach(() => {
+      warn.mockRestore();
+      for (const clean of cleanups.splice(0)) clean();
+    });
+
+    /** A plain TCP relay to `targetPort` that counts its connections and can be cut. */
+    async function relayTo(targetPort) {
+      const state = { connections: 0, sockets: new Set() };
+      const server = net.createServer((client) => {
+        state.connections += 1;
+        const upstream = net.connect({ host: '127.0.0.1', port: targetPort });
+        for (const socket of [client, upstream]) state.sockets.add(socket);
+        client.pipe(upstream);
+        upstream.pipe(client);
+        const end = () => { client.destroy(); upstream.destroy(); };
+        for (const socket of [client, upstream]) { socket.on('error', end); socket.on('close', end); }
+      });
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      state.port = server.address().port;
+      state.cut = () => { server.close(); for (const socket of state.sockets) socket.destroy(); };
+      cleanups.push(state.cut);
+      return state;
+    }
+
+    async function startPinnedNode(certificate = tls) {
+      const seen = [];
+      const server = https.createServer({ key: certificate.key, cert: certificate.cert }, nodeApp(seen));
+      attachEcho(server);
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      cleanups.push(() => { server.closeAllConnections(); server.close(); });
+      return { server, port: server.address().port, seen };
+    }
+
+    /**
+     * A link whose forward and direct way are two relays to the same pinned node, so
+     * each request shows which way it took.
+     */
+    async function twoWays({ transport, directTo = null, pairing = {}, resolveTarget } = {}) {
+      const target = await startPinnedNode();
+      const forward = await relayTo(target.port);
+      const direct = await relayTo(directTo ?? target.port);
+      const connection = fakeConnection(pairingFor(direct.port, { tls: true, tlsFingerprint: certificateFingerprint(tls.cert), ...pairing }),
+        { transport, resolveTarget });
+      const link = new NodeLink({ connection, freePort: async () => forward.port });
+      cleanups.push(() => link.close());
+      const hub = await hubFor(link);
+      cleanups.push(() => hub.server.close());
+      return { target, forward, direct, connection, link, hub };
+    }
+
+    const get = (hub, path = '/api/node/info') => new Promise((resolve) => {
+      http.get({ host: '127.0.0.1', port: hub.port, path }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); })
+        .on('error', () => resolve('error'));
+    });
+    const post = (hub) => new Promise((resolve) => {
+      const req = http.request({ host: '127.0.0.1', port: hub.port, path: '/api/echo', method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode));
+      });
+      req.on('error', () => resolve('error'));
+      req.end('{"a":1}');
+    });
+    const socketTo = (hub, path) => new Promise((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${hub.port}${path}`);
+      ws.on('message', (data) => { ws.close(); resolve(JSON.parse(String(data)).type); });
+      ws.on('error', () => resolve('error'));
+      ws.on('unexpected-response', (_req, res) => { res.resume(); resolve(res.statusCode); });
+    });
+    /** Lets the background check finish. */
+    const checked = async (link) => { await link.ensure(); link.paths(); await link._direct?.checked; };
+
+    it('is never tried unless the server asks for it', async () => {
+      const ways = await twoWays();
+      expect(await get(ways.hub)).toBe(200);
+      expect(await socketTo(ways.hub, '/ws/terminal/%251')).toBe('hello');
+      expect(ways.direct.connections).toBe(0);
+      expect(ways.connection.resolveTarget).not.toHaveBeenCalled();
+      expect(ways.link.paths()).toMatchObject({ api: 'ssh', terminal: 'ssh', direct: null });
+    });
+
+    it('carries requests and the status socket, but not terminals, when only those ask for it', async () => {
+      const ways = await twoWays({ transport: { api: 'direct', terminal: 'ssh' } });
+      await checked(ways.link);
+      expect(ways.link.paths()).toMatchObject({ api: 'direct', terminal: 'ssh', direct: { status: 'up', reason: null } });
+      const viaForward = ways.forward.connections;
+      const viaDirect = ways.direct.connections;
+
+      expect(await get(ways.hub, '/api/node/info?x=1')).toBe(200);
+      expect(await socketTo(ways.hub, '/ws/status')).toBe('hello');
+      expect(ways.forward.connections).toBe(viaForward);
+      expect(ways.direct.connections).toBeGreaterThan(viaDirect);
+
+      const before = ways.direct.connections;
+      expect(await socketTo(ways.hub, '/ws/terminal/%251')).toBe('hello');
+      expect(ways.direct.connections).toBe(before);
+      expect(ways.forward.connections).toBe(viaForward + 1);
+      // The token went every way it went, and only to the pinned node.
+      expect(ways.target.seen.every((r) => r.headers.authorization === `Bearer ${TOKEN}`)).toBe(true);
+    });
+
+    it('carries terminals when they ask for it', async () => {
+      const ways = await twoWays({ transport: { terminal: 'direct' } });
+      await checked(ways.link);
+      const viaForward = ways.forward.connections;
+      expect(await socketTo(ways.hub, '/ws/terminal/%251')).toBe('hello');
+      expect(await get(ways.hub)).toBe(200);
+      expect(ways.direct.connections).toBe(2); // the check, then the terminal
+      expect(ways.forward.connections).toBe(viaForward + 1); // the request
+    });
+
+    it('refuses another certificate on the direct way: no token there, the forward carries on', async () => {
+      const impostor = await startPinnedNode(otherTls);
+      const ways = await twoWays({ transport: { api: 'direct', terminal: 'direct' }, directTo: impostor.port });
+      await checked(ways.link);
+      expect(ways.link.paths().direct).toMatchObject({ status: 'down', reason: 'cert-mismatch' });
+      expect(impostor.seen).toEqual([]);
+      expect(await get(ways.hub)).toBe(200);
+      expect(await socketTo(ways.hub, '/ws/terminal/%251')).toBe('hello');
+      expect(impostor.seen).toEqual([]);
+      // The forward's pairing is untouched: a direct way failing says nothing about it.
+      expect(ways.connection.fetchPairing).toHaveBeenCalledOnce();
+      expect(ways.link.ready).toBe(true);
+    });
+
+    it('is not tried without TLS, or for a host reached through another machine', async () => {
+      const plain = await twoWays({ transport: { api: 'direct' }, pairing: { tls: false, tlsFingerprint: null } });
+      // A plain forward needs a plain node; only the decision matters here.
+      await plain.link.ensure();
+      plain.link.paths();
+      await plain.link._direct.checked;
+      expect(plain.link.paths().direct).toMatchObject({ status: 'down', reason: 'no-tls' });
+      expect(plain.direct.connections).toBe(0);
+
+      const jumped = await twoWays({ transport: { api: 'direct' }, resolveTarget: vi.fn(async () => ({ host: '10.0.0.5', port: 22, proxied: true })) });
+      await checked(jumped.link);
+      expect(jumped.link.paths().direct).toMatchObject({ status: 'down', reason: 'proxied' });
+      expect(jumped.direct.connections).toBe(0);
+    });
+
+    it('when it dies, a write is not repeated, and later requests take the forward', async () => {
+      const ways = await twoWays({ transport: { api: 'direct' } });
+      await checked(ways.link);
+      ways.direct.cut();
+      // The pooled socket from the check is gone too, so the next request needs a new connection.
+      await vi.waitFor(() => expect(Object.values(ways.link._direct.agent.freeSockets).flat()).toEqual([]));
+
+      const posts = ways.target.seen.filter((r) => r.method === 'POST').length;
+      expect(await post(ways.hub)).toBe(503);
+      expect(ways.target.seen.filter((r) => r.method === 'POST').length).toBe(posts);
+      expect(ways.link.paths()).toMatchObject({ api: 'ssh', direct: { status: 'down', reason: 'econnrefused' } });
+
+      // Down now, so the next ones take the forward from the start.
+      expect(await get(ways.hub)).toBe(200);
+      expect(await post(ways.hub)).toBe(201);
+      expect(ways.link.ready).toBe(true);
+    });
+
+    it('a read caught by the direct way dying is answered through the forward', async () => {
+      const ways = await twoWays({ transport: { api: 'direct' } });
+      await checked(ways.link);
+      ways.direct.cut();
+      // Whether the pooled socket or a new connection fails first, the browser gets its answer.
+      expect(await get(ways.hub)).toBe(200);
+      expect(await get(ways.hub)).toBe(200);
+      expect(ways.link.paths().direct.status).toBe('down');
+      expect(ways.link.ready).toBe(true);
+    });
+
+    it('opens a terminal through the forward when the direct way cannot connect, and the node sees one handshake', async () => {
+      const ways = await twoWays({ transport: { terminal: 'direct' } });
+      await checked(ways.link);
+      ways.direct.cut();
+      const viaForward = ways.forward.connections;
+      expect(await socketTo(ways.hub, '/ws/terminal/%251')).toBe('hello');
+      expect(ways.forward.connections).toBe(viaForward + 1);
+      expect(ways.link.paths().direct).toMatchObject({ status: 'down', reason: 'econnrefused' });
+    });
+
+    it('checks a failed direct way again only after a while', async () => {
+      let clock = 1_000_000;
+      const ways = await twoWays({ transport: { api: 'direct' } });
+      ways.link._now = () => clock;
+      ways.direct.cut();
+      await checked(ways.link);
+      expect(ways.link.paths().direct.status).toBe('down');
+      const first = ways.link._direct;
+      clock += 60_000;
+      ways.link.paths();
+      expect(ways.link._direct).toBe(first);
+      clock += 5 * 60_000;
+      ways.link.paths();
+      expect(ways.link._direct).not.toBe(first);
+      await ways.link._direct.checked;
+    });
+
+    it('writes down only a fixed reason when it goes down: no address, port or token', async () => {
+      const ways = await twoWays({ transport: { api: 'direct' } });
+      ways.direct.cut();
+      await checked(ways.link);
+      const lines = warn.mock.calls.filter(([tag]) => tag === '[node-link] direct path').map(([, line]) => JSON.parse(line));
+      expect(lines.at(-1)).toMatchObject({ serverId: 'node-1', status: 'down', reason: 'econnrefused' });
+      const written = JSON.stringify(warn.mock.calls);
+      for (const forbidden of [TOKEN, '127.0.0.1', String(ways.direct.port)]) expect(written).not.toContain(forbidden);
     });
   });
 

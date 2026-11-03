@@ -513,6 +513,7 @@ export class SshConnection {
         host: address.host,
         port: address.port ? Number(address.port) : 22,
         hostKeyAlias: ssh.knownHostAlias || null,
+        proxied: Boolean(ssh.proxyJump),
         source: 'record',
       };
     }
@@ -539,6 +540,8 @@ export class SshConnection {
       port: Number(config.port || address.port || 22),
       // An explicit record alias wins; otherwise honor the one from ssh config.
       hostKeyAlias: ssh.knownHostAlias || config.hostkeyalias || null,
+      // Reached through another machine: its address may mean nothing from here.
+      proxied: Boolean(ssh.proxyJump) || [config.proxyjump, config.proxycommand].some((value) => value && value !== 'none'),
       source: 'ssh-config',
     };
   }

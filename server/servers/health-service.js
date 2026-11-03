@@ -50,7 +50,7 @@ function unavailableWorkspace(transport) {
 }
 
 /** Maps a node's self-description onto the status the UI renders. */
-export function statusFromNodeInfo(serverId, info, { transport, latencyMs, now }) {
+export function statusFromNodeInfo(serverId, info, { transport, latencyMs, now, paths = null }) {
   const tmux = info && info.tmux ? info.tmux : { available: false, version: null, reason: 'unknown' };
   const capabilities = (info && info.capabilities) || {};
   const at = new Date(now).toISOString();
@@ -78,6 +78,8 @@ export function statusFromNodeInfo(serverId, info, { transport, latencyMs, now }
       ? { provider: 'tmux', transport, persistence: 'tmux' }
       : unavailableWorkspace(transport),
     node: { installed: true, version: info?.version || null },
+    // Which way each kind of traffic takes to a remote node (NodeLink.paths).
+    ...(paths ? { paths } : {}),
   };
 }
 
@@ -280,8 +282,12 @@ export class HealthService {
 
   async _probeRemote(server, startedAt) {
     if (await this.links.mode(server.id) === 'node') {
-      const info = await this.links.link(server.id).info();
-      return statusFromNodeInfo(server.id, info, { transport: 'ssh', latencyMs: this._now() - startedAt, now: this._now() });
+      const link = this.links.link(server.id);
+      const info = await link.info();
+      return statusFromNodeInfo(server.id, info, {
+        transport: 'ssh', latencyMs: this._now() - startedAt, now: this._now(),
+        paths: typeof link.paths === 'function' ? link.paths() : null,
+      });
     }
     const facts = await this.links.basic(server.id).detect({ force: true });
     return statusFromBasic(server.id, facts, { latencyMs: this._now() - startedAt, now: this._now() });

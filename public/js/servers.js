@@ -23,6 +23,16 @@
     return '<div class="detail-row"><span>' + esc(label) + '</span><strong class="mono">' + esc(value) + '</strong></div>';
   }
 
+  /** What each kind of traffic takes now, and why a wanted direct way is not used. */
+  function pathsText(paths) {
+    var name = function (via) { return via === 'direct' ? '直连' : 'SSH 隧道'; };
+    var text = '终端 ' + name(paths.terminal) + ' · 文件/Git/监控 ' + name(paths.api);
+    var direct = paths.direct;
+    if (direct && direct.status === 'checking') text += '（直连检测中）';
+    else if (direct && direct.status === 'down') text += '（直连不可用：' + (direct.reason || '未知') + '）';
+    return text;
+  }
+
   /** Reachable over SSH, panel not installed there. */
   function isBasic(health) {
     return Boolean(health && health.node && health.node.installed === false);
@@ -252,6 +262,7 @@
         + detail('SSH Port', address.port || (ssh.configHost ? '来自 ssh config' : '未配置'))
         + detail('Username', address.user || (ssh.configHost ? '来自 ssh config' : '—'))
         + detail('认证配置', ssh.authMethod === 'password' ? '用户名密码' : ssh.usesIdentityFile ? '指定私钥文件' : 'SSH Agent / ssh config')
+        + (health.paths ? detail('数据通道', pathsText(health.paths)) : '')
         + detail('最近成功', relativeTime(health.lastOnlineAt))
         + (facts.version ? detail('面板版本', facts.version) : '')
         + '</div>'
@@ -278,7 +289,7 @@
         + timeline('tmux', tmux.text, tmux.ok)
         + timeline('指标采集能力', metrics.text, metrics.ok)
         + '</div>'
-        + '<p class="muted" style="margin-top:10px">面板只通过 SSH 端口转发访问那台机器上运行的同一套面板服务，不在远端执行命令。</p>'
+        + '<p class="muted" style="margin-top:10px">面板通过 SSH 端口转发（或在编辑中选择的直连 HTTPS）访问那台机器上运行的同一套面板服务，不在远端执行命令。</p>'
         + '</section></div>';
     },
 

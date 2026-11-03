@@ -16,6 +16,7 @@ import net from 'node:net';
 import tls from 'node:tls';
 
 import { AppError, ErrorCode } from '../servers/errors.js';
+import { DEFAULT_TRANSPORT } from '../servers/registry.js';
 import { NODE_PROTOCOL } from '../node/identity.js';
 import { diagnostics } from '../diagnostics.js';
 
@@ -34,6 +35,9 @@ const UPGRADE_TIMEOUT_MS = 15_000;
 const RETRYABLE_READ_ERRORS = new Set(['ECONNRESET', 'EPIPE']);
 // Not worth a second attempt with less time than this left.
 const MIN_RETRY_MS = 1000;
+// The node's own listener: how long its check may take, and how long a failed one stands.
+const DIRECT_CHECK_TIMEOUT_MS = 5_000;
+const DIRECT_RECHECK_MS = 5 * 60_000;
 
 /** True when a request may carry a body, which a retry could not send again. */
 function hasRequestBody(headers) {
@@ -265,11 +269,16 @@ export class NodeLink {
    * @param {object} deps
    * @param {import('../transport/ssh-connection.js').SshConnection} deps.connection
    */
-  constructor({ connection, freePort = freeLoopbackPort, readyTimeoutMs = READY_TIMEOUT_MS, stallLimits = {} }) {
+  constructor({ connection, freePort = freeLoopbackPort, readyTimeoutMs = READY_TIMEOUT_MS, stallLimits = {},
+    directCheckTimeoutMs = DIRECT_CHECK_TIMEOUT_MS, now = () => Date.now() }) {
     this.connection = connection;
     this.serverId = connection.id;
     this._freePort = freePort;
     this._readyTimeoutMs = readyTimeoutMs;
+    this._directCheckTimeoutMs = directCheckTimeoutMs;
+    this._now = now;
+    /** The node's own listener, when the server asks for it: see _route. */
+    this._direct = null;
     this._stallLimits = {
       queue: QUEUE_TIMEOUT_MS,
       connect: CONNECT_TIMEOUT_MS,
@@ -345,6 +354,7 @@ export class NodeLink {
   /** Forget the pairing too, e.g. after the node rejected our token. */
   reset(reason, detail) {
     this._dropTunnel(reason, detail);
+    this._closeDirect();
     this._pairing = null;
   }
 
@@ -383,9 +393,9 @@ export class NodeLink {
     return headers;
   }
 
-  _traceRequest(request, path, began, ensureMs) {
+  _traceRequest(request, path, began, ensureMs, via = 'ssh') {
     if (!diagnostics.status().active) return;
-    const context = { ...diagnostics.currentContext(), serverId: this.serverId, path, provider: 'node-link' };
+    const context = { ...diagnostics.currentContext(), serverId: this.serverId, path, provider: 'node-link', via };
     const queuedAt = performance.now();
     const note = (phase, fields = {}) => diagnostics.record('proxy', {
       ...context, phase, ensureMs, durationMs: performance.now() - began, ...fields,
@@ -504,6 +514,10 @@ export class NodeLink {
    * body, only while the browser is still there and the forward is the same one,
    * and only within what is left of the first attempt's time. Writes, answers that
    * have started, timeouts and certificate or token failures are never repeated.
+   *
+   * On the direct way (see _route), that one second attempt takes the forward
+   * instead, and any failure but a stale pooled socket sends the next requests
+   * through the forward too until a later check.
    */
   async proxy(req, res, path) {
     const began = performance.now();
@@ -530,43 +544,64 @@ export class NodeLink {
       current?.destroy();
     });
 
-    const send = ({ retry, limits }) => {
-      const upstream = this._client().request(retry ? { ...target, agent: this._upgradeAgent } : target, (answer) => {
+    /**
+     * retry: false for the first attempt, 'fresh' for the same way on a new
+     * connection, 'forward' for the forward after the direct way failed.
+     */
+    const send = ({ route, retry, limits }) => {
+      const upstream = this._client().request({ ...target, host: route.host, port: route.port, agent: retry === 'fresh' ? route.upgradeAgent : route.agent }, (answer) => {
         if (answer.statusCode === 401) this._resetIfCurrent(tunnel, 'auth-rejected', { code: 'HTTP_401' });
         res.writeHead(answer.statusCode, forwardResponseHeaders(answer.headers));
         answer.pipe(res);
       });
       current = upstream;
       let sentAt = null;
+      let settled = false;
       upstream.once('finish', () => { sentAt = performance.now(); });
-      this._traceRequest(upstream, path, began, ensureMs);
+      this._traceRequest(upstream, path, began, ensureMs, route.via);
+      // Measured from the moment the first request went out, or from the start if it never did.
+      const timeLeft = () => limits.answerMs - (performance.now() - (sentAt ?? began));
+      const again = (nextRoute, kind, err) => {
+        const left = timeLeft();
+        if (retry || !replayable || res.headersSent || browserGone || this._tunnel !== tunnel || left < MIN_RETRY_MS) return false;
+        diagnostics.record('proxy', { ...req.diagnosticContext, serverId: this.serverId, path, via: nextRoute.via,
+          phase: 'retry', retry: kind, transportCode: err?.code, reusedSocket: Boolean(upstream.reusedSocket), durationMs: performance.now() - began });
+        send({ route: nextRoute, retry: kind, limits: { queueMs: left, connectMs: Math.min(this._stallLimits.connect, left), answerMs: left } });
+        return true;
+      };
+      const settle = (err) => {
+        if (settled) return;
+        settled = true;
+        if (route.via === 'direct') {
+          // A pooled socket the node closed is not the direct way failing; anything else is.
+          if (!(RETRYABLE_READ_ERRORS.has(err?.code) && upstream.reusedSocket)) this._directFailed(route.direct, directFailureReason(err));
+          // Either way the forward is known to work, so the one second attempt goes there.
+          if (!again(this._forwardRoute(), 'forward', err)) fail(err);
+          return;
+        }
+        this._noteUpstreamError(tunnel, err);
+        if (RETRYABLE_READ_ERRORS.has(err?.code) && again(route, 'fresh', err)) return;
+        fail(err);
+      };
       stallGuard(upstream, {
         ...limits,
         onStall: (err, phase) => {
-          diagnostics.record('proxy', { ...req.diagnosticContext, serverId: this.serverId, path,
+          diagnostics.record('proxy', { ...req.diagnosticContext, serverId: this.serverId, path, via: route.via,
             phase, timedOut: true, transportCode: err.code, retry, durationMs: performance.now() - began });
+          // Nothing reached the node over a direct way that never connected: the forward may still answer.
+          if (route.via === 'direct' && phase === 'connect') { settle(err); return; }
+          settled = true;
           fail(err);
         },
-        onConnectStall: () => this._dropDeadTunnel(tunnel),
+        onConnectStall: route.via === 'ssh' ? () => this._dropDeadTunnel(tunnel) : undefined,
       });
-      upstream.on('error', (err) => {
-        this._noteUpstreamError(tunnel, err);
-        // Measured from the moment the first request went out, or from the start if it never did.
-        const left = limits.answerMs - (performance.now() - (sentAt ?? began));
-        if (!retry && replayable && RETRYABLE_READ_ERRORS.has(err?.code) && !res.headersSent && !browserGone
-          && this._tunnel === tunnel && left >= MIN_RETRY_MS) {
-          diagnostics.record('proxy', { ...req.diagnosticContext, serverId: this.serverId, path,
-            phase: 'retry', transportCode: err.code, reusedSocket: Boolean(upstream.reusedSocket), durationMs: performance.now() - began });
-          send({ retry: true, limits: { queueMs: left, connectMs: Math.min(this._stallLimits.connect, left), answerMs: left } });
-          return;
-        }
-        fail(err);
-      });
+      upstream.on('error', settle);
       if (retry) upstream.end();
       else req.pipe(upstream);
     };
 
     send({
+      route: this._route('api'),
       retry: false,
       limits: {
         queueMs: this._stallLimits.queue,
@@ -576,7 +611,12 @@ export class NodeLink {
     });
   }
 
-  /** Relays a WebSocket upgrade byte-for-byte after the node accepts it. */
+  /**
+   * Relays a WebSocket upgrade byte-for-byte after the node accepts it. Terminals
+   * take the way chosen for terminals; the status socket counts as monitoring. When
+   * the direct way cannot even connect, nothing reached the node, so the forward is
+   * asked instead; once the handshake was sent, a failure ends this socket only.
+   */
   async proxyUpgrade(req, socket, head, path) {
     const began = performance.now();
     watchUpgradeSocket(socket);
@@ -594,20 +634,46 @@ export class NodeLink {
     headers.connection = 'Upgrade';
     headers.upgrade = 'websocket';
     const tunnel = this._tunnel;
-    const upstream = this._client().request({ ...this._target(stripTokenParam(path), headers, 'GET'), agent: this._upgradeAgent });
-    this._traceRequest(upstream, path, began, ensureMs);
+    const kind = stripTokenParam(path).startsWith('/ws/terminal/') ? 'terminal' : 'api';
+    this._openUpgrade({ req, socket, head, path, headers, tunnel, began, ensureMs, route: this._route(kind) });
+  }
+
+  _openUpgrade({ req, socket, head, path, headers, tunnel, began, ensureMs, route }) {
+    const upstream = this._client().request({ ...this._target(stripTokenParam(path), headers, 'GET'), host: route.host, port: route.port, agent: route.upgradeAgent });
+    this._traceRequest(upstream, path, began, ensureMs, route.via);
     const abandon = () => upstream.destroy();
     socket.once('close', abandon);
+    // Connected: the handshake may be on its way to the node. A certificate the pin
+    // refused has been destroyed by then and counts as never connected.
+    let connected = false;
+    upstream.once('socket', (raw) => {
+      if (!raw.connecting) { connected = true; return; }
+      raw.once(raw instanceof tls.TLSSocket ? 'secureConnect' : 'connect', () => { connected = !raw.destroyed; });
+    });
+    // The forward instead, only while nothing has reached the node and the browser waits.
+    const fallBack = (err) => {
+      if (route.via !== 'direct') return false;
+      this._directFailed(route.direct, directFailureReason(err));
+      if (connected || socket.destroyed || this._tunnel !== tunnel) return false;
+      socket.off('close', abandon);
+      upstream.destroy();
+      diagnostics.record('proxy', { serverId: this.serverId, path, via: 'ssh', phase: 'retry', retry: 'forward',
+        transportCode: err?.code, durationMs: performance.now() - began });
+      this._openUpgrade({ req, socket, head, path, headers, tunnel, began, ensureMs, route: this._forwardRoute() });
+      return true;
+    };
+    let fellBack = false;
     stallGuard(upstream, {
       queueMs: this._stallLimits.queue,
       connectMs: this._stallLimits.connect,
       answerMs: this._stallLimits.upgrade,
       onStall: (err, phase) => {
-        diagnostics.record('proxy', { serverId: this.serverId, path, phase, timedOut: true,
+        diagnostics.record('proxy', { serverId: this.serverId, path, via: route.via, phase, timedOut: true,
           transportCode: err.code, durationMs: performance.now() - began });
+        if (phase === 'connect' && fallBack(err)) { fellBack = true; return; }
         if (!socket.destroyed) socket.end('HTTP/1.1 504 Gateway Timeout\r\nConnection: close\r\n\r\n');
       },
-      onConnectStall: () => this._dropDeadTunnel(tunnel),
+      onConnectStall: route.via === 'ssh' ? () => this._dropDeadTunnel(tunnel) : undefined,
     });
     upstream.on('upgrade', (answer, upstreamSocket, upstreamHead) => {
       socket.off('close', abandon);
@@ -630,10 +696,135 @@ export class NodeLink {
       answer.resume();
     });
     upstream.on('error', (err) => {
-      this._noteUpstreamError(tunnel, err);
+      if (fellBack) return;
+      if (route.via === 'ssh') this._noteUpstreamError(tunnel, err);
+      else if (fallBack(err)) return;
       // A stall has already answered, and ending that socket here would cut it off.
       if (!err || err.code !== 'ETIMEDOUT') socket.destroy();
     });
     upstream.end();
   }
+
+  /** The forward: always there once ensure() has resolved. */
+  _forwardRoute() {
+    return { via: 'ssh', host: '127.0.0.1', port: this._tunnel.port, agent: this._agent, upgradeAgent: this._upgradeAgent };
+  }
+
+  /**
+   * The way to the node for `kind` ('api' or 'terminal'): the node's own listener
+   * when the server asks for it and a check confirmed it, the forward otherwise. A
+   * way wanted but not confirmed starts a check in the background; nothing waits.
+   */
+  _route(kind) {
+    if (this.connection.server?.transport?.[kind] !== 'direct') return this._forwardRoute();
+    const direct = this._directFor(this._pairing);
+    if (direct.status !== 'up') return this._forwardRoute();
+    return { via: 'direct', host: direct.host, port: direct.port, agent: direct.agent, upgradeAgent: direct.upgradeAgent, direct };
+  }
+
+  /** The current direct way for `pairing`, starting a check when there is none or a failed one is old. */
+  _directFor(pairing) {
+    const current = this._direct;
+    if (current && current.pairing === pairing
+      && (current.status !== 'down' || this._now() - current.checkedAt < DIRECT_RECHECK_MS)) return current;
+    this._closeDirect({ idleOnly: true });
+    const direct = { pairing, status: 'checking', reason: null, checkedAt: this._now(), host: null, port: pairing.port, agent: null, upgradeAgent: null };
+    this._direct = direct;
+    direct.checked = this._checkDirect(direct);
+    return direct;
+  }
+
+  /**
+   * Asks the node for its info on its own listener, at the address SSH uses for
+   * the host. Only over TLS, pinned like the forward: the token never crosses a
+   * network in the clear, and never reaches another certificate.
+   */
+  async _checkDirect(direct) {
+    try {
+      if (!direct.pairing.tls) throw Object.assign(new Error('no tls'), { directReason: 'no-tls' });
+      const target = await this.connection.resolveTarget();
+      if (target.proxied) throw Object.assign(new Error('proxied'), { directReason: 'proxied' });
+      if (this._direct !== direct) return;
+      const sessions = createSessionCache();
+      direct.host = target.host;
+      direct.agent = pinnedAgent(direct.pairing.tlsFingerprint, { sessions });
+      direct.upgradeAgent = pinnedAgent(direct.pairing.tlsFingerprint, { keepAlive: false, sessions });
+      await new Promise((resolve, reject) => {
+        const headers = forwardRequestHeaders({ accept: 'application/json' }, direct.pairing.token);
+        const req = https.request({ host: direct.host, port: direct.port, path: '/api/node/info', method: 'GET', headers, agent: direct.agent }, (res) => {
+          res.resume();
+          res.on('end', () => (res.statusCode === 200 ? resolve() : reject(Object.assign(new Error('status'), { directReason: `http-${res.statusCode}` }))));
+          res.on('error', reject);
+        });
+        req.setTimeout(this._directCheckTimeoutMs, () => req.destroy(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })));
+        req.on('error', reject);
+        req.end();
+      });
+      if (this._direct !== direct) return;
+      direct.status = 'up';
+      direct.checkedAt = this._now();
+      logDirect(this.serverId, 'up', null);
+    } catch (err) {
+      this._directFailed(direct, err.directReason || directFailureReason(err));
+    }
+  }
+
+  /**
+   * The direct way failed: new requests take the forward until a later check.
+   * Streams already open on it go on; only idle sockets are closed.
+   */
+  _directFailed(direct, reason) {
+    if (!direct || this._direct !== direct || direct.status === 'down') return;
+    direct.status = 'down';
+    direct.reason = reason;
+    direct.checkedAt = this._now();
+    closeIdle(direct.agent);
+    closeIdle(direct.upgradeAgent);
+    logDirect(this.serverId, 'down', reason);
+  }
+
+  _closeDirect({ idleOnly = false } = {}) {
+    const direct = this._direct;
+    this._direct = null;
+    if (!direct) return;
+    for (const agent of [direct.agent, direct.upgradeAgent]) {
+      if (!agent) continue;
+      if (idleOnly) closeIdle(agent);
+      else agent.destroy();
+    }
+  }
+
+  /**
+   * Which way each kind of traffic takes right now, for the server's status. Also
+   * keeps a wanted direct way checked: a failed one is tried again after a while.
+   */
+  paths() {
+    const wanted = { ...DEFAULT_TRANSPORT, ...this.connection.server?.transport };
+    const wantsDirect = Object.values(wanted).includes('direct');
+    if (!wantsDirect && this._direct) this._closeDirect({ idleOnly: true });
+    const direct = wantsDirect && this._pairing ? this._directFor(this._pairing) : null;
+    const taken = (kind) => (wanted[kind] === 'direct' && direct?.status === 'up' ? 'direct' : 'ssh');
+    return {
+      wanted,
+      api: taken('api'),
+      terminal: taken('terminal'),
+      direct: direct ? { status: direct.status, reason: direct.reason, checkedAt: new Date(direct.checkedAt).toISOString() } : null,
+    };
+  }
+}
+
+/** A short, fixed reason for a direct way that failed; never an address or message. */
+function directFailureReason(err) {
+  if (err instanceof AppError && err.code === ErrorCode.NODE_AUTH_FAILED) return 'cert-mismatch';
+  if (err && typeof err.code === 'string' && /^E[A-Z_]+$/.test(err.code)) return err.code.toLowerCase();
+  return 'failed';
+}
+
+function closeIdle(agent) {
+  if (!agent) return;
+  for (const sockets of Object.values(agent.freeSockets || {})) for (const socket of sockets) socket.destroy();
+}
+
+function logDirect(serverId, status, reason) {
+  console.warn('[node-link] direct path', JSON.stringify({ at: new Date().toISOString(), serverId, status, reason }));
 }
