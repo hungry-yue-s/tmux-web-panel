@@ -116,6 +116,8 @@ Mac 安装了官方 Homebrew Mosh 1.4.0 bottle，仅用于隔离验收。最终 
 
 跨网络 generic 探针未取得 UDP 结论：准备脚本失败、没有启动 Mac 客户端；随后完整只读核实 Mosh 进程和该临时脚本候选均为 0。所用默认 `C:\msys64\usr\bin\mosh-server.exe` 路径当前不存在，实验用组件目录仍须从实际启动参数核对；不能把文档中的默认值当成已安装证据。原探针代码及失败记录保留，准备阶段诊断和非秘密资源归属 manifest 已补强，没有盲目重试、修改防火墙或部署正式服务。
 
+随后已从实际验收参数核对：Windows 用的是上一个会话 scratchpad 中从官方 Mosh 1.4.0-6 / protobuf 21.12-3 包解压的四个文件，**未安装到系统或正式 Node**，临时目录可能被清理。纠正路径后，大小 335552B、SHA256 与 `--version=1.4.0` 均核对通过，再手动授权了一次有期限的 generic WAN 尝试，没有 tmux。Mac 原生客户端启动后未收到远端 READY/ACK，没有发送输入，约 8.84 秒后自然退出；本次没有建立可证明的双向 UDP 会话，不能归因防火墙、过滤器或 NAT，也没有速度对比结论。远端 daemon 与命令子进程自然退出、身份句柄和 MSYS anchor 均确认已消失，临时脚本删除，SSH 正常退出；没有 TERM/KILL 或正式环境配置变更。密钥和 challenge 仅在内存，非秘密 owner manifest 以 600 权限保存。
+
 Mosh 的启动时序可直接核对 [Mosh 1.4.0 官方源码](https://github.com/mobile-shell/mosh/blob/mosh-1.4.0/src/frontend/mosh-server.cc#L414)：CONNECT 在 fork 前输出，命令子进程先等待父进程释放，收到客户端状态后才继续执行。由此判断，固定等待不足以证明 Windows tmux 的 attach 已完成。
 
 所有涉及 tmux 的真实实验必须遵守 [CLAUDE.md](../CLAUDE.md) 的私有 socket 和进程归属要求；操作事故及其影响边界见 [ENV-5](known-issues.md#env-5-实验进程继承-tmux-时tmux_tmpdir-不足以隔离2026-11-03)。
