@@ -20,6 +20,8 @@ import { diagnostics } from '../diagnostics.js';
 
 const PREFIX_RE = /^\/n\/([a-z0-9][a-z0-9._-]{0,63})(\/[^?#]*)?(\?[^#]*)?$/;
 const HUB_ONLY = /^\/api\/(auth|servers|plugins|managed-resources)(\/|$)/;
+// Answered only to a hub's own calls: relaying would hand a browser the node token's powers.
+const HUB_INTERNAL = /^\/api\/mosh(\/|$)/;
 
 /** Splits `/n/:serverId/rest?query`; null for anything else. */
 export function parseNodePath(url) {
@@ -31,7 +33,11 @@ export function parseNodePath(url) {
 /** Machine-scoped paths a hub may relay. */
 export function isRelayable(pathname, { upgrade = false } = {}) {
   if (upgrade) return pathname === '/ws/status' || pathname.startsWith('/ws/terminal/');
-  return pathname.startsWith('/api/') && !HUB_ONLY.test(pathname);
+  if (!pathname.startsWith('/api/') || HUB_ONLY.test(pathname)) return false;
+  // Spelled any way a router might still match it.
+  let plain = pathname;
+  try { plain = decodeURIComponent(pathname); } catch { return false; }
+  return !HUB_INTERNAL.test(plain.replace(/\/{2,}/g, '/').toLowerCase());
 }
 
 function sendError(res, err) {
@@ -89,7 +95,7 @@ export function createNodeProxy({ registry, links, authorize, sameOrigin, basic 
  * caller can continue with its own routes; for `local` it rewrites req.url
  * and also returns false.
  */
-export function relayNodeUpgrade(req, socket, head, { registry, links, authorize, basic = null }) {
+export function relayNodeUpgrade(req, socket, head, { registry, links, authorize, basic = null, mosh = null }) {
   const target = parseNodePath(req.url);
   if (!target) return false;
   if (target.serverId === LOCAL_SERVER_ID) {
@@ -107,6 +113,10 @@ export function relayNodeUpgrade(req, socket, head, { registry, links, authorize
     .then((mode) => {
       // The browser may have left already: nothing may attach on its behalf.
       if (socket.destroyed) return undefined;
+      // A terminal over mosh is answered here and relays itself when mosh is not to be had.
+      if (mode === 'node' && mosh && target.pathname.startsWith('/ws/terminal/') && mosh.wants(target.serverId)) {
+        return mosh.open(req, socket, head, target.serverId, target);
+      }
       if (mode === 'node') return links.link(target.serverId).proxyUpgrade(req, socket, head, target.path);
       if (!basic) { reject('503 Service Unavailable'); return undefined; }
       return basic(req, socket, head, target.serverId, target);

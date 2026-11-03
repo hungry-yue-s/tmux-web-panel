@@ -73,6 +73,9 @@ import { createNodeProxy, relayNodeUpgrade } from './hub/proxy.js';
 import { BasicHost } from './hub/basic/basic-host.js';
 import { createBasicHttp, createBasicUpgrade } from './hub/basic/basic-routes.js';
 import { NodeInstaller } from './hub/node-installer.js';
+import { MoshTerminals } from './hub/mosh-terminal.js';
+import { MoshService } from './mosh/server.js';
+import { createMoshRouter } from './api/mosh.js';
 import { createNodeInstallRouter } from './api/node-install.js';
 import pty from 'node-pty';
 import { trackConsoleSpawn } from './terminal/console-reaper.js';
@@ -251,7 +254,10 @@ if (apiGuarded) {
   app.use('/api', tokenAuth(tokenMap, { isServiceToken: nodeIdentity.isNodeToken }));
 }
 
-const localNodeInfo = () => collectNodeInfo({ tmuxVersion: tmux.tmuxVersion });
+// Mosh sessions on this node, for a hub's mosh-client, and mosh terminals this hub runs. Set below.
+let moshService = null;
+let moshTerminals = null;
+const localNodeInfo = () => collectNodeInfo({ tmuxVersion: tmux.tmuxVersion, mosh: moshService ? () => moshService.capability() : null });
 app.get('/api/node/info', handle(async () => localNodeInfo()));
 app.use('/api/diagnostics', createDiagnosticsRouter({ diagnostics }));
 
@@ -414,10 +420,14 @@ const workspaceService = new WorkspaceService({
   onChange: (revision) => statusMonitor.broadcastWorkspaceChanged(revision),
 });
 
+moshService = new MoshService({ workspace: workspaceService, terminalManager });
+moshTerminals = new MoshTerminals({ registry: serverRegistry, links, wss });
+
 const healthService = new HealthService({
   registry: serverRegistry,
   links,
   localInfo: localNodeInfo,
+  moshStatus: (serverId) => moshTerminals.status(serverId),
   onStatus: (status) => statusMonitor.broadcastServerStatus(status),
 });
 
@@ -429,6 +439,7 @@ const terminalGateway = new TerminalGateway({ workspace: workspaceService, termi
 
 app.use('/api/workspace', createWorkspaceRouter({ workspaceService }));
 app.use('/api/metrics', createMetricsRouter({ metricsService }));
+app.use('/api/mosh', createMoshRouter({ mosh: moshService, isNodeToken: nodeIdentity.isNodeToken }));
 const nodeInstaller = new NodeInstaller({
   links,
   projectDir: join(__dirname, '..'),
@@ -486,6 +497,7 @@ server.on('upgrade', (req, socket, head) => {
   // Another server's socket is relayed whole; /n/local/... is rewritten in place.
   const relayed = relayNodeUpgrade(req, socket, head, {
     basic: basicUpgrade,
+    mosh: moshTerminals,
     registry: serverRegistry,
     links,
     authorize: (upgradeReq) => !(config.auth || config.nodeOnly) || wsTokenAuth(tokenMap, upgradeReq),
@@ -562,9 +574,18 @@ function shutdown(signal) {
   // Destroy all terminal PTY connections
   terminalManager.destroyAll();
 
-  // Stop server health polling and close every port forward.
+  // Mosh: terminals this hub runs end their node sessions, sessions this node runs
+  // end their processes (the tmux server stays). Both finish before the process goes.
+  const moshBusy = moshService.sessions.size > 0 || moshTerminals.busy();
+  const moshStopped = Promise.all([
+    moshTerminals.closeAll().catch(() => false),
+    moshService.stopAll().catch(() => false),
+  ]);
+
+  // Stop server health polling and close every port forward, after the mosh
+  // terminals have ended their sessions through them.
   healthService.stop();
-  links.closeAll();
+  moshStopped.finally(() => links.closeAll());
 
   // Close all WebSocket connections
   for (const client of wss.clients) {
@@ -580,17 +601,18 @@ function shutdown(signal) {
     server.close(async () => {
       console.log('Server closed.');
       await diagnosticsStopped;
+      await moshStopped;
       flushTokenPersistence(tokenMap);
       process.exit(0);
     });
   });
 
-  // Force exit after 5 seconds if graceful shutdown stalls
+  // Force exit if graceful shutdown stalls; ending mosh processes may take longer.
   setTimeout(() => {
     console.error('Forced exit after timeout.');
     flushTokenPersistence(tokenMap);
     process.exit(1);
-  }, 5000);
+  }, moshBusy ? 15_000 : 5000);
 }
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));

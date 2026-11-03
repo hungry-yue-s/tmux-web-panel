@@ -122,13 +122,14 @@ export class HealthService {
    * @param {import('../hub/link-pool.js').LinkPool} deps.links
    * @param {() => Promise<object>} deps.localInfo this node's /api/node/info
    */
-  constructor({ registry, links, localInfo, now = () => Date.now(), onStatus = null } = {}) {
+  constructor({ registry, links, localInfo, now = () => Date.now(), onStatus = null, moshStatus = null } = {}) {
     if (!registry) throw new Error('HealthService requires a registry');
     if (!links) throw new Error('HealthService requires a link pool');
     if (typeof localInfo !== 'function') throw new Error('HealthService requires localInfo');
     this.registry = registry;
     this.links = links;
     this._localInfo = localInfo;
+    this._moshStatus = moshStatus;
     this._now = now;
     this._onStatus = onStatus;
     /** serverId -> { status, inFlight, generation, nextPollAt, failureCount } */
@@ -284,10 +285,13 @@ export class HealthService {
     if (await this.links.mode(server.id) === 'node') {
       const link = this.links.link(server.id);
       const info = await link.info();
-      return statusFromNodeInfo(server.id, info, {
-        transport: 'ssh', latencyMs: this._now() - startedAt, now: this._now(),
-        paths: typeof link.paths === 'function' ? link.paths() : null,
-      });
+      const paths = typeof link.paths === 'function' ? link.paths() : null;
+      const mosh = paths && this._moshStatus ? this._moshStatus(server.id) : null;
+      if (mosh) {
+        paths.mosh = mosh;
+        if (mosh.status === 'up') paths.terminal = 'mosh';
+      }
+      return statusFromNodeInfo(server.id, info, { transport: 'ssh', latencyMs: this._now() - startedAt, now: this._now(), paths });
     }
     const facts = await this.links.basic(server.id).detect({ force: true });
     return statusFromBasic(server.id, facts, { latencyMs: this._now() - startedAt, now: this._now() });

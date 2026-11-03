@@ -89,8 +89,9 @@ export function slugify(name) {
  * else (files, Git, monitoring). `ssh` is the port forward; `direct` is the node's
  * own HTTPS listener at the SSH host's address, still pinned and still with the
  * token kept on the hub, falling back to the forward whenever it does not answer.
+ * A terminal may also take `mosh` (hub/mosh-terminal.js), which falls back the same way.
  */
-export const TRANSPORT_CHOICES = Object.freeze({ api: ['ssh', 'direct'], terminal: ['ssh', 'direct'] });
+export const TRANSPORT_CHOICES = Object.freeze({ api: ['ssh', 'direct'], terminal: ['ssh', 'direct', 'mosh'] });
 export const DEFAULT_TRANSPORT = Object.freeze({ api: 'ssh', terminal: 'ssh' });
 
 function normalizeTransport(input, previous) {

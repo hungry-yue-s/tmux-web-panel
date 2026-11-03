@@ -32,7 +32,7 @@ export function nodePlatform(platform = process.platform) {
  * @param {object} deps
  * @param {() => Promise<string|null>} deps.tmuxVersion
  */
-export async function collectNodeInfo({ tmuxVersion, platform = process.platform, arch = process.arch, host = hostname() }) {
+export async function collectNodeInfo({ tmuxVersion, mosh = null, platform = process.platform, arch = process.arch, host = hostname() }) {
   let version = null;
   let reason = null;
   try {
@@ -42,6 +42,8 @@ export async function collectNodeInfo({ tmuxVersion, platform = process.platform
     reason = err && err.code === 'ENOENT' ? 'command_not_found' : 'command_failed';
   }
   const windows = platform === 'win32';
+  // Checked once per process; no path in the answer.
+  const moshServer = mosh ? await mosh().catch(() => null) : null;
   return {
     protocol: NODE_PROTOCOL,
     version: PACKAGE_VERSION,
@@ -53,6 +55,7 @@ export async function collectNodeInfo({ tmuxVersion, platform = process.platform
       metrics: { available: true, level: windows ? 'basic' : 'full' },
       files: { available: true },
       processStats: { available: !windows },
+      ...(moshServer ? { mosh: { available: moshServer.available, version: moshServer.version, reason: moshServer.reason } } : {}),
     },
   };
 }

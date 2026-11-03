@@ -25,11 +25,12 @@
 
   /** What each kind of traffic takes now, and why a wanted direct way is not used. */
   function pathsText(paths) {
-    var name = function (via) { return via === 'direct' ? '直连' : 'SSH 隧道'; };
+    var name = function (via) { return via === 'direct' ? '直连' : via === 'mosh' ? 'Mosh' : 'SSH 隧道'; };
     var text = '终端 ' + name(paths.terminal) + ' · 文件/Git/监控 ' + name(paths.api);
     var direct = paths.direct;
     if (direct && direct.status === 'checking') text += '（直连检测中）';
     else if (direct && direct.status === 'down') text += '（直连不可用：' + (direct.reason || '未知') + '）';
+    if (paths.mosh && paths.mosh.status === 'down') text += '（Mosh 不可用：' + (paths.mosh.reason || '未知') + '）';
     return text;
   }
 

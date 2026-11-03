@@ -54,9 +54,11 @@ export const HOP_BY_HOP = new Set([
 
 /**
  * Request headers the hub must not pass to a node: the browser's own
- * credentials, and the browser's Host/Origin, which describe the hub.
+ * credentials, the browser's Host/Origin, which describe the hub, and the mark
+ * of the hub's own calls, which a browser must not be able to forge.
  */
-const STRIP_REQUEST = new Set(['host', 'authorization', 'cookie', 'origin', 'referer']);
+export const HUB_CALL_HEADER = 'x-twp-hub-call';
+const STRIP_REQUEST = new Set(['host', 'authorization', 'cookie', 'origin', 'referer', HUB_CALL_HEADER]);
 
 export function forwardRequestHeaders(headers, token) {
   const out = {};
@@ -349,8 +351,21 @@ export class NodeLink {
     this._upgradeAgent = null;
     // Upgraded sockets leave their Agent; this link still owns their lifetime.
     this._upgraded = new Set();
+    // Bumped whenever the pairing is dropped: whatever was started for the old one is over.
+    this.generation = 0;
+    // Other things running for this pairing, such as a hub-side mosh terminal (see adopt).
+    this._adopted = new Set();
     this._connecting = null;
     this._closed = false;
+  }
+
+  /**
+   * Something that runs for this link outside its sockets. A reset or close calls
+   * its `end(reason)`, as it ends upgraded sockets. Returns a function to let go.
+   */
+  adopt(owned) {
+    this._adopted.add(owned);
+    return () => this._adopted.delete(owned);
   }
 
   get ready() {
@@ -418,6 +433,9 @@ export class NodeLink {
       browser.destroy();
     }
     this._upgraded.clear();
+    this.generation += 1;
+    for (const owned of [...this._adopted]) owned.end(reason);
+    this._adopted.clear();
     this._pairing = null;
   }
 
@@ -493,6 +511,8 @@ export class NodeLink {
     const tunnel = this._tunnel;
     const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
     const headers = this._diagnosticHeaders(forwardRequestHeaders({ accept: 'application/json' }, this._pairing.token));
+    // The hub asking for itself; relayed browser requests never carry this.
+    headers[HUB_CALL_HEADER] = '1';
     if (payload) {
       headers['content-type'] = 'application/json';
       headers['content-length'] = String(payload.length);

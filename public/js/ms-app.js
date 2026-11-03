@@ -1307,15 +1307,17 @@
 
     /** Which way terminals, and everything else, take to the node. SSH unless asked otherwise. */
     _transportFields(prefix, transport) {
-      const select = (id, label, current) => '<div class="field"><label for="' + prefix + '-' + id + '">' + label + '</label>'
+      const select = (id, label, current, choices) => '<div class="field"><label for="' + prefix + '-' + id + '">' + label + '</label>'
         + '<select id="' + prefix + '-' + id + '">'
-        + '<option value="ssh"' + (current !== 'direct' ? ' selected' : '') + '>SSH 隧道</option>'
-        + '<option value="direct"' + (current === 'direct' ? ' selected' : '') + '>直连 HTTPS（实验）</option>'
+        + choices.map(([value, text]) => '<option value="' + value + '"' + ((current || 'ssh') === value ? ' selected' : '') + '>' + text + '</option>').join('')
         + '</select></div>';
-      return select('transport-terminal', '终端通道', transport.terminal)
-        + select('transport-api', '文件 / Git / 监控', transport.api)
-        + '<p class="field full muted">直连使用那台面板自己的 HTTPS 端口，证书同样固定、令牌不离开本机；'
-        + '只在检测通过后使用，连不上时自动回到 SSH 隧道。经跳板机或未启用 HTTPS 的主机不会直连。</p>';
+      const ssh = ['ssh', 'SSH 隧道'];
+      const direct = ['direct', '直连 HTTPS（实验）'];
+      return select('transport-terminal', '终端通道', transport.terminal, [ssh, direct, ['mosh', 'Mosh（实验）']])
+        + select('transport-api', '文件 / Git / 监控', transport.api, [ssh, direct])
+        + '<p class="field full muted">直连使用那台面板自己的 HTTPS 端口，证书同样固定、令牌不离开本机。'
+        + 'Mosh 需要本机有 mosh-client、那台机器有 mosh-server 且 UDP 可达，本地预测只在本机面板上有效。'
+        + '两者都只在检测通过后使用，不通时自动回到 SSH 隧道；经跳板机的主机不会使用。</p>';
     },
 
     async _submitEditServer(serverId) {

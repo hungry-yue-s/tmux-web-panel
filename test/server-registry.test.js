@@ -62,6 +62,8 @@ describe('ServerRegistry', () => {
     await reloaded.load();
     expect(reloaded.get(created.id).transport).toEqual({ api: 'ssh', terminal: 'direct' });
 
+    // Mosh is a way for terminals only.
+    expect((await registry.update(created.id, { transport: { terminal: 'mosh' } })).transport).toEqual({ api: 'ssh', terminal: 'mosh' });
     for (const transport of [{ terminal: 'udp' }, { api: 'mosh' }, 'direct', ['ssh']]) {
       await expect(registry.update(created.id, { transport })).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR });
     }
