@@ -22,6 +22,8 @@
 
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { lookup as lookupAddress } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import pty from 'node-pty';
 
 import { createOutputBatcher, extractOsc52 } from '../terminal.js';
@@ -141,7 +143,8 @@ export class MoshTerminals {
   constructor({ registry, links, wss, client = findMoshClient(),
     // Every pty this process starts is on the console reaper's record (CLAUDE.md).
     spawnPty = (file, args, options) => trackConsoleSpawn(() => pty.spawn(file, args, options)).term,
-    now = () => Date.now(), contactTimeoutMs = CONTACT_TIMEOUT_MS, sessionWatchMs = SESSION_WATCH_MS, localExitWaitMs = LOCAL_EXIT_WAIT_MS }) {
+    now = () => Date.now(), contactTimeoutMs = CONTACT_TIMEOUT_MS, sessionWatchMs = SESSION_WATCH_MS, localExitWaitMs = LOCAL_EXIT_WAIT_MS,
+    lookup = lookupAddress, lookupTimeoutMs = 5000 }) {
     this.registry = registry;
     this.links = links;
     this.wss = wss;
@@ -151,6 +154,8 @@ export class MoshTerminals {
     this._contactTimeoutMs = contactTimeoutMs;
     this._sessionWatchMs = sessionWatchMs;
     this._localExitWaitMs = localExitWaitMs;
+    this._lookup = lookup;
+    this._lookupTimeoutMs = lookupTimeoutMs;
     /** serverId -> { reason, at } for mosh that did not work, so it is not retried at once. */
     this._failed = new Map();
     /** Attempts still coming up, and bridged terminals: both end on closeAll. */
@@ -221,6 +226,32 @@ export class MoshTerminals {
       if (where.proxied) throw Object.assign(new Error('proxied'), { moshReason: 'proxied' });
       // Nothing may attach for a browser that already left.
       if (!stillWanted()) throw Object.assign(new Error('gone'), { moshReason: null });
+      let address = where.host;
+      if (!isIP(address)) {
+        // Raw mosh-client requires AI_NUMERICHOST. Use one OS-selected address;
+        // this does not claim multi-address/family failover or UDP reachability.
+        address = await new Promise((resolve, reject) => {
+          let finished = false;
+          const finish = (reason, ip) => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            socket.removeListener('close', cancelled);
+            wake = () => {};
+            if (reason) reject(Object.assign(new Error(reason), { moshReason: reason === 'gone' ? null : reason }));
+            else resolve(ip);
+          };
+          const cancelled = () => finish('gone');
+          const timer = setTimeout(() => finish('dns_timeout'), this._lookupTimeoutMs);
+          wake = cancelled;
+          socket.once('close', cancelled);
+          Promise.resolve().then(() => this._lookup(where.host)).then(
+            (result) => typeof result?.address === 'string' && isIP(result.address) ? finish(null, result.address) : finish('dns_failed'),
+            () => finish('dns_failed'),
+          );
+        });
+      }
+      if (!stillWanted()) throw Object.assign(new Error('gone'), { moshReason: null });
       posted = true;
       let session;
       try {
@@ -234,7 +265,7 @@ export class MoshTerminals {
       const env = { ...process.env, MOSH_KEY: session.key, TERM: 'xterm-256color', LANG: process.env.LANG || 'en_US.UTF-8' };
       delete env.TMUX;
       delete env.TMUX_PANE;
-      term = this._spawnPty(this.client.path, [where.host, String(session.port)], { name: 'xterm-256color', cols: query.cols, rows: query.rows, env });
+      term = this._spawnPty(this.client.path, [address, String(session.port)], { name: 'xterm-256color', cols: query.cols, rows: query.rows, env });
       session.key = null;
       local = trackLocal(term);
       term.onData((chunk) => handlers.data && handlers.data(chunk));

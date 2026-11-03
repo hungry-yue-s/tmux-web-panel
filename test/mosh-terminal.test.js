@@ -77,7 +77,8 @@ describe('MoshTerminals', () => {
    * the fake mosh-client prints right after it starts.
    */
   async function hub({ screen = '\x1b[24;1H[exp] 0:bash*', proxied = false, post = null, remove = null, state = () => ({ state: 'active' }),
-    transport = 'mosh', client = { available: true, path: '/usr/bin/mosh-client' }, sessionWatchMs = 60_000, ignoreKills = 0 } = {}) {
+    transport = 'mosh', client = { available: true, path: '/usr/bin/mosh-client' }, sessionWatchMs = 60_000, ignoreKills = 0,
+    host = '192.0.2.10', lookup = vi.fn(async () => ({ address: '192.0.2.10', family: 4 })), lookupTimeoutMs = 50 } = {}) {
     const terms = [];
     const requests = [];
     const adopted = new Set();
@@ -89,7 +90,7 @@ describe('MoshTerminals', () => {
       reset() { link.generation += 1; for (const owned of [...adopted]) owned.end('test-reset'); adopted.clear(); },
       adopted,
       ensure: vi.fn(async () => {}),
-      connection: { resolveTarget: vi.fn(async () => ({ host: 'node.example', port: 22, proxied })) },
+      connection: { resolveTarget: vi.fn(async () => ({ host, port: 22, proxied })) },
       requestJson: vi.fn(async (method, path, body) => {
         requests.push({ method, path, body });
         if (method === 'POST') {
@@ -112,7 +113,8 @@ describe('MoshTerminals', () => {
       if (screen) setTimeout(() => term.emit(screen), 5);
       return term;
     });
-    const mosh = new MoshTerminals({ registry, links, wss, client, spawnPty, contactTimeoutMs: 150, sessionWatchMs, localExitWaitMs: 60 });
+    const mosh = new MoshTerminals({ registry, links, wss, client, spawnPty, contactTimeoutMs: 150, sessionWatchMs, localExitWaitMs: 60,
+      lookup, lookupTimeoutMs });
     const server = http.createServer();
     server.on('upgrade', (req, socket, head) => {
       relayNodeUpgrade(req, socket, head, { registry, links, authorize: () => true, mosh });
@@ -134,13 +136,96 @@ describe('MoshTerminals', () => {
     });
   }
 
+  it.each(['192.0.2.10', '2001:db8::10'])('passes the literal IP %s through without a DNS request', async (host) => {
+    const lookup = vi.fn();
+    const fixture = await hub({ host, lookup });
+    const result = await connect(fixture.port);
+    expect(result.status).toBe(101);
+    expect(lookup).not.toHaveBeenCalled();
+    expect(fixture.terms[0].spawned.args).toEqual([host, '60001']);
+  });
+
+  it('resolves a hostname before reserving a remote session and passes only its numeric address to the client', async () => {
+    const lookup = vi.fn(async () => ({ address: '192.0.2.22', family: 4 }));
+    const fixture = await hub({ host: 'node.example', lookup });
+    expect((await connect(fixture.port)).status).toBe(101);
+    expect(lookup).toHaveBeenCalledExactlyOnceWith('node.example');
+    expect(fixture.requests[0].method).toBe('POST');
+    expect(fixture.terms[0].spawned.args).toEqual(['192.0.2.22', '60001']);
+  });
+
+  it('bounds a DNS request that never settles and relays without reserving or spawning', async () => {
+    const fixture = await hub({ host: 'node.example', lookup: () => new Promise(() => {}), lookupTimeoutMs: 20 });
+    expect((await connect(fixture.port)).status).toBe(418);
+    expect(fixture.requests).toEqual([]);
+    expect(fixture.terms).toEqual([]);
+    expect(fixture.mosh.status('box')).toMatchObject({ status: 'down', reason: 'dns_timeout' });
+    expect(fixture.link.adopted.size).toBe(0);
+  });
+
+  it.each([() => Promise.reject(new Error('private DNS diagnostic')), () => Promise.resolve({ address: 'not-an-ip' }), () => Promise.resolve(null)])(
+    'classifies failed or invalid DNS results without exposing the resolver error', async (lookup) => {
+      const fixture = await hub({ host: 'node.example', lookup });
+      expect((await connect(fixture.port)).status).toBe(418);
+      expect(fixture.requests).toEqual([]);
+      expect(fixture.terms).toEqual([]);
+      expect(fixture.mosh.status('box')).toMatchObject({ reason: 'dns_failed' });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('private DNS diagnostic');
+    },
+  );
+
+  it('abandons DNS on a link reset, ignoring a late address without reserving or spawning', async () => {
+    let release;
+    const lookup = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+    const fixture = await hub({ host: 'node.example', lookup, lookupTimeoutMs: 1000 });
+    const pending = connect(fixture.port);
+    await vi.waitFor(() => expect(lookup).toHaveBeenCalledOnce());
+    fixture.link.reset();
+    expect((await pending).status).toBe(503);
+    release({ address: '192.0.2.22', family: 4 });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(fixture.requests).toEqual([]);
+    expect(fixture.terms).toEqual([]);
+    expect(fixture.link.proxyUpgrade).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the link generation after a hostname resolves', async () => {
+    let release;
+    const lookup = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+    const fixture = await hub({ host: 'node.example', lookup, lookupTimeoutMs: 1000 });
+    const pending = connect(fixture.port);
+    await vi.waitFor(() => expect(lookup).toHaveBeenCalledOnce());
+    fixture.link.generation += 1;
+    release({ address: '192.0.2.22', family: 4 });
+    expect((await pending).status).toBe(503);
+    expect(fixture.requests).toEqual([]);
+    expect(fixture.terms).toEqual([]);
+  });
+
+  it('stops waiting for DNS when the browser leaves and ignores the late result', async () => {
+    let release;
+    const lookup = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+    const fixture = await hub({ host: 'node.example', lookup, lookupTimeoutMs: 1000 });
+    const ws = new WebSocket(`ws://127.0.0.1:${fixture.port}/n/box/ws/terminal/%251`);
+    ws.on('error', () => {});
+    cleanups.push(() => ws.terminate());
+    await vi.waitFor(() => expect(lookup).toHaveBeenCalledOnce());
+    ws.terminate();
+    await vi.waitFor(() => expect(fixture.mosh._opening.size).toBe(0));
+    release({ address: '192.0.2.22', family: 4 });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(fixture.requests).toEqual([]);
+    expect(fixture.terms).toEqual([]);
+    expect(fixture.link.proxyUpgrade).not.toHaveBeenCalled();
+  });
+
   it('bridges the socket to a mosh-client it started with the node\'s port and key, which the browser never sees', async () => {
     const { link, terms, requests, port } = await hub();
     const { ws, frames, status } = await connect(port);
     expect(status).toBe(101);
     const [term] = terms;
     expect(term.spawned.file).toBe('/usr/bin/mosh-client');
-    expect(term.spawned.args).toEqual(['node.example', '60001']);
+    expect(term.spawned.args).toEqual(['192.0.2.10', '60001']);
     expect(term.spawned.options).toMatchObject({ cols: 100, rows: 30 });
     expect(term.spawned.options.env.MOSH_KEY).toBe(KEY);
     // The hub names the session, so it can end it even without an answer.

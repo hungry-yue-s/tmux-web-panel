@@ -11,7 +11,8 @@ import { isRelayable } from '../server/hub/proxy.js';
 import { HUB_CALL_HEADER, forwardRequestHeaders } from '../server/hub/node-link.js';
 import { collectNodeInfo } from '../server/node/info.js';
 import { TerminalManager, buildTmuxAttachArgs } from '../server/terminal.js';
-import { TMUX_BIN } from '../server/msys.js';
+import { TMUX_BIN, MSYS_ROOT } from '../server/msys.js';
+import { win32 } from 'node:path';
 
 const KEY = 'AbCdEfGhIjKlMnOpQrStUv';
 const DAEMON = 500;
@@ -199,6 +200,35 @@ describe('finding mosh-server', () => {
     const { mosh } = service();
     const info = await collectNodeInfo({ tmuxVersion: async () => '3.4', mosh: () => mosh.capability(), platform: 'linux', arch: 'x64', host: 'h' });
     expect(info.capabilities.mosh).toEqual({ available: true, version: '1.4.0', reason: null });
+  });
+
+  it('checks an external Windows server with the injected environment and the same MSYS runtime path as its launch', async () => {
+    const external = 'D:\\Mosh tools\\mosh-server.exe';
+    const env = { PATH: 'C:\\Windows\\System32', TMUX_PANEL_MOSH_SERVER: external, FIXTURE_SETTING: 'kept' };
+    const before = { ...env };
+    const execFileImpl = vi.fn((_file, _args, options, done) => {
+      const ready = options.env?.PATH === `${win32.join(MSYS_ROOT, 'usr', 'bin')};${before.PATH}`
+        && options.env.FIXTURE_SETTING === 'kept';
+      done(ready ? null : new Error('fixture runtime unavailable'), ready ? 'mosh-server (mosh 1.4.0)' : '');
+    });
+    const mosh = new MoshService({ platform: 'win32', env, workspace: {}, terminalManager: {},
+      find: ({ env: actual }) => actual.TMUX_PANEL_MOSH_SERVER, execFileImpl });
+    expect(await mosh.capability()).toMatchObject({ available: true, version: '1.4.0' });
+    expect(execFileImpl).toHaveBeenCalledWith(external, ['--version'], expect.objectContaining({
+      timeout: 5000, windowsHide: true, env: expect.objectContaining({ FIXTURE_SETTING: 'kept' }),
+    }), expect.any(Function));
+    expect(env).toEqual(before);
+  });
+
+  it('keeps the injected Unix environment intact for the version check without adding a Windows path', async () => {
+    const env = { PATH: '/custom/bin:/usr/bin', LANG: 'C.UTF-8', FIXTURE_SETTING: 'kept' };
+    const before = { ...env };
+    const execFileImpl = vi.fn((_file, _args, _options, done) => done(null, 'mosh-server (mosh 1.4.0)'));
+    const mosh = new MoshService({ platform: 'darwin', env, workspace: {}, terminalManager: {},
+      find: () => '/custom/bin/mosh-server', execFileImpl });
+    expect(await mosh.capability()).toMatchObject({ available: true });
+    expect(execFileImpl.mock.calls[0][2].env).toEqual(before);
+    expect(env).toEqual(before);
   });
 });
 

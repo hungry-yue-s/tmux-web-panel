@@ -85,9 +85,14 @@ export function findMoshServer({ platform = process.platform, env = process.env,
   return candidates.find((candidate) => exists(candidate)) || null;
 }
 
-function runVersion(file, execFileImpl) {
+function runVersion(file, execFileImpl, env, platform) {
   return new Promise((resolve) => {
-    execFileImpl(file, ['--version'], { timeout: 5000, windowsHide: true }, (err, stdout) => {
+    const childEnv = { ...env };
+    if (platform === 'win32') {
+      const bin = win32.join(MSYS_ROOT, 'usr', 'bin');
+      childEnv.PATH = `${bin};${childEnv.PATH || ''}`;
+    }
+    execFileImpl(file, ['--version'], { env: childEnv, timeout: 5000, windowsHide: true }, (err, stdout) => {
       const match = /mosh-server \(mosh ([0-9][0-9A-Za-z.\-]*)\)/.exec(String(stdout || ''));
       resolve(err && !match ? null : match ? match[1] : null);
     });
@@ -138,7 +143,7 @@ export class MoshService {
       this._capability = (async () => {
         const path = this._find({ platform: this._platform, env: this._env });
         if (!path) return { available: false, version: null, reason: 'mosh_server_not_found' };
-        const version = await runVersion(path, this._execFile);
+        const version = await runVersion(path, this._execFile, this._env, this._platform);
         if (!version) return { available: false, version: null, reason: 'mosh_server_unusable' };
         return { available: true, version, reason: null, path };
       })();
