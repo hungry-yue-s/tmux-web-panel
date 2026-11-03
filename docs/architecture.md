@@ -51,6 +51,18 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 - 前提是 Node 监听在 Hub 能访问的地址上。一键安装的 Node 只监听 127.0.0.1，直连对它不可用；是否改监听地址、开放端口由用户决定，面板不改防火墙。
 - 两条路径的对照用 `scripts/measure-node-paths.mjs <serverId>`（在 Hub 机器上运行，自建一条转发，不影响运行中的面板），随机交错的状态 socket ping，输出分位数、>1s 比例和 socket 计数字节数。单路径结果只能作为基线，不能称为对照；测量口径和 Mosh 的未完成验收门槛见 [Mac 验收记录](low-latency-validation.md)。
 
+### 可选：终端走 Mosh（实验）
+
+`transport.terminal = 'mosh'` 时，浏览器仍只连本机 Hub 的 WebSocket；Hub 在本机 PTY 里运行 `mosh-client`，经 UDP 连到 Node 上的 `mosh-server`，后者运行与普通终端相同的 tmux attach。预测回显发生在 Hub 这台机器的 mosh-client 里，所以只在 Hub 靠近浏览器时有意义（桌面客户端自带的面板）；手机连远端 Hub 时，预测发生在那台 Hub，不在手机上。Git、文件、监控照旧走 `transport.api`。
+
+- **只有 Hub 自己能开会话。** `POST/GET/DELETE /api/mosh/sessions[/:id]`（`server/api/mosh.js`）要求 node token 加上只有 Hub 自己的调用才带的 `x-twp-hub-call`；`/n/` 转发会剥掉这个头，`isRelayable` 也拒绝任何拼法的 `/api/mosh`。会话密钥只在 Hub 进程和 mosh-client 的环境里，不进浏览器、日志和诊断。
+- **会话 id 由 Hub 生成。** 应答没到也能按 id 结束；结束过的 id 记住 10 分钟，迟到的创建请求被拒；创建请求在应答前断开，Node 立即取消。启动中的会话计入上限。
+- **Windows 的 attach 证明。** mosh-server 打印 CONNECT 后才 fork 命令子进程，子进程要等第一个客户端包才 exec tmux。Node 在 CONNECT 时就把端口和密钥交给 Hub，但**客户端启动队列一直持有到** `tmux list-clients` 里出现父进程是这个 mosh-server 的客户端，再等 `CLIENT_SETTLE_MS`；期间按 `holdStart` 计为“启动中”，面板自己的客户端不离开（ENV-3）。20 秒内没有就结束会话并释放队列。面板的新客户端在同一会话上启动前，经 `addClientOwner` 先结束该会话上的 Mosh 客户端，结果不明则 `TERMINAL_BUSY`。
+- **结束只针对确认的进程。** `server/mosh/processes.js` 记录 pid、启动时间、可执行文件和（MSYS2 的）Windows pid；命令子进程 exec 后可执行文件和 Windows pid 会变，只按 pid+启动时间认。先结束 tmux 客户端，让 mosh-server 通知客户端后自行退出，再结束 mosh-server，最后才 KILL；仍有残留时报告 `clean: false`。自然退出的会话由定期清扫回收。关机时 `stopAll` 和 Hub 的 `closeAll` 完成后进程才退出。
+- **回退规则。** 缺 mosh-client、Node 没有 mosh-server、经跳板机、8 秒内没看到远端画面（UDP 不通）时，Hub 结束本机 mosh-client 并请 Node 结束会话；**只有 Node 确认干净**才把这个 socket 照常转发给 Node，否则以 503 拒绝，不在旧会话旁边再接一个客户端。失败的服务器 10 分钟内不再尝试 Mosh。链路重置（配对变化、关闭）结束该链路上的 Mosh 终端，不回退。已经交给某个传输的输入不会再发给另一个。
+- **桥接期间。** Hub 每 15 秒问 Node 会话是否还在；被接管或已结束就向页面发 exit 并以 1000 关闭（mosh 的结束消息可能丢失）。mosh-client 以 0 退出也以 1000 关闭，其它退出以 1011 让页面重连。
+- Windows 不作为 Mosh 客户端（ENV-6）。
+
 主机密钥仍然走首次信任流程：先 `scan` 再 `trust`，只接受用户确认过的那一个指纹。`StrictHostKeyChecking` 始终为 `yes`。用户名加密码的认证方式通过 askpass 完成，密码不会出现在 argv 和环境变量里（`server/transport/ssh-connection.js`）。
 
 ## 健康状态

@@ -76,6 +76,32 @@ Node v24.18.1，完整 Vitest 回归：137 个文件，136 通过、1 跳过；2
 | 升级失败和回退 | `server/hub/mosh-terminal.js` 的 `handleUpgrade` 前后 | HTTP 升级拒绝、抛错、迟到 POST 都须收敛本地 PTY 和远端会话；清理结果不明时不能再 attach 第二个终端。 |
 | 真实验收 | 私有 socket 的 Windows Node + Mac Hub | 验证取消、并发、resize、掉线、旧进程退出；验证 UDP 不通时的失败/回退，不重放已经交付的输入。mock 通过不能替代这些验收。 |
 
+### 门槛现状（远端 Windows，2026-11-03）
+
+上表各项已在 `server/mosh/`、`server/api/mosh.js`、`server/hub/mosh-terminal.js` 中实现，单元测试覆盖（`test/mosh-server.test.js`、`test/mosh-terminal.test.js`、`test/terminal-client-owners.test.js`），并在 Windows 上用真实 mosh-server / mosh-client / tmux 做了私有生命周期验收。它仍是默认关闭的实验通道，**不代表 Mac Hub → Windows Node 已验收**。
+
+| 边界 | 现在的做法 |
+| --- | --- |
+| 取消与代际 | 会话 id 由 Hub 生成；Node 侧 pending 可被 `DELETE` 取消，创建请求在应答前断开即取消，结束过的 id 拒绝迟到的创建。Hub 侧尝试与已桥接终端都登记到 `NodeLink.adopt`，链路 `reset`（配对变化、关闭）时结束，并按 `generation` 拒绝落地。 |
+| Windows 启动串行化 | CONNECT 后先答复 Hub，但客户端启动队列持有到 `tmux list-clients` 出现父进程为该 mosh-server 的客户端，再等 `CLIENT_SETTLE_MS`；期间 `holdStart` 阻止面板客户端离开。20 秒内无 attach 则在队列内结束会话。新客户端启动前经 `addClientOwner` 结束同一会话上的 Mosh 客户端，结果不明即 `TERMINAL_BUSY`。 |
+| 进程退出与回收 | 启动中计入上限；记录 pid、启动时间、可执行文件、Windows pid，命令子进程按 pid+启动时间认（exec 后两者不变，已在 MSYS2 实测）；先结束 tmux 客户端让 mosh-server 自行通知客户端并退出，再 TERM、KILL；仍有残留报 `clean: false`。定期清扫自然退出的会话；关机等待 `stopAll` / `closeAll`。 |
+| 升级失败和回退 | ws 拒绝握手、抛错、浏览器离开、迟到 POST 都结束本机 mosh-client 并 `DELETE`；只有 Node 回答 `clean: true` 才转发到 Node，否则 503。桥接期间每 15 秒查询会话状态，被接管或已结束即关闭页面连接。 |
+
+私有验收（`-S` 私有 socket，子进程无 `TMUX`/`TMUX_PANE`，UDP 只绑 127.0.0.1；Node 侧为真实路由 + 真实 HTTP，Hub 侧为真实 `MoshTerminals` + 真实 ws；为此显式注入了 Windows 的 mosh-client，产品不允许 Windows 作客户端）。最终逻辑下 9 轮：
+
+| 检查 | 结果 |
+| --- | --- |
+| 打开、attach 证明（唯一客户端是该 mosh-server 的子进程） | 9/9；打开约 1.2–2.4 秒，看到 attach 约 2.0–3.3 秒 |
+| ASCII + 中文输入到达窗格、输出到达页面、页面帧不含密钥 | 9/9 |
+| 同一会话再开一个 Mosh 终端：旧的被结束，始终 1 个客户端，旧页面收到 exit | 9/9 |
+| 关闭页面后会话与 tmux 客户端消失 | 9/9 |
+| UDP 不通（客户端发往 127.0.0.2）：确认清理后转发，全程未 attach | 9/9；约 9.2–9.4 秒（8 秒连通时限 + 清理），前 6 轮未优化时约 15–18 秒 |
+| 关机：`closeAll` + `stopAll` 后无客户端、无会话 | 9/9 |
+| 无残留 mosh 进程；私有 tmux server 全程同一 pid | 9/9 |
+| 单次改尺寸 | 6/9；失败的 3 轮 mosh pty 与 tmux 同为旧尺寸，是 Windows mosh-client 一侧（ENV-6） |
+
+未测或未通过、仍需 Mac 主控在真实 Mac Hub → Windows Node 上验收：Mac mosh-client（需安装）的改尺寸与预测回显；公网 UDP 是否可达（云安全组未知）及失败回退耗时；弱网、掉线重连、并发多窗格；输入法、粘贴/密码不回显、鼠标、OSC 52、链接、真彩色、Claude/vim 动态重绘；Windows 默认 tmux 上的 DA 应答（ENV-3）是否受 Mosh 客户端接入时序影响。预测显示与远端执行时间须分开报告。
+
 Mosh 的启动时序可直接核对 [Mosh 1.4.0 官方源码](https://github.com/mobile-shell/mosh/blob/mosh-1.4.0/src/frontend/mosh-server.cc#L414)：CONNECT 在 fork 前输出，命令子进程先等待父进程释放，收到客户端状态后才继续执行。由此判断，固定等待不足以证明 Windows tmux 的 attach 已完成。
 
 所有涉及 tmux 的真实实验必须遵守 [CLAUDE.md](../CLAUDE.md) 的私有 socket 和进程归属要求；操作事故及其影响边界见 [ENV-5](known-issues.md#env-5-实验进程继承-tmux-时tmux_tmpdir-不足以隔离2026-11-03)。

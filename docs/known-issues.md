@@ -201,6 +201,23 @@ node-pty 报告退出比进程消失晚约 1 秒（中位 1.0 到 1.4 秒），�
 
 **防止重现。** 实验、真实组件测试及其清理全部显式使用同一个私有 `-S` socket 或唯一 `-L` 名称，移除所有子进程的 `TMUX` / `TMUX_PANE`，每条命令有超时。结束 server 前先用相同参数读取并核对 socket 路径和 PID 的归属。Windows 的产品代码可能直接调用绝对路径的 MSYS2 tmux，不能依赖 PATH 里的 POSIX 包装隔离；不具备 Windows 隔离实现的测试应明确跳过，而非一边失败一边访问默认 server。Mosh 实验在隔离与生命周期验收前保持不可用于正式连接。
 
+### ENV-6 Windows：ConPTY 下的 mosh-client 会丢尺寸、偶尔不再响应（2026-11-03）
+
+**现象。** 在 Windows 上用 node-pty 运行 MSYS2 的 `mosh-client`（mosh 1.4.0-6）时，尺寸变化有时到不了 mosh-server；连续快速改尺寸时，mosh-client 还会自行退出（exit 1，“mosh did not shut down cleanly”）。个别轮次里它整体不再响应：既不发尺寸，也收不到服务端的结束消息。
+
+**证据。** 全部在私有 `-L` / `-S` tmux 上，mosh UDP 只绑 127.0.0.1。
+
+| 场景 | 结果 |
+|------|------|
+| 10 次尺寸连发，间隔 15ms | 11 轮中 5 轮 mosh-client 退出；最终尺寸多数不是最后一次 |
+| 同上，间隔 200ms | 8 轮中 1 轮丢了最后一次 |
+| 单次改尺寸（生命周期验收，9 轮） | 3 轮没生效 |
+| 每次失败时比对 `stty -F <mosh pty>` 与 tmux 客户端尺寸 | 始终相同，都是旧尺寸 |
+
+**结论。** 已证实：丢失发生在客户端一侧，mosh-server 的 pty 和 tmux 只是没收到新尺寸；服务端 pty 到 tmux 的尺寸跟随在所有轮次中都正确。原因（ConPTY 的窗口事件、MSYS2 运行时的 SIGWINCH）未查。macOS 的 mosh-client 跑在真实 pty 上，是否有同样问题未测。
+
+**服务现在怎么处理。** Windows 不作为 Mosh 客户端：Hub 在 Windows 上报告 `client_platform`，不提供 Mosh 终端（`server/hub/mosh-terminal.js` 的 `findMoshClient`）。Windows 作为 Node 运行 mosh-server 不受影响。Hub 桥接期间定期向 Node 询问会话是否还在，客户端漏收结束消息时页面也会关闭，不会一直停在冻结画面。
+
 ## 捕获环境备注
 
 两条和产物无关但值得记下来的事。CDP 的 `Page.startScreencast` 在这台共享 Chrome 上返回的帧偶发无样式，所以所有动画改成定时 `page.screenshot` 静帧合成，脚本在 `.playwright-mcp/readme-shot/shot.mjs`。截图里的主机名、内网和公网 IP、服务器名、进程名都在捕获期做了 DOM 文本替换脱敏，tmux 状态栏的主机名用 session 级 `status-right` 覆盖掉，规则见同目录 `shot.mjs` 的 `SANITIZE_RULES`。
