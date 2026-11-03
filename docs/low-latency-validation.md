@@ -102,6 +102,18 @@ Node v24.18.1，完整 Vitest 回归：137 个文件，136 通过、1 跳过；2
 
 未测或未通过、仍需 Mac 主控在真实 Mac Hub → Windows Node 上验收：Mac mosh-client（需安装）的改尺寸与预测回显；公网 UDP 是否可达（云安全组未知）及失败回退耗时；弱网、掉线重连、并发多窗格；输入法、粘贴/密码不回显、鼠标、OSC 52、链接、真彩色、Claude/vim 动态重绘；Windows 默认 tmux 上的 DA 应答（ENV-3）是否受 Mosh 客户端接入时序影响。预测显示与远端执行时间须分开报告。
 
+### Mac 复核与长期身份修正
+
+Mac 安装了官方 Homebrew Mosh 1.4.0 bottle，仅用于隔离验收。最终 Mosh 提交 `647bec8` 的原生客户端回收回归 1/1 通过：真实未连通客户端未响应首次结束请求，生产 helper 升级结束后，实测顺序为 `onExit → 远端 clean → fallback`；测试自身没有兜底强杀，没有 tmux、Mosh 服务端或远端操作。另有三次无 tmux 原生回环测试覆盖父进程退出与标准流关闭、首行文本、UDP 无服务端九秒负例，均保留固定字段证据，不保存密钥或输出正文。
+
+进程身份复核发现了一个必须修复的长期会话问题：MSYS `ps -l` 的 STIME 在进程满 24 小时后从时分秒变成月日，不能用来识别进程。修正为同一 MSYS runtime 批读 `/proc/PID` 目录的 epoch mtime（逻辑进程 birth），并核对 WinPID；该 birth 保持跨 exec 的含义，而 `/proc/PID/stat` 第 22 字段可能随 Windows exec 改变。单数字日期也不再解析错列。身份读取失败、截断或缺失时保持 unknown，不能当作进程已退出；清理未确认的会话保留归属，后续接入仍须核实，避免下一次请求绕过保护。此身份核对仍不是原子操作，不作“PID 复用零风险”的承诺。
+
+新 helper 已在 Windows 只读执行一次：205.83ms，89 行中 87 行有 epoch birth，2 行保持 unknown；源码与生成 stdin 的哈希一致，未调用 signal，也未执行 tmux 命令。`/proc` birth 与 tmux 自己的 `start_time` 是不同来源，不能要求两个字符串相等。MSYS 依赖的原始文件仅有 CRLF 差异，标准化后的源码一致。
+
+身份修正后 Mac 完整回归为 **2311 通过、3 跳过、0 失败**。此前 `647bec8` 的一轮全量出现过一个 Git 文件 API 错误体断言失败；同文件在该分支和 master 各单独 21/21 通过，相关代码与依赖相同，该次失败记录保留，未把它冒充为已证明的 master 故障，也未为通过测试修改 Git 产品代码。
+
+跨网络 generic 探针未取得 UDP 结论：准备脚本失败、没有启动 Mac 客户端；随后完整只读核实 Mosh 进程和该临时脚本候选均为 0。所用默认 `C:\msys64\usr\bin\mosh-server.exe` 路径当前不存在，实验用组件目录仍须从实际启动参数核对；不能把文档中的默认值当成已安装证据。原探针代码及失败记录保留，准备阶段诊断和非秘密资源归属 manifest 已补强，没有盲目重试、修改防火墙或部署正式服务。
+
 Mosh 的启动时序可直接核对 [Mosh 1.4.0 官方源码](https://github.com/mobile-shell/mosh/blob/mosh-1.4.0/src/frontend/mosh-server.cc#L414)：CONNECT 在 fork 前输出，命令子进程先等待父进程释放，收到客户端状态后才继续执行。由此判断，固定等待不足以证明 Windows tmux 的 attach 已完成。
 
 所有涉及 tmux 的真实实验必须遵守 [CLAUDE.md](../CLAUDE.md) 的私有 socket 和进程归属要求；操作事故及其影响边界见 [ENV-5](known-issues.md#env-5-实验进程继承-tmux-时tmux_tmpdir-不足以隔离2026-11-03)。

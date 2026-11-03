@@ -36,6 +36,15 @@ import { MSYS_ROOT, TMUX_BIN, msysExecArgs, toPosixPath } from '../msys.js';
 import { tmuxExec } from '../tmux.js';
 import { createProcessTable, sameProcess, sameStart } from './processes.js';
 
+// A listed process with unreadable birth is still present. It must neither be
+// signalled without identity nor disappear from the cleanup/ownership checks.
+function hasUnknownIdentity(session, table) {
+  return [session.daemon, ...session.children].some((entry) => entry
+    && table.has(entry.pid) && !table.get(entry.pid).start)
+    || (sameProcess(session.daemon, table.get(session.daemon?.pid))
+      && [...table.values()].some((entry) => entry.ppid === session.daemon.pid && !entry.start));
+}
+
 /** A server no client has reached for this long ends itself, with its tmux client. */
 export const NETWORK_TIMEOUT_S = 120;
 export const MAX_SESSIONS = 16;
@@ -224,7 +233,7 @@ export class MoshService {
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const table = await this._processes.read().catch(() => null);
       const entry = table && table.get(Number(pid));
-      if (entry) return entry;
+      if (entry?.start) return entry;
       await pause(50);
     }
     return null;
@@ -239,7 +248,9 @@ export class MoshService {
         this._processes.read().catch(() => null),
       ]);
       if (table) {
-        if (!sameProcess(session.daemon, table.get(session.daemon.pid))) return null;
+        const daemon = table.get(session.daemon.pid);
+        if (daemon && !daemon.start) { await pause(ATTACH_POLL_MS); continue; }
+        if (!sameProcess(session.daemon, daemon)) return null;
         this._noteChildren(session, table);
         const pids = new Set(String(clients).split('\n').map((line) => Number(line.trim())).filter(Boolean));
         const client = session.children.find((child) => pids.has(child.pid));
@@ -253,7 +264,7 @@ export class MoshService {
   /** Children of the daemon as they are now, kept so they can be ended after it. */
   _noteChildren(session, table) {
     for (const entry of table.values()) {
-      if (entry.ppid !== session.daemon.pid) continue;
+      if (entry.ppid !== session.daemon.pid || !entry.start) continue;
       const index = session.children.findIndex((child) => child.pid === entry.pid);
       if (index >= 0) session.children[index] = entry;
       else session.children.push(entry);
@@ -386,17 +397,25 @@ export class MoshService {
             // A spawn under way finishes first, so its processes are known.
             if (session.launch) await session.launch.catch(() => {});
             const clean = await this._terminate(session);
-            this.sessions.delete(session.id);
-            this._ended.set(session.id, { clean, at: this._now() });
-            if (!clean) console.warn('[mosh] session', JSON.stringify({ at: new Date().toISOString(), status: 'not_clean' }));
+            if (clean) {
+              this.sessions.delete(session.id);
+              this._ended.set(session.id, { clean, at: this._now() });
+            } else {
+              // Keep ownership: a later attach must not mistake unconfirmed
+              // cleanup for absence. It may retry only with a fresh identity read.
+              session.teardown = null;
+              session.queued = null;
+              console.warn('[mosh] session', JSON.stringify({ at: new Date().toISOString(), status: 'not_clean' }));
+            }
             return clean;
           })();
         }
         return result;
       };
     }
-    if (inTurn) return session.teardown();
-    if (!session.queued) session.queued = this.terminalManager.inClientTurn(() => session.teardown());
+    const teardown = session.teardown;
+    if (inTurn) return teardown();
+    if (!session.queued) session.queued = this.terminalManager.inClientTurn(teardown);
     return session.queued;
   }
 
@@ -408,7 +427,7 @@ export class MoshService {
     }
     if (!session.daemon) return true;
     const table = await this._processes.read().catch(() => null);
-    if (!table) return false;
+    if (!table || hasUnknownIdentity(session, table)) return false;
     if (sameProcess(session.daemon, table.get(session.daemon.pid))) this._noteChildren(session, table);
     const ours = [...session.children, session.daemon];
     const isOurs = (entry, current) => (entry === session.daemon ? sameProcess(entry, current) : sameStart(entry, current));
@@ -422,13 +441,14 @@ export class MoshService {
     if (session.attached) steps.unshift({ signal: 'TERM', who: (entry) => entry !== session.daemon });
     for (const step of steps) {
       const now = await this._processes.read().catch(() => null);
-      if (!now) return false;
+      if (!now || hasUnknownIdentity(session, now)) return false;
       const left = alive(now);
       if (left.length === 0) return true;
       for (const entry of left.filter(step.who)) await this._processes.signal(entry.pid, step.signal);
       for (let waited = 0; waited < this._goneWaitMs; waited += GONE_POLL_MS) {
         await pause(GONE_POLL_MS);
         const after = await this._processes.read().catch(() => null);
+        if (after && hasUnknownIdentity(session, after)) return false;
         if (after && alive(after).length === 0) return true;
       }
     }
@@ -451,6 +471,7 @@ export class MoshService {
     const table = await this._processes.read();
     for (const session of [...this.sessions.values()]) {
       if (session.state !== 'active' || session.teardown) continue;
+      if (hasUnknownIdentity(session, table)) continue;
       if (sameProcess(session.daemon, table.get(session.daemon.pid))) this._noteChildren(session, table);
       if (sameProcess(session.daemon, table.get(session.daemon.pid))
         || session.children.some((entry) => sameStart(entry, table.get(entry.pid)))) {

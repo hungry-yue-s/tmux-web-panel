@@ -152,8 +152,9 @@ describe('process tables', () => {
     const msys = parseMsysPs('      PID    PPID    PGID     WINPID   TTY         UID    STIME COMMAND\n'
       + '  1329790       1 1329790      19736  ?         197108 16:46:46 /usr/bin/mosh-server\n'
       + '   892149  892122  892149      11180  pty17     197108   Oct 30 /c/Program Files/x y.exe\n');
-    expect(msys.get(1329790)).toEqual({ pid: 1329790, ppid: 1, winpid: 19736, start: '16:46:46', command: '/usr/bin/mosh-server' });
-    expect(msys.get(892149)).toMatchObject({ start: 'Oct 30', command: '/c/Program Files/x y.exe' });
+    // The display time is deliberately not accepted as process identity.
+    expect(msys.get(1329790)).toEqual({ pid: 1329790, ppid: 1, winpid: 19736, start: null, command: '/usr/bin/mosh-server' });
+    expect(msys.get(892149)).toMatchObject({ start: null, command: '/c/Program Files/x y.exe' });
     const unix = parseUnixPs('  500     1 Tue Nov  3 16:46:46 2026 /usr/bin/mosh-server\n');
     expect(unix.get(500)).toEqual({ pid: 500, ppid: 1, winpid: null, start: 'Tue Nov 3 16:46:46 2026', command: '/usr/bin/mosh-server' });
 
@@ -342,7 +343,7 @@ describe('cancelling and ending', () => {
     expect(await mosh.stop(sessionId)).toEqual({ stopped: true, clean: false });
     expect(processes.signals).toContainEqual([CHILD, 'KILL']);
     expect(warnings.some(([tag, line]) => tag === '[mosh] session' && line.includes('not_clean'))).toBe(true);
-    expect(await mosh.stop(sessionId)).toEqual({ stopped: false, clean: false });
+    expect(await mosh.stop(sessionId)).toEqual({ stopped: true, clean: false });
   });
 
   it('says not clean when mosh-server printed CONNECT, so forked, but never said its pid', async () => {
@@ -350,7 +351,7 @@ describe('cancelling and ending', () => {
     const { mosh } = service({ spawn: fakeSpawn(processes, { printPid: false }) });
     const sessionId = id();
     await expect(mosh.start({ id: sessionId, paneId: '%1' })).rejects.toMatchObject({ message: 'mosh-server exited without a session' });
-    expect(await mosh.stop(sessionId)).toEqual({ stopped: false, clean: false });
+    expect(await mosh.stop(sessionId)).toEqual({ stopped: true, clean: false });
   });
 
   it('says what became of a session, for a hub watching one it bridges', async () => {
