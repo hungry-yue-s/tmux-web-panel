@@ -147,6 +147,29 @@ Mac 安装了官方 Homebrew Mosh 1.4.0 bottle，仅用于隔离验收。最终 
 
 合入 `7a67a0e` 后，Mac 使用 Node v24.18.1、`--maxWorkers=1` 再跑完整回归：140 个文件通过、1 个跳过；**2314 项通过、3 项跳过、0 失败**，177.21 秒。UTC 10:02:13 验证正式 Mac LaunchAgent 仍为 PID 14862，本机 tmux 仍为 `1873:1793170878`、远端仍为 `185256:1793677232`，本机原有窗格仍可见；未部署传输分支。
 
+### 后续复核：接入和探针的缺口
+
+此前的 generic WAN 结果只证明没有取得可核实的双向会话，不能称为“已证明公网 UDP 被阻断”。客户端退出码为 1，1151B 输出只保留了计数，没有错误分类；约 8.84 秒退出不能单独区分本机错误、远端结束或网络路径。探针对原始 VT 字节使用 `includes` 查 READY，也可能把 Mosh 重绘时被控制序列拆开的文字判为未出现。重新验证须补客户端错误类别、独立的命令启动/输入到达证据，不能靠重复同一探针解决观测缺口。
+
+产品接入另有一个可复现的域名问题：官方 Mosh 1.4.0 的 raw `mosh-client` 使用 `AI_NUMERICHOST`，不会像 SSH 一样解析传入域名。Hub 现改为先用有期限的 OS 地址查询，再把 numeric IP 传给客户端；IP 字面量不增加查询，取消、link reset、超时或无效结果都不能继续创建远端会话。这里只选择一次 OS 返回的地址，没有实现多地址/地址族回退；本次 Cc-windows 探针本来使用公网 IP 字面量，因此这个修复不能解释其失败。
+
+另一处条件性缺陷是能力检查与真实启动的环境不一致：Windows 使用外置 `TMUX_PANEL_MOSH_SERVER` 时，真正启动会前置 MSYS2 的 `usr/bin`，版本检查却未使用注入的环境和 runtime PATH，可能把缺少同目录 runtime DLL 的组件误报为不可用，并缓存结果。现在两者使用一致的 MSYS runtime 路径，保持调用方环境不变；Windows 外置组件和 Unix 环境各有回归。此缺陷未在当前正式环境实证，不能用来解释此前的 native 客户端退出。
+
+### 带独立状态的复测与本机 UDP 对照
+
+UTC 12:43 的实时预检重新核对 Windows 临时组件大小、SHA256、版本与退出，再于 12:44 做一次无 tmux 的 generic WAN 尝试。CONNECT 端口和实际脚本 hash 写入私有 manifest，密钥和输入只在内存；客户端启动两秒后仅向本次 generic 命令写入一次私有 challenge，独立状态文件只存 started/read_timeout/ack 三个布尔值。这样不依赖原始 READY 文本来决定是否发送。
+
+- 独立状态显示 `commandStarted=false`、`commandAck=false`，服务端未记录已认证客户端，约十秒因 network idle 自然退出；因此本轮的主要问题不是 READY 漏判。47B 只是写入本机客户端，不能称为已送达 Windows。
+- Mac 客户端自然退出 1，未取得 ACK。监督程序没有发 TERM/KILL，daemon、命令 anchor 均已消失，脚本和状态文件已删除，SSH 退出，自有资源清理确认。
+- 初版白名单仍漏掉了 `EPIPE / Broken pipe`，通用 no_response 提示又会遮盖更具体的错误类别，不能将其当成根因。后续原生客户端对照用 Darwin errno 全表在内存匹配，不保存终端正文；一次将 syscall、errno、阶段和时间绑定，确认 `sendto: EPIPE` 首次出现于观察期 3224ms，早于 3500ms 开始的主动回收。这个对照使用新随机 key、没有服务端或输入，结束只回收自己的客户端并确认退出，不能冒充成功会话。
+- 独立 launchd RunAtLoad/noKeepAlive 测试也观察到 EPIPE；本次测试 job 已退出并 bootout，未替换正式 LaunchAgent。不能据此将故障仅归于 Codex 父进程，但这也未证明某个过滤器就是根因。
+
+最初 Node `dgram.connect/send` 和 Python `sendto` 的单包调用均被系统接受，这只证明首次提交。按 Mosh 的实际未连接 UDP、`MSG_DONTWAIT`、TOS=2、IP_RECVTOS=1 保留 socket 五秒后，同目标从约一秒起持续返回 errno 32；connected UDP 也一样。默认 TOS=0 的同目标对照同样返回 32，而已关闭的回环端口返回的是 errno 61（ECONNREFUSED），随后可交替提交。所有对照 socket 均已关闭；这些少量合成数据不能代表终端带宽或丢包率。
+
+当前可确认的阻碍是**到该目标端口的 UDP 发送在首包之后返回本机 EPIPE**。本机系统扩展只读清单显示有 enabled 的 Alibaba endpoint networkFilter，macOS 内置防火墙未启用；限定本次目标/Mosh 的十分钟统一日志查询没有匹配记录。不能据“有过滤扩展”认定它拦截，也没有修改、停用安全软件、网络设置、防火墙或云安全组。主机过滤、外部拒绝以及具体 socket 失效机制仍待取得直接证据。正式 Windows Node 的 Mosh 组件安装和 Mac → Windows 产品端到端验收仍未完成，故没有开启正式 Mosh 通道。
+
+接入补修提交 `b65f23d` 的四个 Mosh 文件定向 82/82；Mac 完整回归 **2326 通过、3 跳过、0 失败**（212.37 秒）。UTC 12:58:19 只读复核：正式 LaunchAgent PID 14862、本机 tmux `1873:1793170878`、远端 tmux `185256:1793677232` 均保持不变，本机原有窗格仍可见。此轮没有将分支部署到正式服务。
+
 Mosh 的启动时序可直接核对 [Mosh 1.4.0 官方源码](https://github.com/mobile-shell/mosh/blob/mosh-1.4.0/src/frontend/mosh-server.cc#L414)：CONNECT 在 fork 前输出，命令子进程先等待父进程释放，收到客户端状态后才继续执行。由此判断，固定等待不足以证明 Windows tmux 的 attach 已完成。
 
 所有涉及 tmux 的真实实验必须遵守 [CLAUDE.md](../CLAUDE.md) 的私有 socket 和进程归属要求；操作事故及其影响边界见 [ENV-5](known-issues.md#env-5-实验进程继承-tmux-时tmux_tmpdir-不足以隔离2026-11-03)。
