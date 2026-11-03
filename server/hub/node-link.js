@@ -30,6 +30,17 @@ const CONNECT_TIMEOUT_MS = 10_000;
 const READ_ANSWER_TIMEOUT_MS = 60_000;
 const WRITE_ANSWER_TIMEOUT_MS = 5 * 60_000;
 const UPGRADE_TIMEOUT_MS = 15_000;
+// A connection dropped under a request: what a pooled socket the node closed looks like.
+const RETRYABLE_READ_ERRORS = new Set(['ECONNRESET', 'EPIPE']);
+// Not worth a second attempt with less time than this left.
+const MIN_RETRY_MS = 1000;
+
+/** True when a request may carry a body, which a retry could not send again. */
+function hasRequestBody(headers) {
+  if (headers['transfer-encoding']) return true;
+  const length = headers['content-length'];
+  return length !== undefined && length !== '0';
+}
 
 /** Headers that describe one hop and must not be forwarded (RFC 9110 §7.6.1). */
 export const HOP_BY_HOP = new Set([
@@ -484,7 +495,16 @@ export class NodeLink {
     if (err && err.code === ErrorCode.NODE_AUTH_FAILED) this._resetIfCurrent(tunnel, 'cert-changed', { code: err.code });
   }
 
-  /** Streams one browser request to the node and the answer back. */
+  /**
+   * Streams one browser request to the node and the answer back.
+   *
+   * A read the connection drops before any answer is asked once more, on a new
+   * connection: a pooled socket the node had just closed fails exactly like that,
+   * and the browser should not see an error for it. Only a GET or HEAD without a
+   * body, only while the browser is still there and the forward is the same one,
+   * and only within what is left of the first attempt's time. Writes, answers that
+   * have started, timeouts and certificate or token failures are never repeated.
+   */
   async proxy(req, res, path) {
     const began = performance.now();
     await this.ensure();
@@ -492,39 +512,68 @@ export class NodeLink {
     // The browser may have gone while the forward came up.
     if (res.destroyed || res.writableEnded) return;
     const tunnel = this._tunnel;
-    const upstream = this._client().request(
-      this._target(stripTokenParam(path), this._diagnosticHeaders(forwardRequestHeaders(req.headers, this._pairing.token)), req.method),
-      (answer) => {
-        if (answer.statusCode === 401) this._resetIfCurrent(tunnel, 'auth-rejected', { code: 'HTTP_401' });
-        res.writeHead(answer.statusCode, forwardResponseHeaders(answer.headers));
-        answer.pipe(res);
-      },
-    );
-    this._traceRequest(upstream, path, began, ensureMs);
+    const read = /^(GET|HEAD)$/i.test(req.method);
+    const replayable = read && !hasRequestBody(req.headers);
+    const target = this._target(stripTokenParam(path), this._diagnosticHeaders(forwardRequestHeaders(req.headers, this._pairing.token)), req.method);
     const fail = (err) => {
       if (res.writableEnded) return;
       if (res.headersSent) { res.destroy(); return; }
       const appError = upstreamError(err);
       res.status(appError.status).json({ success: false, data: null, error: appError.toJSON(), meta: { requestId: null } });
     };
-    stallGuard(upstream, {
-      queueMs: this._stallLimits.queue,
-      connectMs: this._stallLimits.connect,
-      answerMs: /^(GET|HEAD)$/i.test(req.method) ? this._stallLimits.read : this._stallLimits.write,
-      onStall: (err, phase) => {
-        diagnostics.record('proxy', { ...req.diagnosticContext, serverId: this.serverId, path,
-          phase, timedOut: true, transportCode: err.code, durationMs: performance.now() - began });
-        fail(err);
-      },
-      onConnectStall: () => this._dropDeadTunnel(tunnel),
-    });
-    upstream.on('error', (err) => {
-      this._noteUpstreamError(tunnel, err);
-      fail(err);
-    });
+    let current = null;
+    let browserGone = false;
     // Closing the browser side (e.g. an aborted download) ends the upstream too.
-    res.on('close', () => { if (!res.writableFinished) upstream.destroy(); });
-    req.pipe(upstream);
+    res.on('close', () => {
+      if (res.writableFinished) return;
+      browserGone = true;
+      current?.destroy();
+    });
+
+    const send = ({ retry, limits }) => {
+      const upstream = this._client().request(retry ? { ...target, agent: this._upgradeAgent } : target, (answer) => {
+        if (answer.statusCode === 401) this._resetIfCurrent(tunnel, 'auth-rejected', { code: 'HTTP_401' });
+        res.writeHead(answer.statusCode, forwardResponseHeaders(answer.headers));
+        answer.pipe(res);
+      });
+      current = upstream;
+      let sentAt = null;
+      upstream.once('finish', () => { sentAt = performance.now(); });
+      this._traceRequest(upstream, path, began, ensureMs);
+      stallGuard(upstream, {
+        ...limits,
+        onStall: (err, phase) => {
+          diagnostics.record('proxy', { ...req.diagnosticContext, serverId: this.serverId, path,
+            phase, timedOut: true, transportCode: err.code, retry, durationMs: performance.now() - began });
+          fail(err);
+        },
+        onConnectStall: () => this._dropDeadTunnel(tunnel),
+      });
+      upstream.on('error', (err) => {
+        this._noteUpstreamError(tunnel, err);
+        // Measured from the moment the first request went out, or from the start if it never did.
+        const left = limits.answerMs - (performance.now() - (sentAt ?? began));
+        if (!retry && replayable && RETRYABLE_READ_ERRORS.has(err?.code) && !res.headersSent && !browserGone
+          && this._tunnel === tunnel && left >= MIN_RETRY_MS) {
+          diagnostics.record('proxy', { ...req.diagnosticContext, serverId: this.serverId, path,
+            phase: 'retry', transportCode: err.code, reusedSocket: Boolean(upstream.reusedSocket), durationMs: performance.now() - began });
+          send({ retry: true, limits: { queueMs: left, connectMs: Math.min(this._stallLimits.connect, left), answerMs: left } });
+          return;
+        }
+        fail(err);
+      });
+      if (retry) upstream.end();
+      else req.pipe(upstream);
+    };
+
+    send({
+      retry: false,
+      limits: {
+        queueMs: this._stallLimits.queue,
+        connectMs: this._stallLimits.connect,
+        answerMs: read ? this._stallLimits.read : this._stallLimits.write,
+      },
+    });
   }
 
   /** Relays a WebSocket upgrade byte-for-byte after the node accepts it. */

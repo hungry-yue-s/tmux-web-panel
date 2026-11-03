@@ -596,7 +596,7 @@ describe('NodeLink health checks on a link in use', () => {
    * open until told otherwise, as a terminal or a download would.
    */
   async function startNode() {
-    const state = { probes: [], failNext: 0, holdNext: false, held: [], answer401: false };
+    const state = { probes: [], failNext: 0, holdNext: false, held: [], answer401: false, cutNext: false };
     const server = http.createServer((req, res) => {
       if (req.url === '/stream') {
         res.writeHead(200);
@@ -608,6 +608,13 @@ describe('NodeLink health checks on a link in use', () => {
       if (state.failNext > 0) {
         state.failNext -= 1;
         req.socket.resetAndDestroy();
+        return;
+      }
+      if (state.cutNext) {
+        state.cutNext = false;
+        res.writeHead(200, { 'content-type': 'application/octet-stream' });
+        res.write('part');
+        setTimeout(() => req.socket.resetAndDestroy(), 20);
         return;
       }
       if (state.holdNext) {
@@ -772,6 +779,147 @@ describe('NodeLink health checks on a link in use', () => {
     expect(status).toBe(503);
     expect(node.probes.length - before).toBe(1);
     expect(link.ready).toBe(true);
+  });
+
+  describe('a relayed read that loses its connection', () => {
+    /** One request through the hub; resolves with the status, or 'cut' if the answer broke off. */
+    function relay(hub, { method = 'GET', path = '/api/x', body = null, signal = null } = {}) {
+      return new Promise((resolve) => {
+        const headers = body === null ? {} : { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(body)) };
+        const req = http.request({ host: '127.0.0.1', port: hub.port, path, method, headers, signal }, (res) => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode));
+          res.on('error', () => resolve('cut'));
+          res.on('aborted', () => resolve('cut'));
+        });
+        req.on('error', (err) => resolve(err.name === 'AbortError' ? 'aborted' : 'error'));
+        req.end(body ?? undefined);
+      });
+    }
+
+    async function warmLink(node, stallLimits) {
+      const connection = fakeConnection(pairingFor(node.port));
+      const link = new NodeLink({ connection, freePort: async () => node.port, stallLimits });
+      cleanups.push(() => link.close());
+      const hub = await hubOn(link);
+      // Leaves a pooled socket for the next request to reuse.
+      expect(await relay(hub)).toBe(200);
+      return { link, connection, hub, before: node.probes.length };
+    }
+
+    it('asks once more on a new connection, and the browser and the other streams see nothing', async () => {
+      const node = await startNode();
+      const { link, connection, hub } = await warmLink(node);
+      const stream = await openStream(hub);
+      // The stream took the pooled socket; leave another one for the read.
+      expect(await relay(hub)).toBe(200);
+      const before = node.probes.length;
+
+      for (const method of ['GET', 'HEAD']) {
+        node.failNext = 1;
+        expect(await relay(hub, { method })).toBe(200);
+      }
+
+      const probes = node.probes.slice(before);
+      expect(probes.map((probe) => probe.method)).toEqual(['GET', 'GET', 'HEAD', 'HEAD']);
+      expect(probes[0].socket).toBe(node.probes[before - 1].socket);
+      expect(probes[1].socket).not.toBe(probes[0].socket);
+      expect(stream.cut).toBe(false);
+      expect(link.ready).toBe(true);
+      expect(connection.children[0].kill).not.toHaveBeenCalled();
+      expect(linkLostLines()).toEqual([]);
+      node.finishStream();
+    });
+
+    it('asks only once more, and the failure costs the link nothing', async () => {
+      const node = await startNode();
+      const { link, connection, hub, before } = await warmLink(node);
+      node.failNext = 100;
+      expect(await relay(hub)).toBe(503);
+      expect(node.probes.length - before).toBe(2);
+      expect(link.ready).toBe(true);
+      expect(connection.children[0].kill).not.toHaveBeenCalled();
+    });
+
+    it('does not repeat a read that carries a body', async () => {
+      const node = await startNode();
+      const { hub, before } = await warmLink(node);
+      node.failNext = 1;
+      expect(await relay(hub, { body: '{}' })).toBe(503);
+      expect(node.probes.length - before).toBe(1);
+    });
+
+    it('does not repeat a read whose answer had started', async () => {
+      const node = await startNode();
+      const { hub, before } = await warmLink(node);
+      node.cutNext = true;
+      expect(await relay(hub)).toBe('cut');
+      expect(node.probes.length - before).toBe(1);
+    });
+
+    it('does not ask again for a browser that has left', async () => {
+      const node = await startNode();
+      const { hub, before } = await warmLink(node);
+      node.holdNext = true;
+      const controller = new AbortController();
+      const pending = relay(hub, { signal: controller.signal });
+      await vi.waitFor(() => expect(node.held).toHaveLength(1));
+      controller.abort();
+      expect(await pending).toBe('aborted');
+      await vi.waitFor(() => expect(node.held[0].req.socket.destroyed).toBe(true));
+      await new Promise((resolve) => { setTimeout(resolve, 50); });
+      expect(node.probes.length - before).toBe(1);
+    });
+
+    it('does not ask a forward that replaced the one the read was sent on', async () => {
+      const node = await startNode();
+      const { link, connection, hub, before } = await warmLink(node);
+      node.holdNext = true;
+      const pending = relay(hub);
+      await vi.waitFor(() => expect(node.held).toHaveLength(1));
+      // Keep the old agent's socket alive past the reset, so it can fail late.
+      link._agent = new http.Agent();
+      link._upgradeAgent = new http.Agent();
+      link.reset('test');
+      await link.ensure();
+      warn.mockClear();
+
+      node.held[0].req.socket.resetAndDestroy();
+      expect(await pending).toBe(503);
+      expect(node.probes.length - before).toBe(1);
+      expect(connection.children[1].kill).not.toHaveBeenCalled();
+      expect(linkLostLines()).toEqual([]);
+    });
+
+    it('gives the second attempt only what is left of the first one\'s time', async () => {
+      const node = await startNode();
+      const { hub } = await warmLink(node, { read: 1600 });
+      node.holdNext = true;
+      const started = Date.now();
+      const pending = relay(hub);
+      await vi.waitFor(() => expect(node.held).toHaveLength(1));
+      await new Promise((resolve) => { setTimeout(resolve, 200); });
+      // The second attempt is held too, and must time out at the first one's deadline.
+      node.holdNext = true;
+      node.held[0].req.socket.resetAndDestroy();
+      expect(await pending).toBe(504);
+      expect(node.held).toHaveLength(2);
+      const elapsed = Date.now() - started;
+      expect(elapsed).toBeGreaterThanOrEqual(1500);
+      expect(elapsed).toBeLessThan(2600);
+    });
+
+    it('does not bother when too little time is left', async () => {
+      const node = await startNode();
+      const { hub, before } = await warmLink(node, { read: 1200 });
+      node.holdNext = true;
+      const pending = relay(hub);
+      await vi.waitFor(() => expect(node.held).toHaveLength(1));
+      await new Promise((resolve) => { setTimeout(resolve, 400); });
+      node.held[0].req.socket.resetAndDestroy();
+      expect(await pending).toBe(503);
+      expect(node.probes.length - before).toBe(1);
+    });
   });
 
   it('takes a rejected token at its word, with no second try', async () => {
