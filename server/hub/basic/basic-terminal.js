@@ -10,7 +10,7 @@
 
 import { AppError, ErrorCode } from '../../servers/errors.js';
 import { extractOsc52 } from '../../terminal.js';
-import { ServerMessage, parseClientMessage, parseTerminalPath, parseTerminalQuery } from '../../terminal/protocol.js';
+import { ServerMessage, outputFrameOptions, parseClientMessage, parseTerminalPath, parseTerminalQuery } from '../../terminal/protocol.js';
 import { sshPtyBinary } from '../../transport/ssh-connection.js';
 
 let focusSeq = 0;
@@ -91,7 +91,10 @@ function attachHostedShell(ws, host, resolved, { cols, rows, maxConnectionsPerPa
     const { clipboard, cleaned, pending } = extractOsc52(osc52Pending + chunk);
     osc52Pending = pending;
     for (const text of clipboard) ws.send(ServerMessage.clipboard(text));
-    if (cleaned.length > 0) ws.send(ServerMessage.output(cleaned));
+    if (cleaned.length > 0) {
+      const frame = ServerMessage.output(cleaned);
+      ws.send(frame, outputFrameOptions(frame));
+    }
   };
   const subscriber = {
     send: forward,

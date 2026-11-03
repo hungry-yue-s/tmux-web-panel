@@ -12,7 +12,7 @@ import { promisify } from 'node:util';
 import { TMUX_BIN, msysExecArgs } from './msys.js';
 import { AppError, ErrorCode } from './servers/errors.js';
 import { ConsoleReaper, trackConsoleSpawn } from './terminal/console-reaper.js';
-import { MAX_HELD_INPUT_BYTES } from './terminal/protocol.js';
+import { MAX_HELD_INPUT_BYTES, ServerMessage, outputFrameOptions } from './terminal/protocol.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -371,7 +371,9 @@ export class TerminalManager {
       alive: true,
       osc52Pending: '', // carry-over for OSC 52 split across PTY chunks
       output: createOutputBatcher((data) => {
-        if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'output', data }));
+        if (ws.readyState !== ws.OPEN) return;
+        const frame = ServerMessage.output(data);
+        ws.send(frame, outputFrameOptions(frame));
       }),
       onPtyExit: options.onPtyExit,
       spawnPty,

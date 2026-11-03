@@ -61,6 +61,7 @@ import { WorkspaceService } from './workspace/service.js';
 import { MetricsService } from './metrics/service.js';
 import { collectLocalMetrics } from './metrics/local-collector.js';
 import { TerminalGateway } from './terminal/gateway.js';
+import { SOCKET_DEFLATE } from './terminal/protocol.js';
 import { createServersRouter } from './api/servers.js';
 import { createWorkspaceRouter } from './api/workspace.js';
 import { createMetricsRouter } from './api/metrics.js';
@@ -394,14 +395,9 @@ const wss = new WebSocketServer({
   noServer: true,
   // A terminal frame is keystrokes or a paste; nothing legitimate is larger.
   maxPayload: 1024 * 1024,
-  // Terminal output is highly repetitive (escape sequences, redrawn lines):
-  // deflate cuts it several times over on a slow link. Keystroke echoes stay
-  // below the threshold and go out uncompressed.
-  perMessageDeflate: {
-    zlibDeflateOptions: { level: 4, memLevel: 8 },
-    threshold: 256,
-    concurrencyLimit: 8,
-  },
+  // Keystroke echoes go out uncompressed because each output frame says so
+  // (outputFrameOptions); the threshold alone does not do it.
+  perMessageDeflate: SOCKET_DEFLATE,
 });
 
 const terminalManager = new TerminalManager({
