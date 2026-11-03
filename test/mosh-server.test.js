@@ -32,18 +32,36 @@ function fakeProcesses() {
     resist,
     add(entry) { procs.set(entry.pid, { ppid: 1, winpid: entry.pid + 10_000, start: '16:00:00', command: '/usr/bin/x', ...entry }); },
     exec(pid, command) { const entry = procs.get(pid); procs.set(pid, { ...entry, command, winpid: entry.winpid + 1 }); },
-    async read() { return new Map([...procs].map(([pid, entry]) => [pid, { ...entry }])); },
+    /** pid -> reads during which, once signalled, it is still listed but its birth cannot be read. */
+    exiting: new Map(),
+    async read() {
+      const table = new Map([...procs].map(([pid, entry]) => [pid, { ...entry }]));
+      for (const [pid, left] of this.exiting) {
+        if (!procs.has(pid) || procs.get(pid).start !== null) continue;
+        if (left <= 1) { this.exiting.delete(pid); procs.delete(pid); } else this.exiting.set(pid, left - 1);
+      }
+      return table;
+    },
     /** mosh-server ends by itself once its command has gone, after telling its client. */
     daemonFollowsChild: false,
     async signal(pid, signal) {
       signals.push([pid, signal]);
       if ((resist.get(pid) || []).includes(signal)) return;
       const entry = procs.get(pid);
+      if (this.exiting.has(pid) && entry) {
+        // On its way out: still listed, birth no longer readable, for a few reads.
+        procs.set(pid, { ...entry, start: null });
+        return;
+      }
       procs.delete(pid);
       // Children outlive their parent, as they do: they are re-parented.
       for (const [otherPid, other] of procs) if (entry && other.ppid === pid) procs.set(otherPid, { ...other, ppid: 1 });
       if (this.daemonFollowsChild && entry && procs.get(entry.ppid)?.command === '/usr/bin/mosh-server') {
-        setTimeout(() => procs.delete(entry.ppid), 20);
+        const daemon = entry.ppid;
+        setTimeout(() => {
+          if (this.exiting.has(daemon) && procs.has(daemon)) procs.set(daemon, { ...procs.get(daemon), start: null });
+          else procs.delete(daemon);
+        }, 20);
       }
     },
   };
@@ -333,6 +351,39 @@ describe('cancelling and ending', () => {
     expect(await mosh.stop(sessionId)).toEqual({ stopped: true, clean: true });
     expect(processes.signals).toEqual([[CHILD, 'TERM']]);
     expect(processes.procs.size).toBe(0);
+  });
+
+  it('waits out a process that shows without its birth while it exits, signals nothing it cannot identify, and is clean', async () => {
+    const { mosh, processes } = service();
+    const sessionId = id();
+    await mosh.start({ id: sessionId, paneId: '%1' });
+    processes.exec(CHILD, '/usr/bin/tmux');
+    processes.exiting.set(CHILD, 2);
+    expect(await mosh.stop(sessionId)).toEqual({ stopped: true, clean: true });
+    // TERM for the child; once unreadable it gets nothing more.
+    expect(processes.signals.filter(([pid]) => pid === CHILD)).toEqual([[CHILD, 'TERM']]);
+    expect(processes.procs.size).toBe(0);
+  });
+
+  it('waits out mosh-server showing without its birth as it ends itself after its tmux client', async () => {
+    const { mosh, processes } = service();
+    processes.daemonFollowsChild = true;
+    const sessionId = id();
+    await mosh.start({ id: sessionId, paneId: '%1' });
+    processes.exec(CHILD, '/usr/bin/tmux');
+    processes.exiting.set(DAEMON, 2);
+    expect(await mosh.stop(sessionId)).toEqual({ stopped: true, clean: true });
+    expect(processes.signals).toEqual([[CHILD, 'TERM']]);
+    expect(processes.procs.size).toBe(0);
+  });
+
+  it('is not clean while one of its processes stays listed without a readable birth', async () => {
+    const { mosh, processes } = service({ goneWaitMs: 200 });
+    const sessionId = id();
+    await mosh.start({ id: sessionId, paneId: '%1' });
+    processes.exiting.set(CHILD, Infinity);
+    expect(await mosh.stop(sessionId)).toEqual({ stopped: true, clean: false });
+    expect(processes.signals.filter(([pid]) => pid === CHILD)).toEqual([[CHILD, 'TERM']]);
   });
 
   it('says not clean when its processes will not go, after TERM and KILL', async () => {

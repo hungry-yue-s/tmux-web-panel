@@ -38,11 +38,19 @@ import { createProcessTable, sameProcess, sameStart } from './processes.js';
 
 // A listed process with unreadable birth is still present. It must neither be
 // signalled without identity nor disappear from the cleanup/ownership checks.
+function unknownPids(session, table) {
+  const pids = new Set();
+  for (const entry of [session.daemon, ...session.children]) {
+    if (entry && table.has(entry.pid) && !table.get(entry.pid).start) pids.add(entry.pid);
+  }
+  if (sameProcess(session.daemon, table.get(session.daemon?.pid))) {
+    for (const entry of table.values()) if (entry.ppid === session.daemon.pid && !entry.start) pids.add(entry.pid);
+  }
+  return pids;
+}
+
 function hasUnknownIdentity(session, table) {
-  return [session.daemon, ...session.children].some((entry) => entry
-    && table.has(entry.pid) && !table.get(entry.pid).start)
-    || (sameProcess(session.daemon, table.get(session.daemon?.pid))
-      && [...table.values()].some((entry) => entry.ppid === session.daemon.pid && !entry.start));
+  return unknownPids(session, table).size > 0;
 }
 
 /** A server no client has reached for this long ends itself, with its tmux client. */
@@ -427,11 +435,24 @@ export class MoshService {
     }
     if (!session.daemon) return true;
     const table = await this._processes.read().catch(() => null);
+    // Before anything is signalled, any unreadable birth keeps ownership: nothing is sent.
     if (!table || hasUnknownIdentity(session, table)) return false;
     if (sameProcess(session.daemon, table.get(session.daemon.pid))) this._noteChildren(session, table);
     const ours = [...session.children, session.daemon];
     const isOurs = (entry, current) => (entry === session.daemon ? sameProcess(entry, current) : sameStart(entry, current));
     const alive = (current) => ours.filter((entry) => isOurs(entry, current.get(entry.pid)));
+    // Once this end has sent a signal, its processes go: the one signalled, and
+    // mosh-server after its tmux client. On the way out a process can stay listed for
+    // a moment after its birth stops being readable (seen on Windows). Such a row is
+    // waited for, never signalled (alive() needs the birth) and never counted as
+    // gone; still there after every step, the end is not clean. Before any signal, an
+    // unreadable birth stops the end at once, with nothing sent.
+    let signalled = false;
+    const check = (current) => {
+      const unknown = unknownPids(session, current).size > 0;
+      if (unknown && !signalled) return 'unknown';
+      return alive(current).length === 0 && !unknown ? 'done' : 'waiting';
+    };
     // First only the command child, the tmux client: mosh-server then tells the
     // client it is over and waits for its answer before it exits, so the browser's
     // mosh-client exits too instead of waiting for a server that is gone. Then
@@ -441,15 +462,19 @@ export class MoshService {
     if (session.attached) steps.unshift({ signal: 'TERM', who: (entry) => entry !== session.daemon });
     for (const step of steps) {
       const now = await this._processes.read().catch(() => null);
-      if (!now || hasUnknownIdentity(session, now)) return false;
-      const left = alive(now);
-      if (left.length === 0) return true;
-      for (const entry of left.filter(step.who)) await this._processes.signal(entry.pid, step.signal);
+      if (!now) return false;
+      const state = check(now);
+      if (state !== 'waiting') return state === 'done';
+      for (const entry of alive(now).filter(step.who)) {
+        signalled = true;
+        await this._processes.signal(entry.pid, step.signal);
+      }
       for (let waited = 0; waited < this._goneWaitMs; waited += GONE_POLL_MS) {
         await pause(GONE_POLL_MS);
         const after = await this._processes.read().catch(() => null);
-        if (after && hasUnknownIdentity(session, after)) return false;
-        if (after && alive(after).length === 0) return true;
+        if (!after) continue;
+        const next = check(after);
+        if (next !== 'waiting') return next === 'done';
       }
     }
     return false;
