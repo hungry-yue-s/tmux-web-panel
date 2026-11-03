@@ -74,13 +74,34 @@
     return {};
   }
 
-  function handleUnauthorized() {
+  var authCheck = null;
+
+  function handleUnauthorized(path, requestHeaders) {
     var auth = global && global.Auth;
-    if (!auth || typeof auth.clearToken !== 'function') return;
+    if (!auth || typeof auth.clearToken !== 'function') return Promise.resolve(false);
+    var rejected = (requestHeaders && requestHeaders.Authorization) || '';
+    // A late answer for a previous login must never remove the current one.
+    if ((authHeaders().Authorization || '') !== rejected) return Promise.resolve(false);
+    if (path !== '/api/status') {
+      // Node and provider 401s do not prove that the hub login has expired.
+      // Confirm against this hub, sharing the check across concurrent failures.
+      if (authCheck && authCheck.authorization === rejected) return authCheck.promise;
+      var check = { authorization: rejected };
+      check.promise = get('/api/status', { timeout: 5000 }).then(function () {
+        return false;
+      }, function () {
+        return false;
+      }).finally(function () {
+        if (authCheck === check) authCheck = null;
+      });
+      authCheck = check;
+      return check.promise;
+    }
     try {
       auth.clearToken();
     } catch (_e) {}
     if (global && global.location) global.location.href = LOGIN_URL;
+    return Promise.resolve(true);
   }
 
   function getFetch() {
@@ -178,8 +199,9 @@
         if (timedOut) throw timeoutError();
         var status = typeof res.status === 'number' ? res.status : 0;
         if (status === 401) {
-          handleUnauthorized();
-          throw new ApiError(normalizeError(payload, status));
+          return handleUnauthorized(path, headers).then(function () {
+            throw new ApiError(normalizeError(payload, status));
+          });
         }
         var failed = !isOk(res) || (payload && typeof payload === 'object' && payload.success === false);
         if (failed) throw new ApiError(normalizeError(payload, status));
@@ -308,5 +330,6 @@
     activeServerId: activeServerId,
     activeUrl: activeUrl,
     activeWsUrl: activeWsUrl,
+    handleUnauthorized: handleUnauthorized,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -70,7 +70,7 @@
         if (!answer) continue;
         var target = new URL('https://' + answer.data + ':' + config.port + '/');
         var theme = document.documentElement.dataset.theme;
-        if (saved) target.hash = new URLSearchParams({ handoff: saved, theme: theme }).toString();
+        if (saved) target.hash = new URLSearchParams({ handoff: saved, theme: theme, relay: '1' }).toString();
         else {
           target.pathname = '/login.html';
           target.search = new URLSearchParams({ relay: '1', theme: theme }).toString();
@@ -91,7 +91,7 @@
       var back = new URL(fragment.get('return') || '/', location.href);
       if (!token || back.protocol !== 'https:' || back.username || back.password) throw new Error('Invalid handoff');
       try { localStorage.setItem(TOKEN_KEY, token); } catch (_e) {}
-      back.hash = new URLSearchParams({ handoff: token, theme: document.documentElement.dataset.theme }).toString();
+      back.hash = new URLSearchParams({ handoff: token, theme: document.documentElement.dataset.theme, relay: '1' }).toString();
       enter(back, '登录状态已接续，正在返回工作台…');
     } catch (_e) {
       setState('failed', '返回地址无效，请重新打开引导链接');

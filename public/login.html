@@ -13,6 +13,7 @@
     try {
       var entryQuery = new URLSearchParams(location.search);
       var entryTheme = entryQuery.get('theme');
+      if (entryQuery.get('relay') === '1') localStorage.setItem('tmux_relay_login', '1');
       if (entryQuery.get('relay') && entryTheme && /^[a-z][a-z0-9-]{0,63}$/.test(entryTheme)) localStorage.setItem('tmux_theme', entryTheme);
     } catch (_e) {}
   </script>
@@ -113,7 +114,8 @@
       var RELAY_PAGE = window.PANEL_RELAY_PAGE || '';
 
       // If already authenticated, redirect to main app
-      var existing = localStorage.getItem(TOKEN_KEY);
+      var existing = null;
+      try { existing = localStorage.getItem(TOKEN_KEY); } catch (e) {}
       if (existing) {
         fetch('/api/status', {
           headers: { 'Authorization': 'Bearer ' + existing },
@@ -153,8 +155,12 @@
           .then(function (res) { return res.json(); })
           .then(function (data) {
             if (data.success && data.data && data.data.token) {
-              localStorage.setItem(TOKEN_KEY, data.data.token);
+              try { localStorage.setItem(TOKEN_KEY, data.data.token); }
+              catch (e) { showError('客户端无法保存登录状态，请检查存储设置后重试'); return; }
               var relay = new URLSearchParams(window.location.search).get('relay');
+              // A rejected handoff reaches /login.html without its old query.
+              // Keep the configured relay in sync so the next cold start uses this login.
+              try { relay = relay || localStorage.getItem('tmux_relay_login') === '1'; } catch (e) {}
               if (relay && RELAY_PAGE) {
                 // Stored above first, so a failed bounce still leaves a session.
                 var panelTheme = '';
