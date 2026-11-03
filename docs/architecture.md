@@ -49,7 +49,7 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 - 直连上的请求在应答前失败：可重放的读改走转发（仍只算一次重试），写请求返回错误；除池化连接被关闭外，其余失败把直连标为不可用。直连上的终端升级在连上之前失败时改走转发（Node 没收到握手，不会出现两个客户端）；握手已发出则只结束这一个 socket。
 - 证书不符只让直连不可用，不重置 SSH 链路。
 - 前提是 Node 监听在 Hub 能访问的地址上。一键安装的 Node 只监听 127.0.0.1，直连对它不可用；是否改监听地址、开放端口由用户决定，面板不改防火墙。
-- 两条路径的对照用 `scripts/measure-node-paths.mjs <serverId>`（在 Hub 机器上运行，自建一条转发，不影响运行中的面板），随机交错的状态 socket ping，输出分位数、>1s 比例和字节数。
+- 两条路径的对照用 `scripts/measure-node-paths.mjs <serverId>`（在 Hub 机器上运行，自建一条转发，不影响运行中的面板），随机交错的状态 socket ping，输出分位数、>1s 比例和 socket 计数字节数。单路径结果只能作为基线，不能称为对照；测量口径和 Mosh 的未完成验收门槛见 [Mac 验收记录](low-latency-validation.md)。
 
 主机密钥仍然走首次信任流程：先 `scan` 再 `trust`，只接受用户确认过的那一个指纹。`StrictHostKeyChecking` 始终为 `yes`。用户名加密码的认证方式通过 askpass 完成，密码不会出现在 argv 和环境变量里（`server/transport/ssh-connection.js`）。
 

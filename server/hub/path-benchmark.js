@@ -7,6 +7,7 @@
  */
 
 import { monitorEventLoopDelay } from 'node:perf_hooks';
+import { setTimeout as pause } from 'node:timers/promises';
 
 /** p50/p95/p99 by nearest rank, the maximum, and how many took a second or more. */
 export function summarize(values) {
@@ -39,8 +40,10 @@ export function interleave(names, perPath, random = Math.random) {
 let pingSeq = 0;
 
 /** One ping on an open socket: its round trip in ms, or null when no pong came in time. */
-export function pingOnce(ws, timeoutMs) {
-  return new Promise((resolve) => {
+export function pingOnce(ws, timeoutMs, { signal } = {}) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(Object.assign(new Error('aborted'), { code: 'ABORTED' }));
+    if (ws.readyState !== 1) return reject(Object.assign(new Error('closed'), { code: 'PATH_CLOSED' }));
     pingSeq += 1;
     const tag = Buffer.from(`twp-${pingSeq}`);
     const started = performance.now();
@@ -49,21 +52,32 @@ export function pingOnce(ws, timeoutMs) {
       done(performance.now() - started);
     };
     const timer = setTimeout(() => done(null), timeoutMs);
-    function done(value) {
+    let settled = false;
+    const onClose = () => done(null, Object.assign(new Error('closed'), { code: 'PATH_CLOSED' }));
+    const onError = () => done(null, Object.assign(new Error('socket error'), { code: 'PATH_ERROR' }));
+    const onAbort = () => done(null, Object.assign(new Error('aborted'), { code: 'ABORTED' }));
+    function done(value, error) {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       ws.off('pong', onPong);
-      resolve(value);
+      ws.off('close', onClose);
+      ws.off('error', onError);
+      signal?.removeEventListener('abort', onAbort);
+      if (error) reject(error);
+      else resolve(value);
     }
     ws.on('pong', onPong);
+    ws.once('close', onClose);
+    ws.once('error', onError);
+    signal?.addEventListener('abort', onAbort, { once: true });
     try {
-      ws.ping(tag);
+      ws.ping(tag, (err) => { if (err) onError(); });
     } catch {
-      done(null);
+      onError();
     }
   });
 }
-
-const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 /**
  * @param {object} options
@@ -72,11 +86,11 @@ const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
  * @param {number} [options.warmup] unmeasured pings per way first
  * @param {number} [options.intervalMs] pause between pings, which bounds the traffic
  */
-export async function comparePaths({ paths, samples = 500, warmup = 20, intervalMs = 20, timeoutMs = 5000, random = Math.random }) {
+export async function comparePaths({ paths, samples = 500, warmup = 20, intervalMs = 20, timeoutMs = 5000, random = Math.random, signal }) {
   const byName = new Map(paths.map((path) => [path.name, path.ws]));
   for (const name of interleave([...byName.keys()], warmup, random)) {
-    await pingOnce(byName.get(name), timeoutMs);
-    await pause(intervalMs);
+    await pingOnce(byName.get(name), timeoutMs, { signal });
+    await pause(intervalMs, undefined, { signal });
   }
   const results = new Map([...byName.keys()].map((name) => [name, { times: [], lost: 0 }]));
   const bytes = (ws) => ({ out: ws._socket?.bytesWritten ?? 0, in: ws._socket?.bytesRead ?? 0 });
@@ -85,16 +99,21 @@ export async function comparePaths({ paths, samples = 500, warmup = 20, interval
   loop.enable();
   const cpu = process.cpuUsage();
   const began = Date.now();
-  for (const name of interleave([...byName.keys()], samples, random)) {
-    const value = await pingOnce(byName.get(name), timeoutMs);
-    if (value === null) results.get(name).lost += 1;
-    else results.get(name).times.push(value);
-    await pause(intervalMs);
-  }
-  loop.disable();
+  try {
+    for (const name of interleave([...byName.keys()], samples, random)) {
+      const value = await pingOnce(byName.get(name), timeoutMs, { signal });
+      if (value === null) results.get(name).lost += 1;
+      else results.get(name).times.push(value);
+      await pause(intervalMs, undefined, { signal });
+    }
+  } finally { loop.disable(); }
   const used = process.cpuUsage(cpu);
   const report = {
+    comparable: [...results.values()].every((result) => result.times.length > 0),
     samplesPerPath: samples,
+    warmupPerPath: warmup,
+    percentileBasis: 'successful_pongs_only',
+    byteCounterScope: 'WebSocket socket counter deltas; may include status pushes; not NIC bandwidth, full SSH overhead or exact ping cost',
     intervalMs,
     durationMs: Date.now() - began,
     measuringProcess: {
@@ -108,8 +127,8 @@ export async function comparePaths({ paths, samples = 500, warmup = 20, interval
     report.paths[name] = {
       ...summarize(results.get(name).times),
       lost: results.get(name).lost,
-      // Bytes the socket handed to or got from its stream: WebSocket framing included,
-      // TLS records and anything the node pushed on the status socket meanwhile too.
+      // Only this WebSocket's socket counters. Status pushes may contribute;
+      // these are not NIC/SSH totals or an exact cost per ping.
       bytesOut: after.out - before.get(name).out,
       bytesIn: after.in - before.get(name).in,
     };

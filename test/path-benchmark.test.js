@@ -1,9 +1,46 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
 import http from 'node:http';
 import net from 'node:net';
 import { WebSocketServer, WebSocket } from 'ws';
 
-import { comparePaths, interleave, summarize } from '../server/hub/path-benchmark.js';
+import { comparePaths, interleave, summarize, pingOnce } from '../server/hub/path-benchmark.js';
+
+describe('a path that stops answering', () => {
+  afterEach(() => vi.useRealTimers());
+
+  function socket() {
+    return Object.assign(new EventEmitter(), { readyState: 1, ping: vi.fn() });
+  }
+
+  it('fails immediately on a closed path instead of counting hundreds of fake timeouts', async () => {
+    const ws = socket();
+    ws.readyState = 3;
+    await expect(comparePaths({ paths: [{ name: 'closed', ws }], samples: 500, warmup: 0 }))
+      .rejects.toMatchObject({ code: 'PATH_CLOSED' });
+    expect(ws.ping).not.toHaveBeenCalled();
+  });
+
+  it.each(['close', 'error'])('settles on %s and removes its temporary listeners', async (event) => {
+    const ws = socket();
+    const pending = pingOnce(ws, 5000);
+    const check = expect(pending).rejects.toMatchObject({ code: event === 'close' ? 'PATH_CLOSED' : 'PATH_ERROR' });
+    ws.emit(event);
+    await check;
+    expect(ws.listenerCount('pong')).toBe(0);
+    expect(ws.listenerCount('close')).toBe(0);
+    expect(ws.listenerCount('error')).toBe(0);
+  });
+
+  it('can abort an in-flight ping without waiting for its timeout', async () => {
+    const controller = new AbortController(), ws = socket();
+    const pending = pingOnce(ws, 5000, { signal: controller.signal });
+    const check = expect(pending).rejects.toMatchObject({ code: 'ABORTED' });
+    controller.abort();
+    await check;
+    expect(ws.listenerCount('pong')).toBe(0);
+  });
+});
 
 describe('summaries', () => {
   it('reports nearest-rank percentiles, the maximum and the share over a second', () => {
@@ -82,5 +119,6 @@ describe('comparing two ways to one server', () => {
     });
     expect(report.paths.silent).toMatchObject({ n: 0, lost: 3, p50: null });
     expect(report.paths.answering).toMatchObject({ n: 3, lost: 0 });
+    expect(report.comparable).toBe(false);
   });
 });
