@@ -1,0 +1,23 @@
+# One machine's panel: its tmux, its API and its browser client.
+#
+# Change it with a patch (<home>/patch.yml or --patch), not by editing this
+# file; `twp --dump-config` prints the result. See docs/architecture.md.
+name: node
+plugins:
+  - id: logger
+    use: logger-console
+  - id: timer
+    use: '@cordisjs/plugin-timer'
+  - id: http
+    use: http
+    config:
+      host: 127.0.0.1
+      port: 7690
+  - id: client
+    use: client
+  - id: tmux
+    use: tmux
+  - id: workspace-tmux
+    use: workspace-tmux
+  - id: workspace
+    use: workspace

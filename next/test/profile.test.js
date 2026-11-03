@@ -1,0 +1,109 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import YAML from 'yaml';
+import { applyPatch, dumpEntries, ProfileError, readProfile, resolveEntries, resolveUse, ROOT } from '../kernel/profile.js';
+
+let dir;
+
+beforeEach(async () => {
+  dir = await mkdtemp(join(tmpdir(), 'twp-profile-'));
+});
+
+afterEach(async () => {
+  await rm(dir, { recursive: true, force: true });
+});
+
+async function write(name, value) {
+  const file = join(dir, name);
+  await writeFile(file, typeof value === 'string' ? value : YAML.stringify(value));
+  return file;
+}
+
+describe('resolveUse', () => {
+  it('maps a bare id to the built-in plugin, a path to a file, anything else to a package', () => {
+    const declared = join(dir, 'profile.yml');
+    expect(resolveUse('http', declared)).toBe(pathToFileURL(join(ROOT, 'plugins', 'http', 'index.js')).href);
+    expect(resolveUse('./mine.js', declared)).toBe(pathToFileURL(join(dir, 'mine.js')).href);
+    expect(resolveUse('@cordisjs/plugin-timer', declared)).toBe('@cordisjs/plugin-timer');
+    expect(resolveUse('no-such-builtin', declared)).toBe('no-such-builtin');
+  });
+});
+
+describe('readProfile', () => {
+  it('reads the shipped node profile', async () => {
+    const profile = await readProfile('node');
+    expect(profile.name).toBe('node');
+    expect(profile.entries.map((entry) => entry.id)).toEqual([
+      'logger', 'timer', 'http', 'client', 'tmux', 'workspace-tmux', 'workspace',
+    ]);
+  });
+
+  it('rejects unknown keys, bad ids and duplicates with the file in the message', async () => {
+    const unknown = await write('a.yml', { plugins: [{ id: 'x', use: 'http', confg: {} }] });
+    await expect(readProfile(unknown)).rejects.toThrow(/a\.yml.*unknown key "confg"/);
+    const badId = await write('b.yml', { plugins: [{ id: 'X Y', use: 'http' }] });
+    await expect(readProfile(badId)).rejects.toThrow(ProfileError);
+    const dup = await write('c.yml', { plugins: [{ id: 'x', use: 'http' }, { id: 'x', use: 'tmux' }] });
+    await expect(readProfile(dup)).rejects.toThrow(/duplicate id "x"/);
+  });
+});
+
+describe('patches', () => {
+  const base = [
+    { id: 'a', use: 'a', module: 'a', config: { n: 1 }, disabled: false },
+    { id: 'b', use: 'b', module: 'b', config: null, disabled: false },
+  ];
+
+  it('replaces a whole config, swaps an implementation, disables, and inserts', () => {
+    const next = applyPatch(base, [
+      { kind: 'change', id: 'a', config: { m: 2 } },
+      { kind: 'change', id: 'b', use: 'c', module: 'c', disabled: true },
+      { kind: 'insert', entry: { id: 'x', use: 'x', module: 'x', config: null, disabled: false }, after: 'a' },
+      { kind: 'insert', entry: { id: 'y', use: 'y', module: 'y', config: null, disabled: false }, before: 'a' },
+    ]);
+    expect(next.map((entry) => entry.id)).toEqual(['y', 'a', 'x', 'b']);
+    expect(next[1].config).toEqual({ m: 2 });
+    expect(next[3]).toMatchObject({ use: 'c', disabled: true });
+    // The input is not modified.
+    expect(base[0].config).toEqual({ n: 1 });
+  });
+
+  it('refuses to patch an entry that does not exist or to insert a duplicate', () => {
+    expect(() => applyPatch(base, [{ kind: 'change', id: 'zz', disabled: true, file: 'p.yml' }])).toThrow(/no entry "zz"/);
+    expect(() => applyPatch(base, [{ kind: 'insert', entry: { id: 'a' }, file: 'p.yml' }])).toThrow(/already exists/);
+  });
+
+  it('layers the home patch before --patch files and records every layer', async () => {
+    const home = join(dir, 'home');
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(home);
+    await writeFile(join(home, 'patch.yml'), YAML.stringify([{ id: 'http', config: { port: 1 } }]));
+    const cli = await write('cli.yml', [
+      { id: 'http', config: { port: 2 } },
+      { insert: { id: 'mine', use: './mine.js' }, after: 'http' },
+    ]);
+    const assembled = await resolveEntries({ profile: 'node', home, patches: [cli] });
+    const http = assembled.entries.find((entry) => entry.id === 'http');
+    expect(http.config).toEqual({ port: 2 });
+    expect(assembled.entries.map((entry) => entry.id).indexOf('mine')).toBe(assembled.entries.map((entry) => entry.id).indexOf('http') + 1);
+    expect(assembled.entries.find((entry) => entry.id === 'mine').module).toBe(pathToFileURL(join(dir, 'mine.js')).href);
+    expect(assembled.layers).toHaveLength(3);
+  });
+
+  it('treats an empty patch file as no operations', async () => {
+    const empty = await write('empty.yml', '');
+    const assembled = await resolveEntries({ profile: 'node', patches: [empty] });
+    expect(assembled.entries).toHaveLength(7);
+  });
+
+  it('dumps in the shape a profile is written in', async () => {
+    const assembled = await resolveEntries({ profile: 'node' });
+    const text = dumpEntries(assembled);
+    expect(text).toMatch(/^# profile: node/);
+    const doc = YAML.parse(text);
+    expect(doc.plugins[2]).toEqual({ id: 'http', use: 'http', config: { host: '127.0.0.1', port: 7690 } });
+  });
+});

@@ -1,0 +1,16 @@
+{
+  "name": "cosmokit",
+  "version": "1.8.1",
+  "description": "Vendored cosmokit (see ../README.md)",
+  "type": "module",
+  "main": "lib/index.mjs",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "license": "MIT"
+}

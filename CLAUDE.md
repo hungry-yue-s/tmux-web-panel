@@ -2,6 +2,10 @@
 
 通用 Agent 工作流程（含任务完成后自动提交与推送）见 [AGENTS.md](AGENTS.md)，执行本文件时同样遵守。
 
+## 重写：`next/`
+
+`next/` 是基于 Cordis 插件内核（与 DeepSeek Harness 同一内核）的从零重写，独立的 npm 包、独立的测试（`cd next && npm test`），按功能切片迁移。约定、Cordis 的使用陷阱和迁移路线见 [next/docs/architecture.md](next/docs/architecture.md)。生产服务仍跑根目录的 `server/`、`public/`。本文件的契约对 `next/` 同样有效：迁移一个功能时，把对应契约搬进插件并写成测试。
+
 ## 服务管理
 
 **严禁使用 systemd 以外的方式启停服务。**

@@ -1,0 +1,16 @@
+{
+  "name": "cordis",
+  "version": "4.0.0-rc.12",
+  "description": "Vendored Cordis core (see ../README.md)",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,28 @@
+{
+  "name": "tmux-web-panel-next",
+  "version": "0.0.0",
+  "private": true,
+  "description": "tmux-web-panel rebuilt on the Cordis plugin kernel: everything is a plugin",
+  "type": "module",
+  "bin": {
+    "twp": "bin/twp.js"
+  },
+  "scripts": {
+    "start": "node bin/twp.js",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "@cordisjs/plugin-timer": "file:vendor/plugin-timer",
+    "cordis": "file:vendor/cordis",
+    "cosmokit": "file:vendor/cosmokit",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "jsdom": "^29.0.1",
+    "vitest": "^4.1.0"
+  }
+}
