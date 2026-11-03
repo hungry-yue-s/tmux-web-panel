@@ -65,7 +65,7 @@ README 重做过程中实际踩到、观察到或验证过的问题。每条都�
 - 历次退出留下的孤儿窗格进程没有清理，判断不了里面是否还有用户的程序，需要人工确认。
 - 包装脚本的探测偶尔会失败。20:45 之后 `tmux-server.log` 有两次在 server 运行时又记录 `starting`，接着是 `open terminal failed: not a terminal` 和退出码 1：这是新起的 `tmux -D` 连上现有 server 后失败，不是 server 退出（pid 从 19:04 起没变）。两次都发生在全量测试运行期间（20:55:25 到 20:56:13、22:10:43 到 22:11:33），同一段时间面板日志有 5 次 tmux 命令失败。负载导致超时只是推测，未证实。手动起的 server 上这没有影响；计划任务的 server 上，连续 3 次没有应答（约 1 分钟）会被结束，再靠自动恢复回来，届时窗格里的程序要重新打开。
 
-**实验规则。** 不要在默认 tmux server 上做接入、resize、断开实验，只碰临时会话也不行，会话隔离不等于 server 隔离。一律用 `tmux -L <name>` 或 `TMUX_TMPDIR`，每条命令带超时。不要在普通 shell 里手动起默认 socket 的 tmux。
+**实验规则。** 不要在默认 tmux server 上做接入、resize、断开实验，只碰临时会话也不行，会话隔离不等于 server 隔离。每条命令显式用 `tmux -S <私有 socket>` 或 `-L <唯一名称>`，带超时，并从实验及全部子进程环境移除 `TMUX` / `TMUX_PANE`。`TMUX_TMPDIR` 不能覆盖继承的 `TMUX` socket，不能单独作为隔离。清理前以相同 socket 参数核对 `socket_path` 和 server PID 归属；无法核对就不结束。不要在普通 shell 里手动起默认 socket 的 tmux。Windows 使用绝对 tmux 可执行路径时，PATH 中的 POSIX 包装不会提供隔离。
 
 ### ENV-2 Windows：手动启动的 tmux server，窗格里找不到 claude（2026-10-30）
 
@@ -192,6 +192,14 @@ node-pty 报告退出比进程消失晚约 1 秒（中位 1.0 到 1.4 秒），�
 **结论。** 已证实：多出的约 30ms 来自 Windows 自带的 ssh **客户端**，sshd 一侧只多约 0.8ms。原因（例如计时器粒度约 15.6ms 的两倍）未证实。所以 Mac 作 Hub、Windows 作 Node 时，这条不适用，直连在 Windows 一侧几乎省不出时间。
 
 **还没处理。** 面板在 Windows 上仍用系统 ssh.exe。换客户端会引入对 Git for Windows 或 MSYS2 openssh 的依赖，需要另行决定。
+
+### ENV-5 实验进程继承 TMUX 时，TMUX_TMPDIR 不足以隔离（2026-11-03）
+
+**已确认的操作事故。** Mosh smoke 只设置了 `TMUX_TMPDIR`，但继承了窗格中的 `TMUX`；没有 `-L` / `-S` 的清理命令因此结束了默认 server。旧实例 `937593:1793354641` 后来变为 `185256:1793677232`。执行该实验的 Claude 在私有 socket 上复核优先级后确认了错误；主控也核对了项目 tmux 源码的 socket 选择逻辑：只有命令行未指定 `-L` / `-S` 时才采用 `TMUX`，随后才按目录构造默认路径。创建了临时目录或其中存在一个 socket，不足以证明每条命令都用了它。
+
+**影响边界。** 默认 server 被结束会中断其会话和进程；自动恢复只能重建窗口结构和重新运行命令，不能恢复原进程内存。主控确认当前同名窗口可读，不能据此声称原任务完整保留。中断前后快照及其它集成测试的隔离仍需分别核查，不把它们列为已通过。
+
+**防止重现。** 实验、真实组件测试及其清理全部显式使用同一个私有 `-S` socket 或唯一 `-L` 名称，移除所有子进程的 `TMUX` / `TMUX_PANE`，每条命令有超时。结束 server 前先用相同参数读取并核对 socket 路径和 PID 的归属。Windows 的产品代码可能直接调用绝对路径的 MSYS2 tmux，不能依赖 PATH 里的 POSIX 包装隔离；不具备 Windows 隔离实现的测试应明确跳过，而非一边失败一边访问默认 server。Mosh 实验在隔离与生命周期验收前保持不可用于正式连接。
 
 ## 捕获环境备注
 

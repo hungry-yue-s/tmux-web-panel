@@ -61,7 +61,7 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 - **客户端变更期间的输入留给下一个客户端**：网关的 `early`（接入前）和连接的 `heldInput`（从接受一次改变尺寸的 resize 起，到新客户端建立或尺寸改回）都只投递一次，总量受 `MAX_HELD_INPUT_BYTES` 限制，超过就以 1009 关闭并清空。不要把输入写给马上要结束的客户端。已经写入的，`_killClient` 按字节数等 server 读完（`INPUT_READ_*`，有上限）：这是尽力保护，不保证长粘贴，也不是 DA 问题的修复，不要拿它替代排队；没写过输入的客户端不等
 - **Windows 上新窗格依赖 tmux 全局环境里的 `MSYS2_PATH_TYPE=inherit`**：没有它，MSYS2 登录 shell 会把 PATH 重置到最小集，窗格里找不到 claude、Node、Git（`docs/known-issues.md` ENV-2）。`run-tmux-server.ps1`、`server/msys.js` 和会话保护的 `_applyOptions` 三处保证，不要去掉
 - **Windows 上结束终端控制台要能证明没人在用**：`conhost.exe` 只能按 `pty.spawn` 的精确时间窗认领，不加余量（实测 30 个全部落在窗内）。进程里每个 `pty.spawn` 都必须经 `trackConsoleSpawn`（`server/terminal/console-reaper.js`），它把时间窗记到 pty 退出；一个控制台还可能属于活着的 pty、或一个窗里不止一个控制台，就不结束。宁可漏清，不扩大窗口，也不要批量清理来历不明的 `conhost.exe`
-- **环境问题要记录并由服务管理**：现象、证据和结论写进 `docs/known-issues.md`，检测和恢复做进服务，不靠人工救场。不要在默认 tmux server 上做接入、resize、断开实验，一律用 `tmux -L` 或 `TMUX_TMPDIR`
+- **环境问题要记录并由服务管理**：现象、证据和结论写进 `docs/known-issues.md`，检测和恢复做进服务，不靠人工救场。不要在默认 tmux server 上做接入、resize、断开实验。每条实验命令显式带 `tmux -S <私有 socket>` 或 `-L <唯一名称>`，并从实验及全部子进程环境移除 `TMUX` / `TMUX_PANE`；仅设置 `TMUX_TMPDIR` 不能隔离继承了 `TMUX` 的进程。清理前用同一组参数核对 `socket_path` 和 server PID 确实属于本次实验，无法确认归属就不结束。Windows 的绝对 tmux 路径会绕过 PATH 中的 shell 包装，不能把 POSIX 包装当作 Windows 隔离证明。
 - **没有会话时绝不保存**：那次空快照会成为 `last`，下次重启就什么也恢复不了。`save.sh` 只能由 `SessionProtection` 在有会话时调用
 - **用户自己在 `~/.tmux.conf` 里加载了 tmux-resurrect（常见于 TPM + continuum）时，面板不自动保存和恢复**（`mode: 'external'`），只提供立即保存和找回会话，避免两套机制互相覆盖或重复恢复
 - **从 Windows 的 Node 调 MSYS2 程序（tmux）必须用 `msysExecArgs`**（`server/msys.js`）：Node 默认把 `"` 转义成 `\"`，MSYS 不认，布局字符串、带引号的命令或名字会被拆碎
