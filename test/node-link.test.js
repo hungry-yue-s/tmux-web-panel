@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
@@ -12,6 +13,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 
 import {
   NodeLink,
+  createSessionCache,
   forwardRequestHeaders,
   forwardResponseHeaders,
   pinnedAgent,
@@ -1017,16 +1019,21 @@ const OPENSSL = findOpenssl();
 describe.skipIf(!OPENSSL)('NodeLink over HTTPS', () => {
   let dir;
   let tls;
+  let otherTls;
   let node;
 
   beforeAll(async () => {
     // Generated per run: no key or certificate is ever committed.
     dir = mkdtempSync(join(tmpdir(), 'node-link-tls-'));
-    const key = join(dir, 'key.pem');
-    const cert = join(dir, 'cert.pem');
-    execFileSync(OPENSSL, ['req', '-x509', '-nodes', '-newkey', 'rsa:2048', '-sha256', '-days', '1',
-      '-subj', '/CN=localhost', '-keyout', key, '-out', cert], { stdio: 'ignore' });
-    tls = { key: readFileSync(key), cert: readFileSync(cert, 'utf8') };
+    const generate = (name) => {
+      const key = join(dir, `${name}-key.pem`);
+      const cert = join(dir, `${name}-cert.pem`);
+      execFileSync(OPENSSL, ['req', '-x509', '-nodes', '-newkey', 'rsa:2048', '-sha256', '-days', '1',
+        '-subj', '/CN=localhost', '-keyout', key, '-out', cert], { stdio: 'ignore' });
+      return { key: readFileSync(key), cert: readFileSync(cert, 'utf8') };
+    };
+    tls = generate('node');
+    otherTls = generate('other');
     const seen = [];
     const server = https.createServer({ key: tls.key, cert: tls.cert }, nodeApp(seen));
     attachEcho(server);
@@ -1092,6 +1099,114 @@ describe.skipIf(!OPENSSL)('NodeLink over HTTPS', () => {
     })).rejects.toThrow();
     badHub.server.close();
     bad.close();
+  });
+
+  describe('TLS session resumption', () => {
+    /** A pinned node that records, per request and per upgrade, whether the handshake resumed. */
+    async function resumingNode({ version, certificate = tls } = {}) {
+      const state = { reused: [], upgrades: [], tokens: [] };
+      const versions = version ? { minVersion: version, maxVersion: version } : {};
+      const server = https.createServer({ key: certificate.key, cert: certificate.cert, ...versions }, (req, res) => {
+        state.reused.push(req.socket.isSessionReused());
+        state.tokens.push(req.headers.authorization || null);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ success: true, data: { protocol: 1, hostname: 'node-1' } }));
+      });
+      const wss = new WebSocketServer({ noServer: true });
+      server.on('upgrade', (req, socket, head) => {
+        state.upgrades.push(socket.isSessionReused());
+        wss.handleUpgrade(req, socket, head, (ws) => ws.send('hello'));
+      });
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      state.server = server;
+      state.port = server.address().port;
+      state.close = () => { server.closeAllConnections(); server.close(); };
+      return state;
+    }
+
+    /** One request on a connection of its own, through `agent`. */
+    function getVia(agent, port) {
+      return new Promise((resolve, reject) => {
+        const req = https.request({ host: '127.0.0.1', port, path: '/api/node/info', agent, headers: { authorization: `Bearer ${TOKEN}` } }, (res) => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode));
+        });
+        req.on('error', reject);
+        req.end();
+      });
+    }
+
+    it.each(['TLSv1.2', 'TLSv1.3'])('resumes on %s, and every connection still sends the token only after the check', async (version) => {
+      const node = await resumingNode({ version });
+      const agent = pinnedAgent(certificateFingerprint(tls.cert), { keepAlive: false });
+      for (let i = 0; i < 3; i += 1) expect(await getVia(agent, node.port)).toBe(200);
+      expect(node.reused).toEqual([false, true, true]);
+      expect(node.tokens).toEqual([`Bearer ${TOKEN}`, `Bearer ${TOKEN}`, `Bearer ${TOKEN}`]);
+      agent.destroy();
+      node.close();
+    });
+
+    it('does a full handshake, pinned as before, when the node will not resume', async () => {
+      const node = await resumingNode();
+      const agent = pinnedAgent(certificateFingerprint(tls.cert), { keepAlive: false });
+      expect(await getVia(agent, node.port)).toBe(200);
+      // A restarted node has new ticket keys and cannot read the old ticket.
+      node.server.setTicketKeys(randomBytes(48));
+      expect(await getVia(agent, node.port)).toBe(200);
+      expect(await getVia(agent, node.port)).toBe(200);
+      expect(node.reused).toEqual([false, false, true]);
+      agent.destroy();
+      node.close();
+    });
+
+    it('offers a remembered session to another certificate in vain: no token, nothing remembered from it', async () => {
+      const good = await resumingNode();
+      const other = await resumingNode({ certificate: otherTls });
+      const sessions = createSessionCache();
+      const agent = pinnedAgent(certificateFingerprint(tls.cert), { keepAlive: false, sessions });
+      expect(await getVia(agent, good.port)).toBe(200);
+      expect(sessions.get()).toBeTruthy();
+
+      await expect(getVia(agent, other.port)).rejects.toMatchObject({ code: ErrorCode.NODE_AUTH_FAILED });
+      expect(other.tokens).toEqual([]);
+      expect(sessions.get()).toBeNull();
+
+      // And a certificate that never matched leaves nothing to resume either.
+      const fresh = createSessionCache();
+      const wrong = pinnedAgent(certificateFingerprint(tls.cert), { keepAlive: false, sessions: fresh });
+      await expect(getVia(wrong, other.port)).rejects.toMatchObject({ code: ErrorCode.NODE_AUTH_FAILED });
+      expect(fresh.get()).toBeNull();
+      expect(other.tokens).toEqual([]);
+      agent.destroy();
+      wrong.destroy();
+      good.close();
+      other.close();
+    });
+
+    it('lets a terminal resume what a request negotiated on the same forward, and never across forwards', async () => {
+      const node = await resumingNode();
+      const connection = fakeConnection(pairingFor(node.port, { tls: true, tlsFingerprint: certificateFingerprint(tls.cert) }));
+      const link = new NodeLink({ connection, freePort: async () => node.port });
+      const hub = await hubFor(link);
+      const openStatus = () => new Promise((resolve, reject) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${hub.port}/ws/status`);
+        ws.on('message', () => { ws.close(); resolve(); });
+        ws.on('error', reject);
+      });
+
+      await link.info();
+      await openStatus();
+      expect(node.reused).toEqual([false]);
+      expect(node.upgrades).toEqual([true]);
+
+      link.reset('test');
+      await openStatus();
+      expect(node.upgrades).toEqual([true, false]);
+      expect(connection.openForward).toHaveBeenCalledTimes(2);
+      hub.server.close();
+      link.close();
+      node.close();
+    });
   });
 
   describe('a health check over TLS', () => {

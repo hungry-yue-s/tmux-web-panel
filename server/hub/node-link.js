@@ -110,16 +110,57 @@ function waitForListener(port, timeoutMs, failed) {
   });
 }
 
-/** An https.Agent that accepts exactly one certificate, by SHA-256 fingerprint. */
-export function pinnedAgent(fingerprint, { keepAlive = true } = {}) {
+/**
+ * TLS sessions a link may resume. It holds only sessions from connections whose
+ * certificate passed the pin, lives in memory, and belongs to one forward of one
+ * pairing: a new tunnel or pairing starts with an empty one.
+ */
+export function createSessionCache() {
+  let session = null;
+  return {
+    get: () => session,
+    set: (value) => { session = value; },
+    clear: () => { session = null; },
+  };
+}
+
+/**
+ * An https.Agent that accepts exactly one certificate, by SHA-256 fingerprint.
+ *
+ * Every connection is checked before the request goes out. A full handshake shows
+ * the certificate and it must match. A resumed one shows none at all (Node reports
+ * an empty certificate), so it passes only when it resumed a session from `sessions`:
+ * finishing a resumption proves the node holds the secret of a handshake that did
+ * match. Resumption is never 0-RTT here; the request is sent after the handshake.
+ */
+export function pinnedAgent(fingerprint, { keepAlive = true, sessions = createSessionCache() } = {}) {
   const agent = new https.Agent({ keepAlive, maxSockets: 16 });
   agent.createConnection = (options) => {
-    const socket = tls.connect({ ...options, rejectUnauthorized: false, servername: undefined });
+    const offered = sessions.get();
+    const socket = tls.connect({ ...options, rejectUnauthorized: false, servername: undefined, ...(offered ? { session: offered } : {}) });
+    let verified = false;
+    // TLS 1.2 hands its session over before the handshake completes; keep it until the pin passed.
+    let early = null;
+    socket.on('session', (session) => {
+      if (verified) sessions.set(session);
+      else early = session;
+    });
     // Runs before any buffered request bytes are flushed, so a wrong
     // certificate never sees the node token.
     socket.once('secureConnect', () => {
-      const presented = socket.getPeerCertificate()?.fingerprint256;
-      if (presented !== fingerprint) socket.destroy(new AppError(ErrorCode.NODE_AUTH_FAILED, 'Node TLS certificate does not match its pairing file'));
+      const resumed = Boolean(offered) && socket.isSessionReused();
+      if (!resumed && socket.getPeerCertificate()?.fingerprint256 !== fingerprint) {
+        sessions.clear();
+        socket.destroy(new AppError(ErrorCode.NODE_AUTH_FAILED, 'Node TLS certificate does not match its pairing file'));
+        return;
+      }
+      verified = true;
+      if (early) sessions.set(early);
+      early = null;
+    });
+    // A handshake that failed may have failed on the session it offered.
+    socket.once('close', (hadError) => {
+      if (hadError && !verified && offered && sessions.get() === offered) sessions.clear();
     });
     return socket;
   };
@@ -271,9 +312,12 @@ export class NodeLink {
     });
     this._pairing = pairing;
     this._tunnel = tunnel;
-    this._agent = pairing.tls ? pinnedAgent(pairing.tlsFingerprint) : new http.Agent({ keepAlive: true, maxSockets: 16 });
+    // Both agents talk to the same node through the same forward, so a terminal's
+    // handshake may resume what a request already negotiated. Never across tunnels.
+    const sessions = createSessionCache();
+    this._agent = pairing.tls ? pinnedAgent(pairing.tlsFingerprint, { sessions }) : new http.Agent({ keepAlive: true, maxSockets: 16 });
     // Upgraded sockets leave their agent for good, so they get one without a pool.
-    this._upgradeAgent = pairing.tls ? pinnedAgent(pairing.tlsFingerprint, { keepAlive: false }) : new http.Agent({ keepAlive: false });
+    this._upgradeAgent = pairing.tls ? pinnedAgent(pairing.tlsFingerprint, { keepAlive: false, sessions }) : new http.Agent({ keepAlive: false });
   }
 
   _dropTunnel(reason = 'reset', detail) {
