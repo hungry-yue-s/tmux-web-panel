@@ -23,6 +23,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { lookup as lookupAddress } from 'node:dns/promises';
+import { execFile } from 'node:child_process';
 import { isIP } from 'node:net';
 import pty from 'node-pty';
 
@@ -146,13 +147,16 @@ export class MoshTerminals {
     // Every pty this process starts is on the console reaper's record (CLAUDE.md).
     spawnPty = (file, args, options) => trackConsoleSpawn(() => pty.spawn(file, args, options)).term,
     now = () => Date.now(), contactTimeoutMs = CONTACT_TIMEOUT_MS, sessionWatchMs = SESSION_WATCH_MS, localExitWaitMs = LOCAL_EXIT_WAIT_MS,
-    lookup = lookupAddress, lookupTimeoutMs = 5000, setupTimeoutMs = SETUP_TIMEOUT_MS, pingIntervalMs = PING_INTERVAL_MS }) {
+    lookup = lookupAddress, lookupTimeoutMs = 5000, setupTimeoutMs = SETUP_TIMEOUT_MS, pingIntervalMs = PING_INTERVAL_MS,
+    execFileImpl = execFile }) {
     this.registry = registry;
     this.links = links;
     this.wss = wss;
     this._findClient = client === undefined ? findClient : null;
     this.client = client === undefined ? findClient() : client;
     this._clientCheckedAt = now();
+    this._execFile = execFileImpl;
+    this._clientVersion = null;
     this._spawnPty = spawnPty;
     this._now = now;
     this._contactTimeoutMs = contactTimeoutMs;
@@ -185,6 +189,25 @@ export class MoshTerminals {
     if (!this._findClient || (!force && this._now() - this._clientCheckedAt < 30_000)) return;
     this.client = this._findClient();
     this._clientCheckedAt = this._now();
+  }
+
+  /** Component readiness on this Hub; it says nothing about a target's UDP path. */
+  clientCapability({ force = false } = {}) {
+    this._refreshClient(force);
+    if (!this.client.available) return Promise.resolve({ available: false, version: null, reason: this.client.reason });
+    const before = this._clientVersion;
+    const age = before ? this._now() - before.at : Infinity;
+    if (!force && before?.path === this.client.path && (before.pending || (age >= 0 && age < 30_000))) return before.promise;
+    const entry = { path: this.client.path, at: this._now(), pending: true, promise: null };
+    this._clientVersion = entry;
+    entry.promise = new Promise((resolve) => {
+      this._execFile(entry.path, ['--version'], { timeout: 5000, windowsHide: true }, (err, stdout, stderr) => {
+        const version = /mosh-client \(mosh ([0-9][0-9A-Za-z.\-]*)\)/.exec(String(stdout || '') + '\n' + String(stderr || ''))?.[1];
+        resolve(!err && version ? { available: true, version, reason: null }
+          : { available: false, version: null, reason: 'mosh_client_unusable' });
+      });
+    }).finally(() => { entry.pending = false; entry.at = this._now(); });
+    return entry.promise;
   }
 
   /** Retry a confirmed-clean negative result; never release ownership or a running trial. */

@@ -28,12 +28,27 @@ export function createNodeInstallRouter({ installer }) {
 
   router.get('/:serverId/node/install', handle(async (req) => installer.status(requireServerId(req))));
 
-  router.post('/:serverId/node/install', handle(async (req, res) => {
+  function options(req) {
     const body = req.body || {};
-    if (body.sudoPassword !== undefined && (typeof body.sudoPassword !== 'string' || body.sudoPassword.length > 1024)) {
+    if (body.sudoPassword !== undefined && (typeof body.sudoPassword !== 'string' || body.sudoPassword.length > 1024 || /[\0\r\n]/.test(body.sudoPassword))) {
       throw new AppError(ErrorCode.VALIDATION_ERROR, 'Invalid sudo password', { details: { field: 'sudoPassword' } });
     }
-    const status = installer.start(requireServerId(req), { sudoPassword: body.sudoPassword || '' });
+    if (body.skipMosh !== undefined && typeof body.skipMosh !== 'boolean') {
+      throw new AppError(ErrorCode.VALIDATION_ERROR, 'Invalid Mosh choice', { details: { field: 'skipMosh' } });
+    }
+    return { sudoPassword: body.sudoPassword || '', ...(body.skipMosh !== undefined ? { skipMosh: body.skipMosh } : {}) };
+  }
+
+  router.post('/:serverId/node/install', handle(async (req, res) => {
+    const status = installer.start(requireServerId(req), options(req));
+    res.status(202);
+    return status;
+  }));
+
+  router.get('/:serverId/components/mosh/install', handle(async (req) => installer.status(requireServerId(req))));
+  router.post('/:serverId/components/mosh/install', handle(async (req, res) => {
+    const { sudoPassword } = options(req);
+    const status = installer.startComponent(requireServerId(req), { sudoPassword });
     res.status(202);
     return status;
   }));

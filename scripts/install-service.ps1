@@ -49,7 +49,9 @@ param(
   [switch]$Tmux,
   # Serve only the panel that manages this machine over SSH (node token
   # required for the API); set when another panel installs itself here.
-  [switch]$NodeOnly
+  [switch]$NodeOnly,
+  # Prepare the optional server component by default; never changes terminal transport.
+  [switch]$SkipMosh
 )
 
 $ErrorActionPreference = 'Stop'
@@ -315,6 +317,25 @@ function Install-Service {
   Write-Host "Listening on ${scheme}://${ListenHost}:$Port"
   Write-Host "Settings: $ConfigFile"
   Write-Host "Logs:     $LogDir"
+
+  # The base service is installed first. Optional component failure must not undo it.
+  $component = Join-Path $PSScriptRoot 'install-mosh.ps1'
+  if (Test-Path -LiteralPath $component) {
+    $componentArgs = @('-NoProfile', '-NonInteractive', '-File', $component, '-Role', 'server', '-Msys2Root', $Msys2Root)
+    if ($SkipMosh) { $componentArgs += '-SkipMosh' }
+    try {
+      Invoke-Native { & powershell.exe @componentArgs | ForEach-Object { Write-Host "$_" }; $script:MoshComponentExit = $LASTEXITCODE }
+      if ($script:MoshComponentExit -ne 0) { Write-Warn 'Mosh preparation did not finish; the panel remains installed. Retry from component maintenance.' }
+    } catch {
+      Write-Host 'TWP_COMPONENT_RESULT=failed'
+      Write-Host 'TWP_COMPONENT_REASON=component_check_failed'
+      Write-Warn 'Mosh preparation failed; the panel remains installed. Retry scripts/install-mosh.ps1.'
+    }
+  } else {
+    Write-Host 'TWP_COMPONENT_RESULT=failed'
+    Write-Host 'TWP_COMPONENT_REASON=component_script_missing'
+    Write-Warn 'Mosh installer is missing; the panel remains installed.'
+  }
 }
 
 function Uninstall-Service {

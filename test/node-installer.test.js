@@ -16,7 +16,8 @@ import { ErrorCode } from '../server/servers/errors.js';
 describe('install scripts', () => {
   it('prepends quoted inputs to the POSIX installer, the password included', () => {
     const script = posixInstallScript('echo body', { sudoPassword: "pa'ss $(x)" });
-    expect(script.split('\n').slice(0, 4)).toEqual([
+    expect(script.split('\n').slice(0, 5)).toEqual([
+      'set +x',
       `TWP_ARCHIVE=${REMOTE_ARCHIVE}`,
       `TWP_PORT_CANDIDATES='${PORT_CANDIDATES}'`,
       `TWP_SUDO_PASSWORD='pa'\\''ss $(x)'`,

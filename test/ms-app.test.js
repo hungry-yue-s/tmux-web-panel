@@ -1702,6 +1702,187 @@ describe('MsApp node installation', () => {
     await ctx.MsApp._installNode('api-linux');
     expect(ctx.win.Api.post).not.toHaveBeenCalled();
   });
+
+  it('prepares the local Mosh component without switching mode or rebuilding the workspace', async () => {
+    const ctx = installShell([{ operation: 'mosh', state: 'succeeded', result: 'ready', log: [] }]);
+    await ctx.MsApp._installMosh('local');
+    expect(ctx.win.Api.post).toHaveBeenCalledWith('/api/servers/local/components/mosh/install', {});
+    await vi.waitFor(() => expect(ctx.MsApp.refreshServers).toHaveBeenCalled());
+    expect(ctx.MsApp.refreshWorkspace).not.toHaveBeenCalled();
+    expect(ctx.win.AppShell.toast).toHaveBeenCalledWith(expect.stringContaining('Mosh 组件已就绪'));
+    expect(ctx.win.Api.get).toHaveBeenCalledWith('/api/servers/local/components/mosh/install');
+  });
+
+  it('keeps the optional Mosh choice through a sudo retry', async () => {
+    const ctx = installShell([{ state: 'needs_password', log: [] }, { state: 'succeeded', log: [] }]);
+    ctx.document.body.insertAdjacentHTML('beforeend', '<div class="install-node-card"><input type="checkbox" data-prepare-mosh><button data-server-id="api-linux"></button></div>');
+    const button = ctx.document.querySelector('.install-node-card button');
+    await ctx.MsApp._handleAction('install-node', button);
+    await vi.waitFor(() => expect(ctx.win.Api.post).toHaveBeenCalledTimes(2));
+    expect(ctx.win.Api.post).toHaveBeenNthCalledWith(1, '/api/servers/api-linux/node/install', { skipMosh: true });
+    expect(ctx.win.Api.post).toHaveBeenLastCalledWith('/api/servers/api-linux/node/install', { sudoPassword: 'sudo-secret', skipMosh: true });
+    expect(ctx.win.showConfirm).toHaveBeenCalledOnce();
+    expect(JSON.stringify(ctx.MsApp._installJobs)).not.toContain('sudo-secret');
+  });
+
+  it('resumes Mosh with a sudo password on the component endpoint', async () => {
+    const ctx = installShell([{ operation: 'mosh', state: 'needs_password', log: [] }, { operation: 'mosh', state: 'succeeded', result: 'ready', log: [] }]);
+    await ctx.MsApp._installMosh('api-linux');
+    await vi.waitFor(() => expect(ctx.win.Api.post).toHaveBeenCalledTimes(2));
+    expect(ctx.win.Api.post).toHaveBeenLastCalledWith('/api/servers/api-linux/components/mosh/install', { sudoPassword: 'sudo-secret' });
+    expect(ctx.win.showConfirm).toHaveBeenCalledOnce();
+    expect(JSON.stringify(ctx.MsApp._installJobs)).not.toContain('sudo-secret');
+  });
+
+  it('keeps an install alive through one failed progress read', async () => {
+    const ctx = installShell([{ operation: 'mosh', state: 'succeeded', result: 'ready', log: [] }]);
+    ctx.win.Api.get.mockRejectedValueOnce(new Error('connection lost'));
+    await ctx.MsApp._installMosh('api-linux');
+    await vi.waitFor(() => expect(ctx.MsApp.refreshServers).toHaveBeenCalled());
+    expect(ctx.win.Api.post).toHaveBeenCalledOnce();
+    expect(ctx.MsApp.installJob('api-linux').state).toBe('succeeded');
+  });
+
+  it('recovers a lost start response by reading instead of writing twice', async () => {
+    const ctx = installShell([{ operation: 'mosh', state: 'running', log: ['checking packages'] }, { operation: 'mosh', state: 'succeeded', result: 'ready', log: [] }]);
+    ctx.win.Api.post.mockRejectedValueOnce(new Error('response lost'));
+    await ctx.MsApp._installMosh('api-linux');
+    await vi.waitFor(() => expect(ctx.MsApp.refreshServers).toHaveBeenCalled());
+    expect(ctx.win.Api.post).toHaveBeenCalledOnce();
+    expect(ctx.win.Api.get).toHaveBeenCalledWith('/api/servers/api-linux/components/mosh/install');
+  });
+
+  it('recovers a newly completed job when its start response was lost', async () => {
+    const result = { operation: 'mosh', state: 'succeeded', result: 'ready', startedAt: '2026-11-04T08:00:00.000Z', log: [] };
+    const ctx = installShell([result, result]);
+    ctx.win.Api.post.mockRejectedValueOnce(new Error('response lost'));
+    await ctx.MsApp._installMosh('api-linux');
+    await vi.waitFor(() => expect(ctx.MsApp.refreshServers).toHaveBeenCalled());
+    expect(ctx.win.Api.post).toHaveBeenCalledOnce();
+    expect(ctx.win.AppShell.toast).not.toHaveBeenCalledWith(expect.stringContaining('无法开始安装'));
+  });
+
+  it('reports an optional component failure while completing the Node install', async () => {
+    const ctx = installShell([{ operation: 'node', state: 'succeeded', component: { result: 'maintenance_required', reason: 'maintenance_required' }, log: [] }]);
+    await ctx.MsApp._installNode('api-linux');
+    await vi.waitFor(() => expect(ctx.MsApp.refreshWorkspace).toHaveBeenCalled());
+    expect(ctx.win.AppShell.toast).toHaveBeenCalledWith(expect.stringContaining('Mosh 尚未准备完成'));
+  });
+
+  it('does not start another operation while this server has a running job', async () => {
+    const ctx = installShell([{ operation: 'node', state: 'succeeded', log: [] }]);
+    ctx.MsApp._installJobs['api-linux'] = { operation: 'node', state: 'running', log: [] };
+    await ctx.MsApp._installMosh('api-linux');
+    expect(ctx.win.Api.post).not.toHaveBeenCalled();
+    expect(ctx.win.showConfirm).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(ctx.MsApp.refreshServers).toHaveBeenCalled());
+  });
+
+  it('does not apply a restored job after the user has left its route', async () => {
+    const ctx = installShell([]);
+    let resolve;
+    ctx.win.Api.get = vi.fn(() => new Promise((next) => { resolve = next; }));
+    const route = ctx.Router.current();
+    const generation = ctx.MsApp._routeGeneration;
+    const pending = ctx.MsApp._restoreInstallJob('api-linux', route, generation);
+    ctx.MsApp._routeGeneration += 1;
+    resolve({ operation: 'mosh', state: 'failed', log: [] });
+    await pending;
+    expect(ctx.MsApp.installJob('api-linux')).toBeNull();
+  });
+
+  it('does not ask Windows users for a sudo password when administrative access is needed', async () => {
+    const ctx = installShell([{ operation: 'mosh', state: 'needs_password', component: { reason: 'permission_required' }, log: [] }]);
+    ctx.Store.setHealth('api-linux', { state: 'online', facts: { platform: 'windows' }, capabilities: {} });
+    await ctx.MsApp._installMosh('api-linux');
+    await vi.waitFor(() => expect(ctx.win.AppShell.toast).toHaveBeenCalledWith(expect.stringContaining('Windows 管理员权限')));
+    expect(ctx.win.showPrompt).not.toHaveBeenCalled();
+    expect(ctx.win.Api.post).toHaveBeenCalledOnce();
+  });
+});
+
+describe('MsApp bounded component capability feedback', () => {
+  function componentShell(capability) {
+    const ctx = loadStatusShell();
+    ctx.win.setTimeout = (fn, delay) => setTimeout(fn, delay);
+    ctx.win.clearTimeout = timer => clearTimeout(timer);
+    const route = { name: 'server', params: { serverId: 'api-linux', section: 'connection' } };
+    ctx.win.history.replaceState(null, '', ctx.Router.serialize(route));
+    ctx.Store.setRoute(route);
+    const snapshot = () => ({ state: 'online', checkedAt: '2026-11-04T08:00:00.000Z', node: { installed: true },
+      capabilities: capability ? { mosh: capability } : {} });
+    ctx.Store.setHealth('api-linux', snapshot());
+    ctx.document.getElementById('ms-view').innerHTML = '<div id="terminal-sentinel"></div>' + ctx.win.ServersPage._moshCard(ctx.win.AppShell.server('api-linux'), snapshot());
+    const done = { operation: 'mosh', state: 'succeeded', result: 'ready', finishedAt: '2026-11-04T08:00:10.000Z', log: [] };
+    const servers = ctx.win.AppShell.servers();
+    ctx.win.showConfirm = vi.fn(async () => true);
+    ctx.win.Api.post = vi.fn(async () => ({ operation: 'mosh', state: 'running', log: [] }));
+    ctx.win.Api.get = vi.fn(async path => {
+      if (path === '/api/servers') return { servers: servers.map(server => ({ ...server, status: server.id === 'api-linux' ? snapshot() : ctx.win.AppShell.health(server.id) })) };
+      if (path.endsWith('/components/mosh/install') || path.endsWith('/node/install')) return done;
+      throw new Error('unexpected read');
+    });
+    ctx.MsApp._onRoute = vi.fn(async () => {});
+    ctx.MsApp.refreshWorkspace = vi.fn(async () => null);
+    ctx.MsApp.refreshMetrics = vi.fn(async () => null);
+    ctx.win.cleanupTerminal = vi.fn();
+    return { ...ctx, route, setCapability: value => { capability = value; } };
+  }
+
+  it('updates the actual card from the normal Hub cache poll and real Store without rebuilding the workspace', async () => {
+    vi.useFakeTimers(); const ctx = componentShell();
+    try {
+      await ctx.MsApp._installMosh('api-linux');
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(ctx.document.querySelector('.mosh-component-card').textContent).toContain('更新检测中');
+      ctx.MsApp._onRoute.mockClear();
+      const sentinel = ctx.document.getElementById('terminal-sentinel');
+      ctx.setCapability({ available: true, version: '1.4.0' });
+      ctx.MsApp._startPolling();
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(ctx.win.AppShell.health('api-linux').capabilities.mosh.available).toBe(true);
+      expect(ctx.document.querySelector('.mosh-component-card').textContent).toContain('组件就绪');
+      expect(ctx.document.getElementById('terminal-sentinel')).toBe(sentinel);
+      expect(ctx.MsApp._onRoute).not.toHaveBeenCalled();
+      expect(ctx.MsApp.refreshWorkspace).not.toHaveBeenCalled();
+      expect(ctx.win.cleanupTerminal).not.toHaveBeenCalled();
+      expect(ctx.win.Api.post).toHaveBeenCalledOnce();
+      expect(ctx.MsApp._installPolls['api-linux']).toBeUndefined();
+      ctx.MsApp._stopPolling();
+      const reads = ctx.win.Api.get.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(40000);
+      expect(ctx.win.Api.get).toHaveBeenCalledTimes(reads);
+    } finally { ctx.MsApp._stopPolling(); ctx.win.close(); vi.useRealTimers(); }
+  });
+
+  it.each([undefined, { available: false, reason: 'mosh_server_unusable' }])('ends capability waiting within 40s and restores repair when the result is %j', async capability => {
+    vi.useFakeTimers(); const ctx = componentShell(capability);
+    try {
+      await ctx.MsApp._installMosh('api-linux');
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(ctx.document.querySelector('[data-action="install-mosh"]')).toBeNull();
+      await vi.advanceTimersByTimeAsync(39999);
+      expect(ctx.document.querySelector('.mosh-component-card').textContent).toContain('更新检测中');
+      await vi.advanceTimersByTimeAsync(1);
+      const card = ctx.document.querySelector('.mosh-component-card');
+      expect(card.textContent).not.toContain('更新检测中');
+      expect(card.textContent).toContain(capability ? '当前检测尚未就绪' : '服务尚未上报能力');
+      expect(card.querySelector('[data-action="install-mosh"]')).not.toBeNull();
+      expect(ctx.MsApp._installPolls['api-linux']).toBeUndefined();
+      expect(ctx.win.Api.post).toHaveBeenCalledOnce();
+    } finally { ctx.win.close(); vi.useRealTimers(); }
+  });
+
+  it('bounds a completed job restored after reload without starting another installation', async () => {
+    vi.useFakeTimers(); const ctx = componentShell();
+    try {
+      await ctx.MsApp._restoreInstallJob('api-linux', ctx.route, ctx.MsApp._routeGeneration);
+      expect(ctx.document.querySelector('.mosh-component-card').textContent).toContain('更新检测中');
+      await vi.advanceTimersByTimeAsync(40000);
+      expect(ctx.document.querySelector('.mosh-component-card').textContent).toContain('可更新面板后重新检查');
+      expect(ctx.win.Api.post).not.toHaveBeenCalled();
+    } finally { ctx.win.close(); vi.useRealTimers(); }
+  });
 });
 
 describe('MsApp clears notification attention on window switch', () => {

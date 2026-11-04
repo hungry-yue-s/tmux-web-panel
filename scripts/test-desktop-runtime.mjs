@@ -149,7 +149,7 @@ try {
   const sessionName = 'desktop-test-' + randomBytes(5).toString('hex');
 
   phase = 'initialize';
-  const initialized = await helper('initialize', { username, password, port: await freePort(), listenOnLAN: false });
+  const initialized = await helper('initialize', { username, password, port: await freePort(), listenOnLAN: false, prepareMosh: false });
   check(initialized.configuration?.initialized && initialized.status?.panelState === 'running' && initialized.status?.tmuxState === 'running', 'INITIALIZATION_NOT_READY');
   check(initialized.status.panelLabel === labels.panel && initialized.status.tmuxLabel === labels.tmux, 'TEST_LABEL_MISMATCH');
   console.log('PASS initialize through isolated launchd jobs');

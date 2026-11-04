@@ -218,6 +218,14 @@ node-pty 报告退出比进程消失晚约 1 秒（中位 1.0 到 1.4 秒），�
 
 **服务现在怎么处理。** Windows 不作为 Mosh 客户端：Hub 在 Windows 上报告 `client_platform`，不提供 Mosh 终端（`server/hub/mosh-terminal.js` 的 `findMoshClient`）。Windows 作为 Node 运行 mosh-server 不受影响。Hub 桥接期间定期向 Node 询问会话是否还在，客户端漏收结束消息时页面也会关闭，不会一直停在冻结画面。
 
+### ENV-7：Swift 设置自测编译产物收到 SIGKILL（2026-11-04）
+
+**现象。** `scripts/test-macos-shell.sh` 的 endpoint/原生顶栏编译自测通过；含 `DesktopSetupManager.swift` 的设置自测编译成功，但新版本连续两次执行收到 SIGKILL（137）。原版本的一次对照执行通过。Swift 主程序 `swift build -j 2` 编译链接成功，脚本附带的设置源码解释执行也通过；后者仅作逻辑补充，不能替代编译产物执行验收。
+
+**证据边界。** 对应时段 amfid 对新旧测试产物都记录 `AppleMobileFileIntegrityError -423`，说明 ad-hoc 签名或证书链不被识别；syspolicyd 同时记录评估。尚无直接证据将两次 SIGKILL 归因于某条策略或本轮代码。保留原始退出码，不把源码解释通过、主程序构建成功或旧版本对照通过写成该编译自测已通过。
+
+**处理。** 不关闭系统验证、不更改企业防护或签名信任策略。正式分发仍需已有发布流程中的 Developer ID/公证配置；本轮未替换用户正在运行的 Swift 应用。此限制不影响 Node/组件脚本回归与既有会话只读核对，后续签名执行验证需单独取得通过证据。
+
 ## 捕获环境备注
 
 两条和产物无关但值得记下来的事。CDP 的 `Page.startScreencast` 在这台共享 Chrome 上返回的帧偶发无样式，所以所有动画改成定时 `page.screenshot` 静帧合成，脚本在 `.playwright-mcp/readme-shot/shot.mjs`。截图里的主机名、内网和公网 IP、服务器名、进程名都在捕获期做了 DOM 文本替换脱敏，tmux 状态栏的主机名用 session 级 `status-right` 覆盖掉，规则见同目录 `shot.mjs` 的 `SANITIZE_RULES`。

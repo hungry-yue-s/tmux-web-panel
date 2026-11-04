@@ -425,6 +425,17 @@ describe('SshConnection', () => {
     expect(() => connection.stream(['sh;id'])).toThrow();
   });
 
+  it('contains a closed installer input pipe and settles from the SSH exit', async () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.stdin = new EventEmitter();
+    child.stdin.end = () => queueMicrotask(() => {
+      child.stdin.emit('error', Object.assign(new Error('closed'), { code: 'EPIPE' }));
+      child.emit('close', 1);
+    });
+    const connection = new SshConnection({ server: REMOTE, configDir: dir, spawnImpl: () => child });
+    await expect(connection.stream(['sh', '-s'], { input: 'component script' })).resolves.toBe(1);
+  });
+
   it('names the system OpenSSH client for a pty on Windows', () => {
     expect(sshPtyBinary({ platform: 'darwin' })).toBe('ssh');
     expect(sshPtyBinary({ platform: 'win32', env: { SystemRoot: 'C:\\Windows' }, exists: () => true }))

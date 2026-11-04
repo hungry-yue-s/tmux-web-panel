@@ -257,7 +257,8 @@ if (apiGuarded) {
 // Mosh sessions on this node, for a hub's mosh-client, and mosh terminals this hub runs. Set below.
 let moshService = null;
 let moshTerminals = null;
-const localNodeInfo = () => collectNodeInfo({ tmuxVersion: tmux.tmuxVersion, mosh: moshService ? () => moshService.capability() : null });
+const localNodeInfo = () => collectNodeInfo({ tmuxVersion: tmux.tmuxVersion,
+  mosh: () => moshService.capability(), moshClient: () => moshTerminals.clientCapability() });
 app.get('/api/node/info', handle(async () => localNodeInfo()));
 app.use('/api/diagnostics', createDiagnosticsRouter({ diagnostics }));
 
@@ -439,13 +440,28 @@ const terminalGateway = new TerminalGateway({ workspace: workspaceService, termi
 
 app.use('/api/workspace', createWorkspaceRouter({ workspaceService }));
 app.use('/api/metrics', createMetricsRouter({ metricsService }));
-app.use('/api/mosh', createMoshRouter({ mosh: moshService, isNodeToken: nodeIdentity.isNodeToken }));
+const refreshMoshComponents = async () => {
+  const [server, client] = await Promise.all([moshService.refreshCapability(), moshTerminals.clientCapability({ force: true })]);
+  return { server: { available: server.available, version: server.version, reason: server.reason }, client };
+};
+app.use('/api/mosh', createMoshRouter({ mosh: moshService, isNodeToken: nodeIdentity.isNodeToken, refreshComponents: refreshMoshComponents }));
 const nodeInstaller = new NodeInstaller({
   links,
+  registry: serverRegistry,
   projectDir: join(__dirname, '..'),
   onInstalled: (serverId) => {
     healthService.invalidate(serverId);
     healthService.probe(serverId, { force: true }).catch(() => {});
+  },
+  onComponentInstalled: async (serverId) => {
+    if (serverId === 'local') await refreshMoshComponents();
+    else {
+      // Older Nodes may not expose this yet; their normal capability cache still expires.
+      await links.link(serverId).requestJson('POST', '/api/mosh/components/refresh', undefined, { timeout: 10_000 }).catch(() => {});
+    }
+    moshTerminals.retry(serverId);
+    healthService.invalidate(serverId);
+    await healthService.probe(serverId, { force: true }).catch(() => {});
   },
 });
 

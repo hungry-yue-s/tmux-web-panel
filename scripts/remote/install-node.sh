@@ -148,7 +148,7 @@ done
 [ -n "$PORT" ] || fail "no free port among: $TWP_PORT_CANDIDATES"
 
 log "install service on 127.0.0.1:$PORT (builds tmux; this takes a few minutes)"
-(cd "$APP" && HOST=127.0.0.1 PORT="$PORT" NODE_BIN="$NODE_BIN" NODE_ONLY=1 bash scripts/install-service.sh install)
+(cd "$APP" && HOST=127.0.0.1 PORT="$PORT" NODE_BIN="$NODE_BIN" TWP_SKIP_MOSH="${TWP_SKIP_MOSH:-${TMUX_PANEL_SKIP_MOSH:-0}}" TWP_SUDO_PASSWORD="${TWP_SUDO_PASSWORD:-}" NODE_ONLY=1 bash scripts/install-service.sh install)
 
 log "wait for the pairing file"
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do

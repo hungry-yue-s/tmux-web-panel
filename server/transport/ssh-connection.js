@@ -420,6 +420,9 @@ export class SshConnection {
         stderrTail = (stderrTail + chunk).slice(-STDERR_KEEP);
         onOutput(String(chunk));
       });
+      // A refused SSH session can close stdin before the installer is fully sent.
+      // Its exit/error below settles the job; EPIPE must not crash the Hub.
+      child.stdin.on('error', () => {});
       child.once('error', (err) => { clearTimeout(timer); reject(classifySshError(err)); });
       child.once('close', async (code) => {
         clearTimeout(timer);

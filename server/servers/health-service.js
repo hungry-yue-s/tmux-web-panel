@@ -74,6 +74,7 @@ export function statusFromNodeInfo(serverId, info, { transport, latencyMs, now, 
       files: capabilities.files || { available: false },
       processStats: capabilities.processStats || { available: false },
       ...(capabilities.mosh ? { mosh: capabilities.mosh } : {}),
+      ...(capabilities.moshClient ? { moshClient: capabilities.moshClient } : {}),
     },
     workspace: tmux.available
       ? { provider: 'tmux', transport, persistence: 'tmux' }

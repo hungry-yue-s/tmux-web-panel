@@ -20,6 +20,8 @@
     /** serverId -> latest install job status from the hub. */
     _installJobs: {},
     _installPolls: {},
+    _installStarts: {},
+    _installReads: {},
     _resizing: false,
     _perfPanelMounted: false,
     _agentHubMounted: false,
@@ -78,6 +80,7 @@
           global.Store.setServers(servers);
           for (const server of servers) {
             if (server.status) global.Store.setHealth(server.id, server.status);
+            this._updateMoshCard(server.id);
           }
         } catch (err) {
           global.AppShell.toast('无法读取服务器列表：' + (err && err.message ? err.message : '未知错误'));
@@ -241,6 +244,9 @@
         this._mountPerfPanel(route);
         this._mountAgentHub(route);
         this._mountSessionProtection(route);
+        if (section === 'connection' || global.AppShell.health(serverId).node?.installed === false) {
+          this._restoreInstallJob(serverId, route, generation);
+        }
         await this.refreshWorkspace(serverId, { shared: true });
         // The rail shows CPU and memory for every server, not just this one.
         await Promise.all(global.AppShell.servers().map((s) => this.refreshMetrics(s.id)));
@@ -1096,7 +1102,12 @@
         return;
       }
       if (action === 'install-node') {
-        await this._installNode(serverId);
+        const prepare = node.closest('.install-node-card')?.querySelector('[data-prepare-mosh]');
+        await this._installNode(serverId, prepare ? { skipMosh: !prepare.checked } : {});
+        return;
+      }
+      if (action === 'install-mosh') {
+        await this._installMosh(serverId);
         return;
       }
       if (action === 'scan-host-key') {
@@ -1151,38 +1162,139 @@
       }
     },
 
-    /**
-     * Installs the panel on a basic-mode server. The hub runs the job; this
-     * starts it, polls its log, asks for a sudo password when the remote side
-     * needs one, and re-checks the server when it is done.
-     */
-    async _installNode(serverId, { sudoPassword = null } = {}) {
+    _installPath(serverId, operation) {
+      return global.Api.serverPath(serverId, operation === 'mosh' ? '/components/mosh/install' : '/node/install');
+    },
+
+    /** Recover the server's job after reloading this page without starting an installation. */
+    async _restoreInstallJob(serverId, route, generation) {
+      if (this._installJobs[serverId] || this._installReads[serverId]) return;
+      this._installReads[serverId] = true;
+      try {
+        const status = await global.Api.get(this._installPath(serverId, 'node'));
+        if (generation !== this._routeGeneration || !global.Router.isSame(global.Router.current(), route)) return;
+        if (!status || !status.state) return;
+        this._installJobs[serverId] = { ...status };
+        if (status.operation === 'mosh' && status.state === 'succeeded' && status.result === 'ready') {
+          this._waitMoshCapability(serverId, this._installJobs[serverId]);
+        }
+        if (status.state !== 'idle') this._rerenderServer(serverId);
+        if (status.state === 'running') this._pollInstall(serverId);
+      } catch (_err) {
+        // The page keeps its measured capabilities; a failed read is no installation result.
+      } finally {
+        delete this._installReads[serverId];
+      }
+    },
+
+    _installNode(serverId, options = {}) {
+      return this._startInstall(serverId, 'node', options);
+    },
+
+    _installMosh(serverId, options = {}) {
+      return this._startInstall(serverId, 'mosh', options);
+    },
+
+    /** The existing health refresh repaints only this card, never the terminal or workspace. */
+    _updateMoshCard(serverId) {
+      const server = global.AppShell.server(serverId);
+      if (!server) return;
+      const health = global.AppShell.health(serverId);
+      const caps = health.capabilities || {};
+      const ready = caps.mosh?.available && (server.kind !== 'local'
+        || caps.moshClient?.available || caps.moshClient?.reason === 'client_platform');
+      const job = this._installJobs[serverId];
+      if (ready && job?.capabilityChecking) {
+        if (this._installPolls[serverId] === job.capabilityTimer) delete this._installPolls[serverId];
+        global.clearTimeout(job.capabilityTimer);
+        job.capabilityChecking = false;
+        job.capabilityCheckFinished = true;
+      }
+      const route = global.Router.current();
+      if (route?.name !== 'server' || route.params?.serverId !== serverId || route.params?.section !== 'connection') return;
+      const card = global.document.querySelector('.mosh-component-card');
+      if (!card || !global.ServersPage?._moshCard) return;
+      const next = global.document.createElement('div');
+      next.innerHTML = global.ServersPage._moshCard(server, health);
+      const details = next.querySelector('details');
+      if (details && card.querySelector('details')?.open) details.open = true;
+      if (card.parentElement.outerHTML !== next.innerHTML) card.parentElement.replaceWith(next.firstElementChild);
+    },
+
+    /** Old nodes may not report Mosh at all. Waiting for their capability is bounded. */
+    _waitMoshCapability(serverId, job) {
+      if (job.capabilityChecking || job.capabilityCheckFinished) return;
+      job.capabilityChecking = true;
+      const timer = global.setTimeout(() => {
+        if (this._installPolls[serverId] === timer) delete this._installPolls[serverId];
+        if (this._installJobs[serverId] !== job) return;
+        job.capabilityChecking = false;
+        job.capabilityCheckFinished = true;
+        this._updateMoshCard(serverId);
+      }, 40000);
+      job.capabilityTimer = timer;
+      this._installPolls[serverId] = timer;
+      this._updateMoshCard(serverId);
+    },
+
+    /** The two fixed operations share one per-server job, progress poll and sudo flow. */
+    async _startInstall(serverId, operation, { sudoPassword = null, skipMosh } = {}) {
       const server = global.AppShell.server(serverId) || {};
       const job = this._installJobs[serverId];
-      if (job && job.state === 'needs_password' && sudoPassword === null) {
-        const password = await promptDialog({
-          title: (server.name || serverId) + ' 的 sudo 密码（安装缺少的软件包用，不会保存）',
-          placeholder: 'sudo 密码',
-          type: 'password',
-          confirmText: '继续安装',
-        });
-        if (!password) return;
-        return this._installNode(serverId, { sudoPassword: password });
+      if (this._installStarts[serverId]) return;
+      if (job && job.state === 'running') {
+        global.AppShell.toast('这台机器已有安装任务，正在显示进度');
+        this._pollInstall(serverId);
+        return;
       }
-      if (sudoPassword === null && !await confirmDialog({
-        title: '在 ' + (server.name || serverId) + ' 上安装面板服务',
-        message: '会把本客户端的面板代码经 SFTP 传到那台机器，安装缺少的依赖、Node.js 和 tmux，'
-          + '再以只监听 127.0.0.1 的用户服务运行。首次安装需要编译 tmux，可能需要几分钟。',
-        confirmText: '开始安装',
-      })) return;
+      this._installStarts[serverId] = true;
+      const component = operation === 'mosh';
+      const health = global.AppShell.health(serverId);
+      const windows = /^(windows|win32)$/.test(health.facts?.platform || health.node?.platform || '');
+      const sameOperation = job && (job.operation || 'node') === operation;
+      const skip = skipMosh === undefined ? Boolean(sameOperation && job.skipMosh) : skipMosh;
       try {
-        this._installJobs[serverId] = await global.Api.post(
-          global.Api.serverPath(serverId, '/node/install'),
-          sudoPassword ? { sudoPassword } : {},
-        );
+        if (sameOperation && job.state === 'needs_password' && sudoPassword === null && !windows) {
+          sudoPassword = await promptDialog({
+            title: (server.name || serverId) + ' 的 sudo 密码（安装缺少的软件包用，不会保存）',
+            placeholder: 'sudo 密码', type: 'password', confirmText: '继续安装',
+          });
+          if (!sudoPassword) return;
+        }
+        if (sudoPassword === null && !await confirmDialog({
+          title: '在 ' + (server.name || serverId) + (component ? ' 上准备 Mosh 组件' : ' 上安装面板服务'),
+          message: component
+            ? '只检查并安装缺少的 Mosh 组件，不重装面板或切换已有终端。需要升级共享运行组件时会提示维护；组件就绪后仍需验证 UDP 连通性。'
+            : '会把本客户端的面板代码经 SFTP 传到那台机器，安装缺少的依赖、Node.js 和 tmux，'
+              + '再以只监听 127.0.0.1 的用户服务运行。首次安装需要编译 tmux，可能需要几分钟。'
+              + (skip ? '这次跳过可选 Mosh 组件。' : '同时尝试准备可选 Mosh 组件，失败不影响面板安装。'),
+          confirmText: component ? '准备组件' : '开始安装',
+        })) return;
+        if (job?.capabilityChecking) {
+          global.clearTimeout(job.capabilityTimer);
+          delete this._installPolls[serverId];
+          job.capabilityChecking = false;
+          job.capabilityCheckFinished = true;
+        }
+        const body = { ...(sudoPassword ? { sudoPassword } : {}), ...(!component && skip ? { skipMosh: true } : {}) };
+        const status = await global.Api.post(this._installPath(serverId, operation), body);
+        this._installJobs[serverId] = { ...status, operation: status.operation || operation,
+          ...(!component ? { skipMosh: status.skipMosh === undefined ? skip : status.skipMosh } : {}) };
       } catch (err) {
+        // A lost response is not proof that the write failed. Recover only by reading.
+        let running;
+        try { running = await global.Api.get(this._installPath(serverId, operation)); } catch (_readError) { running = null; }
+        if (running && (running.state === 'running' || (running.state !== 'idle' && running.operation === operation
+          && running.startedAt && running.startedAt !== job?.startedAt))) {
+          this._installJobs[serverId] = { ...running };
+          this._rerenderServer(serverId);
+          this._pollInstall(serverId);
+          return;
+        }
         global.AppShell.toast('无法开始安装：' + (err && err.message ? err.message : '未知错误'));
         return;
+      } finally {
+        delete this._installStarts[serverId];
       }
       this._rerenderServer(serverId);
       this._pollInstall(serverId);
@@ -1193,24 +1305,36 @@
       const tick = async () => {
         let status;
         try {
-          status = await global.Api.get(global.Api.serverPath(serverId, '/node/install'));
+          status = await global.Api.get(this._installPath(serverId, this._installJobs[serverId]?.operation));
         } catch (_err) {
           status = null;
         }
-        if (status) this._installJobs[serverId] = status;
+        const previous = this._installJobs[serverId];
+        if (status) this._installJobs[serverId] = { ...status, operation: status.operation || previous?.operation || 'node',
+          skipMosh: status.skipMosh === undefined ? Boolean(previous?.skipMosh) : status.skipMosh };
+        else if (previous) previous.pollError = true;
         this._rerenderServer(serverId);
-        if (status && status.state === 'running') {
+        if ((status && status.state === 'running') || (!status && previous?.state === 'running')) {
           this._installPolls[serverId] = global.setTimeout(tick, 2000);
           return;
         }
         delete this._installPolls[serverId];
         if (status && status.state === 'succeeded') {
-          global.AppShell.toast('面板服务已安装，正在切换到完整模式');
+          const component = (status.operation || previous?.operation) === 'mosh';
+          const optional = status.component;
+          global.AppShell.toast(component ? (status.result === 'skipped' ? '已跳过 Mosh 组件准备，继续使用 SSH' : 'Mosh 组件已就绪，正在更新检测结果')
+            : optional && optional.result && optional.result !== 'ready' && optional.result !== 'skipped'
+              ? '面板服务已安装，Mosh 尚未准备完成，可在连接页面处理' : '面板服务已安装，正在切换到完整模式');
+          if (component && status.result === 'ready') this._waitMoshCapability(serverId, this._installJobs[serverId]);
           await this.refreshServers();
-          await this.refreshWorkspace(serverId);
+          if (!component) await this.refreshWorkspace(serverId);
           this._rerenderServer(serverId);
         } else if (status && status.state === 'needs_password') {
-          await this._installNode(serverId);
+          const health = global.AppShell.health(serverId);
+          if (/^(windows|win32)$/.test(health.facts?.platform || health.node?.platform || '')) {
+            global.AppShell.toast('需要 Windows 管理员权限，请在目标机器处理后重新检查组件');
+          } else if ((status.operation || previous?.operation) === 'mosh') await this._installMosh(serverId);
+          else await this._installNode(serverId);
         }
       };
       this._installPolls[serverId] = global.setTimeout(tick, 1000);

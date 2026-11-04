@@ -142,6 +142,16 @@ export class MoshService {
   }
 
   /** Whether this node can start mosh sessions; concurrent callers share one check. */
+  async refreshCapability() {
+    const previous = this._capability;
+    await Promise.resolve(previous).catch(() => {});
+    if (this._capability === previous) {
+      this._capability = null;
+      this._capabilityCheckedAt = null;
+    }
+    return this.capability();
+  }
+
   capability() {
     const age = this._capabilityCheckedAt === null ? Infinity : this._now() - this._capabilityCheckedAt;
     if (!this._capability || (!this._capabilityPending && (age < 0 || age >= CAPABILITY_CACHE_MS))) {

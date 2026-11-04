@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Keep an optional sudo password out of build and service child environments.
+unset mosh_sudo_password
+mosh_sudo_password="${TWP_SUDO_PASSWORD:-}"
+unset TWP_SUDO_PASSWORD
+
 # tmux-web-panel service installer
 # Supports: Linux (systemd user service) and macOS (launchd user agent)
 
@@ -43,6 +48,7 @@ Environment variables:
   TMUX_INSTALL_PREFIX Project-managed tmux install prefix
                                       (default: ~/.local/share/tmux-web-panel)
   TMUX_BUILD_JOBS Parallel tmux build jobs (default: detected CPU count)
+  TMUX_PANEL_SKIP_MOSH 1 = skip optional Mosh component preparation
 
 Examples:
   $0 install
@@ -72,6 +78,15 @@ build_project_tmux() {
     echo "Error: project-managed tmux was not installed at $TMUX_BIN" >&2
     return 1
   fi
+}
+
+prepare_mosh() {
+  local role="${TWP_MOSH_ROLE:-both}"
+  if [[ "${NODE_ONLY:-0}" == 1 ]]; then role=server; fi
+  if ! TWP_MOSH_ROLE="$role" TWP_SUDO_PASSWORD="$mosh_sudo_password" sh "$SCRIPT_DIR/install-mosh.sh"; then
+    echo 'Warning: optional Mosh components are not ready; continuing with SSH.' >&2
+  fi
+  unset mosh_sudo_password
 }
 
 detect_lan_ip() {
@@ -492,6 +507,7 @@ case "$action" in
     build_project_tmux
     prepare_tls
     if [[ "$platform" == "linux" ]]; then install_systemd; else install_launchd; fi
+    prepare_mosh
     echo ""
     echo "Service will auto-start on login. Listening on ${HOST}:${PORT}"
     ;;

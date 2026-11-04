@@ -18,7 +18,7 @@ function bearer(header) {
   return typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7) : null;
 }
 
-export function createMoshRouter({ mosh, isNodeToken }) {
+export function createMoshRouter({ mosh, isNodeToken, refreshComponents = null }) {
   const router = express.Router();
 
   router.use((req, res, next) => {
@@ -28,6 +28,12 @@ export function createMoshRouter({ mosh, isNodeToken }) {
     res.status(403).json(fail(new AppError(ErrorCode.UNSUPPORTED, 'Only a hub can open mosh sessions', { status: 403 })));
     return undefined;
   });
+
+  // Only a trusted Hub can bypass the component-probe cache after an explicit install.
+  router.post('/components/refresh', handle(async () => {
+    if (!refreshComponents) throw new AppError(ErrorCode.UNSUPPORTED, 'Component refresh is unavailable');
+    return refreshComponents();
+  }));
 
   // The hub names the session, so it can end one whose answer never reached it.
   router.post('/sessions', handle(async (req, res) => {

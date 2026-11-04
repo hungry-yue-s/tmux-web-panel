@@ -52,10 +52,16 @@ function fingerprint(config) {
 }
 function publicConfig(config) {
   return { schemaVersion: 1, initialized: !!config.initialized && config.setupComplete !== false, port: config.port || 17681, listenOnLAN: !!config.listenOnLAN,
-    launchAtLogin: config.launchAtLogin !== false, username: config.auth?.username || 'admin',
+    launchAtLogin: config.launchAtLogin !== false, prepareMosh: config.prepareMosh !== false, username: config.auth?.username || 'admin',
     relay: { enabled: !!config.relay?.enabled, domain: config.relay?.domain || '', pagesURL: config.relay?.pagesURL || '', hasToken: !!config.relay?.duckdnsToken } };
 }
+function publicMoshPreparation(value) {
+  if (!value || !['ready', 'failed', 'needs_password', 'maintenance_required', 'unsupported', 'skipped'].includes(value.result)) return null;
+  return { result: value.result, reason: /^[a-z0-9_]{1,80}$/.test(value.reason || '') ? value.reason : null,
+    checkedAt: typeof value.checkedAt === 'string' && Number.isFinite(Date.parse(value.checkedAt)) ? new Date(value.checkedAt).toISOString() : null };
+}
 export function validateSettings(input, previous = {}) {
+  if (input.prepareMosh !== undefined && typeof input.prepareMosh !== 'boolean') throw new SetupError('MOSH_OPTION_INVALID', 'Mosh 组件准备选项必须为开启或关闭。');
   const port = Number(input.port ?? previous.port ?? 17681);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new SetupError('PORT_INVALID', '端口请填写 1024–65535 之间的整数。', '通常保留默认端口 17681 即可。');
   const username = String(input.username ?? previous.auth?.username ?? 'admin').trim();
@@ -79,7 +85,18 @@ export function validateSettings(input, previous = {}) {
   }
   if (typeof relay.duckdnsToken !== 'string' || relay.duckdnsToken.length > 2048 || /[\r\n]/.test(relay.duckdnsToken)) throw new SetupError('TOKEN_INVALID', 'DuckDNS Token 格式不正确。');
   return { ...previous, schemaVersion: 1, initialized: true, port, listenOnLAN: input.listenOnLAN ?? previous.listenOnLAN ?? false,
-    launchAtLogin: input.launchAtLogin ?? previous.launchAtLogin ?? true, auth, relay };
+    launchAtLogin: input.launchAtLogin ?? previous.launchAtLogin ?? true,
+    prepareMosh: input.prepareMosh ?? previous.prepareMosh ?? true, auth, relay };
+}
+
+function moshPreparationMessage(result, reason) {
+  if (result === 'ready') return '可选 Mosh 组件准备完成；UDP 连通性仍需在使用时验证。';
+  if (result === 'skipped') return '已跳过可选 Mosh 组件，核心工作台与 SSH 仍可使用。';
+  if (reason === 'homebrew_missing') return '未找到 Homebrew；请先查看 https://brew.sh 的安装说明，再重新准备 Mosh。核心工作台与 SSH 仍可使用。';
+  if (result === 'maintenance_required') return '当前环境需要先维护共享组件或安装权限，请处理后重新准备 Mosh。核心工作台与 SSH 仍可使用。';
+  if (result === 'needs_password') return '当前账户缺少组件安装权限，请在具备安装权限的环境处理后重试。核心工作台与 SSH 仍可使用。';
+  if (result === 'unsupported') return '当前环境暂不支持自动准备 Mosh，请检查组件安装条件。核心工作台与 SSH 仍可使用。';
+  return '可选 Mosh 组件准备未完成，请检查网络与包管理器后重试。核心工作台与 SSH 仍可使用。';
 }
 export async function isPortAvailable(port, host = '127.0.0.1') {
   return new Promise(done => { const s = createServer(); s.unref(); s.once('error', () => done(false)); s.listen(port, host, () => s.close(() => done(true))); });
@@ -169,6 +186,7 @@ export class DesktopRuntime {
     return { ok: true, configuration: publicConfig(config), paths, events: await this.events(),
       requiresRestart,
       status: { managedInstalled: publicConfig(config).initialized, runtimeAvailable: !!m, runtimeError,
+        moshPreparation: publicMoshPreparation(config.moshPreparation),
         legacyInstalled: await exists(join(this.home, 'Library/LaunchAgents/com.tmux-web-panel.plist')),
         portAvailable, suggestedPort, endpoint: current,
         lanEndpoint: panelState === 'running' && !requiresRestart && config.listenOnLAN && lanIPs()[0] ? endpoint(config, lanIPs()[0]) : null,
@@ -191,6 +209,42 @@ export class DesktopRuntime {
   }
   async certificates() {
     return ensureDesktopCertificates(this.root, { run: this.run, ips: lanIPs() });
+  }
+  async prepareMosh(config, { skip = false } = {}) {
+    await this.event('mosh', '准备可选 Mosh 组件', 'running');
+    let result = skip ? 'skipped' : 'failed', reason = skip ? 'opted_out' : 'component_helper_missing';
+    let script = null;
+    if (!skip) {
+      for (const runtime of new Set([this.bundle, config.runtimePath].filter(Boolean))) {
+        try {
+          await this.manifest(runtime);
+          const candidate = join(runtime, 'app/scripts/install-mosh.sh');
+          if (await exists(candidate)) { script = candidate; break; }
+        } catch { /* An older installation may use the checked helper from the new client bundle. */ }
+      }
+    }
+    if (script) {
+      const env = { ...process.env, TWP_MOSH_ROLE: 'both',
+        PATH: join(config.runtimePath, 'bin') + ':' + SYSTEM_PATH };
+      delete env.TMUX; delete env.TMUX_PANE; delete env.TWP_SUDO_PASSWORD;
+      let output = '', exited = false;
+      try {
+        const pending = this.run('/bin/sh', [script], { env, maxBuffer: 256 * 1024 });
+        pending.child?.stdin?.end();
+        const completed = await pending;
+        output = String(completed.stdout || ''); exited = true;
+      } catch (error) { output = String(error.stdout || ''); }
+      const results = [...output.matchAll(/^TWP_COMPONENT_RESULT=(ready|failed|needs_password|maintenance_required|unsupported|skipped)\s*$/gm)];
+      const reasons = [...output.matchAll(/^TWP_COMPONENT_REASON=([a-z0-9_]{1,80})\s*$/gm)];
+      result = results.at(-1)?.[1] || 'failed';
+      reason = reasons.at(-1)?.[1] || (result === 'ready' || result === 'skipped' ? null : exited ? 'component_result_missing' : 'component_process_failed');
+      if (!exited && (result === 'ready' || result === 'skipped')) { result = 'failed'; reason = 'component_process_failed'; }
+      if (exited && result === 'failed' && !results.length) reason = 'component_result_missing';
+    } else if (!skip) result = 'unsupported';
+    config.moshPreparation = { result, reason, checkedAt: new Date().toISOString() };
+    await atomicJSON(this.paths.configuration, config);
+    await this.event('mosh', '准备可选 Mosh 组件', result === 'ready' ? 'complete' : result === 'skipped' ? 'skipped' : 'warning', moshPreparationMessage(result, reason));
+    return config.moshPreparation;
   }
   async certificateStatus(config) {
     return inspectDesktopCertificates(config.tls, lanIPs());
@@ -330,6 +384,7 @@ export class DesktopRuntime {
         await atomicJSON(this.paths.configuration, config);
         await this.event('services', '注册并启动后台组件', 'complete');
         await this.event('health', '验证工作台连接', 'complete');
+        await this.prepareMosh(config, { skip: config.prepareMosh === false });
         const result = await this.inspect();
         if (this.input.password) {
           const response = await this.request(config, '/api/auth/login', { username: config.auth.username, password: this.input.password, trusted: true });
@@ -338,6 +393,11 @@ export class DesktopRuntime {
         return result;
       }
       if (!config?.initialized) throw new SetupError('NOT_INITIALIZED', '请先完成本机工作台初始化。');
+      if (command === 'prepare-mosh') {
+        if (config.setupComplete === false) throw new SetupError('NOT_INITIALIZED', '请先完成核心工作台初始化，再准备可选组件。');
+        const preparation = await this.prepareMosh(config);
+        return { ...await this.inspect(), message: moshPreparationMessage(preparation.result, preparation.reason) };
+      }
       if (command === 'repair') {
         const bundled = await this.manifest(this.bundle);
         const previous = await jsonFile(join(config.runtimePath, 'manifest.json'));

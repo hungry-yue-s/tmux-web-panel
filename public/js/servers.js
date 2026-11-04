@@ -23,6 +23,65 @@
     return '<div class="detail-row"><span>' + esc(label) + '</span><strong class="mono">' + esc(value) + '</strong></div>';
   }
 
+  function componentReason(reason) {
+    return ({ package_manager_busy: '软件包管理器正在使用，请稍后重试。',
+      package_manager_locked: '软件包管理器正在使用，请等待当前安装结束后重试。',
+      package_manager_missing: '未找到支持的软件包管理器，请先按系统要求完成安装。',
+      shared_package_change: '安装需要变更已有共享组件。', shared_runtime_upgrade_required: '安装需要升级正在使用的共享运行组件。',
+      system_upgrade_pending: '系统软件包尚有待完成的升级，请先安排系统维护。',
+      unknown_package_plan: '无法确认安装计划是否会影响已有组件。', unsafe_package_plan: '安装计划可能影响已有组件，自动安装已停止。',
+      package_plan_unrecognized: '无法识别当前软件包管理器的安装计划。',
+      service_transaction: '安装计划涉及服务变更，请安排维护。',
+      package_cache_unavailable: '本机软件包缓存不可用，请维护软件源后重试。',
+      package_network_unavailable: '暂时无法连接软件源，请检查网络后重试。',
+      signature_policy_unsafe: '软件包签名校验配置不符合要求，请维护包管理器后重试。',
+      homebrew_missing: '这台 Mac 尚未安装 Homebrew，请先完成 Homebrew 安装。',
+      brew_requires_user: '请使用安装 Homebrew 的普通用户账户准备组件。',
+      permission_required: '需要安装权限，请按系统提示处理后重试。',
+      windows_admin_required: '需要 Windows 管理员权限，请在目标机器处理权限后重新检查。',
+      sudo_required: '需要 sudo 密码来安装软件包。', sudo_auth_failed: 'sudo 验证未通过，请重新输入密码。',
+      sudo_unavailable: '当前环境没有 sudo，请使用有安装权限的账户处理。',
+      sudo_noninteractive_unavailable: '密码已验证，但系统不允许后续非交互 sudo。请在目标机器维护权限后重试，无需重复输入密码。',
+      package_plan_failed: '无法读取安装计划，请检查软件源和网络后重试。',
+      package_install_failed: '软件包安装未完成，请检查网络、权限和磁盘空间后重试。',
+      package_verification_failed: '软件包校验失败，请检查软件源和系统时间后重试。',
+      signature_policy_unavailable: '无法确认软件包签名校验配置，请维护包管理器后重试。',
+      component_verification_failed: '安装后仍无法运行 Mosh 组件，请查看安装日志。',
+      component_integrity_failed: 'Mosh 组件完整性检查未通过，请维护安装后重试。',
+      mosh_client_unusable: 'Hub 的 Mosh 客户端无法运行，需要修复。',
+      component_unusable: '已有 Mosh 组件无法运行，需要修复。',
+      configured_component_unusable: '已配置的 Mosh 组件无法运行，需要维护。',
+      maintenance_required: '需要升级已有运行组件，请在维护时处理，再回来重新检查。',
+      mosh_server_not_found: '尚未安装 Mosh 服务端。', mosh_server_unusable: 'Mosh 服务端无法运行，需要修复。',
+      mosh_client_not_found: '尚未安装 Hub 使用的 Mosh 客户端。', client_platform: '当前 Windows Hub 不支持 Mosh 客户端。',
+      unsupported: '当前环境暂不支持自动安装，请查看安装日志。' })[reason] || (reason ? '组件暂未就绪，请查看安装日志。' : '');
+  }
+
+  function installFeedback(job, component, windows) {
+    if (!job) return '';
+    var state = job.state;
+    var code = job.reason || (job.component || {}).reason;
+    var reason = componentReason(code) || job.error && job.error.message;
+    if (state === 'running') return '<div class="install-progress" role="status" aria-live="polite"><strong>正在安装：</strong>' + esc(job.step || '准备中') + '</div>';
+    if (state === 'failed') return '<div class="install-progress error" role="alert"><strong>安装失败</strong>' + (reason ? '：' + esc(reason) : '，请查看日志后重试。') + '</div>';
+    if (state === 'needs_password') return windows
+      ? '<div class="install-progress" role="status"><strong>需要 Windows 管理员权限</strong>，请在目标机器处理权限后重新检查。</div>'
+      : '<div class="install-progress" role="status"><strong>需要 sudo 密码</strong>来安装缺少的软件包，密码不会保存。</div>';
+    if (state === 'maintenance_required') return '<div class="install-progress error" role="status"><strong>需要维护</strong>：'
+      + (code === 'windows_admin_required' ? esc(componentReason(code)) : esc(componentReason(code) || '当前环境暂不能安全自动安装。') + '请安排维护后重新检查。') + '现有 SSH 连接可继续使用。</div>';
+    if (state === 'unsupported') return '<div class="install-progress error" role="status"><strong>暂不支持自动安装</strong>' + (reason ? '：' + esc(reason) : '，请查看日志中的处理说明。') + '</div>';
+    if (state === 'succeeded') {
+      if (component) return '<div class="install-progress ok" role="status">' + (job.result === 'skipped' ? '已跳过 Mosh 组件准备，继续使用 SSH。' : 'Mosh 组件已就绪，正在更新检测结果。') + '</div>';
+      var optional = job.component;
+      if (optional && optional.result && optional.result !== 'ready' && optional.result !== 'skipped') {
+        return '<div class="install-progress" role="status"><strong>面板服务已安装，Mosh 尚未准备完成。</strong>'
+          + esc(componentReason(optional.reason) || '可在连接页面补装，SSH 仍可正常使用。') + '</div>';
+      }
+      return '<div class="install-progress ok" role="status"><strong>安装完成</strong>，正在重新连接…</div>';
+    }
+    return '';
+  }
+
   /** New-connection routing, not a claim that existing sockets have switched. */
   function pathsText(paths) {
     var name = function (via) { return via === 'direct' ? '直连' : via === 'mosh' ? 'Mosh' : 'SSH 隧道'; };
@@ -193,7 +252,10 @@
      */
     _installCard: function (server, health) {
       var job = (global.MsApp && global.MsApp.installJob && global.MsApp.installJob(server.id)) || null;
+      var busy = job && job.state === 'running';
+      if (job && job.operation === 'mosh') job = null;
       var node = health.node || {};
+      var windows = /^(windows|win32)$/.test((health.facts || {}).platform || node.platform || '');
       var mode = (health.workspace && health.workspace.provider) === 'tmux'
         ? '远端 tmux 会话（重启客户端后仍在）'
         : '由客户端托管的 SSH 终端（客户端退出后结束）';
@@ -203,32 +265,74 @@
         + (node.posix === false && node.platform !== 'windows'
           ? '<p class="muted">没有检测到 POSIX shell；安装程序会按 Windows 处理。</p>' : '');
       var state = job ? job.state : 'idle';
-      var status = '';
-      if (state === 'running') {
-        status = '<div class="install-progress"><strong>正在安装：</strong>' + esc(job.step || '准备中') + '</div>';
-      } else if (state === 'failed') {
-        status = '<div class="install-progress error"><strong>安装失败</strong>'
-          + (job.error && job.error.message ? '：' + esc(job.error.message) : '') + '</div>';
-      } else if (state === 'needs_password') {
-        status = '<div class="install-progress"><strong>需要 sudo 密码</strong>来安装缺少的系统软件包。</div>';
-      } else if (state === 'succeeded') {
-        status = '<div class="install-progress ok"><strong>安装完成</strong>，正在重新连接…</div>';
-      }
+      var status = installFeedback(job, false, windows);
       var log = job && job.log && job.log.length
         ? '<pre class="install-log mono">' + esc(job.log.slice(-14).join('\n')) + '</pre>' : '';
-      var button = state === 'running'
+      var button = busy
         ? ''
-        : actionButton(state === 'failed' ? '重试安装' : state === 'needs_password' ? '输入 sudo 密码并继续' : '安装面板服务',
+        : actionButton(state === 'failed' ? '重试安装' : state === 'needs_password' ? (windows ? '管理员处理后重试' : '输入 sudo 密码并继续') : '安装面板服务',
           'install-node', true, '');
       return '<div class="section"><div class="ms-card capability install-node-card">'
         + '<div class="capability-head"><strong>基础模式</strong><span class="ms-badge yellow">未安装面板服务</span></div>'
-        + body + status + log
+        + body + status + (job && job.pollError ? '<p class="muted" role="status">安装进度暂时无法读取，正在重新连接；已显示的进度会保留。</p>' : '') + log
         + '<p class="muted">安装会把本客户端的面板代码经 SFTP 传到那台机器，自动安装缺少的依赖（需要时使用 sudo）、'
         + 'Node.js 和 tmux，再以只监听 127.0.0.1 的用户服务运行；只有本客户端能经 SSH 隧道访问它。</p>'
+        + (busy ? '' : '<label class="monitor-page-toggle"><span><strong>同时准备 Mosh（可选）</strong>'
+          + '<small>默认尝试安装；失败不会阻止面板安装。组件就绪后仍需验证 UDP 连通性。</small></span>'
+          + '<input type="checkbox" data-prepare-mosh' + (job && job.skipMosh ? '' : ' checked') + '><span class="monitor-page-toggle-track" aria-hidden="true"></span></label>')
         + button + '</div></div>';
     },
 
-    _localConnection: function (health) {
+    _moshCard: function (server, health) {
+      var capabilities = health.capabilities || {};
+      var service = capabilities.mosh;
+      var client = server.kind === 'local' ? capabilities.moshClient : null;
+      var clientUnsupported = client && client.reason === 'client_platform';
+      var windows = /^(windows|win32)$/.test((health.facts || {}).platform || (health.node || {}).platform || '');
+      var ready = service && service.available && (server.kind !== 'local' || clientUnsupported || client && client.available);
+      var available = server.kind === 'local' || (health.state === 'online' || health.state === 'degraded');
+      var job = global.MsApp && global.MsApp.installJob && global.MsApp.installJob(server.id);
+      var componentJob = job && job.operation === 'mosh' ? job : null;
+      var busy = job && job.state === 'running';
+      var completed = componentJob && componentJob.state === 'succeeded' && componentJob.result === 'ready';
+      var finishedAt = completed ? Date.parse(componentJob.finishedAt) : NaN;
+      var checkedAt = Date.parse(health.checkedAt);
+      var updating = completed && !ready && !componentJob.capabilityCheckFinished
+        && (componentJob.capabilityChecking || !Number.isFinite(finishedAt) || !Number.isFinite(checkedAt) || checkedAt <= finishedAt);
+      var label = function (capability) {
+        if (!capability) return '未检测';
+        return capability.available ? '已安装' + (capability.version ? ' · ' + capability.version : '')
+          : componentReason(capability.reason) || '暂不可用';
+      };
+      var state = componentJob && componentJob.state;
+      var action = state === 'needs_password' ? (windows ? '管理员处理后重新检查' : '输入 sudo 密码并继续')
+        : state === 'maintenance_required' ? '维护后重新检查'
+          : state === 'failed' || state === 'unsupported' ? '重试准备 Mosh'
+            : service && service.available === false && service.reason !== 'mosh_server_not_found' ? '修复 Mosh 组件' : '准备 Mosh 组件';
+      var warning = job && job.operation === 'node' && job.state === 'succeeded' && job.component
+        && job.component.result !== 'ready' && job.component.result !== 'skipped' ? installFeedback(job, false, windows) : '';
+      var logJob = componentJob || (warning ? job : null);
+      var unreported = completed && componentJob.capabilityCheckFinished && (!service || server.kind === 'local' && !client);
+      var feedback = completed && !ready && !updating
+        ? '<div class="install-progress" role="status">' + (unreported
+          ? '组件已准备，但服务尚未上报能力。可更新面板后重新检查。'
+          : '上次组件准备已完成；当前检测尚未就绪，可重新检查或修复。') + '</div>'
+        : installFeedback(componentJob, true, windows);
+      return '<div class="section"><div class="ms-card capability mosh-component-card" aria-label="Mosh 组件">'
+        + '<div class="capability-head"><strong>Mosh 组件</strong><span class="ms-badge ' + (ready ? 'green' : 'yellow') + '">' + (ready ? '组件就绪' : updating ? '更新检测中' : '待准备') + '</span></div>'
+        + '<div class="detail-list">' + detail('服务端', label(service))
+        + (server.kind === 'local' ? detail('Hub 客户端', label(client)) : '') + '</div>'
+        + '<p class="muted">组件已安装不代表 UDP 已连通。通道选择在新连接时验证，失败时保留 SSH；准备组件不会切换已有终端。</p>'
+        + warning + feedback
+        + (busy && !componentJob ? '<p class="muted" role="status">面板服务正在安装，完成后可检查组件状态。</p>' : '')
+        + (componentJob && componentJob.pollError ? '<p class="muted" role="status">安装进度暂时无法读取，正在重新连接；已显示的进度会保留。</p>' : '')
+        + (logJob && logJob.log && logJob.log.length ? '<details><summary>安装日志</summary><pre class="install-log mono">' + esc(logJob.log.slice(-14).join('\n')) + '</pre></details>' : '')
+        + (!ready && !updating && !busy && available ? actionButton(action, 'install-mosh', true, '') : '')
+        + (!ready && !available ? '<p class="muted">连接恢复后可准备组件。</p>' : '')
+        + '</div></div>';
+    },
+
+    _localConnection: function (health, server) {
       var facts = health.facts || {}, capabilities = health.capabilities || {};
       var platforms = { darwin: 'macOS', linux: 'Linux', windows: 'Windows' };
       var tmux = capabilityStatus(capabilities.tmux, health, true);
@@ -239,7 +343,7 @@
         + detail('平台', platforms[facts.platform] || facts.platform || '未检测')
         + detail('架构', facts.arch || '未检测')
         + detail('主机名', facts.hostname || '未检测')
-        + '</div><p class="muted">直接读取本机运行状态。</p></section><section>'
+        + '</div><p class="muted">直接读取本机运行状态。</p>' + this._moshCard(server, health) + '</section><section>'
         + '<div class="section-head"><h3>最近检测结果</h3><span>' + esc(relativeTime(health.checkedAt)) + '</span></div>'
         + '<div class="ms-card timeline">'
         + timeline('tmux', tmux.text, tmux.ok)
@@ -248,7 +352,7 @@
     },
 
     _connection: function (server, health, workspace) {
-      if (server.kind === 'local') return this._localConnection(health);
+      if (server.kind === 'local') return this._localConnection(health, server);
       var address = server.address || {};
       var ssh = server.ssh || {};
       var capabilities = health.capabilities || {};
@@ -282,6 +386,7 @@
         + (facts.version ? detail('面板版本', facts.version) : '')
         + '</div>'
         + (basic ? this._installCard(server, health) : '')
+        + (!basic ? this._moshCard(server, health) : '')
         + (nodeHint
           ? '<div class="section"><div class="ms-card capability">'
             + '<div class="capability-head"><strong>面板服务</strong><span class="ms-badge yellow">需要处理</span></div>'

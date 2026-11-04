@@ -14,9 +14,16 @@ struct DesktopConfiguration: Decodable, Sendable {
     var port: Int?
     var listenOnLAN: Bool?
     var launchAtLogin: Bool?
+    var prepareMosh: Bool?
     var username: String?
     var relay: DesktopRelayConfiguration?
     var initialized: Bool?
+}
+
+struct DesktopMoshPreparation: Decodable, Sendable {
+    var result: String?
+    var reason: String?
+    var checkedAt: String?
 }
 
 struct DesktopRuntimeStatus: Decodable, Sendable {
@@ -36,6 +43,7 @@ struct DesktopRuntimeStatus: Decodable, Sendable {
     var tmuxVersion: String?
     var panelState: String?
     var tmuxState: String?
+    var moshPreparation: DesktopMoshPreparation?
 }
 
 struct DesktopSetupPaths: Decodable, Sendable {
@@ -87,6 +95,7 @@ struct DesktopSetupRequest: Encodable, Sendable {
     var port: Int?
     var listenOnLAN: Bool?
     var launchAtLogin: Bool?
+    var prepareMosh: Bool?
     var relay: Relay?
 }
 

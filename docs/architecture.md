@@ -107,20 +107,34 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 
 ## 一键安装 Node
 
-在基础模式服务器的页面上点“安装面板服务”，由 Hub 发起安装（`server/hub/node-installer.js`，接口为 `POST/GET /api/servers/:id/node/install`）。这是 Hub 唯一一处主动在远端运行程序的地方，必须由用户明确触发。
+在基础模式服务器的页面上点“安装面板服务”，由 Hub 发起安装（`server/hub/node-installer.js`，接口为 `POST/GET /api/servers/:id/node/install`）。安装与下述固定组件维护是 Hub 主动运行远端程序的唯一入口，必须由用户明确触发。
 
 1. **打包。** 把 Hub 自己的面板代码打包（Linux/macOS 目标还会带上 `vendor/tmux` 源码），经 sftp 上传到 `.cache/tmux-web-panel/panel.tgz`。版本一定与 Hub 一致，远端也不需要能访问 GitHub。
 2. **Linux / macOS：** 把 `scripts/remote/install-node.sh` 经 stdin 交给 `sh -s` 执行。
    - 缺少的编译依赖用包管理器安装（apt / dnf / yum / pacman / apk / zypper / brew）。需要 sudo 且没有免密时，返回 `needs_password`，界面向用户索要 sudo 密码。密码只随本次脚本经 stdin 传过去，不写日志也不保存。
    - Node.js 不满 20 时，下载官方二进制包到 `~/.local/share/tmux-web-panel/`，不需要 sudo。
    - 执行 `npm ci --omit=dev`，然后 `NODE_ONLY=1 HOST=127.0.0.1 scripts/install-service.sh install`（会编译项目自带的 tmux）。
-3. **Windows：** 把 `scripts/remote/install-node.ps1` 用 `powershell -EncodedCommand` 执行（全是普通字符）。
+3. **Windows：** 用固定且简短的 `powershell -EncodedCommand` 入口从 stdin 读取 UTF-8 的 `scripts/remote/install-node.ps1`，避免默认 cmd shell 的命令长度限制。
    - 用 winget 补装 Node.js 和 MSYS2；
    - 执行 `npm ci`；
    - 运行 `install-service.ps1 install -ListenHost 127.0.0.1 -NodeOnly`。
 4. **完成。** 安装结束后，Hub 立即重新配对。服务器从基础模式切换到完整模式，远端 tmux 里的会话不受影响。
 
 `NODE_ONLY=1`：这样安装的 Node 没有登录页可用，API 和 WebSocket 只接受 node token。即使同一台机器上有其他用户，他们也无法访问这个 Node 的接口。
+
+### 可选 Mosh 组件
+
+Linux、macOS 与 Windows 的新安装在核心服务就绪后默认尝试准备 Mosh，失败仅报告组件警告，保留已安装的面板与 SSH。Windows 使用 `scripts/install-mosh.ps1`，Linux/macOS 使用可独立执行或经 stdin 运行的 `scripts/install-mosh.sh`；远程安装和本机安装调用同一实现，不重复安装。`TMUX_PANEL_SKIP_MOSH=1` 或 `TWP_SKIP_MOSH=1` 可跳过，Windows 另支持 `-SkipMosh`；面板首次安装选项也可取消勾选。已就绪的二进制先验证版本，随后直接完成，不执行包操作。
+
+角色分别检查：Node 需要 `mosh-server`，Linux/macOS Hub 需要 `mosh-client`，同机兼任时检查两者。Windows Hub 的客户端能力保持 `client_platform`，但可作为 Node 准备服务端。Swift 内置工作台的独立初始化路径同样有默认可选准备和显式重试；上次准备结果与实时 Node 能力分开显示。安装组件不修改通道偏好，也不宣称 UDP 已连通。
+
+已有机器通过 `POST /api/servers/:id/components/mosh/install` 显式补装或重新检查，`id=local` 处理本机 Hub。它与完整 Node 安装共用每台服务器一个任务和进度日志；`operation` 区分 `node` / `mosh`，两个状态读取入口返回同一最新任务。组件任务只运行固定脚本，不重新运行完整安装、不打包、不上传应用、不执行 npm、不改变服务和 tmux 生命周期。sudo 密码只用于当前调用，经脚本 stdin 传递，不写入任务状态或配置；Windows 需要管理员处理时给维护提示，不索取 sudo 密码。
+
+准备结果区分 `ready`、`skipped`、`needs_password`、`maintenance_required`、`unsupported`、`failed`。脚本先检查包管理器和安装计划；已有共享包需要升级、替换、删除，或计划无法确认时转维护处理。不自动全量升级系统，不删除包管理器锁，不关闭签名校验，不自动安装 Homebrew。断网、包缓存不足和权限问题可以在面板查看原因并重试；组件失败不会阻断 SSH。
+
+组件完成后通过可信 Hub 专用的 `POST /api/mosh/components/refresh` 更新 Node 能力缓存；该接口要求 Node token 和 Hub 调用标记，不能由浏览器转发访问，也不启动终端。旧 Node 不支持此接口时保留正常的能力缓存过期行为。健康信息分别提供服务端 `capabilities.mosh` 和客户端 `capabilities.moshClient`，仅包含可用状态、版本与原因，不包含二进制路径。补装成功只刷新能力，不重建健康链路。
+
+2026-11-04 验证：全量 2491 通过、29 跳过、0 失败；Windows 安装策略另在原生 PowerShell 的隔离函数中覆盖 28 个场景，无真实包操作。Linux 各包管理器路径使用 shim 验证，不等于所有发行版实机认证。Windows 短命令入口已实测传输超过 12KB 的脚本和中文，最终传输相关回归 114/114。Swift 主程序编译通过，独立设置自测的编译执行边界见 [ENV-7](known-issues.md#env-7-swift-设置自测编译产物收到-sigkill2026-11-04)。
 
 ## 插件（tmux-agent）
 
@@ -129,7 +143,7 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 ## 不变量
 
 - Node 的 API 不接受 serverId。需要指定别的机器时，一律通过 Hub 的 `/n/:serverId`。
-- 已装 Node 的机器，Hub 不在远端执行命令。新增功能只写在 Node 上，远程服务器自动就能用。基础模式只覆盖工作区和终端，不要往里加文件、监控之类的远程脚本，那些功能的入口是“安装 Node”。
+- 已装 Node 的机器，日常功能由 Node 本地执行；仅显式的 Node 安装和固定 Mosh 组件维护可通过 `NodeInstaller` 执行受控安装脚本。基础模式只覆盖工作区和终端，不要往里加文件、监控之类的远程脚本，那些功能的入口是“安装 Node”。
 - 基础模式下发往远端的只有两种形式：`sh -s`（脚本走 stdin），或单个单词的 pty 命令（经 sftp 上传的脚本路径）。不要拼接带参数的远程命令行。
 - 转发入口只认登录令牌。node token 只能用来访问那台 Node 自己的 API，不能用它让一个 Hub 再链式转发到下一台机器。
 - 配对文件和 node token 只对本人可读。在 Windows 上用 `icacls` 去掉继承的访问权限。
