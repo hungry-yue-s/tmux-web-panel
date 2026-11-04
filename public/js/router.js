@@ -3,7 +3,7 @@
   var TERMINAL_KEYS = ['serverId', 'sessionId', 'windowId', 'paneId'];
   // Claude/Codex remain accepted as migration aliases and are redirected by
   // AppShell to the unified agents route.
-  var SERVER_SECTIONS = ['performance', 'agents', 'claude', 'codex', 'connection'];
+  var SERVER_SECTIONS = ['performance', 'agents', 'claude', 'codex', 'sessions', 'connection'];
 
   var CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 

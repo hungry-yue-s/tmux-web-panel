@@ -1344,6 +1344,27 @@ describe('MsApp terminal routes under load', () => {
 });
 
 describe('MsApp status mode routing', () => {
+  it.each(['local', 'api-linux'])('opens session protection from the performance tab on %s', async (serverId) => {
+    const ctx = loadStatusShell();
+    ctx.win.history.replaceState(null, '', '/?standalone=status#/servers/' + serverId + '/performance');
+    ctx.win.SessionProtectionPage = { mount: vi.fn(), unmount: vi.fn() };
+    ctx.MsApp._bindEvents();
+    await ctx.MsApp._onRoute(ctx.Router.current());
+
+    const tab = [...ctx.document.querySelectorAll('.tabs .tab')].find(button => button.textContent === '会话');
+    tab.click();
+    const route = { name: 'server', params: { serverId, section: 'sessions' } };
+    expect(ctx.Router.current()).toEqual(route);
+    await ctx.MsApp._onRoute(ctx.Router.current());
+
+    const host = ctx.document.getElementById('session-protection-host');
+    expect(host).not.toBeNull();
+    expect(ctx.win.SessionProtectionPage.mount).toHaveBeenCalledWith(host, serverId);
+    expect(ctx.document.querySelector('.tabs .active').textContent).toBe('会话');
+    expect(ctx.win.AppShell._titleFor(route)).toBe('会话');
+    ctx.win.close();
+  });
+
   it('disconnects the local pane-picker observer when leaving the terminal route', async () => {
     const ctx = loadStatusShell();
     const observer = { disconnect: vi.fn() };

@@ -59,6 +59,50 @@
   var FILE_LIST_SHOWN = 300;
   var DIFF_LINE_PX = 20;
 
+  // Pending parents keep their lane and color until reached. Empty lanes can be
+  // reused, but live lanes never jump sideways when another branch ends.
+  function commitGraph(commits) {
+    var lanes = [], colors = 0, width = 1;
+    var byHash = new Map(commits.map(function (commit) { return [commit.hash, commit]; }));
+    var main = new Set();
+    var head = commits.find(function (commit) { return commit.refs.some(function (ref) { return ref === 'HEAD' || ref.indexOf('HEAD -> ') === 0; }); });
+    var mainHash = head && head.hash;
+    while (mainHash && !main.has(mainHash)) {
+      main.add(mainHash);
+      var ancestor = byHash.get(mainHash);
+      mainHash = ancestor && ancestor.parents[0];
+    }
+    var rows = commits.map(function (commit, index) {
+      var column = lanes.findIndex(function (lane) { return lane && lane.to === commit.hash; });
+      var incoming = column !== -1;
+      if (!incoming) {
+        column = lanes.findIndex(function (lane) { return !lane; });
+        if (column === -1) column = lanes.length;
+      }
+      var color = main.has(commit.hash) ? 0 : incoming ? lanes[column].color : 1 + colors++ % 5;
+      var edges = [];
+      lanes.forEach(function (lane, at) {
+        if (lane) edges.push({ from: lane.from, to: lane.to, color: lane.color, x1: at, x2: at, y1: 0, y2: at === column ? 50 : 100,
+          boundary: index === commits.length - 1 && at !== column });
+      });
+      lanes[column] = null;
+      commit.parents.forEach(function (parent, parentIndex) {
+        var at = lanes.findIndex(function (lane) { return lane && lane.to === parent; });
+        if (at === -1) {
+          at = parentIndex === 0 ? column : lanes.findIndex(function (lane) { return !lane; });
+          if (at === -1) at = lanes.length;
+          lanes[at] = { from: [commit.hash], to: parent, color: main.has(parent) ? 0 : parentIndex === 0 ? color : 1 + colors++ % 5 };
+        } else lanes[at].from = lanes[at].from.concat(commit.hash);
+        edges.push({ from: [commit.hash], to: parent, color: lanes[at].color, x1: column, x2: at, y1: 50, y2: 100,
+          boundary: index === commits.length - 1 });
+      });
+      width = Math.max(width, column + 1, lanes.length);
+      var rightmost = edges.reduce(function (at, edge) { return Math.max(at, edge.x1, edge.x2); }, column);
+      return { column: column, color: color, merge: commit.parents.length > 1, edges: edges, width: (rightmost + 1) * 14 + 4 };
+    });
+    return { width: width * 14 + 4, rows: rows };
+  }
+
   function gitBlock(api) {
     var c = ui.client(api.serverId);
     var target = { path: api.params.path || '.', paneId: api.params.paneId || undefined };
@@ -78,10 +122,16 @@
     var segmented = el('div', 'blk-segmented');
     var changesTab = button('更改', function () { show('changes'); }, { icon: 'changes', className: 'is-active' });
     var historyTab = button('历史', function () { show('history'); }, { icon: 'history' });
+    changesTab.setAttribute('aria-label', '更改');
+    historyTab.setAttribute('aria-label', '历史');
+    changesTab.setAttribute('aria-pressed', 'true');
+    historyTab.setAttribute('aria-pressed', 'false');
     segmented.append(changesTab, historyTab);
     var fetchBtn = iconButton('fetch', '获取远程更新（fetch）', function () { sync('fetch', fetchBtn); });
-    var pullBtn = iconButton('down', '拉取（pull --ff-only）', function () { sync('pull', pullBtn); });
-    var pushBtn = iconButton('up', '推送（push）', function () { sync('push', pushBtn); });
+    var pullBtn = button('拉取', function () { sync('pull', pullBtn); }, { icon: 'down', className: 'blk-btn-ghost git-sync-btn', title: '拉取（pull --ff-only）' });
+    var pushBtn = button('推送', function () { sync('push', pushBtn); }, { icon: 'up', className: 'blk-btn-ghost git-sync-btn', title: '推送（push）' });
+    pullBtn.setAttribute('aria-label', '拉取（pull --ff-only）');
+    pushBtn.setAttribute('aria-label', '推送（push）');
     var refreshBtn = iconButton('refresh', '刷新', function () { load(true); });
     var right = el('div', 'blk-row git-bar-right');
     right.append(segmented, fetchBtn, pullBtn, pushBtn, refreshBtn);
@@ -94,6 +144,65 @@
     root.append(bar, stateBox, changesView, historyView);
     stateBox.appendChild(ui.spinnerLine('读取仓库'));
     changesView.hidden = true;
+
+    var historyWidth = Number(api.params.historyWidth) || 38;
+    var fitGraphGutter = function () {};
+    var graphFrame = null;
+    var historyGrip = el('div', 'git-history-resizer');
+    historyGrip.tabIndex = 0;
+    historyGrip.setAttribute('role', 'separator');
+    historyGrip.setAttribute('aria-label', '历史列表宽度');
+    historyGrip.setAttribute('aria-orientation', 'vertical');
+    function resizeHistory(value, save) {
+      var width = historyView.clientWidth;
+      var min = width > 760 ? 240 / width * 100 : 0;
+      var max = width > 760 ? (width - 328) / width * 100 : 100;
+      historyWidth = Math.max(min, Math.min(max, value));
+      historyView.style.setProperty('--git-history-width', historyWidth + '%');
+      historyGrip.setAttribute('aria-valuemin', String(Math.round(min)));
+      historyGrip.setAttribute('aria-valuemax', String(Math.round(max)));
+      historyGrip.setAttribute('aria-valuenow', String(Math.round(historyWidth)));
+      if (save) api.setParams({ historyWidth: historyWidth });
+    }
+    resizeHistory(historyWidth, false);
+    var historyResize = window.ResizeObserver ? new ResizeObserver(function () {
+      if (historyView.clientWidth > 760) resizeHistory(historyWidth, false);
+      fitGraphGutter();
+    }) : null;
+    if (historyResize) historyResize.observe(historyView);
+    historyGrip.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      historyGrip.setPointerCapture(e.pointerId);
+      historyView.classList.add('is-resizing');
+    });
+    historyGrip.addEventListener('pointermove', function (e) {
+      if (!historyGrip.hasPointerCapture(e.pointerId)) return;
+      var rect = historyView.getBoundingClientRect();
+      resizeHistory((e.clientX - rect.left) / rect.width * 100, false);
+    });
+    historyGrip.addEventListener('lostpointercapture', function () {
+      historyView.classList.remove('is-resizing');
+      resizeHistory(historyWidth, true);
+    });
+    historyGrip.addEventListener('keydown', function (e) {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home') return;
+      e.preventDefault();
+      resizeHistory(e.key === 'Home' ? 38 : historyWidth + (e.key === 'ArrowLeft' ? -2 : 2), true);
+    });
+
+    var wrapDiff = api.params.wrapDiff !== false;
+    root.classList.toggle('is-wrap-diff', wrapDiff);
+    function wrapToggle() {
+      var toggle = button('自动换行', function () {
+        wrapDiff = !wrapDiff;
+        root.classList.toggle('is-wrap-diff', wrapDiff);
+        root.querySelectorAll('.git-wrap-toggle').forEach(function (b) { b.setAttribute('aria-pressed', String(wrapDiff)); });
+        api.setParams({ wrapDiff: wrapDiff });
+      }, { className: 'blk-btn-ghost blk-btn-small git-wrap-toggle' });
+      toggle.setAttribute('aria-pressed', String(wrapDiff));
+      return toggle;
+    }
 
     // --- changes: list + commit on the left, diff on the right ---
     var side = el('div', 'git-side');
@@ -195,6 +304,7 @@
         }, { className: mode === pair[0] ? 'is-active' : '', title: pair[0] === 'diff' ? '按行查看改动' : '像文件预览一样显示这个文件' }));
       });
       box.appendChild(modes);
+      if (mode === 'diff') box.appendChild(wrapToggle());
       if (mode === 'preview') {
         var sides = el('div', 'blk-segmented');
         sides.setAttribute('aria-label', '版本');
@@ -761,8 +871,34 @@
 
     // --- history ---
     var GRAPH_COLORS = 6;
-    function graphNode(graph) {
+    function graphNode(graph, layout, width) {
       var node = el('span', 'git-graph');
+      node.setAttribute('aria-hidden', 'true');
+      if (layout) {
+        node.classList.add('is-drawn');
+        node.style.width = 'var(--git-graph-width, ' + width + 'px)';
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 ' + width + ' 100');
+        svg.setAttribute('preserveAspectRatio', 'none');
+        // Keep track coordinates fixed when the text gutter becomes narrower.
+        svg.style.width = width + 'px';
+        layout.edges.forEach(function (edge) {
+          var path = document.createElementNS(svg.namespaceURI, 'path');
+          var x1 = edge.x1 * 14 + 8, x2 = edge.x2 * 14 + 8;
+          path.setAttribute('d', 'M' + x1 + ' ' + edge.y1 + (x1 === x2 ? 'V' + edge.y2 : 'C' + x1 + ' 80 ' + x2 + ' 70 ' + x2 + ' ' + edge.y2));
+          path.setAttribute('class', 'git-graph-edge git-g' + edge.color + (edge.boundary ? ' is-boundary' : ''));
+          path.setAttribute('data-from', edge.from.join(' '));
+          path.setAttribute('data-to', edge.to);
+          path.setAttribute('vector-effect', 'non-scaling-stroke');
+          svg.appendChild(path);
+        });
+        var dot = el('span', 'git-graph-dot git-g' + layout.color + (layout.merge ? ' is-merge' : ''));
+        dot.style.left = (layout.column * 14 + 8) + 'px';
+        node.append(svg, dot);
+        return node;
+      }
+      // Older Nodes do not yet return parents: preserve their graph rather than
+      // guessing relationships from the visible order of commits.
       for (var i = 0; i < graph.length; i++) {
         var ch = graph.charAt(i);
         if (ch === ' ') { node.appendChild(document.createTextNode(' ')); continue; }
@@ -791,33 +927,80 @@
         historyJson = json;
         var log = el('div', 'git-log');
         log.setAttribute('role', 'listbox');
+        log.setAttribute('aria-label', '提交历史');
         log.tabIndex = 0;
         var detail = el('div', 'git-log-detail');
         detail.appendChild(ui.emptyState('commit', '选择一个提交', '查看它的说明和改动。'));
         // A commit open before stays open, as it was, while it is still in the history:
         // its detail is kept rather than read and drawn again. So is where the list was.
         var previousLog = historyView.querySelector('.git-log');
+        if (previousLog && historyResize) historyResize.unobserve(previousLog);
         var previousDetail = historyView.querySelector('.git-log-detail');
         var listTop = previousLog ? previousLog.scrollTop : 0;
         var openHash = previousDetail && previousDetail.__openCommit;
         if (openHash && data.rows.some(function (row) { return row.commit && row.commit.hash === openHash; })) detail = previousDetail;
         else openHash = null;
         var commitRows = [];
-        data.rows.forEach(function (row) {
+        var commits = data.rows.filter(function (row) { return row.commit; }).map(function (row) { return row.commit; });
+        var graph = commits.every(function (commit) { return Array.isArray(commit.parents); }) ? commitGraph(commits) : null;
+        var drawnIndex = 0;
+        if (!graph) log.classList.add('is-legacy-graph');
+        function traceGraph(hash) {
+          log.classList.toggle('is-tracing', !!hash);
+          log.querySelectorAll('.git-graph-edge').forEach(function (edge) {
+            edge.classList.toggle('is-traced', edge.getAttribute('data-from').split(' ').indexOf(hash) !== -1 || edge.getAttribute('data-to') === hash);
+          });
+        }
+        data.rows.forEach(function (row, rowIndex) {
+          if (graph && !row.commit) return;
           var line = el('div', 'git-log-row' + (row.commit ? ' has-commit' : ''));
-          line.appendChild(graphNode(row.graph));
+          var layout = graph && graph.rows[drawnIndex++];
+          line.appendChild(graphNode(row.graph, layout, graph && graph.width));
+          line.__graphWidth = layout && layout.width;
           if (row.commit) {
             commitRows.push(line);
             if (row.commit.hash === openHash) line.classList.add('is-active');
             line.setAttribute('role', 'option');
-            line.appendChild(el('span', 'git-hash', row.commit.short));
-            row.commit.refs.forEach(function (ref) {
+            line.id = api.id + '-commit-' + row.commit.hash;
+            line.setAttribute('aria-selected', String(row.commit.hash === openHash));
+            line.setAttribute('aria-label', row.commit.subject + '，' + row.commit.author + '，' + row.commit.date + (row.commit.parents && row.commit.parents.length > 1 ? '，合并提交' : ''));
+            line.title = row.commit.subject;
+            var subject = el('span', 'git-subject', row.commit.subject);
+            var labels = el('span', 'git-log-labels');
+            var refs = row.commit.refs.slice().sort(function (a, b) {
+              function rank(ref) { return ref.indexOf('HEAD -> ') === 0 ? 0 : ref.indexOf('/') === -1 ? 1 : 2; }
+              return rank(a) - rank(b);
+            });
+            function refBadge(ref) {
               var head = ref.indexOf('HEAD -> ') === 0;
               var kind = head ? ' is-head' : ref.indexOf('tag: ') === 0 ? ' is-tag' : ref.indexOf('/') !== -1 ? ' is-remote' : '';
-              line.appendChild(el('span', 'git-ref' + kind, ref.replace(/^HEAD -> /, '').replace(/^tag: /, '')));
-            });
-            line.appendChild(el('span', 'git-subject', row.commit.subject));
-            line.appendChild(el('span', 'git-log-meta', row.commit.author + ' · ' + row.commit.date));
+              var badge = el('span', 'git-ref' + kind, ref.replace(/^HEAD -> /, '').replace(/^tag: /, ''));
+              badge.title = ref;
+              return badge;
+            }
+            if (refs.length) labels.appendChild(refBadge(refs[0]));
+            if (refs.length > 1) {
+              var refMenu = el('div', 'blk-menu git-ref-menu');
+              refMenu.id = api.id + '-refs-' + rowIndex;
+              refMenu.setAttribute('popover', 'auto');
+              refMenu.addEventListener('click', function (e) { e.stopPropagation(); });
+              refs.forEach(function (ref) { refMenu.appendChild(refBadge(ref)); });
+              var moreRefs = button('+' + (refs.length - 1), function (e) {
+                e.stopPropagation();
+                var rect = moreRefs.getBoundingClientRect();
+                refMenu.style.left = Math.max(12, Math.min(rect.left, window.innerWidth - 332)) + 'px';
+                refMenu.style.top = Math.max(12, Math.min(rect.bottom + 4, window.innerHeight - 180)) + 'px';
+                refMenu.togglePopover();
+              }, { className: 'blk-btn-ghost blk-btn-small git-ref-more', title: refs.join('\n') });
+              moreRefs.setAttribute('aria-label', '查看全部 ' + refs.length + ' 个引用');
+              moreRefs.setAttribute('aria-controls', refMenu.id);
+              moreRefs.setAttribute('aria-haspopup', 'true');
+              labels.append(moreRefs, refMenu);
+            }
+            var meta = el('span', 'git-log-meta');
+            meta.append(el('span', 'git-hash', row.commit.short), el('span', 'git-log-author', row.commit.author), el('span', '', row.commit.date));
+            line.append(subject, labels, meta);
+            line.addEventListener('mouseenter', function () { traceGraph(row.commit.hash); });
             line.addEventListener('click', function () { openCommit(row.commit, line); });
           }
           log.appendChild(line);
@@ -833,11 +1016,39 @@
           else if (e.key === 'ArrowUp' || e.key === 'k') next = commitRows[Math.max(0, index - 1)];
           if (next) { e.preventDefault(); next.click(); next.scrollIntoView({ block: 'nearest' }); }
         });
-        historyView.replaceChildren(log, detail);
+        log.addEventListener('mouseleave', function () { traceGraph(detail.__openCommit); });
+        log.addEventListener('focus', function () { traceGraph(detail.__openCommit); });
+        historyView.replaceChildren(log, historyGrip, detail);
+        traceGraph(openHash);
+        if (openHash) log.setAttribute('aria-activedescendant', api.id + '-commit-' + openHash);
         log.scrollTop = listTop;
+        // Only visible tracks reserve space beside the text. A complicated merge
+        // hundreds of rows below must not indent the entire commit list.
+        fitGraphGutter = function () {
+          if (!graph || !log.clientHeight) return;
+          var top = log.scrollTop, bottom = top + log.clientHeight;
+          var width = 18;
+          for (var i = 0; i < commitRows.length; i++) {
+            var row = commitRows[i], rowTop = row.offsetTop;
+            if (rowTop > bottom) break;
+            if (rowTop + row.offsetHeight > top) width = Math.max(width, row.__graphWidth);
+          }
+          log.style.setProperty('--git-graph-width', width + 'px');
+        };
+        log.addEventListener('scroll', function () {
+          if (graphFrame !== null) return;
+          graphFrame = requestAnimationFrame(function () { graphFrame = null; fitGraphGutter(); });
+        }, { passive: true });
+        if (historyResize) historyResize.observe(log);
+        fitGraphGutter();
 
         function openCommit(commit, line) {
-          commitRows.forEach(function (r) { r.classList.toggle('is-active', r === line); });
+          commitRows.forEach(function (r) {
+            r.classList.toggle('is-active', r === line);
+            r.setAttribute('aria-selected', String(r === line));
+          });
+          traceGraph(commit.hash);
+          log.setAttribute('aria-activedescendant', line.id);
           stopLazyDiffs();
           // A large commit can answer after the next one was picked: only the latest lands.
           var asked = {};
@@ -854,7 +1065,6 @@
             var subject = bodyText.split('\n')[0] || commit.subject;
             card.appendChild(el('h3', '', subject));
             var rest = bodyText.split('\n').slice(1).join('\n').trim();
-            if (rest) card.appendChild(el('pre', 'git-commit-body', rest));
             var metaRow = el('div', 'git-commit-meta');
             metaRow.appendChild(el('span', '', lines[1] || commit.author));
             metaRow.appendChild(el('span', 'blk-muted', lines[2] || commit.date));
@@ -863,6 +1073,13 @@
             }, { icon: 'copy', className: 'blk-btn-ghost blk-btn-small git-hash-btn', title: '复制完整哈希' });
             metaRow.appendChild(hash);
             card.appendChild(metaRow);
+            if (rest) {
+              var messageDetails = el('details', 'git-commit-message');
+              var summary = el('summary');
+              summary.append(el('span', 'git-message-preview', rest), el('span', 'git-message-expand', '展开说明'), el('span', 'git-message-collapse', '收起说明'));
+              messageDetails.append(summary, el('pre', 'git-commit-body', rest));
+              card.appendChild(messageDetails);
+            }
             var diffText = at === -1 ? '' : res.diff.slice(at + 1);
             var files = res.files || [];
             var fileRows = [];
@@ -1000,6 +1217,7 @@
                   if (window.FilePreview) FilePreview.openFile(rootPath(file.path), null);
                 })
               );
+              if (mode === 'diff') bar.classList.add('is-diff');
               disposePreviews(diffs);
               if (mode === 'preview') {
                 var preview = el('div', 'git-preview');
@@ -1033,6 +1251,10 @@
             if (files.length) {
               var listHead = el('div', 'git-group-head');
               listHead.append(el('span', '', '改动的文件'), el('span', 'blk-pill', String(files.length)));
+              var totals = el('span', 'blk-diff-stats git-total-stats');
+              totals.append(el('span', 'is-add', '+' + files.reduce(function (n, f) { return n + (f.added || 0); }, 0)),
+                el('span', 'is-del', '−' + files.reduce(function (n, f) { return n + (f.removed || 0); }, 0)));
+              listHead.append(totals, wrapToggle());
               list.appendChild(listHead);
               var rowsBox = el('div', 'git-commit-file-list');
               rowsBox.setAttribute('role', 'listbox');
@@ -1088,6 +1310,8 @@
     function show(which) {
       changesTab.classList.toggle('is-active', which === 'changes');
       historyTab.classList.toggle('is-active', which === 'history');
+      changesTab.setAttribute('aria-pressed', String(which === 'changes'));
+      historyTab.setAttribute('aria-pressed', String(which === 'history'));
       if (!status) return;
       changesView.hidden = which !== 'changes';
       historyView.hidden = which !== 'history';
@@ -1128,6 +1352,8 @@
       dispose: function () {
         clearInterval(pollTimer);
         clearTimeout(firstLoad);
+        if (graphFrame !== null) cancelAnimationFrame(graphFrame);
+        if (historyResize) historyResize.disconnect();
         window.removeEventListener('focus', onFocus);
         closeBranchMenu();
         stopLazyDiffs();

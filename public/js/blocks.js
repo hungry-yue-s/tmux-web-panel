@@ -588,6 +588,7 @@ var Blocks = (function () {
         });
         fileBox.appendChild(head);
       }
+      fileBox.appendChild(el('div', 'blk-diff-filebody'));
       container.appendChild(fileBox);
       return fileBox;
     }
@@ -609,7 +610,7 @@ var Blocks = (function () {
       box.appendChild(bar);
       var rows = el('div', 'blk-hunk-lines');
       box.appendChild(rows);
-      fileBox.appendChild(box);
+      fileBox.querySelector('.blk-diff-filebody').appendChild(box);
       var m = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(hunk.header);
       return {
         hunk: hunk, box: box, rows: rows, selected: selected, pairs: pairChanges(hunk.lines),

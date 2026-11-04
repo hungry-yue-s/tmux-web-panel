@@ -609,7 +609,7 @@
       if (route.name === 'servers') return '状态';
       if (route.name === 'settings') return '设置';
       if (route.name === 'server') {
-        return ({ performance: '性能', agents: 'Agent 控制台', claude: 'Agent 控制台', codex: 'Agent 控制台', connection: '连接' })[route.params.section] || '性能';
+        return ({ performance: '性能', agents: 'Agent 控制台', claude: 'Agent 控制台', codex: 'Agent 控制台', sessions: '会话', connection: '连接' })[route.params.section] || '性能';
       }
       return '终端工作台';
     },
