@@ -132,6 +132,42 @@ describe('Git history presentation', () => {
     expect(context.frame().querySelectorAll('.git-graph-dot')).toHaveLength(1);
   });
 
+  it('reserves graph space for visible tracks instead of distant merges or retired lanes', async () => {
+    const branches = Array.from({ length: 8 }, (_, i) => 'branch' + i);
+    const rows = [
+      ...Array.from({ length: 30 }, (_, i) => commit('tip' + i, [i === 29 ? 'merge' : 'tip' + (i + 1)])),
+      commit('merge', branches), ...branches.map((hash) => commit(hash, ['root'])), commit('root', ['tail0']),
+      ...Array.from({ length: 20 }, (_, i) => commit('tail' + i, i === 19 ? [] : ['tail' + (i + 1)])),
+    ];
+    const context = setup({ '/api/git/log': () => ({ rows }) });
+    context.win.requestAnimationFrame = (fn) => context.win.setTimeout(fn, 0);
+    context.win.cancelAnimationFrame = (id) => context.win.clearTimeout(id);
+    await settled(); context.press('历史'); await settled();
+    const log = context.frame().querySelector('.git-log');
+    Object.defineProperty(log, 'clientHeight', { value: 460 });
+    [...log.querySelectorAll('.git-log-row')].forEach((row, i) => {
+      Object.defineProperty(row, 'offsetTop', { value: 4 + i * 46 });
+      Object.defineProperty(row, 'offsetHeight', { value: 46 });
+    });
+    const scrollTo = async (top) => {
+      log.scrollTop = top;
+      log.dispatchEvent(new context.win.Event('scroll'));
+      await settled();
+    };
+    const svg = log.querySelector('svg');
+    const originalTracks = svg.outerHTML;
+    await scrollTo(0);
+    expect(log.style.getPropertyValue('--git-graph-width')).toBe('18px');
+    await scrollTo(4 + 30 * 46);
+    expect(log.style.getPropertyValue('--git-graph-width')).toBe('116px');
+    await scrollTo(4 + 39 * 46);
+    expect(log.style.getPropertyValue('--git-graph-width')).toBe('18px');
+    // Fitting the gutter never scales, clips, or rewrites the actual track geometry.
+    expect(svg.outerHTML).toBe(originalTracks);
+    await scrollTo(0);
+    expect(log.style.getPropertyValue('--git-graph-width')).toBe('18px');
+  });
+
   it('retains the graph from older Nodes without guessing any missing parent links', async () => {
     const context = setup();
     await settled(); context.press('历史'); await settled();

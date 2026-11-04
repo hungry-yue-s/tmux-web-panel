@@ -97,7 +97,8 @@
           boundary: index === commits.length - 1 });
       });
       width = Math.max(width, column + 1, lanes.length);
-      return { column: column, color: color, merge: commit.parents.length > 1, edges: edges };
+      var rightmost = edges.reduce(function (at, edge) { return Math.max(at, edge.x1, edge.x2); }, column);
+      return { column: column, color: color, merge: commit.parents.length > 1, edges: edges, width: (rightmost + 1) * 14 + 4 };
     });
     return { width: width * 14 + 4, rows: rows };
   }
@@ -145,6 +146,8 @@
     changesView.hidden = true;
 
     var historyWidth = Number(api.params.historyWidth) || 38;
+    var fitGraphGutter = function () {};
+    var graphFrame = null;
     var historyGrip = el('div', 'git-history-resizer');
     historyGrip.tabIndex = 0;
     historyGrip.setAttribute('role', 'separator');
@@ -164,6 +167,7 @@
     resizeHistory(historyWidth, false);
     var historyResize = window.ResizeObserver ? new ResizeObserver(function () {
       if (historyView.clientWidth > 760) resizeHistory(historyWidth, false);
+      fitGraphGutter();
     }) : null;
     if (historyResize) historyResize.observe(historyView);
     historyGrip.addEventListener('pointerdown', function (e) {
@@ -872,10 +876,12 @@
       node.setAttribute('aria-hidden', 'true');
       if (layout) {
         node.classList.add('is-drawn');
-        node.style.width = width + 'px';
+        node.style.width = 'var(--git-graph-width, ' + width + 'px)';
         var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         svg.setAttribute('viewBox', '0 0 ' + width + ' 100');
         svg.setAttribute('preserveAspectRatio', 'none');
+        // Keep track coordinates fixed when the text gutter becomes narrower.
+        svg.style.width = width + 'px';
         layout.edges.forEach(function (edge) {
           var path = document.createElementNS(svg.namespaceURI, 'path');
           var x1 = edge.x1 * 14 + 8, x2 = edge.x2 * 14 + 8;
@@ -928,6 +934,7 @@
         // A commit open before stays open, as it was, while it is still in the history:
         // its detail is kept rather than read and drawn again. So is where the list was.
         var previousLog = historyView.querySelector('.git-log');
+        if (previousLog && historyResize) historyResize.unobserve(previousLog);
         var previousDetail = historyView.querySelector('.git-log-detail');
         var listTop = previousLog ? previousLog.scrollTop : 0;
         var openHash = previousDetail && previousDetail.__openCommit;
@@ -947,7 +954,9 @@
         data.rows.forEach(function (row, rowIndex) {
           if (graph && !row.commit) return;
           var line = el('div', 'git-log-row' + (row.commit ? ' has-commit' : ''));
-          line.appendChild(graphNode(row.graph, graph && graph.rows[drawnIndex++], graph && graph.width));
+          var layout = graph && graph.rows[drawnIndex++];
+          line.appendChild(graphNode(row.graph, layout, graph && graph.width));
+          line.__graphWidth = layout && layout.width;
           if (row.commit) {
             commitRows.push(line);
             if (row.commit.hash === openHash) line.classList.add('is-active');
@@ -1013,6 +1022,25 @@
         traceGraph(openHash);
         if (openHash) log.setAttribute('aria-activedescendant', api.id + '-commit-' + openHash);
         log.scrollTop = listTop;
+        // Only visible tracks reserve space beside the text. A complicated merge
+        // hundreds of rows below must not indent the entire commit list.
+        fitGraphGutter = function () {
+          if (!graph || !log.clientHeight) return;
+          var top = log.scrollTop, bottom = top + log.clientHeight;
+          var width = 18;
+          for (var i = 0; i < commitRows.length; i++) {
+            var row = commitRows[i], rowTop = row.offsetTop;
+            if (rowTop > bottom) break;
+            if (rowTop + row.offsetHeight > top) width = Math.max(width, row.__graphWidth);
+          }
+          log.style.setProperty('--git-graph-width', width + 'px');
+        };
+        log.addEventListener('scroll', function () {
+          if (graphFrame !== null) return;
+          graphFrame = requestAnimationFrame(function () { graphFrame = null; fitGraphGutter(); });
+        }, { passive: true });
+        if (historyResize) historyResize.observe(log);
+        fitGraphGutter();
 
         function openCommit(commit, line) {
           commitRows.forEach(function (r) {
@@ -1324,6 +1352,7 @@
       dispose: function () {
         clearInterval(pollTimer);
         clearTimeout(firstLoad);
+        if (graphFrame !== null) cancelAnimationFrame(graphFrame);
         if (historyResize) historyResize.disconnect();
         window.removeEventListener('focus', onFocus);
         closeBranchMenu();

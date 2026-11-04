@@ -298,7 +298,7 @@ body.blk-dragging iframe, body.blk-resizing iframe, body.fp-side-resizing iframe
 .git-history-resizer:is(:hover, :focus-visible)::after, .git-history.is-resizing .git-history-resizer::after { background: var(--b-accent); }
 .git-history-resizer:focus-visible { outline: 1px solid var(--b-accent); outline-offset: -1px; }
 .git-history.is-resizing { cursor: col-resize; user-select: none; }
-.git-log { overflow: auto; min-width: 0; padding: 4px 0 12px; container: git-log / inline-size; }
+.git-log { position: relative; overflow: auto; min-width: 0; padding: 4px 0 12px; container: git-log / inline-size; }
 .git-log:focus-visible { outline: 1px solid var(--b-accent); outline-offset: -1px; }
 .git-log-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; column-gap: 8px; min-height: 32px; padding: 0 10px; white-space: nowrap; font-size: 12.5px; position: relative; }
 .git-log-row.has-commit { cursor: pointer; }
