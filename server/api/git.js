@@ -150,15 +150,16 @@ export function parseLog(output) {
   return output.split('\n').filter((line) => line.length > 0).map((line) => {
     const at = line.indexOf('\x1f');
     if (at === -1) return { graph: line, commit: null };
-    const [hash, short, author, date, refs, subject] = line.slice(at + 1).split('\x1f');
+    const [hash, short, author, date, refs, subject, parents] = line.slice(at + 1).split('\x1f');
     return {
       graph: line.slice(0, at),
-      commit: { hash, short, author, date, refs: refs ? refs.split(', ').filter(Boolean) : [], subject },
+      commit: { hash, short, author, date, refs: refs ? refs.split(', ').filter(Boolean) : [], subject,
+        ...(parents === undefined ? {} : { parents: parents.split(' ').filter(Boolean) }) },
     };
   });
 }
 
-const RECORD = '%x1f%H%x1f%h%x1f%an%x1f%ar%x1f%D%x1f%s';
+const RECORD = '%x1f%H%x1f%h%x1f%an%x1f%ar%x1f%D%x1f%s%x1f%P';
 
 /** Parses `for-each-ref` rows written with the format in GET /branches. */
 export function parseBranches(output) {

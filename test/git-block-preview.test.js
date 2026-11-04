@@ -92,6 +92,102 @@ function setup(answers = {}) {
 
 const settled = async () => { for (let i = 0; i < 6; i += 1) await new Promise((resolve) => { setTimeout(resolve, 0); }); };
 
+describe('Git history presentation', () => {
+  const commit = (hash, parents, refs = []) => ({ graph: '* ', commit: { hash, short: hash, parents, refs, subject: 'Commit ' + hash, author: 'T', date: 'now' } });
+
+  it('draws the parent graph without routing rows, including octopus merges and shared ancestry', async () => {
+    const context = setup({ '/api/git/log': () => ({ rows: [
+      commit('merge', ['one', 'two', 'three']), { graph: '|\\', commit: null },
+      commit('one', ['root']), commit('two', ['root']), commit('three', ['root']), commit('root', []),
+    ] }) });
+    await settled();
+    context.press('历史');
+    await settled();
+    const rows = [...context.frame().querySelectorAll('.git-log-row')];
+    expect(rows).toHaveLength(5);
+    expect(rows.map((r) => r.querySelector('svg').getAttribute('viewBox'))).toEqual(Array(5).fill('0 0 46 100'));
+    expect(context.frame().querySelectorAll('.git-graph-dot.is-merge')).toHaveLength(1);
+    const links = new Set([...context.frame().querySelectorAll('.git-graph-edge')].flatMap((e) =>
+      e.dataset.from.split(' ').map((from) => from + '>' + e.dataset.to)));
+    expect([...links].sort()).toEqual(['merge>one', 'merge>three', 'merge>two', 'one>root', 'three>root', 'two>root']);
+    // Every child can still be followed along the shared rail into the root.
+    expect(rows[4].querySelector('[data-to="root"]').dataset.from.split(' ').sort()).toEqual(['one', 'three', 'two']);
+    expect(rows[4].querySelectorAll('path')).toHaveLength(1);
+    rows[2].dispatchEvent(new context.win.MouseEvent('mouseenter'));
+    expect(rows[4].querySelector('[data-to="root"]').classList.contains('is-traced')).toBe(true);
+    // Track endpoints line up across row boundaries, even after another branch ends.
+    for (let i = 0; i < rows.length - 1; i++) {
+      const bottoms = [...rows[i].querySelectorAll('path')].map((p) => p.getAttribute('d')).filter((d) => d.endsWith('100'))
+        .map((d) => d.includes('C') ? Number(d.split(' ').at(-2)) : Number(/^M(\d+)/.exec(d)[1]));
+      const tops = [...rows[i + 1].querySelectorAll('path')].filter((p) => /^M\d+ 0/.test(p.getAttribute('d')))
+        .map((p) => Number(/^M(\d+)/.exec(p.getAttribute('d'))[1]));
+      expect([...new Set(bottoms)].sort()).toEqual([...new Set(tops)].sort());
+    }
+  });
+
+  it('marks unloaded ancestry at the boundary', async () => {
+    const context = setup({ '/api/git/log': () => ({ rows: [commit('tip', ['not-loaded'])] }) });
+    await settled(); context.press('历史'); await settled();
+    expect(context.frame().querySelector('.git-graph-edge.is-boundary').dataset.to).toBe('not-loaded');
+    expect(context.frame().querySelectorAll('.git-graph-dot')).toHaveLength(1);
+  });
+
+  it('retains the graph from older Nodes without guessing any missing parent links', async () => {
+    const context = setup();
+    await settled(); context.press('历史'); await settled();
+    expect(context.frame().querySelector('.git-log').classList.contains('is-legacy-graph')).toBe(true);
+    expect(context.frame().querySelector('.git-graph').textContent.trim()).toBe('●');
+    expect(context.frame().querySelectorAll('.git-graph svg')).toHaveLength(0);
+  });
+
+  it('reserves the accent color for HEAD and its first-parent path', async () => {
+    const context = setup({ '/api/git/log': () => ({ rows: [
+      commit('feature', ['main']), commit('main', ['root'], ['HEAD -> main']), commit('root', []), commit('unrelated', []),
+    ] }) });
+    await settled(); context.press('历史'); await settled();
+    const rows = context.frame().querySelectorAll('.git-log-row');
+    expect(rows[0].querySelector('.git-graph-dot').classList.contains('git-g0')).toBe(false);
+    expect(rows[1].querySelector('.git-graph-dot').classList.contains('git-g0')).toBe(true);
+    expect(rows[2].querySelector('.git-graph-dot').classList.contains('git-g0')).toBe(true);
+    expect(rows[3].querySelectorAll('.git-graph-edge')).toHaveLength(0);
+  });
+
+  it('keeps titles first, folds refs, and lets keyboard users adjust the saved split', async () => {
+    const context = setup({ '/api/git/log': () => ({ rows: [commit('tip', [], ['github/main', 'HEAD -> main', 'tag: v1'])] }) });
+    await settled(); context.press('历史'); await settled();
+    const frame = context.frame();
+    const row = frame.querySelector('.git-log-row');
+    expect(row.querySelector('.git-subject').textContent).toBe('Commit tip');
+    expect(row.querySelector('.git-log-labels > .git-ref').textContent).toBe('main');
+    expect(row.querySelector('.git-ref-more').textContent).toBe('+2');
+    expect(row.querySelectorAll('.git-ref-menu .git-ref')).toHaveLength(3);
+    const grip = frame.querySelector('.git-history-resizer');
+    grip.dispatchEvent(new context.win.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(grip.getAttribute('aria-valuenow')).toBe('40');
+    expect(context.win.BlockHost._test.instances()[0].params.historyWidth).toBe(40);
+    grip.dispatchEvent(new context.win.KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+    expect(grip.getAttribute('aria-valuenow')).toBe('38');
+  });
+
+  it('folds long messages and changes wrapping without recreating the diff', async () => {
+    const body = 'A long explanation.\n'.repeat(10) + '\nCo-Authored-By: Contributor <c@example.test>';
+    const context = setup({ '/api/git/show': () => ({ diff: COMMIT + '\nT\nnow\n\nSubject\n\n' + body + '\n\n' + NOTES_DIFF,
+      files: [{ path: 'notes.md', status: 'M', added: 1, removed: 1 }] }) });
+    await settled(); context.press('历史'); await settled();
+    context.frame().querySelector('.git-log-row').click(); await settled();
+    const frame = context.frame();
+    const message = frame.querySelector('.git-commit-message');
+    expect(message.open).toBe(false);
+    expect(message.querySelector('pre').textContent).toBe(body);
+    const code = frame.querySelector('.git-commit-diffs .blk-code');
+    expect(frame.querySelector('.git-block').classList.contains('is-wrap-diff')).toBe(true);
+    frame.querySelector('.git-commit-files .git-wrap-toggle').click();
+    expect(frame.querySelector('.git-block').classList.contains('is-wrap-diff')).toBe(false);
+    expect(context.win.BlockHost._test.instances()[0].params.wrapDiff).toBe(false);
+    expect(frame.querySelector('.git-commit-diffs .blk-code')).toBe(code);
+  });
+});
+
 describe('a commit in the Git history', () => {
   async function openCommit(context) {
     await settled();
