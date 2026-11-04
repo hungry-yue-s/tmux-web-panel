@@ -34,6 +34,8 @@ import { ServerMessage, outputFrameOptions, parseClientMessage, parseTerminalPat
 export const CONTACT_TIMEOUT_MS = 8_000;
 /** How long a server whose mosh failed is not tried over mosh again. */
 export const RETRY_AFTER_MS = 10 * 60_000;
+export const SETUP_TIMEOUT_MS = 15_000;
+const PING_INTERVAL_MS = 30_000;
 // Browsers resize in bursts while a window is dragged; mosh only needs the last size.
 const RESIZE_SETTLE_MS = 80;
 // Errors a node gives before it reserves a session (api/mosh.js): nothing there to end.
@@ -140,15 +142,17 @@ export class MoshTerminals {
    * @param {import('./link-pool.js').LinkPool} deps.links
    * @param {import('ws').WebSocketServer} deps.wss
    */
-  constructor({ registry, links, wss, client = findMoshClient(),
+  constructor({ registry, links, wss, client, findClient = findMoshClient,
     // Every pty this process starts is on the console reaper's record (CLAUDE.md).
     spawnPty = (file, args, options) => trackConsoleSpawn(() => pty.spawn(file, args, options)).term,
     now = () => Date.now(), contactTimeoutMs = CONTACT_TIMEOUT_MS, sessionWatchMs = SESSION_WATCH_MS, localExitWaitMs = LOCAL_EXIT_WAIT_MS,
-    lookup = lookupAddress, lookupTimeoutMs = 5000 }) {
+    lookup = lookupAddress, lookupTimeoutMs = 5000, setupTimeoutMs = SETUP_TIMEOUT_MS, pingIntervalMs = PING_INTERVAL_MS }) {
     this.registry = registry;
     this.links = links;
     this.wss = wss;
-    this.client = client;
+    this._findClient = client === undefined ? findClient : null;
+    this.client = client === undefined ? findClient() : client;
+    this._clientCheckedAt = now();
     this._spawnPty = spawnPty;
     this._now = now;
     this._contactTimeoutMs = contactTimeoutMs;
@@ -156,34 +160,116 @@ export class MoshTerminals {
     this._localExitWaitMs = localExitWaitMs;
     this._lookup = lookup;
     this._lookupTimeoutMs = lookupTimeoutMs;
-    /** serverId -> { reason, at } for mosh that did not work, so it is not retried at once. */
-    this._failed = new Map();
+    this._setupTimeoutMs = setupTimeoutMs;
+    this._pingIntervalMs = pingIntervalMs;
+    // Results belong to this link and pairing generation, never just its id.
+    this._scopes = new Map();
+    // Ownership outlives a failed attempt and its link's scope, until cleanup is confirmed.
+    this._pendingCleanup = new Map();
     /** Attempts still coming up, and bridged terminals: both end on closeAll. */
     this._opening = new Set();
     this._active = new Set();
     this._closing = false;
   }
 
+  _scope(serverId, link = this.links.link(serverId)) {
+    let scope = this._scopes.get(serverId);
+    if (!scope || scope.link !== link || scope.generation !== link.generation) {
+      scope = { link, generation: link.generation, verified: false, failed: null, trial: null, capability: null, unclean: new Map() };
+      this._scopes.set(serverId, scope);
+    }
+    return scope;
+  }
+
+  _refreshClient(force = false) {
+    if (!this._findClient || (!force && this._now() - this._clientCheckedAt < 30_000)) return;
+    this.client = this._findClient();
+    this._clientCheckedAt = this._now();
+  }
+
+  /** Retry a confirmed-clean negative result; never release ownership or a running trial. */
+  retry(serverId) {
+    this._refreshClient(true);
+    const scope = this._scopes.get(serverId);
+    if (!scope || scope.unclean.size || scope.trial) return;
+    scope.failed = null;
+    scope.verified = false;
+    scope.capability = null;
+  }
+
+  _current(serverId, scope) {
+    try { return this._scope(serverId) === scope; }
+    catch { return false; }
+  }
+
+  _failure(scope) {
+    return scope.failed && (scope.unclean.size || this._now() - scope.failed.at < RETRY_AFTER_MS) ? scope.failed : null;
+  }
+
   /** Whether this terminal socket should try mosh. */
   wants(serverId) {
+    this._refreshClient();
+    const pending = this._scopes.get(serverId);
+    if (pending && this._scope(serverId) === pending && (pending.unclean.size || pending.trial)) return true;
     if (this.registry.get(serverId)?.transport?.terminal !== 'mosh') return false;
     if (!this.client.available) return false;
-    const failed = this._failed.get(serverId);
-    return !failed || this._now() - failed.at >= RETRY_AFTER_MS;
+    const scope = this._scope(serverId);
+    // Unconfirmed cleanup must reach open(), which refuses or confirms it before any fallback.
+    return Boolean(scope.unclean.size || scope.trial || (scope.capability?.available !== false && !this._failure(scope)));
   }
 
   /** For the server's status: why mosh is not in use, if it is wanted. */
-  status(serverId) {
+  status(serverId, { link, capability } = {}) {
     if (this.registry.get(serverId)?.transport?.terminal !== 'mosh') return null;
+    this._refreshClient();
+    const current = this.links.link(serverId);
+    if (link && link !== current) return { status: 'unknown', reason: null };
+    const scope = this._scope(serverId, current);
+    if (capability !== undefined) {
+      const before = scope.capability;
+      scope.capability = capability;
+      if (before && (before.available !== capability?.available || before.version !== capability?.version || before.reason !== capability?.reason)
+        && !scope.trial && !scope.unclean.size && ['unsupported', 'mosh_server_not_found', 'mosh_server_unusable'].includes(scope.failed?.reason)) scope.failed = null;
+    }
+    const failed = this._failure(scope);
+    // A failed new attempt does not turn a still-bridged terminal into an SSH terminal.
+    if ([...this._active].some((active) => active.bridged && active.scope.link === scope.link && active.scope.generation === scope.generation)) {
+      const fallbackReason = scope.unclean.size ? 'cleanup_unconfirmed' : !this.client.available ? this.client.reason
+        : scope.capability?.available === false ? scope.capability.reason || 'mosh_server_not_found' : failed?.reason;
+      return { status: 'up', reason: null, ...(fallbackReason ? { fallbackReason } : {}) };
+    }
+    if (scope.unclean.size) return { status: 'down', reason: 'cleanup_unconfirmed' };
     if (!this.client.available) return { status: 'down', reason: this.client.reason };
-    const failed = this._failed.get(serverId);
-    if (failed && this._now() - failed.at < RETRY_AFTER_MS) return { status: 'down', reason: failed.reason };
-    return { status: 'up', reason: null };
+    if (scope.trial) return { status: 'checking', reason: null };
+    if (scope.capability?.available === false) return { status: 'down', reason: scope.capability.reason || 'mosh_server_not_found' };
+    if (failed) return { status: 'down', reason: failed.reason };
+    return { status: scope.verified ? 'up' : 'unknown', reason: null };
   }
 
-  _fail(serverId, reason) {
-    this._failed.set(serverId, { reason, at: this._now() });
+  _fail(serverId, reason, scope = this._scope(serverId)) {
+    if (!this._current(serverId, scope)) return;
+    scope.failed = { reason, at: this._now() };
+    scope.verified = false;
     logMosh(serverId, 'down', reason);
+  }
+
+  async _cleanOwned(owned) {
+    owned = this._pendingCleanup.get(owned.id) || owned;
+    if (owned.cleaned) return { localGone: true, clean: true };
+    if (owned.cleaning) return owned.cleaning;
+    this._pendingCleanup.set(owned.id, owned);
+    owned.cleaning = (async () => {
+      const localGone = await stopLocalClient(owned.local, { waitMs: this._localExitWaitMs });
+      const clean = localGone && (!owned.posted || await this._endRemote(owned.link, owned.id));
+      if (clean) {
+        owned.cleaned = true;
+        this._pendingCleanup.delete(owned.id);
+        owned.scope?.unclean.delete(owned.id);
+      } else owned.scope?.unclean.set(owned.id, owned);
+      return { localGone, clean };
+    })();
+    try { return await owned.cleaning; }
+    finally { owned.cleaning = null; }
   }
 
   /**
@@ -197,14 +283,18 @@ export class MoshTerminals {
     const relay = () => link.proxyUpgrade(req, socket, head, target.path).catch(() => socket.destroy());
     const refuse = () => { if (!socket.destroyed) socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n'); };
     const pane = parseTerminalPath(target.pathname);
-    if (!pane || this._closing) return relay();
+    if (this._closing) return refuse();
+    if (!pane) return relay();
     const query = parseTerminalQuery(new URLSearchParams(target.path.includes('?') ? target.path.slice(target.path.indexOf('?') + 1) : ''));
     const id = randomUUID();
     // Set once the node may hold a session by this id; until it is confirmed gone, nothing else attaches.
     let posted = false;
     let term = null;
     let local = null;
-    let generation = null;
+    const scope = this._scope(serverId, link);
+    const deadline = performance.now() + this._setupTimeoutMs;
+    let trial = null;
+    let waitingTrial = false;
     let aborted = null;
     let wake = () => {};
     let settle;
@@ -216,13 +306,72 @@ export class MoshTerminals {
     const release = typeof link.adopt === 'function' ? link.adopt(opening) : () => {};
     this._opening.add(opening);
     const done = () => { release(); this._opening.delete(opening); settle(); };
-    const stillWanted = () => !socket.destroyed && !aborted && link.generation === generation;
+    const sameScope = () => { try { return this._scope(serverId) === scope; } catch { return false; } };
+    const stillWanted = () => !socket.destroyed && !aborted && sameScope();
+    const finishTrial = (clean) => {
+      if (!trial) return;
+      if (scope.trial === trial) scope.trial = null;
+      trial.resolve(clean);
+      trial = null;
+    };
+    // A single absolute setup deadline, including any shared trial wait. Cleanup is separate.
+    const wait = (start, limit = Infinity, reason = 'setup_timeout') => new Promise((resolve, reject) => {
+      const left = deadline - performance.now();
+      if (!stillWanted()) { reject(Object.assign(new Error('gone'), { moshReason: null })); return; }
+      if (left <= 0) { reject(Object.assign(new Error('timeout'), { moshReason: 'setup_timeout' })); return; }
+      const expires = performance.now() + Math.min(left, limit);
+      const timedOut = () => Object.assign(new Error('timeout'), { moshReason: left <= limit ? 'setup_timeout' : reason });
+      let finished = false;
+      const finish = (error, value) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        socket.removeListener('close', cancelled);
+        wake = () => {};
+        if (error) reject(error); else resolve(value);
+      };
+      const cancelled = () => finish(Object.assign(new Error('gone'), { moshReason: null }));
+      const timer = setTimeout(() => finish(timedOut()), Math.min(left, limit));
+      wake = cancelled;
+      socket.once('close', cancelled);
+      Promise.resolve().then(() => {
+        if (!stillWanted()) throw Object.assign(new Error('gone'), { moshReason: null });
+        if (performance.now() >= expires) throw timedOut();
+        return start();
+      }).then((value) => performance.now() >= expires ? finish(timedOut()) : finish(null, value), (err) => finish(err));
+    });
     const handlers = { data: null, exit: null };
     let earlier = '';
     try {
-      await link.ensure();
-      generation = link.generation;
-      const where = await link.connection.resolveTarget();
+      while (scope.trial) {
+        waitingTrial = true;
+        const pending = scope.trial;
+        const clean = await wait(() => pending.settled);
+        waitingTrial = false;
+        if (!clean) throw Object.assign(new Error('unclean trial'), { moshReason: null });
+      }
+      if (!stillWanted()) throw Object.assign(new Error('gone'), { moshReason: null });
+      // Recheck after the first trial; none of its waiters attaches beside an unconfirmed client.
+      if (scope.unclean.size) {
+        let resolve;
+        trial = { settled: new Promise((done) => { resolve = done; }), resolve: (clean) => resolve(clean) };
+        scope.trial = trial;
+        await Promise.all([...scope.unclean.values()].map(async (owned) => {
+          if ((await this._cleanOwned(owned)).clean) scope.unclean.delete(owned.id);
+        }));
+        const clean = scope.unclean.size === 0;
+        finishTrial(clean);
+        done();
+        return clean && stillWanted() ? relay() : refuse();
+      }
+      if (this.registry.get(serverId)?.transport?.terminal !== 'mosh' || scope.capability?.available === false || this._failure(scope)) { done(); return relay(); }
+      if (!scope.verified) {
+        let resolve;
+        trial = { settled: new Promise((done) => { resolve = done; }), resolve: (clean) => resolve(clean) };
+        scope.trial = trial;
+      }
+      await wait(() => link.ensure());
+      const where = await wait(() => link.connection.resolveTarget({ timeout: Math.max(1, Math.ceil(deadline - performance.now())) }));
       if (where.proxied) throw Object.assign(new Error('proxied'), { moshReason: 'proxied' });
       // Nothing may attach for a browser that already left.
       if (!stillWanted()) throw Object.assign(new Error('gone'), { moshReason: null });
@@ -230,38 +379,24 @@ export class MoshTerminals {
       if (!isIP(address)) {
         // Raw mosh-client requires AI_NUMERICHOST. Use one OS-selected address;
         // this does not claim multi-address/family failover or UDP reachability.
-        address = await new Promise((resolve, reject) => {
-          let finished = false;
-          const finish = (reason, ip) => {
-            if (finished) return;
-            finished = true;
-            clearTimeout(timer);
-            socket.removeListener('close', cancelled);
-            wake = () => {};
-            if (reason) reject(Object.assign(new Error(reason), { moshReason: reason === 'gone' ? null : reason }));
-            else resolve(ip);
-          };
-          const cancelled = () => finish('gone');
-          const timer = setTimeout(() => finish('dns_timeout'), this._lookupTimeoutMs);
-          wake = cancelled;
-          socket.once('close', cancelled);
-          Promise.resolve().then(() => this._lookup(where.host)).then(
-            (result) => typeof result?.address === 'string' && isIP(result.address) ? finish(null, result.address) : finish('dns_failed'),
-            () => finish('dns_failed'),
-          );
-        });
+        const answer = await wait(() => Promise.resolve(this._lookup(where.host)).catch(() => {
+          throw Object.assign(new Error('dns'), { moshReason: 'dns_failed' });
+        }), this._lookupTimeoutMs, 'dns_timeout');
+        if (typeof answer?.address !== 'string' || !isIP(answer.address)) throw Object.assign(new Error('dns'), { moshReason: 'dns_failed' });
+        address = answer.address;
       }
-      if (!stillWanted()) throw Object.assign(new Error('gone'), { moshReason: null });
+      if (!stillWanted() || this.registry.get(serverId)?.transport?.terminal !== 'mosh') throw Object.assign(new Error('gone'), { moshReason: null });
       posted = true;
       let session;
       try {
-        session = await link.requestJson('POST', '/api/mosh/sessions', { id, paneId: pane.paneId, nozoom: query.nozoom }, { timeout: 20_000 });
+        session = await wait(() => link.requestJson('POST', '/api/mosh/sessions', { id, paneId: pane.paneId, nozoom: query.nozoom },
+          { timeout: Math.max(1, Math.ceil(deadline - performance.now())) }));
       } catch (err) {
         // Refused before the node reserved anything: there is nothing to end there.
         if (err && (NEVER_STARTED.has(err.code) || err.status === 404 || err.status === 403)) posted = false;
         throw err;
       }
-      if (!stillWanted()) throw Object.assign(new Error('gone'), { moshReason: null });
+      if (!stillWanted() || this.registry.get(serverId)?.transport?.terminal !== 'mosh') throw Object.assign(new Error('gone'), { moshReason: null });
       const env = { ...process.env, MOSH_KEY: session.key, TERM: 'xterm-256color', LANG: process.env.LANG || 'en_US.UTF-8' };
       delete env.TMUX;
       delete env.TMUX_PANE;
@@ -271,17 +406,13 @@ export class MoshTerminals {
       term.onData((chunk) => handlers.data && handlers.data(chunk));
       term.onExit((info) => handlers.exit && handlers.exit(info));
       const contact = createContactWatch();
-      const reached = await new Promise((resolve) => {
-        const timer = setTimeout(() => resolve('no_contact'), this._contactTimeoutMs);
-        const finish = (value) => { clearTimeout(timer); resolve(value); };
+      const reached = await wait(() => new Promise((resolve) => {
         handlers.data = (chunk) => {
           earlier += chunk;
-          if (contact(chunk)) finish(null);
+          if (contact(chunk)) resolve(null);
         };
-        handlers.exit = () => finish('client_exit');
-        wake = () => finish('aborted');
-        socket.once('close', () => finish('browser_gone'));
-      });
+        handlers.exit = () => resolve('client_exit');
+      }), this._contactTimeoutMs, 'no_contact');
       // Still kept until the socket takes over, a moment from now.
       handlers.data = (chunk) => { earlier += chunk; };
       handlers.exit = null;
@@ -290,15 +421,16 @@ export class MoshTerminals {
       }
     } catch (err) {
       // Ours first, so it stops talking to the session; then the node's. Both must be confirmed.
-      const localGone = await stopLocalClient(local, { waitMs: this._localExitWaitMs });
-      const clean = localGone && (posted ? await this._endRemote(link, id) : true);
+      const owned = { local, link, id, posted, scope };
+      const { localGone, clean } = await this._cleanOwned(owned);
+      finishTrial(clean);
       done();
       // The browser left, or the link or this hub moved on: nothing to fall back for.
-      if (socket.destroyed || aborted || (generation !== null && link.generation !== generation) || err.moshReason === null) {
+      if (!stillWanted() || waitingTrial || err.moshReason === null) {
         refuse();
         return undefined;
       }
-      this._fail(serverId, err.moshReason || (typeof err.code === 'string' ? err.code.toLowerCase() : 'failed'));
+      this._fail(serverId, err.moshReason || (typeof err.code === 'string' ? err.code.toLowerCase() : 'failed'), scope);
       if (!clean) {
         // The session may still be attached; a second client next to it is what -d would leave.
         logMosh(serverId, 'not_clean', localGone ? 'cleanup_unconfirmed' : 'local_client_unconfirmed');
@@ -307,9 +439,10 @@ export class MoshTerminals {
       }
       return relay();
     }
+    const outcome = await this._upgrade(req, socket, head, { term, local, id, link, posted, scope, handlers, earlier: () => earlier }, pane.paneId);
+    if (outcome.bridged && this._current(serverId, scope)) { scope.verified = true; scope.failed = null; }
+    finishTrial(outcome.clean);
     done();
-    this._failed.delete(serverId);
-    this._upgrade(req, socket, head, { term, local, id, link, handlers, earlier: () => earlier }, pane.paneId);
     return undefined;
   }
 
@@ -329,20 +462,23 @@ export class MoshTerminals {
    * close then ends the client and the session all the same.
    */
   _upgrade(req, socket, head, owned, paneId) {
+    let report;
+    const result = new Promise((resolve) => { report = resolve; });
     let ending = null;
     const end = () => {
       if (!ending) {
         ending = (async () => {
-          const localGone = await stopLocalClient(owned.local, { waitMs: this._localExitWaitMs });
-          const remote = await this._endRemote(owned.link, owned.id);
-          if (!localGone || !remote) logMosh(owned.link.serverId, 'not_clean', localGone ? 'session_end' : 'local_client_unconfirmed');
-          return localGone && remote;
+          const { localGone, clean } = await this._cleanOwned(owned);
+          if (!clean) logMosh(owned.link.serverId, 'not_clean', localGone ? 'session_end' : 'local_client_unconfirmed');
+          return clean;
         })();
       }
       return ending;
     };
     // A link reset or shutdown ends it like a close; the page reconnects.
     const active = {
+      scope: owned.scope,
+      bridged: false,
       end: () => {
         if (owned.ws && owned.ws.readyState === owned.ws.OPEN) owned.ws.close(1011, 'link reset');
         else socket.destroy();
@@ -351,9 +487,15 @@ export class MoshTerminals {
     };
     const release = typeof owned.link.adopt === 'function' ? owned.link.adopt(active) : () => {};
     this._active.add(active);
-    owned.finish = () => { release(); this._active.delete(active); return end(); };
+    owned.finish = () => {
+      release(); this._active.delete(active);
+      return end().then((clean) => {
+        report({ bridged: false, clean });
+        return clean;
+      });
+    };
     const abandon = () => { if (!owned.ws) owned.finish(); };
-    if (socket.destroyed) { abandon(); return; }
+    if (socket.destroyed) { abandon(); return result; }
     socket.once('close', abandon);
     try {
       this.wss.handleUpgrade(req, socket, head, (ws) => {
@@ -361,11 +503,14 @@ export class MoshTerminals {
         if (ending) { ws.terminate(); return; }
         owned.ws = ws;
         this._bridge(ws, owned, paneId);
+        active.bridged = true;
+        report({ bridged: true, clean: true });
       });
     } catch {
       abandon();
       socket.destroy();
     }
+    return result;
   }
 
   /** The socket now owns the mosh-client; closing either ends both, and the node's session. */
@@ -388,10 +533,12 @@ export class MoshTerminals {
       if (cleaned) output.push(cleaned);
     };
     let watch = null;
+    let heartbeat = null;
     const finish = () => {
       ended = true;
       clearTimeout(resizeTimer);
       clearInterval(watch);
+      clearInterval(heartbeat);
       output.dispose();
       return owned.finish();
     };
@@ -408,6 +555,14 @@ export class MoshTerminals {
       finish();
     }, this._sessionWatchMs);
     if (watch.unref) watch.unref();
+    let alive = true;
+    ws.on('pong', () => { alive = true; });
+    heartbeat = setInterval(() => {
+      if (!alive) { ws.terminate(); finish(); return; }
+      alive = false;
+      if (ws.readyState === ws.OPEN) ws.ping();
+    }, this._pingIntervalMs);
+    if (heartbeat.unref) heartbeat.unref();
     ws.on('error', finish);
     ws.on('close', finish);
     ws.send(ServerMessage.ready({ paneId, provider: 'mosh', persistence: 'tmux' }));
@@ -437,7 +592,7 @@ export class MoshTerminals {
 
   /** Whether any mosh terminal is coming up or running here. */
   busy() {
-    return this._opening.size > 0 || this._active.size > 0;
+    return this._opening.size > 0 || this._active.size > 0 || this._pendingCleanup.size > 0;
   }
 
   /** On shutdown: no new mosh terminals, and every one ended, the node's sessions too. */
@@ -445,8 +600,9 @@ export class MoshTerminals {
     this._closing = true;
     const opening = [...this._opening];
     for (const attempt of opening) attempt.end('closing');
-    const results = await Promise.all([...this._active].map((active) => active.end()));
+    await Promise.all([...this._active].map((active) => active.end()));
     await Promise.all(opening.map((attempt) => attempt.settled));
-    return results.every(Boolean);
+    const results = await Promise.all([...this._pendingCleanup.values()].map((owned) => this._cleanOwned(owned)));
+    return results.every((result) => result.clean) && this._pendingCleanup.size === 0;
   }
 }

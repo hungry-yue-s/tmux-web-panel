@@ -56,6 +56,8 @@ function hasUnknownIdentity(session, table) {
 /** A server no client has reached for this long ends itself, with its tmux client. */
 export const NETWORK_TIMEOUT_S = 120;
 export const MAX_SESSIONS = 16;
+/** Recheck installed/removed components without keeping an unavailable result forever. */
+export const CAPABILITY_CACHE_MS = 30_000;
 /** From spawning mosh-server to its CONNECT line. */
 const START_TIMEOUT_MS = 10_000;
 /** From CONNECT to tmux listing the client: the hub's mosh-client must reach us first. */
@@ -128,6 +130,8 @@ export class MoshService {
     this._goneWaitMs = goneWaitMs;
     this._hubSilenceMs = hubSilenceMs;
     this._capability = null;
+    this._capabilityPending = false;
+    this._capabilityCheckedAt = null;
     this._closing = false;
     this._sweeper = null;
     /** @type {Map<string, object>} id -> session, starting ones included */
@@ -137,15 +141,22 @@ export class MoshService {
     terminalManager.addClientOwner?.(this);
   }
 
-  /** Whether this node can start mosh sessions, checked once. */
+  /** Whether this node can start mosh sessions; concurrent callers share one check. */
   capability() {
-    if (!this._capability) {
+    const age = this._capabilityCheckedAt === null ? Infinity : this._now() - this._capabilityCheckedAt;
+    if (!this._capability || (!this._capabilityPending && (age < 0 || age >= CAPABILITY_CACHE_MS))) {
+      this._capabilityPending = true;
       this._capability = (async () => {
-        const path = this._find({ platform: this._platform, env: this._env });
-        if (!path) return { available: false, version: null, reason: 'mosh_server_not_found' };
-        const version = await runVersion(path, this._execFile, this._env, this._platform);
-        if (!version) return { available: false, version: null, reason: 'mosh_server_unusable' };
-        return { available: true, version, reason: null, path };
+        try {
+          const path = this._find({ platform: this._platform, env: this._env });
+          if (!path) return { available: false, version: null, reason: 'mosh_server_not_found' };
+          const version = await runVersion(path, this._execFile, this._env, this._platform);
+          if (!version) return { available: false, version: null, reason: 'mosh_server_unusable' };
+          return { available: true, version, reason: null, path };
+        } finally {
+          this._capabilityPending = false;
+          this._capabilityCheckedAt = this._now();
+        }
       })();
     }
     return this._capability;

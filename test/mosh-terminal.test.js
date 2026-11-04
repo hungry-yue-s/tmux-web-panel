@@ -78,7 +78,9 @@ describe('MoshTerminals', () => {
    */
   async function hub({ screen = '\x1b[24;1H[exp] 0:bash*', proxied = false, post = null, remove = null, state = () => ({ state: 'active' }),
     transport = 'mosh', client = { available: true, path: '/usr/bin/mosh-client' }, sessionWatchMs = 60_000, ignoreKills = 0,
-    host = '192.0.2.10', lookup = vi.fn(async () => ({ address: '192.0.2.10', family: 4 })), lookupTimeoutMs = 50 } = {}) {
+    host = '192.0.2.10', lookup = vi.fn(async () => ({ address: '192.0.2.10', family: 4 })), lookupTimeoutMs = 50,
+    ensure = async () => {}, resolveTarget = null, setupTimeoutMs = 15_000, pingIntervalMs = 30_000,
+    useDefaultClient = false, findClient, now } = {}) {
     const terms = [];
     const requests = [];
     const adopted = new Set();
@@ -89,45 +91,48 @@ describe('MoshTerminals', () => {
       /** What NodeLink.reset does to what it adopted. */
       reset() { link.generation += 1; for (const owned of [...adopted]) owned.end('test-reset'); adopted.clear(); },
       adopted,
-      ensure: vi.fn(async () => {}),
-      connection: { resolveTarget: vi.fn(async () => ({ host, port: 22, proxied })) },
-      requestJson: vi.fn(async (method, path, body) => {
+      ensure: vi.fn(ensure),
+      connection: { resolveTarget: vi.fn(resolveTarget || (async () => ({ host, port: 22, proxied }))) },
+      requestJson: vi.fn(async (method, path, body, options) => {
         requests.push({ method, path, body });
         if (method === 'POST') {
-          if (post) return post(body);
+          if (post) return post(body, options);
           return { id: body.id, port: 60001, key: KEY, paneId: body.paneId };
         }
         if (method === 'GET') return state();
-        if (remove) return remove();
+        if (remove) return remove(path);
         return { stopped: true, clean: true };
       }),
       proxyUpgrade: vi.fn(async (req, socket) => { socket.end('HTTP/1.1 418 Relayed\r\nConnection: close\r\n\r\n'); }),
     };
-    const registry = { get: () => ({ id: 'box', transport: { terminal: transport } }), has: () => true };
-    const links = { link: () => link, mode: async () => 'node' };
+    const record = { id: 'box', transport: { terminal: transport } };
+    const registry = { get: () => record, has: () => true };
+    let currentLink = link;
+    const links = { link: () => currentLink, mode: async () => 'node' };
     const wss = new WebSocketServer({ noServer: true });
     const spawnPty = vi.fn((file, args, options) => {
       const term = fakeTerm({ ignoreKills });
       term.spawned = { file, args, options };
       terms.push(term);
-      if (screen) setTimeout(() => term.emit(screen), 5);
+      const data = typeof screen === 'function' ? screen(terms.length) : screen;
+      if (data) setTimeout(() => term.emit(data), 5);
       return term;
     });
-    const mosh = new MoshTerminals({ registry, links, wss, client, spawnPty, contactTimeoutMs: 150, sessionWatchMs, localExitWaitMs: 60,
-      lookup, lookupTimeoutMs });
+    const mosh = new MoshTerminals({ registry, links, wss, client: useDefaultClient ? undefined : client, findClient, spawnPty,
+      contactTimeoutMs: 150, sessionWatchMs, localExitWaitMs: 60, lookup, lookupTimeoutMs, setupTimeoutMs, pingIntervalMs, now });
     const server = http.createServer();
     server.on('upgrade', (req, socket, head) => {
       relayNodeUpgrade(req, socket, head, { registry, links, authorize: () => true, mosh });
     });
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     cleanups.push(() => { for (const c of wss.clients) c.terminate(); server.close(); });
-    return { mosh, link, terms, requests, spawnPty, port: server.address().port };
+    return { mosh, link, terms, requests, spawnPty, record, setLink: (next) => { currentLink = next; }, port: server.address().port };
   }
 
-  function connect(port, path = '/n/box/ws/terminal/%251?cols=100&rows=30') {
+  function connect(port, path = '/n/box/ws/terminal/%251?cols=100&rows=30', options = {}) {
     return new Promise((resolve) => {
       const frames = [];
-      const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`);
+      const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`, options);
       ws.on('message', (data) => frames.push(JSON.parse(String(data))));
       ws.on('open', () => resolve({ ws, frames, status: 101 }));
       ws.on('unexpected-response', (_req, res) => { res.resume(); resolve({ status: res.statusCode, frames }); });
@@ -135,6 +140,298 @@ describe('MoshTerminals', () => {
       cleanups.push(() => ws.terminate());
     });
   }
+
+  it('reports unknown, then checking, and up only after an actual bridge', async () => {
+    let ready;
+    const fixture = await hub({ ensure: () => new Promise((resolve) => { ready = resolve; }) });
+    expect(fixture.mosh.status('box')).toEqual({ status: 'unknown', reason: null });
+    const pending = connect(fixture.port);
+    await vi.waitFor(() => expect(ready).toBeTypeOf('function'));
+    expect(fixture.mosh.status('box')).toEqual({ status: 'checking', reason: null });
+    ready();
+    expect((await pending).status).toBe(101);
+    expect(fixture.mosh.status('box')).toEqual({ status: 'up', reason: null });
+  });
+
+  it('uses a missing node capability without probing UDP and can retry when the capability changes', async () => {
+    const fixture = await hub();
+    expect(fixture.mosh.status('box', { link: fixture.link, capability: { available: false, reason: 'mosh_server_not_found' } }))
+      .toEqual({ status: 'down', reason: 'mosh_server_not_found' });
+    expect((await connect(fixture.port)).status).toBe(418);
+    expect(fixture.requests).toEqual([]);
+    expect(fixture.mosh.status('box', { capability: { available: true, version: '1.4.0' } })).toMatchObject({ status: 'unknown' });
+    expect((await connect(fixture.port)).status).toBe(101);
+  });
+
+  it('does not reuse a failure for a replacement link or pairing generation', async () => {
+    const fixture = await hub();
+    fixture.mosh._fail('box', 'no_contact');
+    fixture.link.generation += 1;
+    expect(fixture.mosh.status('box').status).toBe('unknown');
+    fixture.mosh._fail('box', 'no_contact');
+    fixture.setLink({ ...fixture.link, generation: 0 });
+    expect(fixture.mosh.wants('box')).toBe(true);
+    expect(fixture.mosh.status('box').status).toBe('unknown');
+    expect((await connect(fixture.port)).status).toBe(101);
+  });
+
+  it('does not let a late health result for an old link overwrite the current negative scope', async () => {
+    const fixture = await hub();
+    const previous = fixture.link;
+    fixture.setLink({ ...previous });
+    fixture.mosh._fail('box', 'no_contact');
+    expect(fixture.mosh.status('box', { link: previous, capability: { available: true } })).toMatchObject({ status: 'unknown' });
+    expect(fixture.mosh.wants('box')).toBe(false);
+    expect(fixture.mosh.status('box')).toEqual({ status: 'down', reason: 'no_contact' });
+  });
+
+  it('waits for one unknown trial and its confirmed cleanup before every waiting fallback', async () => {
+    let clean;
+    const fixture = await hub({ screen: null, remove: () => new Promise((resolve) => { clean = resolve; }) });
+    const pending = [connect(fixture.port), connect(fixture.port), connect(fixture.port)];
+    await vi.waitFor(() => expect(clean).toBeTypeOf('function'));
+    expect(fixture.requests.filter((r) => r.method === 'POST')).toHaveLength(1);
+    expect(fixture.terms).toHaveLength(1);
+    expect(fixture.link.proxyUpgrade).not.toHaveBeenCalled();
+    clean({ clean: true });
+    expect((await Promise.all(pending)).map((r) => r.status)).toEqual([418, 418, 418]);
+    expect(fixture.requests.map((r) => r.method)).toEqual(['POST', 'DELETE']);
+  });
+
+  it('refuses waiters and later requests after unconfirmed cleanup, even after changing preference to SSH', async () => {
+    let clean = false;
+    const fixture = await hub({ screen: null, remove: () => ({ clean }) });
+    expect((await Promise.all([connect(fixture.port), connect(fixture.port)])).map((r) => r.status)).toEqual([503, 503]);
+    expect(fixture.mosh.status('box')).toEqual({ status: 'down', reason: 'cleanup_unconfirmed' });
+    fixture.record.transport.terminal = 'ssh';
+    fixture.mosh.retry('box');
+    expect((await connect(fixture.port)).status).toBe(503);
+    expect(fixture.link.proxyUpgrade).not.toHaveBeenCalled();
+    expect(fixture.requests.filter((r) => r.method === 'POST')).toHaveLength(1);
+    clean = true;
+    expect((await connect(fixture.port)).status).toBe(418);
+    expect(fixture.requests.filter((r) => r.method === 'POST')).toHaveLength(1);
+  });
+
+  it('serializes only the initial unknown trial, then allows verified opens to start together', async () => {
+    const fixture = await hub({ screen: null });
+    const first = connect(fixture.port);
+    await vi.waitFor(() => expect(fixture.terms).toHaveLength(1));
+    const second = connect(fixture.port);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fixture.terms).toHaveLength(1);
+    fixture.terms[0].emit('\x1b[24;1Hremote');
+    expect((await first).status).toBe(101);
+    await vi.waitFor(() => expect(fixture.terms).toHaveLength(2));
+    fixture.terms[1].emit('\x1b[24;1Hremote');
+    expect((await second).status).toBe(101);
+    const next = [connect(fixture.port), connect(fixture.port)];
+    await vi.waitFor(() => expect(fixture.terms).toHaveLength(4));
+    fixture.terms[2].emit('\x1b[24;1Hremote');
+    fixture.terms[3].emit('\x1b[24;1Hremote');
+    expect((await Promise.all(next)).map((r) => r.status)).toEqual([101, 101]);
+  });
+
+  it('keeps a healthy bridge up when a later attempt fails and uses fallback only for new opens', async () => {
+    const fixture = await hub({ screen: (n) => n === 1 ? '\x1b[24;1Hremote' : null });
+    const first = await connect(fixture.port);
+    expect((await connect(fixture.port)).status).toBe(418);
+    expect(fixture.mosh.status('box')).toEqual({ status: 'up', reason: null, fallbackReason: 'no_contact' });
+    expect(fixture.terms[0].killed).toBe(false);
+    first.ws.send(JSON.stringify({ type: 'input', data: 'still here' }));
+    await vi.waitFor(() => expect(fixture.terms[0].writes).toEqual(['still here']));
+    fixture.mosh.retry('box');
+    expect(fixture.mosh.wants('box')).toBe(true);
+    expect(fixture.mosh.status('box').status).toBe('up');
+    expect(fixture.terms[0].killed).toBe(false);
+  });
+
+  it('retains every unconfirmed owner from concurrent verified opens until all are confirmed gone', async () => {
+    const cleared = new Set();
+    const fixture = await hub({ screen: (n) => n === 1 ? '\x1b[24;1Hremote' : null, remove: (path) => ({ clean: cleared.has(path) }) });
+    const healthy = await connect(fixture.port);
+    expect((await Promise.all([connect(fixture.port), connect(fixture.port)])).map((r) => r.status)).toEqual([503, 503]);
+    const ends = fixture.requests.filter((r) => r.method === 'DELETE').map((r) => r.path);
+    expect(new Set(ends).size).toBe(2);
+    cleared.add(ends[0]);
+    expect((await connect(fixture.port)).status).toBe(503);
+    expect(fixture.link.proxyUpgrade).not.toHaveBeenCalled();
+    cleared.add(ends[1]);
+    expect((await connect(fixture.port)).status).toBe(418);
+    expect(fixture.requests.filter((r) => r.method === 'POST')).toHaveLength(3);
+    expect(healthy.ws.readyState).toBe(WebSocket.OPEN);
+    expect(fixture.terms[0].killed).toBe(false);
+  });
+
+  it('keeps failed cleanup busy and retries it on shutdown without any new attach', async () => {
+    let clean = false;
+    const fixture = await hub({ screen: null, remove: () => ({ clean }) });
+    expect((await connect(fixture.port)).status).toBe(503);
+    expect(fixture.mosh.busy()).toBe(true);
+    expect(await fixture.mosh.closeAll()).toBe(false);
+    expect(fixture.mosh.busy()).toBe(true);
+    fixture.record.transport.terminal = 'ssh';
+    expect((await connect(fixture.port)).status).toBe(503);
+    expect(fixture.link.proxyUpgrade).not.toHaveBeenCalled();
+    clean = true;
+    expect(await fixture.mosh.closeAll()).toBe(true);
+    expect(fixture.mosh.busy()).toBe(false);
+    expect(fixture.requests.filter((r) => r.method === 'POST')).toHaveLength(1);
+  });
+
+  it('retains ownership when the scope changes during cleanup and retries the old owner on shutdown', async () => {
+    let answer;
+    let calls = 0;
+    const fixture = await hub({ screen: null, remove: () => ++calls === 1 ? new Promise((resolve) => { answer = resolve; }) : { clean: true } });
+    const pending = connect(fixture.port);
+    await vi.waitFor(() => expect(answer).toBeTypeOf('function'));
+    fixture.link.reset();
+    expect(fixture.mosh.status('box').status).toBe('unknown');
+    answer({ clean: false });
+    expect((await pending).status).toBe(503);
+    expect(fixture.mosh.busy()).toBe(true);
+    expect(fixture.mosh.status('box').status).toBe('unknown');
+    expect(await fixture.mosh.closeAll()).toBe(true);
+    expect(fixture.mosh.busy()).toBe(false);
+    expect(calls).toBe(2);
+    expect(fixture.link.proxyUpgrade).not.toHaveBeenCalled();
+    expect(fixture.requests.filter((r) => r.method === 'POST')).toHaveLength(1);
+  });
+
+  it('shares a pending owner cleanup across concurrent shutdown calls', async () => {
+    let answer;
+    let calls = 0;
+    const fixture = await hub({ screen: null, remove: () => ++calls === 1 ? { clean: false } : new Promise((resolve) => { answer = resolve; }) });
+    expect((await connect(fixture.port)).status).toBe(503);
+    const closing = [fixture.mosh.closeAll(), fixture.mosh.closeAll()];
+    await vi.waitFor(() => expect(answer).toBeTypeOf('function'));
+    expect(calls).toBe(2);
+    answer({ clean: true });
+    expect(await Promise.all(closing)).toEqual([true, true]);
+    expect(fixture.mosh.busy()).toBe(false);
+    expect(fixture.link.proxyUpgrade).not.toHaveBeenCalled();
+  });
+
+  it('describes fallback for missing components while retaining evidence of the active bridge', async () => {
+    const fixture = await hub();
+    await connect(fixture.port);
+    expect(fixture.mosh.status('box', { capability: { available: false, reason: 'mosh_server_not_found' } }))
+      .toEqual({ status: 'up', reason: null, fallbackReason: 'mosh_server_not_found' });
+    expect(fixture.mosh.wants('box')).toBe(false);
+    fixture.mosh.client = { available: false, reason: 'mosh_client_not_found' };
+    expect(fixture.mosh.status('box')).toEqual({ status: 'up', reason: null, fallbackReason: 'mosh_client_not_found' });
+    expect(fixture.terms[0].killed).toBe(false);
+  });
+
+  it('does not invalidate a pending trial on rename or explicit retry', async () => {
+    const fixture = await hub({ screen: null });
+    const first = connect(fixture.port);
+    await vi.waitFor(() => expect(fixture.terms).toHaveLength(1));
+    fixture.record.name = 'new name';
+    fixture.record.updatedAt = '2030-01-01T00:00:00Z';
+    fixture.mosh.retry('box');
+    expect(fixture.mosh.status('box').status).toBe('checking');
+    fixture.terms[0].emit('\x1b[24;1Hremote');
+    expect((await first).status).toBe(101);
+    expect(fixture.mosh.status('box').status).toBe('up');
+    expect(fixture.requests.filter((r) => r.method === 'POST')).toHaveLength(1);
+  });
+
+  it('ignores an old setup result after reset instead of poisoning the new scope', async () => {
+    let ready;
+    let calls = 0;
+    const fixture = await hub({ ensure: () => ++calls === 1 ? new Promise((resolve) => { ready = resolve; }) : Promise.resolve() });
+    const old = connect(fixture.port);
+    await vi.waitFor(() => expect(ready).toBeTypeOf('function'));
+    fixture.link.reset();
+    expect((await old).status).toBe(503);
+    expect((await connect(fixture.port)).status).toBe(101);
+    ready();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(fixture.mosh.status('box').status).toBe('up');
+    expect(fixture.requests.filter((r) => r.method === 'POST')).toHaveLength(1);
+  });
+
+  it('bounds a stuck ensure by the shared setup deadline and ignores its late completion', async () => {
+    let ready;
+    const fixture = await hub({ setupTimeoutMs: 35, ensure: () => new Promise((resolve) => { ready = resolve; }) });
+    expect((await connect(fixture.port)).status).toBe(418);
+    expect(fixture.mosh.status('box')).toMatchObject({ reason: 'setup_timeout' });
+    ready();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(fixture.requests).toEqual([]);
+    expect(fixture.terms).toEqual([]);
+  });
+
+  it('shares the remaining deadline across ensure, POST and contact rather than restarting a phase budget', async () => {
+    let postTimeout;
+    const fixture = await hub({ setupTimeoutMs: 100, screen: null,
+      ensure: () => new Promise((resolve) => setTimeout(resolve, 40)),
+      post: async (body, options) => { postTimeout = options.timeout; await new Promise((resolve) => setTimeout(resolve, 20)); return { id: body.id, port: 60001, key: KEY }; } });
+    expect((await connect(fixture.port)).status).toBe(418);
+    expect(postTimeout).toBeGreaterThan(0);
+    expect(postTimeout).toBeLessThan(80);
+    expect(fixture.mosh.status('box')).toMatchObject({ reason: 'setup_timeout' });
+    expect(fixture.terms[0].killed).toBe(true);
+    expect(fixture.requests.map((r) => r.method)).toEqual(['POST', 'DELETE']);
+  });
+
+  it('does not use the setup deadline to pretend remote cleanup is complete', async () => {
+    let clean;
+    let answered = false;
+    const fixture = await hub({ setupTimeoutMs: 40, screen: null, remove: () => new Promise((resolve) => { clean = resolve; }) });
+    const pending = connect(fixture.port).then((r) => { answered = true; return r; });
+    await vi.waitFor(() => expect(clean).toBeTypeOf('function'));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(answered).toBe(false);
+    expect(fixture.link.proxyUpgrade).not.toHaveBeenCalled();
+    clean({ clean: true });
+    expect((await pending).status).toBe(418);
+  });
+
+  it('ends the chosen remote id after a POST misses the setup deadline and ignores its late key', async () => {
+    let answer;
+    const fixture = await hub({ setupTimeoutMs: 40, post: (body) => new Promise((resolve) => {
+      answer = () => resolve({ id: body.id, port: 60001, key: KEY });
+    }) });
+    expect((await connect(fixture.port)).status).toBe(418);
+    expect(fixture.requests.map((r) => r.method)).toEqual(['POST', 'DELETE']);
+    expect(fixture.requests[1].path).toBe(`/api/mosh/sessions/${fixture.requests[0].body.id}`);
+    answer();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(fixture.terms).toEqual([]);
+  });
+
+  it('reaps a browser black hole by ping/pong while retaining an idle healthy browser', async () => {
+    const fixture = await hub({ pingIntervalMs: 25 });
+    const healthy = await connect(fixture.port);
+    const lost = await connect(fixture.port, undefined, { autoPong: false });
+    await vi.waitFor(() => expect(fixture.terms[1].killed).toBe(true));
+    await vi.waitFor(() => expect(lost.ws.readyState).not.toBe(WebSocket.OPEN));
+    expect(healthy.ws.readyState).toBe(WebSocket.OPEN);
+    expect(fixture.terms[0].killed).toBe(false);
+    await vi.waitFor(() => expect(fixture.requests.filter((r) => r.method === 'DELETE')).toHaveLength(1));
+    expect(fixture.terms[1].gone).toBe(true);
+  });
+
+  it('refreshes a default missing client after 30 seconds and on explicit retry without touching injected clients', async () => {
+    let clock = 0;
+    let available = false;
+    const finder = vi.fn(() => ({ available, path: available ? '/test/mosh-client' : null, reason: available ? null : 'mosh_client_not_found' }));
+    const fixture = await hub({ useDefaultClient: true, findClient: finder, now: () => clock });
+    expect(fixture.mosh.wants('box')).toBe(false);
+    available = true;
+    clock = 30_000;
+    expect(fixture.mosh.wants('box')).toBe(true);
+    expect((await connect(fixture.port)).status).toBe(101);
+    available = false;
+    fixture.mosh.retry('box');
+    expect(fixture.mosh.wants('box')).toBe(false);
+    const injectedFinder = vi.fn();
+    const injected = await hub({ findClient: injectedFinder });
+    injected.mosh.retry('box');
+    expect(injectedFinder).not.toHaveBeenCalled();
+  });
 
   it.each(['192.0.2.10', '2001:db8::10'])('passes the literal IP %s through without a DNS request', async (host) => {
     const lookup = vi.fn();

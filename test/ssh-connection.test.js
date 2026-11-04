@@ -513,7 +513,23 @@ describe('SshConnection', () => {
         port: 2202,
         source: 'ssh-config',
       });
-      expect(calls[0].argv).toEqual(['-G', 'build-mac']);
+      expect(calls[0].argv[0]).toBe('-G');
+      expect(calls[0].argv.at(-1)).toBe('build-mac');
+      expect(calls[0].argv).toContain('StrictHostKeyChecking=yes');
+    });
+
+    it('treats an explicit ProxyJump none as direct and resolves alias overrides using the actual connection options', async () => {
+      const direct = make({ ...REMOTE, ssh: { ...REMOTE.ssh, proxyJump: 'none' } });
+      expect((await direct.executor.resolveTarget()).proxied).toBe(false);
+      const { executor, calls } = make(
+        { ...REMOTE, address: { ...REMOTE.address, port: 2222 }, ssh: { ...REMOTE.ssh, configHost: 'aliased', proxyJump: 'none' } },
+        { ssh: { stdout: 'hostname 10.1.1.1\nport 2202\nproxyjump none\nproxycommand none\n' } },
+      );
+      expect(await executor.resolveTarget()).toMatchObject({ proxied: false, port: 2202 });
+      const argv = calls[0].argv;
+      expect(argv[argv.indexOf('-J') + 1]).toBe('none');
+      // Config aliases keep their own port, as the actual connection does.
+      expect(argv).not.toContain('-p');
     });
 
     it('honors hostkeyalias from ssh config', async () => {

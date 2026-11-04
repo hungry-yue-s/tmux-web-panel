@@ -59,9 +59,13 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 - **会话 id 由 Hub 生成。** 应答没到也能按 id 结束；结束过的 id 记住 10 分钟，迟到的创建请求被拒；创建请求在应答前断开，Node 立即取消。启动中的会话计入上限。
 - **Windows 的 attach 证明。** mosh-server 打印 CONNECT 后才 fork 命令子进程，子进程要等第一个客户端包才 exec tmux。Node 在 CONNECT 时就把端口和密钥交给 Hub，但**客户端启动队列一直持有到** `tmux list-clients` 里出现父进程是这个 mosh-server 的客户端，再等 `CLIENT_SETTLE_MS`；期间按 `holdStart` 计为“启动中”，面板自己的客户端不离开（ENV-3）。20 秒内没有就结束会话并释放队列。面板的新客户端在同一会话上启动前，经 `addClientOwner` 先结束该会话上的 Mosh 客户端，结果不明则 `TERMINAL_BUSY`。
 - **结束只针对确认的进程。** `server/mosh/processes.js` 记录 pid、启动时间、可执行文件和（MSYS2 的）Windows pid；命令子进程 exec 后可执行文件和 Windows pid 会变，只按 pid+启动时间认。先结束 tmux 客户端，让 mosh-server 通知客户端后自行退出，再结束 mosh-server，最后才 KILL；仍有残留时报告 `clean: false`。自然退出的会话由定期清扫回收。关机时 `stopAll` 和 Hub 的 `closeAll` 完成后进程才退出。
-- **回退规则。** 缺 mosh-client、Node 没有 mosh-server、经跳板机、8 秒内没看到远端画面（UDP 不通）时，Hub 结束本机 mosh-client 并请 Node 结束会话；**只有 Node 确认干净**才把这个 socket 照常转发给 Node，否则以 503 拒绝，不在旧会话旁边再接一个客户端。失败的服务器 10 分钟内不再尝试 Mosh。链路重置（配对变化、关闭）结束该链路上的 Mosh 终端，不回退。已经交给某个传输的输入不会再发给另一个。
-- **桥接期间。** Hub 每 15 秒问 Node 会话是否还在；被接管或已结束就向页面发 exit 并以 1000 关闭（mosh 的结束消息可能丢失）。mosh-client 以 0 退出也以 1000 关闭，其它退出以 1011 让页面重连。
+- **回退规则。** 缺组件、经跳板机、地址解析失败或未看到远端画面时，Hub 先确认本机客户端退出，再请 Node 结束会话；**只有两端确认干净**才转发到 SSH，否则以 503 拒绝。未确认的资源保留完整归属，跨链路换代仍计入 busy 和关机清理，不用新连接覆盖它。已经交给某个传输的输入不会再发给另一个。
+- **并发与重检。** 首次未验证的路径按服务器、link 实例和 generation 合并试探，其它新请求等待同一结论并再次检查，避免堆积多个失败的 Windows 接入。失败冷却为 10 分钟；配置变化和显式重新检测可清除已确认干净的负结果，周期健康轮询不清冷却。重试不关闭健康终端，也不清除待确认资源。Hub 客户端查找和 Node 组件能力均会重检，避免安装或移除组件后永久沿用旧结果。
+- **状态与预算。** 未验证、验证中、已验证、失败分别报告；只有当前链路的成功证据才标记 Mosh。已有桥接仍健康但新连接需回退或拒绝时单独报告原因。准备阶段在 `MoshTerminals.open` 内共享 15 秒绝对预算（包括 DNS、POST 和最多 8 秒的 contact 等待），清理独立等待实际结果；外层首次 Node/SSH 识别不算入这 15 秒。浏览器显式选择远端 Mosh 时最多等 60 秒，普通 SSH/direct 和本机仍为 20 秒，预算不是人为延迟，也不依赖可能过期的健康快照。极慢的冷启动仍可能耗尽总等待，此时失败并收拢资源，不能假称已完成回退。
+- **桥接期间。** WebSocket 使用 ping/pong 判断浏览器是否失联，不按无键盘输入清理。Hub 每 15 秒问 Node 会话是否还在；被接管或已结束就向页面发 exit 并以 1000 关闭（mosh 的结束消息可能丢失）。mosh-client 以 0 退出也以 1000 关闭，其它退出以 1011 让页面重连。
 - Windows 不作为 Mosh 客户端（ENV-6）。
+
+通道选择始终按服务器配置，默认仍是 SSH；保存首选通道只影响新连接，地址或认证变化才按原有规则重建链路。设置页中的 Hub 是运行面板服务的机器，不是手机；浏览器、Swift 和移动客户端共用这些规则。无 Node 的基础模式保持 SSH，并明确说明不能采用所选的 direct/Mosh。支持常见 SSH 配置别名（解析实际连接选项，`ProxyJump none` 不误判为跳板）；独立 UDP 公网地址/端口映射、多地址或地址族逐个试连尚未实现，NAT/双栈环境不能据 mock 覆盖宣称真实可用。
 
 主机密钥仍然走首次信任流程：先 `scan` 再 `trust`，只接受用户确认过的那一个指纹。`StrictHostKeyChecking` 始终为 `yes`。用户名加密码的认证方式通过 askpass 完成，密码不会出现在 argv 和环境变量里（`server/transport/ssh-connection.js`）。
 

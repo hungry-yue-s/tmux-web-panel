@@ -1315,9 +1315,9 @@
       const direct = ['direct', '直连 HTTPS（实验）'];
       return select('transport-terminal', '终端通道', transport.terminal, [ssh, direct, ['mosh', 'Mosh（实验）']])
         + select('transport-api', '文件 / Git / 监控', transport.api, [ssh, direct])
-        + '<p class="field full muted">直连使用那台面板自己的 HTTPS 端口，证书同样固定、令牌不离开本机。'
-        + 'Mosh 需要本机有 mosh-client、那台机器有 mosh-server 且 UDP 可达，本地预测只在本机面板上有效。'
-        + '两者都只在检测通过后使用，不通时自动回到 SSH 隧道；经跳板机的主机不会使用。</p>';
+        + '<p class="field full muted">这些是新连接的首选通道，已有终端会保持当前连接。直连使用目标面板的 HTTPS 端口并校验证书。SSH 认证和 Node 配对在面板服务（Hub）完成，私钥和配对令牌不下发浏览器或移动端。'
+        + 'Mosh 需要 Hub 上有 mosh-client、目标机器有 mosh-server 且 UDP 可达；预测发生在 Hub，不能消除手机或浏览器到远端 Hub 的延迟。Windows Hub 目前不支持 Mosh 客户端。'
+        + '未安装目标面板服务或经跳板机连接时使用 SSH。Mosh 会在首次连接时验证，不通且确认已清理后回到 SSH；清理无法确认时中止连接，避免重复接管会话。</p>';
     },
 
     async _submitEditServer(serverId) {

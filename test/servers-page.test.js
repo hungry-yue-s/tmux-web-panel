@@ -31,6 +31,37 @@ function render(ctx, id, health, section = 'connection') {
 const checkedAt = '2026-10-21T10:00:00.000Z';
 
 describe('ServersPage real connection facts and actions', () => {
+  it.each(['unknown', 'checking', 'down', 'up'])('describes new-connection routing without claiming existing sockets switched (%s)', (status) => {
+    const ctx = setup();
+    const view = render(ctx, 'remote', { state: 'online', checkedAt, node: { installed: true }, capabilities: {},
+      paths: { wanted: { terminal: 'mosh', api: 'ssh' }, terminal: status === 'up' ? 'mosh' : 'ssh', api: 'ssh',
+        mosh: { status, reason: status === 'down' ? 'client_platform' : null } } });
+    expect(view.textContent).toContain('新连接选路');
+    expect(view.textContent).toContain('已有终端保持当前连接');
+    if (status === 'unknown') expect(view.textContent).toContain('待首次连接验证');
+    if (status === 'checking') expect(view.textContent).toContain('Mosh 验证中');
+    if (status === 'down') expect(view.textContent).toContain('Hub 所在平台暂不支持 Mosh 客户端');
+    if (status !== 'up') expect(view.textContent).not.toContain('终端 Mosh');
+  });
+
+  it('explains why basic mode does not adopt the saved Mosh/direct selection', () => {
+    const ctx = setup();
+    const view = render(ctx, 'remote', { state: 'online', checkedAt, node: { installed: false }, capabilities: {},
+      paths: { wanted: { terminal: 'mosh', api: 'direct' }, terminal: 'ssh', api: 'ssh',
+        mosh: { status: 'down', reason: 'node_not_installed' }, direct: { status: 'down', reason: 'node_not_installed' } } });
+    expect(view.textContent).toContain('未安装面板服务，使用基础 SSH');
+    expect(view.textContent).toContain('终端 SSH 隧道');
+  });
+
+  it('does not promise a new SSH terminal while an older Mosh client has unconfirmed cleanup', () => {
+    const ctx = setup();
+    const view = render(ctx, 'remote', { state: 'online', checkedAt, capabilities: {},
+      paths: { terminal: 'ssh', api: 'ssh', mosh: { status: 'up', reason: null, fallbackReason: 'cleanup_unconfirmed' } } });
+    expect(view.textContent).toContain('终端 暂不可用');
+    expect(view.textContent).toContain('已有 Mosh 连接保持');
+    expect(view.textContent).toContain('旧连接清理未确认');
+    expect(view.textContent).not.toContain('终端 Mosh');
+  });
   it('exposes every settings category in the mobile page and folds host operations', () => {
     const ctx = setup();
     ctx.win.MobileUI = { isMobile: () => true };

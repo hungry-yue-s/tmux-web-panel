@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import express from 'express';
 import request from 'supertest';
 
-import { MoshService, MAX_SESSIONS, NETWORK_TIMEOUT_S, findMoshServer } from '../server/mosh/server.js';
+import { MoshService, MAX_SESSIONS, NETWORK_TIMEOUT_S, CAPABILITY_CACHE_MS, findMoshServer } from '../server/mosh/server.js';
 import { parseMsysPs, parseUnixPs, sameProcess, sameStart } from '../server/mosh/processes.js';
 import { createMoshRouter } from '../server/api/mosh.js';
 import { isRelayable } from '../server/hub/proxy.js';
@@ -187,6 +187,38 @@ describe('process tables', () => {
 });
 
 describe('finding mosh-server', () => {
+  it('finds a newly installed component and notices its removal after the cache expires', async () => {
+    let clock = 0;
+    let found = null;
+    const find = vi.fn(() => found);
+    const execFileImpl = vi.fn((_file, _args, _options, done) => done(null, 'mosh-server (mosh 1.4.0)'));
+    const mosh = new MoshService({ workspace: {}, terminalManager: {}, find, execFileImpl, now: () => clock });
+    expect(await mosh.capability()).toMatchObject({ available: false });
+    found = '/test/mosh-server';
+    clock = CAPABILITY_CACHE_MS - 1;
+    expect(await mosh.capability()).toMatchObject({ available: false });
+    clock++;
+    expect(await mosh.capability()).toMatchObject({ available: true });
+    found = null;
+    clock += CAPABILITY_CACHE_MS;
+    expect(await mosh.capability()).toMatchObject({ available: false });
+    expect(find).toHaveBeenCalledTimes(3);
+    expect(execFileImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares a component check still in progress instead of starting another one after a clock change', async () => {
+    let clock = 0;
+    let complete;
+    const execFileImpl = vi.fn((_file, _args, _options, done) => { complete = done; });
+    const mosh = new MoshService({ workspace: {}, terminalManager: {}, find: () => '/test/mosh-server', execFileImpl, now: () => clock });
+    const first = mosh.capability();
+    clock += CAPABILITY_CACHE_MS * 2;
+    expect(mosh.capability()).toBe(first);
+    complete(null, 'mosh-server (mosh 1.4.0)');
+    expect(await first).toMatchObject({ available: true });
+    expect(execFileImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('looks in the MSYS2 that tmux comes from on Windows, and honours an override', () => {
     const exists = (path) => path.endsWith('mosh-server.exe');
     expect(findMoshServer({ platform: 'win32', env: {}, exists, msysRoot: 'D:\\msys64' })).toBe('D:\\msys64\\usr\\bin\\mosh-server.exe');

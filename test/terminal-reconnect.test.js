@@ -58,6 +58,31 @@ describe('reconnecting a terminal', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
+  it.each([
+    ['node Mosh', 'remote', { node: { installed: true }, paths: { mosh: { status: 'unknown' } } }, 'mosh', 60000],
+    ['connecting Mosh', 'remote', { node: { installed: true }, paths: { mosh: { status: 'checking' } } }, 'mosh', 60000],
+    ['cold health', 'remote', null, 'mosh', 60000],
+    ['old node without capability', 'remote', { node: { installed: true } }, 'mosh', 60000],
+    ['possibly stale basic health', 'remote', { node: { installed: false } }, 'mosh', 60000],
+    ['possibly stale Hub capability', 'remote', { paths: { mosh: { status: 'down', reason: 'client_platform' } } }, 'mosh', 60000],
+    ['possibly stale server component', 'remote', { capabilities: { mosh: { available: false } } }, 'mosh', 60000],
+    ['ordinary SSH', 'remote', { node: { installed: true } }, 'ssh', 20000],
+    ['direct HTTPS', 'remote', { node: { installed: true } }, 'direct', 20000],
+    ['local', 'local', null, 'mosh', 20000],
+  ])('bounds a pending %s handshake without cutting a possible safe Mosh fallback', (_name, id, health, transport, budget) => {
+    const { win, term, sockets } = setup();
+    win.TerminalTarget.serverId = id;
+    win.AppShell = { server: () => ({ id, kind: id === 'local' ? 'local' : 'remote', transport: { terminal: transport } }), health: () => health };
+    win.eval(`terminalState.ws = connectTerminalWs('%1', __term, false);`);
+    vi.advanceTimersByTime(budget - 1);
+    expect(sockets[0].readyState).toBe(0);
+    vi.advanceTimersByTime(1);
+    expect(sockets[0].readyState).toBe(3);
+    expect(term.write).not.toHaveBeenCalled();
+    expect(sockets[0].sent).toEqual([]);
+    win.close();
+  });
+
   it('sends later resizes on the new socket, so tmux follows the window after a drop', () => {
     const { win, term, sockets, open, ready, drop, connected } = setup();
     const first = connected();

@@ -427,13 +427,13 @@ const healthService = new HealthService({
   registry: serverRegistry,
   links,
   localInfo: localNodeInfo,
-  moshStatus: (serverId) => moshTerminals.status(serverId),
+  moshStatus: (serverId, context) => moshTerminals.status(serverId, context),
   onStatus: (status) => statusMonitor.broadcastServerStatus(status),
 });
 
 const metricsService = new MetricsService({ collector: collectLocalMetrics });
 
-const serverService = new ServerService({ registry: serverRegistry, links, health: healthService });
+const serverService = new ServerService({ registry: serverRegistry, links, health: healthService, mosh: moshTerminals });
 
 const terminalGateway = new TerminalGateway({ workspace: workspaceService, terminalManager });
 

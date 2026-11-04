@@ -9,7 +9,7 @@
  */
 
 import { AppError, ErrorCode } from './errors.js';
-import { LOCAL_SERVER_ID } from './registry.js';
+import { DEFAULT_TRANSPORT, LOCAL_SERVER_ID } from './registry.js';
 
 export const ServerState = Object.freeze({
   UNKNOWN: 'unknown',
@@ -73,6 +73,7 @@ export function statusFromNodeInfo(serverId, info, { transport, latencyMs, now, 
       metrics: capabilities.metrics || { available: false, level: 'none' },
       files: capabilities.files || { available: false },
       processStats: capabilities.processStats || { available: false },
+      ...(capabilities.mosh ? { mosh: capabilities.mosh } : {}),
     },
     workspace: tmux.available
       ? { provider: 'tmux', transport, persistence: 'tmux' }
@@ -286,15 +287,23 @@ export class HealthService {
       const link = this.links.link(server.id);
       const info = await link.info();
       const paths = typeof link.paths === 'function' ? link.paths() : null;
-      const mosh = paths && this._moshStatus ? this._moshStatus(server.id) : null;
+      const mosh = paths && this._moshStatus
+        ? this._moshStatus(server.id, { link, capability: info?.capabilities?.mosh }) : null;
       if (mosh) {
         paths.mosh = mosh;
-        if (mosh.status === 'up') paths.terminal = 'mosh';
+        if (mosh.status === 'up' && !mosh.fallbackReason) paths.terminal = 'mosh';
       }
       return statusFromNodeInfo(server.id, info, { transport: 'ssh', latencyMs: this._now() - startedAt, now: this._now(), paths });
     }
     const facts = await this.links.basic(server.id).detect({ force: true });
-    return statusFromBasic(server.id, facts, { latencyMs: this._now() - startedAt, now: this._now() });
+    const status = statusFromBasic(server.id, facts, { latencyMs: this._now() - startedAt, now: this._now() });
+    const wanted = { ...DEFAULT_TRANSPORT, ...server.transport };
+    status.paths = {
+      wanted, api: 'ssh', terminal: 'ssh',
+      direct: Object.values(wanted).includes('direct') ? { status: 'down', reason: 'node_not_installed' } : null,
+      mosh: wanted.terminal === 'mosh' ? { status: 'down', reason: 'node_not_installed' } : null,
+    };
+    return status;
   }
 
   /** Applies a probe result unless a newer generation invalidated it. */
@@ -329,6 +338,7 @@ export class HealthService {
         workspace: status.workspace,
         facts: status.facts,
         node: status.node,
+        ...(status.paths ? { paths: status.paths } : {}),
       });
     }
   }

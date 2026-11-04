@@ -47,6 +47,21 @@ describe('MsApp port parsing', () => {
   });
 });
 
+describe('MsApp transport setting scope', () => {
+  it('keeps saved choices and explains Hub-side prediction, fallback and existing terminals', () => {
+    const app = loadMsApp();
+    const doc = new JSDOM(app._transportFields('edit', { terminal: 'mosh', api: 'direct' })).window.document;
+    expect(doc.querySelector('#edit-transport-terminal').value).toBe('mosh');
+    expect(doc.querySelector('#edit-transport-api').value).toBe('direct');
+    expect(doc.body.textContent).toContain('预测发生在 Hub');
+    expect(doc.body.textContent).toContain('已有终端会保持当前连接');
+    expect(doc.body.textContent).toContain('Windows Hub 目前不支持 Mosh 客户端');
+    expect(doc.body.textContent).toContain('确认已清理后回到 SSH');
+    expect(doc.body.textContent).not.toContain('令牌不离开本机');
+    doc.defaultView.close();
+  });
+});
+
 describe('MsApp failure reporting', () => {
   it('never swallows a route render failure', () => {
     // A blank page with no console trace was impossible to diagnose.

@@ -513,13 +513,14 @@ export class SshConnection {
         host: address.host,
         port: address.port ? Number(address.port) : 22,
         hostKeyAlias: ssh.knownHostAlias || null,
-        proxied: Boolean(ssh.proxyJump),
+        proxied: Boolean(ssh.proxyJump && String(ssh.proxyJump).trim().toLowerCase() !== 'none'),
         source: 'record',
       };
     }
 
     const { stdout } = await new Promise((resolve, reject) => {
-      this._execFile(SSH_BIN, ['-G', ssh.configHost], { timeout, maxBuffer: DEFAULT_MAX_BUFFER }, (err, out, stderrOut) => {
+      const argv = buildSshArgs(this.server, { knownHostsPath: this.knownHostsPath, leading: ['-G'] });
+      this._execFile(SSH_BIN, argv, { timeout, maxBuffer: DEFAULT_MAX_BUFFER }, (err, out, stderrOut) => {
         if (err && !out) {
           reject(classifySshError(Object.assign(err, { stderr: stderrOut })));
           return;
@@ -541,7 +542,7 @@ export class SshConnection {
       // An explicit record alias wins; otherwise honor the one from ssh config.
       hostKeyAlias: ssh.knownHostAlias || config.hostkeyalias || null,
       // Reached through another machine: its address may mean nothing from here.
-      proxied: Boolean(ssh.proxyJump) || [config.proxyjump, config.proxycommand].some((value) => value && value !== 'none'),
+      proxied: [config.proxyjump, config.proxycommand].some((value) => value && value.toLowerCase() !== 'none'),
       source: 'ssh-config',
     };
   }

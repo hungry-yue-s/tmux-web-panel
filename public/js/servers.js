@@ -23,14 +23,28 @@
     return '<div class="detail-row"><span>' + esc(label) + '</span><strong class="mono">' + esc(value) + '</strong></div>';
   }
 
-  /** What each kind of traffic takes now, and why a wanted direct way is not used. */
+  /** New-connection routing, not a claim that existing sockets have switched. */
   function pathsText(paths) {
     var name = function (via) { return via === 'direct' ? '直连' : via === 'mosh' ? 'Mosh' : 'SSH 隧道'; };
-    var text = '终端 ' + name(paths.terminal) + ' · 文件/Git/监控 ' + name(paths.api);
+    var reason = function (value) {
+      return ({ node_not_installed: '未安装面板服务，使用基础 SSH', client_platform: 'Hub 所在平台暂不支持 Mosh 客户端',
+        mosh_client_not_found: 'Hub 未安装 mosh-client', mosh_server_not_found: '目标机器未安装 mosh-server',
+        mosh_server_unusable: '目标机器的 mosh-server 无法运行', unsupported: '目标机器不支持 Mosh',
+        proxied: '经跳板机连接，使用 SSH', no_contact: '未能建立 Mosh 连接',
+        client_exit: 'Mosh 客户端已退出', setup_timeout: 'Mosh 初始化超时',
+        cleanup_unconfirmed: '旧连接清理未确认，暂不建立新终端',
+        dns_failed: 'Hub 无法解析目标地址', dns_timeout: 'Hub 解析目标地址超时' })[value] || value || '未知';
+    };
+    var mosh = paths.mosh;
+    var blocked = mosh && (mosh.reason === 'cleanup_unconfirmed' || mosh.fallbackReason === 'cleanup_unconfirmed');
+    var text = '终端 ' + (blocked ? '暂不可用' : name(paths.terminal)) + ' · 文件/Git/监控 ' + name(paths.api);
     var direct = paths.direct;
     if (direct && direct.status === 'checking') text += '（直连检测中）';
-    else if (direct && direct.status === 'down') text += '（直连不可用：' + (direct.reason || '未知') + '）';
-    if (paths.mosh && paths.mosh.status === 'down') text += '（Mosh 不可用：' + (paths.mosh.reason || '未知') + '）';
+    else if (direct && direct.status === 'down') text += '（直连不可用：' + reason(direct.reason) + '）';
+    if (mosh && mosh.fallbackReason) text += '（已有 Mosh 连接保持，新连接：' + reason(mosh.fallbackReason) + '）';
+    else if (paths.mosh && paths.mosh.status === 'down') text += '（Mosh 不可用：' + reason(paths.mosh.reason) + '）';
+    else if (paths.mosh && paths.mosh.status === 'checking') text += '（Mosh 验证中）';
+    else if (paths.mosh && paths.mosh.status === 'unknown') text += '（首选 Mosh，待首次连接验证）';
     return text;
   }
 
@@ -263,7 +277,7 @@
         + detail('SSH Port', address.port || (ssh.configHost ? '来自 ssh config' : '未配置'))
         + detail('Username', address.user || (ssh.configHost ? '来自 ssh config' : '—'))
         + detail('认证配置', ssh.authMethod === 'password' ? '用户名密码' : ssh.usesIdentityFile ? '指定私钥文件' : 'SSH Agent / ssh config')
-        + (health.paths ? detail('数据通道', pathsText(health.paths)) : '')
+        + (health.paths ? detail('新连接选路', pathsText(health.paths)) : '')
         + detail('最近成功', relativeTime(health.lastOnlineAt))
         + (facts.version ? detail('面板版本', facts.version) : '')
         + '</div>'
@@ -290,7 +304,7 @@
         + timeline('tmux', tmux.text, tmux.ok)
         + timeline('指标采集能力', metrics.text, metrics.ok)
         + '</div>'
-        + '<p class="muted" style="margin-top:10px">面板通过 SSH 端口转发（或在编辑中选择的直连 HTTPS）访问那台机器上运行的同一套面板服务，不在远端执行命令。</p>'
+        + '<p class="muted" style="margin-top:10px">连接由面板服务所在机器（Hub）建立。已有终端保持当前连接，通道设置在下次连接时应用。基础模式使用 SSH；安装面板服务后可使用直连 HTTPS 或尝试 Mosh。</p>'
         + '</section></div>';
     },
 
