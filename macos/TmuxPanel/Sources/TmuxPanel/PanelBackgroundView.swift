@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 
 /// Fullscreen Spaces have no desktop behind the window for AppKit to sample.
 /// Keep a local wallpaper layer below the material in a native fullscreen Space.
@@ -9,6 +10,10 @@ final class PanelBackgroundView: NSView {
     private let workspaceNotifications = NSWorkspace.shared.notificationCenter
     private var wallpaperScreenNumber: NSNumber?
     private var wallpaperURL: URL?
+    private let wallpaperQueue = DispatchQueue(label: "com.tmux-web-panel.wallpaper", qos: .utility)
+    private var wallpaperRequest = 0
+    private var loadingWallpaperURL: URL?
+    private var loadingScreenNumber: Int?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -36,6 +41,9 @@ final class PanelBackgroundView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        wallpaperRequest += 1
+        loadingWallpaperURL = nil
+        loadingScreenNumber = nil
         NotificationCenter.default.removeObserver(self)
         workspaceNotifications.removeObserver(self)
         guard let window else { return }
@@ -58,22 +66,52 @@ final class PanelBackgroundView: NSView {
         let screenChanged = wallpaperScreenNumber != screenNumber
         if let url = NSWorkspace.shared.desktopImageURL(for: screen), url.isFileURL {
             if screenChanged || url != wallpaperURL || notification?.name == NSApplication.didBecomeActiveNotification {
-                if let image = NSImage(contentsOf: url),
-                   let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                    wallpaperView.layer?.contents = cgImage
-                    wallpaperURL = url
-                    wallpaperScreenNumber = screenNumber
-                } else if screenChanged {
-                    wallpaperView.layer?.contents = nil
-                    wallpaperURL = nil
-                    wallpaperScreenNumber = nil
-                }
+                loadWallpaper(url, screenNumber: screenNumber?.intValue)
             }
         } else if screenChanged {
+            wallpaperRequest += 1
+            loadingWallpaperURL = nil
+            loadingScreenNumber = nil
             wallpaperView.layer?.contents = nil
             wallpaperURL = nil
             wallpaperScreenNumber = nil
         }
+        updateMaterial()
+    }
+
+    private func loadWallpaper(_ url: URL, screenNumber: Int?) {
+        guard loadingWallpaperURL != url || loadingScreenNumber != screenNumber else { return }
+        wallpaperRequest += 1
+        let request = wallpaperRequest
+        loadingWallpaperURL = url
+        loadingScreenNumber = screenNumber
+        // A desktop image can live on an unavailable volume. File access and
+        // decoding must not block activation, input, or an application quit.
+        wallpaperQueue.async { [weak self] in
+            let source = CGImageSourceCreateWithURL(url as CFURL, nil)
+            let image = source.flatMap {
+                CGImageSourceCreateImageAtIndex($0, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.wallpaperRequest == request else { return }
+                self.loadingWallpaperURL = nil
+                self.loadingScreenNumber = nil
+                if let image {
+                    self.wallpaperView.layer?.contents = image
+                    self.wallpaperURL = url
+                    self.wallpaperScreenNumber = screenNumber.map { NSNumber(value: $0) }
+                } else if self.wallpaperScreenNumber?.intValue != screenNumber {
+                    self.wallpaperView.layer?.contents = nil
+                    self.wallpaperURL = nil
+                    self.wallpaperScreenNumber = nil
+                }
+                self.updateMaterial()
+            }
+        }
+    }
+
+    private func updateMaterial() {
+        guard let window else { return }
         let useWallpaper = wallpaperView.layer?.contents != nil && window.styleMask.contains(.fullScreen)
         wallpaperView.isHidden = !useWallpaper
         materialView.material = useWallpaper ? .titlebar : .underWindowBackground

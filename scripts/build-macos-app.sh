@@ -51,7 +51,12 @@ if [[ "$BUNDLE_RUNTIME" == 1 ]]; then
 fi
 
 SIGN_FLAGS=(--force --sign "$IDENTITY")
-if [[ "$IDENTITY" != - ]]; then SIGN_FLAGS+=(--timestamp --options runtime); fi
+if [[ "$IDENTITY" != - ]]; then SIGN_FLAGS+=(--timestamp); fi
+# Local development certificates may have no Apple Team ID, which Hardened
+# Runtime requires when Node loads its native addons. Distribution retains it.
+if [[ "$IDENTITY" == 'Developer ID Application:'* || -n "$NOTARY_PROFILE" || "$DISTRIBUTION" == 1 ]]; then
+  SIGN_FLAGS+=(--options runtime)
+fi
 cat > "$WORK/node-entitlements.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

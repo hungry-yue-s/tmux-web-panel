@@ -139,7 +139,7 @@ for name in libevent_core.pc libutf8proc.pc; do cp "$PREFIX/lib/pkgconfig/$name"
 )
 install -m 755 "$WORK/tmux/tmux" "$RUNTIME/bin/tmux"
 /usr/bin/strip -S "$RUNTIME/bin/tmux"
-/usr/bin/codesign --force --sign - "$RUNTIME/bin/tmux"
+/usr/bin/codesign --force --sign "${TMUX_PANEL_CODESIGN_IDENTITY:--}" "$RUNTIME/bin/tmux"
 cp "$PROJECT_DIR/vendor/tmux/COPYING" "$RUNTIME/licenses/tmux-COPYING.txt"
 
 echo 'Copying server resources and installing production dependencies...'
