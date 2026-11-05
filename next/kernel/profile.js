@@ -183,7 +183,7 @@ export function applyPatch(entries, ops) {
  * The application a profile describes, after every patch layer.
  * `layers` lists the files that took part, in the order they were applied.
  */
-export async function resolveEntries({ profile = 'node', patches = [], home = null, root = ROOT } = {}) {
+export async function resolveEntries({ profile = 'panel', patches = [], home = null, root = ROOT } = {}) {
   const base = await readProfile(profile, { root });
   let entries = base.entries;
   const layers = [base.file];

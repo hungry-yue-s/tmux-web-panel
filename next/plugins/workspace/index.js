@@ -1,24 +1,22 @@
-// The workspace feature: its API and its view. It depends on the workspace
-// seam only, never on tmux, so it works with any provider of `workspace`.
+// `ctx.workspace`: this machine's session/window/pane tree (lib/workspace).
+//
+// The single thing the workspace API, the terminal gateway and the panel
+// plugins talk to. Every mutation bumps a revision; the change goes out as
+// the `status/workspace-changed` event so open pages refetch instead of
+// polling. Reads are single-flight and invalidated by mutations.
 
-import { HttpError } from '../http/index.js';
+import { WorkspaceService } from '../../lib/workspace/service.js';
+import { createWorkspaceRouter } from '../../lib/api/workspace.js';
 
 export const name = 'workspace';
 
-export const inject = ['http', 'workspace'];
+export const inject = ['http', 'tmux'];
 
 export function apply(ctx) {
-  ctx.http.get('/api/workspace', async () => {
-    try {
-      return await ctx.workspace.read();
-    } catch (error) {
-      ctx.logger.warn('workspace read failed: %s', error?.stderr?.trim() || error?.message || error);
-      throw new HttpError(503, 'WORKSPACE_UNAVAILABLE', 'The workspace could not be read');
-    }
+  const service = new WorkspaceService({
+    tmux: ctx.tmux,
+    onChange: (revision) => ctx.emit('status/workspace-changed', revision),
   });
-
-  // The view is only offered where there is a browser client at all.
-  ctx.inject(['client'], (ctx) => {
-    ctx.client.entry(new URL('./client/index.js', import.meta.url));
-  });
+  ctx.http.mount('/api/workspace', createWorkspaceRouter({ workspaceService: service }));
+  ctx.provide('workspace', service);
 }

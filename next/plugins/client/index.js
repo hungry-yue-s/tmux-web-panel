@@ -35,9 +35,9 @@ const TYPES = {
 
 /** Bare specifiers client code may import, and the file each one is. */
 const BARE = {
-  cordis: '/vendor/cordis/index.js',
-  cosmokit: '/vendor/cosmokit/index.mjs',
-  '@cordisjs/plugin-timer': '/vendor/plugin-timer/index.js',
+  cordis: '/client/vendor/cordis/index.js',
+  cosmokit: '/client/vendor/cosmokit/index.mjs',
+  '@cordisjs/plugin-timer': '/client/vendor/plugin-timer/index.js',
   '@twp/client': '/client/lib/index.js',
 };
 
@@ -87,15 +87,17 @@ export default class ClientService extends Service {
     /** absolute path → { mtimeMs, size, hash } */
     this.hashes = new Map();
 
+    // The kernel first: /client/vendor/… must not fall into the /client/ root.
+    this._addRoot('/client/vendor/cordis/', join(ROOT, 'vendor', 'cordis', 'lib'));
+    this._addRoot('/client/vendor/cosmokit/', join(ROOT, 'vendor', 'cosmokit', 'lib'));
+    this._addRoot('/client/vendor/plugin-timer/', join(ROOT, 'vendor', 'plugin-timer', 'lib'));
     this._addRoot('/client/', join(ROOT, 'client'));
-    this._addRoot('/vendor/cordis/', join(ROOT, 'vendor', 'cordis', 'lib'));
-    this._addRoot('/vendor/cosmokit/', join(ROOT, 'vendor', 'cosmokit', 'lib'));
-    this._addRoot('/vendor/plugin-timer/', join(ROOT, 'vendor', 'plugin-timer', 'lib'));
 
-    ctx.http.get('/', ({ res }) => this._sendPage(res));
-    ctx.http.get('/index.html', ({ res }) => this._sendPage(res));
+    // The plugin-only shell. The site's own pages (the ui plugin) live at /.
+    ctx.http.get('/client/', ({ res }) => this._sendPage(res));
+    ctx.http.get('/client/index.html', ({ res }) => this._sendPage(res));
     ctx.http.get('/api/client/manifest', () => this.manifest());
-    for (const pattern of ['/client/*', '/vendor/*', '/@plugin/*']) {
+    for (const pattern of ['/client/*', '/@plugin/*']) {
       ctx.http.get(pattern, ({ req, res, url }) => this._sendFile(req, res, url));
     }
   }

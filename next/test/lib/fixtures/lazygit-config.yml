@@ -1,0 +1,7 @@
+os:
+  copyToClipboardCmd: "echo {{text}} | osc52-copy"
+customCommands:
+  - key: '<c-a>'
+    description: 'Amend to any commit'
+    command: 'git commit --amend'
+    context: 'files'

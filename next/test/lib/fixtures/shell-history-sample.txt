@@ -1,0 +1,17 @@
+ls -la
+git status
+git status
+git push origin main
+adb logcat | grep keystore
+adb logcat | grep keystore
+adb -s 192.168.50.134:5555 shell logcat
+./gradlew assembleDebug
+./gradlew assembleDebug
+./gradlew assembleDebug
+reboot
+ls
+ls
+cat /var/log/Xorg.0.log
+export API_KEY=sk-secret-should-be-filtered
+git log --oneline
+git log --oneline

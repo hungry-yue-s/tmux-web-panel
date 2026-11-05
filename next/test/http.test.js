@@ -12,6 +12,7 @@ afterEach(async () => {
 
 async function startHttp() {
   const ctx = new Context();
+  ctx.provide('launch', { host: '127.0.0.1', port: 0, tls: null, httpPort: null });
   const fiber = ctx.plugin(HttpService, { port: 0 });
   await fiber;
   running.push(fiber);
@@ -94,8 +95,9 @@ describe('HttpService', () => {
       name: 'guarded',
       inject: ['http'],
       apply(ctx) {
-        ctx.http.use(({ req }) => {
+        ctx.http.use((req, _res, next) => {
           if (req.headers.authorization !== 'Bearer ok') throw new HttpError(401, 'AUTH_REQUIRED', 'Login required');
+          next();
         });
         ctx.http.get('/api/me', () => ({ me: true }));
       },

@@ -34,11 +34,10 @@ describe('resolveUse', () => {
 
 describe('readProfile', () => {
   it('reads the shipped node profile', async () => {
-    const profile = await readProfile('node');
-    expect(profile.name).toBe('node');
-    expect(profile.entries.map((entry) => entry.id)).toEqual([
-      'logger', 'timer', 'http', 'client', 'tmux', 'workspace-tmux', 'workspace',
-    ]);
+    const profile = await readProfile('panel');
+    expect(profile.name).toBe('panel');
+    expect(profile.entries.map((entry) => entry.id).slice(0, 4)).toEqual(['logger', 'timer', 'launch', 'http']);
+    expect(profile.entries.at(-1).id).toBe('ui');
   });
 
   it('rejects unknown keys, bad ids and duplicates with the file in the message', async () => {
@@ -85,7 +84,7 @@ describe('patches', () => {
       { id: 'http', config: { port: 2 } },
       { insert: { id: 'mine', use: './mine.js' }, after: 'http' },
     ]);
-    const assembled = await resolveEntries({ profile: 'node', home, patches: [cli] });
+    const assembled = await resolveEntries({ profile: 'panel', home, patches: [cli] });
     const http = assembled.entries.find((entry) => entry.id === 'http');
     expect(http.config).toEqual({ port: 2 });
     expect(assembled.entries.map((entry) => entry.id).indexOf('mine')).toBe(assembled.entries.map((entry) => entry.id).indexOf('http') + 1);
@@ -95,15 +94,15 @@ describe('patches', () => {
 
   it('treats an empty patch file as no operations', async () => {
     const empty = await write('empty.yml', '');
-    const assembled = await resolveEntries({ profile: 'node', patches: [empty] });
-    expect(assembled.entries).toHaveLength(7);
+    const assembled = await resolveEntries({ profile: 'panel', patches: [empty] });
+    expect(assembled.entries).toHaveLength((await readProfile('panel')).entries.length);
   });
 
   it('dumps in the shape a profile is written in', async () => {
-    const assembled = await resolveEntries({ profile: 'node' });
+    const assembled = await resolveEntries({ profile: 'panel' });
     const text = dumpEntries(assembled);
-    expect(text).toMatch(/^# profile: node/);
+    expect(text).toMatch(/^# profile: panel/);
     const doc = YAML.parse(text);
-    expect(doc.plugins[2]).toEqual({ id: 'http', use: 'http', config: { host: '127.0.0.1', port: 7690 } });
+    expect(doc.plugins[3]).toEqual({ id: 'http', use: 'http' });
   });
 });

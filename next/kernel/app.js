@@ -16,7 +16,7 @@ export function defaultHome(env = process.env) {
  * Resolves once every entry has loaded, failed, or is waiting for a service no
  * entry provides; `loader.status()` tells which.
  */
-export async function createApp({ profile = 'node', patches = [], home = defaultHome(), importer } = {}) {
+export async function createApp({ profile = 'panel', patches = [], home = defaultHome(), importer } = {}) {
   const assembled = await resolveEntries({ profile, patches, home });
   const ctx = new Context();
   const fiber = ctx.plugin(Loader, { entries: assembled.entries, importer });

@@ -12,6 +12,7 @@ afterEach(async () => {
 
 async function startClient() {
   const ctx = new Context();
+  ctx.provide('launch', { host: '127.0.0.1', port: 0, tls: null, httpPort: null });
   const http = ctx.plugin(HttpService, { port: 0 });
   await http;
   running.push(http);
@@ -39,31 +40,31 @@ function importMapOf(html) {
 describe('client service', () => {
   it('renders the page with an import map of content-hashed module URLs', async () => {
     const { base } = await startClient();
-    const page = await fetch(`${base}/`);
+    const page = await fetch(`${base}/client/`);
     expect(page.headers.get('cache-control')).toBe('no-cache');
     const html = await page.text();
     expect(html).toContain('<title>测试面板</title>');
     expect(html).toMatch(/src="\/client\/boot\.js\?h=[0-9a-f]{12}"/);
     const { imports } = importMapOf(html);
-    expect(imports.cordis).toMatch(/^\/vendor\/cordis\/index\.js\?h=[0-9a-f]{12}$/);
-    expect(imports.cosmokit).toMatch(/^\/vendor\/cosmokit\/index\.mjs\?h=/);
+    expect(imports.cordis).toMatch(/^\/client\/vendor\/cordis\/index\.js\?h=[0-9a-f]{12}$/);
+    expect(imports.cosmokit).toMatch(/^\/client\/vendor\/cosmokit\/index\.mjs\?h=/);
     expect(imports['@twp/client']).toMatch(/^\/client\/lib\/index\.js\?h=/);
     expect(imports['/client/core/shell.js']).toMatch(/^\/client\/core\/shell\.js\?h=/);
     // The same page again revalidates to 304.
-    const again = await fetch(`${base}/`, { headers: { 'If-None-Match': page.headers.get('etag') } });
+    const again = await fetch(`${base}/client/`, { headers: { 'If-None-Match': page.headers.get('etag') } });
     expect(again.status).toBe(304);
   });
 
   it('caches a hashed URL for a year and revalidates an unhashed one', async () => {
     const { base } = await startClient();
-    const { imports } = importMapOf(await (await fetch(`${base}/`)).text());
+    const { imports } = importMapOf(await (await fetch(`${base}/client/`)).text());
     const hashed = await fetch(base + imports.cordis);
     expect(hashed.status).toBe(200);
     expect(hashed.headers.get('content-type')).toMatch(/^text\/javascript/);
     expect(hashed.headers.get('cache-control')).toContain('immutable');
-    const plain = await fetch(`${base}/vendor/cordis/index.js`);
+    const plain = await fetch(`${base}/client/vendor/cordis/index.js`);
     expect(plain.headers.get('cache-control')).toBe('no-cache');
-    const stale = await fetch(`${base}/vendor/cordis/index.js?h=000000000000`);
+    const stale = await fetch(`${base}/client/vendor/cordis/index.js?h=000000000000`);
     expect(stale.headers.get('cache-control')).toBe('no-cache');
   });
 
@@ -71,7 +72,7 @@ describe('client service', () => {
     const { base } = await startClient();
     expect(await rawGet(base, '/client/..%2f..%2fpackage.json')).toBe(404);
     expect(await rawGet(base, '/client/%2e%2e/kernel/app.js')).toBe(404);
-    expect(await rawGet(base, '/vendor/cordis/../package.json')).toBe(404);
+    expect(await rawGet(base, '/client/vendor/cordis/../package.json')).toBe(404);
     expect(await rawGet(base, '/client/nope.js')).toBe(404);
   });
 
@@ -81,7 +82,7 @@ describe('client service', () => {
       name: 'feature',
       inject: ['client'],
       apply(ctx) {
-        ctx.client.entry(new URL('../plugins/workspace/client/index.js', import.meta.url), { refresh: 1 });
+        ctx.client.entry(new URL('./fixtures/client-entry/index.js', import.meta.url), { refresh: 1 });
       },
     });
     await fiber;

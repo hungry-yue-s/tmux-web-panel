@@ -5,6 +5,10 @@
 //
 // The profile names the plugins; patches (the home patch, then each --patch)
 // change them. --dump-config prints the result and exits without starting.
+//
+// The old server's options (--config for the desktop app, --port, --host,
+// --auth, --tls-cert, --tls-key, --http-port, --poll-interval,
+// --max-connections) are accepted unchanged; the runtime plugin reads them.
 
 import { parseArgs } from 'node:util';
 import { createApp, defaultHome } from '../kernel/app.js';
@@ -12,8 +16,11 @@ import { dumpEntries, resolveEntries } from '../kernel/profile.js';
 
 const STOP_TIMEOUT_MS = 5000;
 
+const RUNTIME_OPTIONS = ['config', 'port', 'host', 'auth', 'tls-cert', 'tls-key', 'http-port', 'poll-interval', 'max-connections'];
+
 function usage() {
-  return 'usage: twp [profile] [--profile <name|path>] [--patch <file>]... [--home <dir>] [--dump-config]';
+  return 'usage: twp [profile] [--profile <name|path>] [--patch <file>]... [--home <dir>] [--dump-config]\n'
+    + `       runtime options: ${RUNTIME_OPTIONS.map((option) => `--${option} <value>`).join(' ')}`;
 }
 
 async function main() {
@@ -27,6 +34,7 @@ async function main() {
         home: { type: 'string' },
         'dump-config': { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
+        ...Object.fromEntries(RUNTIME_OPTIONS.map((option) => [option, { type: 'string' }])),
       },
     });
   } catch (error) {
@@ -43,7 +51,7 @@ async function main() {
     return 2;
   }
   const options = {
-    profile: values.profile ?? positionals[0] ?? 'node',
+    profile: values.profile ?? positionals[0] ?? 'panel',
     patches: values.patch,
     home: values.home ?? defaultHome(),
   };

@@ -1,14 +1,14 @@
 # tmux-web-panel / next
 
-基于 Cordis 插件内核从零重写的 tmux-web-panel：服务端和浏览器端跑同一个内核，每个功能都是可以热插拔的插件，整个应用由一份 profile 加补丁组装。
+tmux-web-panel rebuilt on the Cordis plugin kernel: every part of the product is a plugin, every registration is reversible, and the whole application is assembled from one profile plus patches.
 
 ```sh
 npm install
-node bin/twp.js                 # http://127.0.0.1:7690
-node bin/twp.js --dump-config   # 看组装结果
+node bin/twp.js                 # the panel; configured by the environment / --config, as before
+node bin/twp.js --dump-config   # print the assembled plugin list
 npm test
 ```
 
-设计与约定：[docs/architecture.md](docs/architecture.md)。内核来源：[vendor/README.md](vendor/README.md)。
+Design, conventions and the migration route: [docs/architecture.md](docs/architecture.md). Kernel provenance: [vendor/README.md](vendor/README.md).
 
-生产服务仍然是仓库根目录的旧实现；`next/` 目前只读工作区，还没有认证，默认只监听本机。
+Status: the server runs entirely as plugins, with the same features and API as the old `server/`; the pages are still the existing `public/` front end, served by the `ui` plugin. Deployment still starts the old server until the service scripts are switched.

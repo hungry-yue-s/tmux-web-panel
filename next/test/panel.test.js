@@ -1,0 +1,149 @@
+// The whole panel profile, started from real inputs: AUTH, a temporary config
+// directory and home, and a private tmux server. Nothing here touches the
+// user's tmux server, pairing file or panel state.
+
+import { existsSync } from 'node:fs';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import WebSocket from 'ws';
+import YAML from 'yaml';
+import { createApp } from '../kernel/app.js';
+import { IS_WINDOWS, MSYS_ROOT, TMUX_BIN, toNativePath } from '../lib/msys.js';
+import { localTmux } from '../lib/tmux.js';
+
+const SOCKET = `twp-next-panel-${process.pid}`;
+const haveTmux = IS_WINDOWS ? existsSync(TMUX_BIN) : true;
+
+let app;
+let base;
+let dir;
+
+async function json(path, { token, method = 'GET', body } = {}) {
+  const response = await fetch(base + path, {
+    method,
+    headers: {
+      Accept: 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    // Not JSON.
+  }
+  return { status: response.status, data };
+}
+
+function socketStatus(path) {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(base.replace('http', 'ws') + path);
+    ws.on('open', () => {
+      ws.close();
+      resolve('open');
+    });
+    ws.on('unexpected-response', (_req, res) => resolve(res.statusCode));
+    ws.on('error', () => resolve('error'));
+  });
+}
+
+describe.skipIf(!haveTmux)('the panel profile', () => {
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'twp-panel-'));
+    const patch = join(dir, 'patch.yml');
+    await writeFile(patch, YAML.stringify([
+      { id: 'launch', config: { argv: [], env: { AUTH: 'admin:correct horse', PORT: '0', HOST: '127.0.0.1', TMUX_PANEL_CONFIG_DIR: join(dir, 'config') } } },
+      { id: 'node', config: { home: join(dir, 'home') } },
+      { id: 'tmux', config: { socket: SOCKET } },
+      { id: 'logger', config: { level: 'warn' } },
+      // Reads ~/.claude and ~/.codex and may start a model relay.
+      { id: 'agent-hub', disabled: true },
+    ]));
+    app = await createApp({ patches: [patch], home: join(dir, 'twp-home') });
+    base = `http://127.0.0.1:${app.ctx.get('http').port}`;
+    // A session on the private server only; every call carries -L.
+    await localTmux.run(['-f', '/dev/null', 'new-session', '-d', '-s', 'alpha', '-x', '100', '-y', '30'], { timeout: 15000 });
+  }, 60000);
+
+  afterAll(async () => {
+    const socketPath = (await localTmux.run(['display-message', '-p', '#{socket_path}']).catch(() => '')).trim();
+    if (socketPath) {
+      // Never end a server that is not the private one.
+      expect(socketPath.endsWith(`/${SOCKET}`)).toBe(true);
+      await localTmux.run(['kill-server']).catch(() => {});
+      if (IS_WINDOWS) await rm(toNativePath(socketPath, MSYS_ROOT), { force: true });
+    }
+    await app?.stop();
+    if (dir) await rm(dir, { recursive: true, force: true });
+  }, 30000);
+
+  it('loads every entry', () => {
+    const states = Object.fromEntries(app.loader.status().map((entry) => [entry.id, entry.state]));
+    expect(states).toMatchObject({ http: 'active', auth: 'active', terminal: 'active', servers: 'active', ui: 'active', 'agent-hub': 'off' });
+    expect(Object.entries(states).filter(([, state]) => !['active', 'off'].includes(state))).toEqual([]);
+  });
+
+  it('serves the pages publicly and keeps the API behind a login', async () => {
+    const page = await fetch(`${base}/`);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toMatch(/src="\/js\/ms-app\.js\?h=[0-9a-f]{12}"/);
+    expect((await json('/api/workspace')).status).toBe(401);
+    expect((await json('/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'wrong' } })).status).toBe(401);
+  });
+
+  it('logs in and reads the private server through the workspace API', async () => {
+    const login = await json('/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'correct horse' } });
+    expect(login.status).toBe(200);
+    const token = login.data.data.token;
+    const workspace = await json('/api/workspace', { token });
+    expect(workspace.status).toBe(200);
+    const names = JSON.stringify(workspace.data).match(/"name":"alpha"/g);
+    expect(names).not.toBeNull();
+    expect((await json('/api/node/info', { token })).status).toBe(200);
+    expect((await json('/api/status', { token })).data.data.sessions).toBe(1);
+  });
+
+  it('refuses sockets without a token and attaches a terminal with one', async () => {
+    expect(await socketStatus('/ws/status')).toBe(401);
+    const login = await json('/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'correct horse' } });
+    const token = login.data.data.token;
+    expect(await socketStatus(`/ws/status?token=${token}`)).toBe('open');
+
+    const paneId = (await localTmux.run(['display-message', '-p', '-t', 'alpha', '#{pane_id}'])).trim();
+    const frames = await new Promise((resolve, reject) => {
+      const seen = [];
+      const ws = new WebSocket(`${base.replace('http', 'ws')}/ws/terminal/${encodeURIComponent(paneId)}?cols=100&rows=30&token=${token}`);
+      const timer = setTimeout(() => {
+        ws.close();
+        resolve(seen);
+      }, 8000);
+      ws.on('message', (raw) => {
+        const message = JSON.parse(String(raw));
+        seen.push(message.type);
+        if (message.type === 'output') {
+          clearTimeout(timer);
+          ws.close();
+          resolve(seen);
+        }
+      });
+      ws.on('error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+    expect(frames[0]).toBe('ready');
+    expect(frames).toContain('output');
+  }, 30000);
+
+  it('undoes what a plugin registered when it is turned off', async () => {
+    await app.loader.setDisabled('share', true);
+    const login = await json('/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'correct horse' } });
+    expect((await json('/api/share', { token: login.data.data.token })).status).toBe(404);
+    await app.loader.setDisabled('share', false);
+    expect((await json('/api/share', { token: login.data.data.token })).status).not.toBe(404);
+  });
+});

@@ -1,0 +1,54 @@
+# The panel: one machine's Node and, for the servers in its registry, a Hub.
+#
+# Settings come from the environment and --config exactly as before (see
+# plugins/launch). Change the composition with a patch (<home>/patch.yml or
+# --patch), not by editing this file; `twp --dump-config` prints the result.
+# See docs/architecture.md.
+name: panel
+plugins:
+  - id: logger
+    use: logger-console
+  - id: timer
+    use: '@cordisjs/plugin-timer'
+  - id: launch
+    use: launch
+  - id: http
+    use: http
+  - id: diagnostics
+    use: diagnostics
+  - id: tmux
+    use: tmux
+  - id: node
+    use: node
+  - id: auth
+    use: auth
+  - id: workspace
+    use: workspace
+  - id: tmux-api
+    use: tmux-api
+  - id: notifications
+    use: notifications
+  - id: status
+    use: status
+  - id: terminal
+    use: terminal
+  - id: pins
+    use: pins
+  - id: share
+    use: share
+  - id: files
+    use: files
+  - id: metrics
+    use: metrics
+  - id: agent-hub
+    use: agent-hub
+  - id: servers
+    use: servers
+  - id: panel-plugins
+    use: panel-plugins
+  - id: session-protection
+    use: session-protection
+  - id: client
+    use: client
+  - id: ui
+    use: ui
