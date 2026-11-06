@@ -6,6 +6,7 @@ import { parseDocument } from 'yaml';
 import { runInNewContext } from 'node:vm';
 import { createDshTuiManager } from '../../../lib/agent-providers/dsh-tui.js';
 import { ManagedResources } from '../../../lib/managed-resources.js';
+import { POSIX_MODES } from '../../helpers/permissions.js';
 
 const roots = [];
 const group = { model: 'mode-auto', models: [{ id: 'mode-auto', name: 'Auto', contextWindow: 128000 }],
@@ -157,10 +158,10 @@ describe('native dsh-tui maintenance', () => {
     });
     const credentials = parseDocument(await readFile(credentialsPath, 'utf8')).toJS();
     expect(credentials.refs).toEqual({ GLM_KEY: 'private-glm-key', TMUX_PANEL_ENTERPRISE_API_KEY: group.key });
-    expect((await stat(credentialsPath)).mode & 0o777).toBe(0o600);
+    if (POSIX_MODES) expect((await stat(credentialsPath)).mode & 0o777).toBe(0o600);
     const backups = await readdir(join(home, '.config/tmux-web-panel/backups'));
     expect(backups).toHaveLength(2);
-    for (const backup of backups) expect((await stat(join(home, '.config/tmux-web-panel/backups', backup))).mode & 0o777).toBe(0o600);
+    if (POSIX_MODES) for (const backup of backups) expect((await stat(join(home, '.config/tmux-web-panel/backups', backup))).mode & 0o777).toBe(0o600);
     expect(await manager.status()).toMatchObject({ backend: 'dsh', enterpriseModelId: group.model });
     await manager.activate({ provider: 'glm', model: 'glm-test' });
     expect(await manager.status()).toMatchObject({ provider: 'glm', model: 'glm-test', enterpriseModelId: null });

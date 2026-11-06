@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { existsSync } from 'node:fs';
 import { cp, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -6,17 +7,21 @@ import { generateKeyPairSync, X509Certificate } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { ensureDesktopCertificates, inspectDesktopCertificates } from '../../scripts/desktop-certificates.mjs';
+import { POSIX_MODES } from '../helpers/permissions.js';
 
 const run = promisify(execFile);
 const ips = ['10.0.0.42'];
+// The macOS desktop app issues its certificates with the system's /usr/bin/openssl.
+const HAS_OPENSSL = existsSync('/usr/bin/openssl');
 let temporary, seed, seedTLS;
 
 beforeAll(async () => {
+  if (!HAS_OPENSSL) return;
   temporary = await mkdtemp(join(tmpdir(), 'tmux-panel-certificates-'));
   seed = join(temporary, 'seed');
   seedTLS = await ensureDesktopCertificates(seed, { run, ips });
 }, 30000);
-afterAll(async () => { await rm(temporary, { recursive: true, force: true }); });
+afterAll(async () => { if (temporary) await rm(temporary, { recursive: true, force: true }); });
 
 async function fixture(name) {
   const root = join(temporary, name);
@@ -30,15 +35,15 @@ async function contents(tls) {
 }
 
 // These checks use real RSA signing; allow slower developer machines and CI.
-describe('desktop certificate lifecycle', { timeout: 30000 }, () => {
+describe.skipIf(!HAS_OPENSSL)('desktop certificate lifecycle', { timeout: 30000 }, () => {
   it('creates verified certificates in private versioned directories', async () => {
     expect(await inspectDesktopCertificates(seedTLS, ips)).toMatchObject({ valid: true, addressesCurrent: true });
     expect(seedTLS.cert).toMatch(/\/tls\/leaves\/[^/]+\/cert\.pem$/);
     expect(seedTLS.ca).toBe(join(seed, 'tls/authority/ca.crt'));
     expect(JSON.parse(await readFile(join(seed, 'tls/current.json'), 'utf8'))).toEqual(seedTLS);
-    expect((await stat(seedTLS.key)).mode & 0o777).toBe(0o600);
-    expect((await stat(join(seed, 'tls/authority/ca.key'))).mode & 0o777).toBe(0o600);
-    expect((await stat(dirname(seedTLS.cert))).mode & 0o777).toBe(0o700);
+    if (POSIX_MODES) expect((await stat(seedTLS.key)).mode & 0o777).toBe(0o600);
+    if (POSIX_MODES) expect((await stat(join(seed, 'tls/authority/ca.key'))).mode & 0o777).toBe(0o600);
+    if (POSIX_MODES) expect((await stat(dirname(seedTLS.cert))).mode & 0o777).toBe(0o700);
     const certificate = new X509Certificate(await readFile(seedTLS.cert));
     expect(certificate.checkHost('localhost')).toBe('localhost');
     expect(certificate.checkIP('127.0.0.1')).toBe('127.0.0.1');

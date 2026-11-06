@@ -5,10 +5,10 @@ README 重做过程中实际踩到、观察到或验证过的问题。每条都�
 | # | 严重度 | 问题 | 证据 / 位置 | 建议 |
 |---|--------|------|-------------|------|
 | 1 | 高 | ⌘K 命令面板在多服务器 shell 下选中后不跳转。面板能打开、能模糊过滤，但点选或回车后界面停在原窗口。根因是 `_selectItem()` 走 app.js 的 legacy `navigate()`，而 legacy `render()` 在 `.ms-app` 存在时直接 return，全程不碰 `location.hash` 和 Router | `plugins/ui/client/js/command-palette.js:93-105`，`plugins/ui/client/js/app.js:335-368`、`app.js:376-380` | palette 改调 `Router`，序列化成 `#/terminal/:serverId/:sessionId/:windowId/:paneId`，补一条 ms-shell 下的跳转测试 |
-| 2 | 中 | 测试红灯。`npm test` 当前 4 个失败，`test/api/claude-usage.test.js` 3 例（full data、not_configured、OAuth 失败降级），`test/api/disk-io.test.js` 1 例（sector delta 速率）。claude 三例断言 `modelUsage['claude-opus-4-6']`、`dailyActivity` 长度等，疑似定价表或日期窗口漂移，disk-io 例对采样间隔敏感 | `npm test` 输出，97 files / 1411 tests / 4 failed | 修 fixture 或断言，disk-io 例改为注入固定时间戳 |
+| 2 | 已解决 | 测试红灯（claude-usage 3 例、disk-io 1 例）。2026-11-06 复核：claude-usage 已通过；disk-io 的根因不是采样间隔，而是 afterEach 里的 `vi.doUnmock` 取消了下一个测试的 `vi.doMock`，于是读到真实的 `/proc/diskstats`（Windows 上为空，Linux 上是真实磁盘） | `test/lib/api/disk-io.test.js` | 已去掉 doUnmock |
 | 3 | 中 | 终端模式按「用户 + server」持久化，不区分设备。桌面切到分屏后手机打开同一 server 会继承分屏，窄屏上两个 pane 挤到不可读，本次捕获中实际复现 | `plugins/ui/client/js/store.js:2-15` 的 `terminalModeByServer` | 小视口回落 tab，或按设备维度持久化 |
 | 4 | 中 | `plugins/ui/client/screenshots/` 全量过期且含真实会话名。4 月截图仍是 legacy shell，侧栏带真实中文会话名，README 若继续引用即泄露工作信息 | `plugins/ui/client/screenshots/*.png` | 删除该目录，README 统一引用 `docs/assets/readme/` |
-| 5 | 低 | CLAUDE.md 与代码漂移。契约写分窗宽度 320–820px，代码已改为 `min(可用宽度 * 0.7)` | `CLAUDE.md`「文件预览分窗契约」，`plugins/files/client/js/file-preview.js:188`，commit `c897f9e` | 更新 CLAUDE.md 契约描述 |
+| 5 | 已解决 | CLAUDE.md 与代码漂移（分窗宽度上限 820px）。CLAUDE.md 现写明最大为可用工作区的 70%、不再设 820px 上限 | `CLAUDE.md`「文件预览分窗契约」 | — |
 | 6 | 低 | 仓库根目录散落一次性截图与证书文件。`claude-auto-detect.png`、`drawer-*.png`、`nexus-*.png`、`terminal-*.png`、`tmux-render-abnormal.png`、`layout-test-open.png`、`cert.pem`、`key.pem` 都只靠 `.gitignore` 兜底，工作树里长期存在 | `git status` 与根目录列表 | 从工作树移除，证书类文件不应留在仓库目录 |
 | 7 | 低 | 性能页对任何已登录客户端暴露进程名与会话名，Top 压力来源和 Windows 与系统进程两块都是。单机自用没问题，多人共用一个面板时是信息泄露面 | `plugins/metrics/client/js/perf-panel.js`，`lib/api/` 下 window-stats 相关 | 共享部署时加配置项或脱敏，README 截图需 sanitize（本次已做） |
 | 8 | 待验证 | 移动端 drawer 按键在合成 touch 序列后抽屉关闭，和「按键不退出」契约不符。可能是 touch 坐标命中抽屉拖拽热区，或 focus 哨兵把合成事件判成软键盘信号 | `CLAUDE.md`「移动端工具盘交互契约」，`plugins/terminal/client/js/fab-drawer.js` | 真机复现，若属实给 kbd 按钮加 `touch-action` 或阻止拖拽判定 |
@@ -241,6 +241,30 @@ node-pty 报告退出比进程消失晚约 1 秒（中位 1.0 到 1.4 秒），�
 **处理与边界。** 壁纸读取和 ImageIO 解码移到后台串行队列，同一屏幕/URL 的进行中请求去重，以请求代次丢弃过期结果，只在主线程更新图层。原有透明与原生全屏下的壁纸语义保留。原生 release 编译通过；截至 2026-11-05，完整 `.app` 的前台执行仍受 ENV-7 所述限制，不能把编译成功写成已完成客户端替换。
 
 **2026-11-06 后验。** 包含此修复的 build 6 已在原路径替换并成功前台运行。两秒进程采样显示主线程处于正常 AppKit 事件循环，未再停在同步壁纸文件读取；实际运行验收见上节部署复核。
+
+### ENV-9 Windows：OpenSSH 启动不了 shell 脚本写的 askpass（2026-11-06）
+
+**现象与证据。** 用密码登录的服务器，Windows 上的 Hub 配对和端口转发都拿不到密码。在本机 sshd 上用一个不存在的用户各试一次：系统 `System32\OpenSSH\ssh.exe` 对 `SSH_ASKPASS=*.sh` 报 `CreateProcessW failed error:193`，MSYS2 的 `ssh.exe` 同样没有运行它；两者都能运行 `.cmd`。
+
+**处理。** Windows 上 `SSH_ASKPASS` 指向 `lib/transport/ssh-askpass.cmd`（`askpassHelper()`），它和 `.sh` 一样只启动 `ssh-askpass.js`，密码不进命令行；`.gitattributes` 让 `*.cmd` 保持 CRLF。
+
+### ENV-10 Windows：没有 sqlite3 命令行（2026-11-06）
+
+**现象。** CC Switch / Token Switch 的读取、供应商切换和企业中继注册都调用 `sqlite3` 命令行；Windows 一般没有它，这些功能在 Windows 上静默失效，对应测试也一直失败。
+
+**处理与边界。** `lib/sqlite-json.js` 优先用 Node 自带的 `node:sqlite`（22.13 起不需要参数），没有时才退回命令行；两者保持命令行的约定：只读查询返回 `-json` 的文本，写入像 `-bail` 一样遇错即停、连接关闭时回滚未提交的事务、错误不带脚本内容、不创建不存在的数据库。语句按引号和注释之外的分号拆分，不支持 `CREATE TRIGGER` 正文。
+
+### ENV-11 Windows：替换文件时目标被短暂占用（2026-11-06）
+
+**现象与证据。** 原子写（写临时文件再改名覆盖）在 Windows 上偶发 `EPERM`：目标正被读取、杀毒或索引打开的那几毫秒里改名失败，结果直接丢失。tmux 构建结果因此停在旧状态，`plugin-management` 的测试时好时坏（日志里是 `rename ... EPERM`）。
+
+**处理。** 所有原子写都经 `lib/atomic-file.js` 的 `replaceFile`：Windows 上对 `EPERM` / `EACCES` / `EBUSY` 重试至多两秒，其它平台和其它错误第一次失败即报。
+
+### ENV-12 Windows：只改 HOME 的测试会写到真实家目录（2026-11-06）
+
+**已确认的事故。** `install-agent-hooks` 的测试只设置了 `HOME`，而 Windows 上的 `os.homedir()` 读 `USERPROFILE`，所以每次运行都往真实的 `~/.qoder/settings.json`、`~/.codex/hooks.json` 安装钩子。安装是幂等的，钩子早已存在，内容与 10 月 26 日最早的备份逐字节相同；但每次都留下一个 `.bak-*` 备份（截至发现时 59 + 42 个）。
+
+**防止重现。** 测试要隔离家目录时同时设置 `HOME` 和 `USERPROFILE`，或者把家目录作为参数传给被测模块；安装脚本没有改动时不再备份和重写文件。
 
 ## 捕获环境备注
 

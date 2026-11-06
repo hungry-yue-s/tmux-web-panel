@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { createQoderCapabilitiesReader } from '../../../lib/agent-providers/qoder-capabilities.js';
 
@@ -14,7 +15,7 @@ describe('Qoder capability reader', () => {
     const result = await read();
     expect(result).toMatchObject({ installed: true, version: '1.1.68', loggedIn: true,
       accountType: 'user', userType: 'teams', allowByok: allow_byok, customProviderAvailable: allow_byok >= 2 });
-    expect(run).toHaveBeenCalledWith('/test-home/.local/bin/qodercli', ['status', '-o', 'json'],
+    expect(run).toHaveBeenCalledWith(join('/test-home', '.local', 'bin', 'qodercli'), ['status', '-o', 'json'],
       { timeout: 5000, maxBuffer: 64 * 1024 });
   });
 

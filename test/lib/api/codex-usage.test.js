@@ -55,12 +55,17 @@ describe('GET /api/codex-usage', () => {
     vi.doMock('node:os', () => ({
       homedir: () => '/home/tester',
     }));
+    // The module joins and resolves paths the platform's way (C:\desktop-data on
+    // Windows); the fixtures speak POSIX.
+    const toPosix = (value) => value.replace(/^[A-Za-z]:(?=[\\/])/, '').replace(/\\/g, '/');
+    const posix = (fn) => (path, ...rest) => fn(toPosix(String(path)), ...rest.map((arg) => (
+      typeof arg === 'string' && /^([A-Za-z]:)?[\\/]/.test(arg) ? toPosix(arg) : arg)));
     vi.doMock('node:fs/promises', () => ({
-      mkdir: mockMkdir,
-      readFile: mockReadFile,
-      readdir: mockReaddir,
-      rename: mockRename,
-      writeFile: mockWriteFile,
+      mkdir: posix(mockMkdir),
+      readFile: posix(mockReadFile),
+      readdir: posix(mockReaddir),
+      rename: posix(mockRename),
+      writeFile: posix(mockWriteFile),
     }));
   });
 

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { configDirectory, resolveRuntimeConfig } from '../../lib/runtime-config.js';
 import { hashPassword, initTokenPersistence, verifyPassword } from '../../lib/auth.js';
 import { ManagedResources } from '../../lib/managed-resources.js';
@@ -27,7 +27,7 @@ describe('unified desktop runtime settings', () => {
   it('keeps source installations on their legacy defaults and honors existing CLI/environment precedence', () => {
     const config = resolveRuntimeConfig({ argv: ['node', 'index'], env: {}, home: '/legacy-user' });
     expect(config).toMatchObject({ port: 7681, host: '0.0.0.0', auth: null, httpPort: 80,
-      configDir: '/legacy-user/.config/tmux-web-panel', managedRuntime: false, tokenFileName: 'tokens.json' });
+      configDir: resolve('/legacy-user', '.config', 'tmux-web-panel'), managedRuntime: false, tokenFileName: 'tokens.json' });
     const overridden = resolveRuntimeConfig({ argv: ['node', 'index', '--port', '9002', '--auth', 'cli:password:with:colon'],
       env: { PORT: '9001', AUTH: 'env:other', HOST: '127.0.0.1' } });
     expect(overridden.port).toBe(9002);
@@ -91,7 +91,7 @@ describe('unified desktop runtime settings', () => {
     const { path, directory } = stored({ listenOnLAN: true, tls: { cert: 'tls/cert.pem', key: 'tls/key.pem' } });
     const config = load(path, { PORT: '20000', TMUX_PANEL_CONFIG_DIR: '/explicit-data' }, ['--port', '21000']);
     expect(config.port).toBe(21000);
-    expect(config.configDir).toBe('/explicit-data');
+    expect(config.configDir).toBe(resolve('/explicit-data'));
     expect(config.host).toBe('0.0.0.0');
     expect(config.tls).toEqual({ cert: join(directory, 'tls/cert.pem'), key: join(directory, 'tls/key.pem') });
     expect(config.httpPort).toBeNull();

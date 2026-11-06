@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { ServerRegistry, LOCAL_SERVER_ID, isValidHost, slugify, normalizeServerInput } from '../../lib/servers/registry.js';
 import { ErrorCode } from '../../lib/servers/errors.js';
+import { POSIX_MODES } from '../helpers/permissions.js';
 
 const REMOTE = {
   name: 'API Linux',
@@ -93,8 +94,8 @@ describe('ServerRegistry', () => {
     const filePath = path.join(dir, 'servers.json');
     const fileStat = await fs.stat(filePath);
     const dirStat = await fs.stat(dir);
-    expect(fileStat.mode & 0o777).toBe(0o600);
-    expect(dirStat.mode & 0o777).toBe(0o700);
+    if (POSIX_MODES) expect(fileStat.mode & 0o777).toBe(0o600);
+    if (POSIX_MODES) expect(dirStat.mode & 0o777).toBe(0o700);
 
     // No temp file left behind by the rename.
     const entries = await fs.readdir(dir);
@@ -143,7 +144,7 @@ describe('ServerRegistry', () => {
     expect(JSON.parse(raw).servers[0].ssh.password).toBeUndefined();
     expect(JSON.stringify(registry.toPublic(created))).not.toContain(password);
     expect(registry.toPublic(created).ssh.authMethod).toBe('password');
-    expect((await fs.stat(path.join(dir, 'server-password.key'))).mode & 0o777).toBe(0o600);
+    if (POSIX_MODES) expect((await fs.stat(path.join(dir, 'server-password.key'))).mode & 0o777).toBe(0o600);
     const reloaded = await new ServerRegistry({ configDir: dir }).load();
     expect(reloaded.loadErrors).toEqual([]);
     expect(reloaded.get(created.id).ssh.password).toBe(password);

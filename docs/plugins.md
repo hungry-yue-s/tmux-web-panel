@@ -187,7 +187,12 @@ npm test
 - **隔离规则**（来自“不在用户 tmux 上做实验”）：每个用到 tmux 的测试和冒烟都经 `tmux` 插件选私有 server（`-L`），`kill-server` 之前先 `display -p '#{socket_path}'` 断言是私有路径；配置目录（`launch` 的 `env.TMUX_PANEL_CONFIG_DIR`）和配对文件所在的家目录（`node` 的 `home`）指向临时目录；会读 `~/.claude`、`~/.codex` 或起模型中继的 `agent-hub` 关掉。
 - 冒烟时像服务脚本一样带上 `LANG=C.UTF-8 LC_CTYPE=C.UTF-8`（`run-panel.ps1`、systemd 单元都设置了）。没有 UTF-8 locale 时 tmux 命令客户端把中文会话名输出成 `____`，再拿它去查就找不到。
 - **MSYS2 的 tmux 退出后不删除 socket 文件**，测试要自己删。在 Git Bash 里直接运行 MSYS2 的 tmux 去启动 server 会挂住（server 继承了 shell 的输出管道），准备会话请用 Node 的 `execFile`。
-- 这台 Windows 开发机上有一批测试在改造前就失败（文件权限位、本机没有 openssl 等工具、MINGW 平台、CRLF 检出的 shebang 在 vite 转换时报语法错误）：`test/lib/` 的 `api/codex-usage`、`api/dsh-tui`、`api/enterprise-runtime`、`api/qoder-capabilities`、`api/qoder-usage`、`api/token-switch-claude-relay`、`auth`、`runtime-config`、`scene-discover/lazygit`、`server-registry`、`ssh-connection`、`totp`，`test/repo/` 的 `desktop-certificates`、`desktop-runtime`、`install-agent-hooks`、`install-service`，`test/client/` 的 `blocks-ui`；`plugin-management` 的一项时好时坏。新的失败不在此列，就是回归。
+- 测试在 Windows 上也要全过，任何失败都是回归。写测试时注意：
+  - 权限位断言放在 `POSIX_MODES`（`test/helpers/permissions.js`）之后：Windows 的 `fs.stat` 只报 0o666 / 0o444。
+  - 隔离家目录要同时设 `HOME` 和 `USERPROFILE`，或者把家目录作为参数传入；只设 `HOME` 在 Windows 上会写到真实家目录（`docs/known-issues.md` ENV-12）。
+  - 期望的路径用 `join` / `resolve` 算，别写死 `/home/x/...`：Windows 上是反斜杠，`resolve` 还会加盘符。
+  - SQLite 夹具用 `test/helpers/sqlite.js`（`node:sqlite`），不要调 `sqlite3` 命令行。
+  - 只在某个平台存在的功能（macOS 桌面版、`install-service.sh`）在别的平台上 `skipIf`，并在旁边写明原因。
 
 ## 改造经过
 
