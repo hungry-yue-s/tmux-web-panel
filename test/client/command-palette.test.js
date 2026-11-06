@@ -150,14 +150,15 @@ describe('command palette destinations and focus', () => {
     expect(palette.isOpen()).toBe(false);
   });
 
-  it('keeps the legacy public API and navigates cached pane IDs without a network request', () => {
+  it('offers no window from the legacy state before the workspaces arrive, and asks the network nothing', () => {
     const { win, doc, palette } = setup();
     win.state = { sessions: [{ name: '中文会话', windowDetails: [{ index: 2, name: '日志窗口', panes: [{ id: '%8', command: 'tail' }] }] }] };
     win.navigate = vi.fn();
     doc.getElementById('opener').focus();
     palette.open();
-    key(win, search(win, doc, '中文 日志'), 'Enter');
-    expect(win.navigate).toHaveBeenCalledWith('terminal', { currentSession: '中文会话', currentWindow: 2, currentPane: '%8' });
+    search(win, doc, '中文 日志');
+    expect([...doc.querySelectorAll('.cmd-palette-overlay [role="option"]')].map((row) => row.textContent).join(' ')).not.toContain('日志窗口');
+    expect(win.navigate).not.toHaveBeenCalled();
     expect(win.fetch).not.toHaveBeenCalled();
     expect(win.api.get).not.toHaveBeenCalled();
     palette.open();

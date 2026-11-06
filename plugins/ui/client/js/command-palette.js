@@ -1,4 +1,4 @@
-/* global Store, Router, AppShell, state, navigate, Blocks */
+/* global Store, Router, AppShell, PanelSlots */
 
 var CommandPalette = (function () {
   var _overlay, _input, _results, _status, _opener, _clear, _modeChip;
@@ -79,7 +79,7 @@ var CommandPalette = (function () {
     if (!Array.isArray(recents)) recents = [];
     var items = [], seen = {};
     function add(item) {
-      var key = item.route && typeof Router !== 'undefined' ? Router.serialize(item.route) : JSON.stringify(item.legacy);
+      var key = typeof Router !== 'undefined' ? Router.serialize(item.route) : JSON.stringify(item.route);
       if (seen[key]) return;
       seen[key] = true;
       item.key = key;
@@ -108,18 +108,8 @@ var CommandPalette = (function () {
           });
         });
       });
-    } else {
-      (typeof state !== 'undefined' && state.sessions || []).forEach(function (session) {
-        (session.windowDetails || []).forEach(function (win) {
-          var panes = win.panes || [], pane = panes.find(function (item) { return item.active; }) || panes[0];
-          var command = pane && pane.command ? commandLabel(pane.command) : '';
-          add({ display: session.name + ' / ' + (win.name || '窗口 ' + win.index), icon: 'terminal', section: 'windows',
-            meta: panes.length + ' 窗格' + (command ? ' · ' + command : ''),
-            keywords: '终端 窗口 ' + win.index, serverId: current,
-            legacy: { currentSession: session.name, currentWindow: win.index, currentPane: pane ? pane.id : null } });
-        });
-      });
     }
+    // Before the workspaces have arrived there are no windows to offer, only pages.
     if (typeof Router !== 'undefined') {
       if (!modern) add({ display: '终端', meta: '当前服务器', icon: 'terminal', serverId: current, section: 'pages',
         route: { name: 'terminal', params: { serverId: current } } });
@@ -459,7 +449,6 @@ var CommandPalette = (function () {
     // A docked inspector is separate workspace state and must be retained.
     if (window.FilePreview && window.FilePreview.closeModal) window.FilePreview.closeModal();
     if (item.route && typeof Router !== 'undefined') Router.go(item.route);
-    else if (item.legacy && typeof navigate === 'function') navigate('terminal', item.legacy);
   }
 
   return {

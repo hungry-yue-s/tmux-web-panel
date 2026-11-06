@@ -4,7 +4,7 @@ README 重做过程中实际踩到、观察到或验证过的问题。每条都�
 
 | # | 严重度 | 问题 | 证据 / 位置 | 建议 |
 |---|--------|------|-------------|------|
-| 1 | 高 | ⌘K 命令面板在多服务器 shell 下选中后不跳转。面板能打开、能模糊过滤，但点选或回车后界面停在原窗口。根因是 `_selectItem()` 走 app.js 的 legacy `navigate()`，而 legacy `render()` 在 `.ms-app` 存在时直接 return，全程不碰 `location.hash` 和 Router | `plugins/ui/client/js/command-palette.js:93-105`，`plugins/ui/client/js/app.js:335-368`、`app.js:376-380` | palette 改调 `Router`，序列化成 `#/terminal/:serverId/:sessionId/:windowId/:paneId`，补一条 ms-shell 下的跳转测试 |
+| 1 | 已解决 | ⌘K 命令面板在多服务器 shell 下选中后不跳转（当时 `_selectItem()` 走 legacy `navigate()`）。现在窗口条目都带路由、经 `Router.go` 跳转；2026-11-06 删除了按旧 `state` 拼条目、再走 `navigate()` 的分支，工作区数据到达前只提供页面 | `plugins/ui/client/js/command-palette.js` | — |
 | 2 | 已解决 | 测试红灯（claude-usage 3 例、disk-io 1 例）。2026-11-06 复核：claude-usage 已通过；disk-io 的根因不是采样间隔，而是 afterEach 里的 `vi.doUnmock` 取消了下一个测试的 `vi.doMock`，于是读到真实的 `/proc/diskstats`（Windows 上为空，Linux 上是真实磁盘） | `test/lib/api/disk-io.test.js` | 已去掉 doUnmock |
 | 3 | 中 | 终端模式按「用户 + server」持久化，不区分设备。桌面切到分屏后手机打开同一 server 会继承分屏，窄屏上两个 pane 挤到不可读，本次捕获中实际复现 | `plugins/ui/client/js/store.js:2-15` 的 `terminalModeByServer` | 小视口回落 tab，或按设备维度持久化 |
 | 4 | 中 | `plugins/ui/client/screenshots/` 全量过期且含真实会话名。4 月截图仍是 legacy shell，侧栏带真实中文会话名，README 若继续引用即泄露工作信息 | `plugins/ui/client/screenshots/*.png` | 删除该目录，README 统一引用 `docs/assets/readme/` |
