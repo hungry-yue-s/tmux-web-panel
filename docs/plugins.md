@@ -35,7 +35,7 @@ node bin/panel.js --patch my.yml     # 叠加一层补丁
 npm test
 ```
 
-正式运行由服务管理器启动（见 `CLAUDE.md`）。`bin/panel.js` 接受原服务端的全部命令行选项（`--config`、`--port`、`--host`、`--auth`、`--tls-cert`、`--tls-key`、`--http-port`、`--poll-interval`、`--max-connections`），由 `launch` 插件读取；服务管理器注入的环境变量（`PORT`、`HOST`、`AUTH`、`NODE_ONLY`、`TLS_*`、`HTTP_PORT`、`TMUX_PANEL_CONFIG_DIR`）也照旧。`install-service.sh` / `.ps1` 生成的单元启动 `bin/panel.js`；还指向 `server/index.js` 的旧单元经兼容入口照常启动，重新运行安装脚本即改过来。
+正式运行由服务管理器启动（见 `CLAUDE.md`）。`bin/panel.js` 接受原服务端的全部命令行选项（`--config`、`--port`、`--host`、`--auth`、`--tls-cert`、`--tls-key`、`--http-port`、`--poll-interval`、`--max-connections`），由 `launch` 插件读取；服务管理器注入的环境变量（`PORT`、`HOST`、`AUTH`、`NODE_ONLY`、`TLS_*`、`HTTP_PORT`、`TMUX_PANEL_CONFIG_DIR`）也照旧。`install-service.sh` / `.ps1` 生成的单元启动 `bin/panel.js`；还指向 `server/index.js` 的旧单元经兼容入口照常启动，重新运行安装脚本即改过来。从旧结构更新的安装还有两处遗留，由面板启动时自动处理：面板以前装的 tmux-agent 技能链接指向已不存在的 `plugins/tmux-agent/`，`session-protection` 把它改指 `catalog/`（只认指向本仓库的链接，私有 tmux server 下不做）；`setup-relay.sh` 以前写在 `public/js/relay-config.js` 的中继配置，`ui` 把它挪到 `plugins/ui/client/js/`。
 
 **不要用 `bin/panel.js` 直接跑在生产状态上做实验。** 默认配置目录就是正式面板的 `~/.config/tmux-web-panel`（令牌、通知、服务器列表、会话保护设置），`node` 插件还会改写 `~/.config/tmux-web-panel/node.json`（Hub 读的配对文件）。实验和冒烟一律用补丁把这些指走，并选私有 tmux server，见“测试”。
 

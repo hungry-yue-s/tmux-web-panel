@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rm, readFile, writeFile, mkdir, symlink, lstat } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, mkdir, symlink, lstat, readlink, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import express from 'express';
@@ -147,5 +147,37 @@ describe('project-managed resources', () => {
     await expect(resources.changeSkill('tmux-agent', 'codex', false)).rejects.toThrow('not managed');
     expect(await readFile(join(path, 'SKILL.md'), 'utf8')).toBe('mine');
     await expect(resources.changeSkill('../other', 'codex', true)).rejects.toThrow('Unknown');
+  });
+
+  it('repoints, replaces or removes its links to where a skill used to be, never anyone else\'s', async () => {
+    const home = await temp();
+    const resources = new ManagedResources({ userHome: home, configDir: join(home, 'config'), projectDir: REPO_ROOT });
+    await resources.load();
+    const legacy = join(REPO_ROOT, 'plugins', 'tmux-agent', 'skills', 'tmux-agent');
+    const codex = resources.skillPath('tmux-agent', 'codex');
+    const claude = resources.skillPath('tmux-agent', 'claude');
+    for (const path of [codex, claude]) { await mkdir(join(path, '..'), { recursive: true }); await symlink(legacy, path, 'dir'); }
+    const status = async (target) => (await resources.status()).skills.find((s) => s.name === 'tmux-agent' && s.target === target).status;
+    expect(await status('codex')).toBe('not_installed');
+
+    // From the page: installing over the old link replaces it.
+    await resources.changeSkill('tmux-agent', 'codex', true);
+    expect(await readlink(codex)).toBe(repoPath('catalog', 'tmux-agent', 'skills', 'tmux-agent'));
+    // At start-up: the rest are repointed, once.
+    expect(await resources.relinkMovedSkills()).toEqual([claude]);
+    expect(await status('claude')).toBe('managed');
+    expect(await resources.relinkMovedSkills()).toEqual([]);
+
+    // Removing an old link works as well.
+    await unlink(claude); await symlink(legacy, claude, 'dir');
+    await resources.changeSkill('tmux-agent', 'claude', false);
+    await expect(lstat(claude)).rejects.toMatchObject({ code: 'ENOENT' });
+
+    // The same path in another checkout is not this panel's.
+    const elsewhere = join(home, 'other-checkout', 'plugins', 'tmux-agent', 'skills', 'tmux-agent');
+    await symlink(elsewhere, claude, 'dir');
+    expect(await resources.relinkMovedSkills()).toEqual([]);
+    expect(await status('claude')).toBe('conflict');
+    expect(await readlink(claude)).toBe(elsewhere);
   });
 });

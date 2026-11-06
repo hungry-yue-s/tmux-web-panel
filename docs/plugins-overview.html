@@ -585,6 +585,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
           <li>Linux、macOS 重新运行 <code>scripts/install-service.sh install</code>，服务单元改为直接启动 bin/panel.js。不重装也能启动：旧单元经 server/index.js 兼容入口进来。Windows 的计划任务经 run-panel.ps1 启动，脚本已经改好，不用重装</li>
           <li>经服务管理器重启面板：<code>systemctl --user restart tmux-web-panel</code>，Windows 用 <code>scripts/install-service.ps1 restart</code>。浏览器里的终端会断开重连，tmux 会话不受影响</li>
         </ol>
+        <p style="margin:10px 0 0;font-size:14px;color:var(--muted)">旧结构留下的两处路径由面板启动时自动修好：指向旧位置的 tmux-agent 技能链接，和 public/js/ 下的中继配置。</p>
       </div>
     </div>
     <div class="card todo">

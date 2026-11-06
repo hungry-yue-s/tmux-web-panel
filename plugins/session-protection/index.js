@@ -41,6 +41,14 @@ export async function apply(ctx) {
     return;
   }
 
+  // Skill links installed before the tmux-agent skill moved to catalog/ point
+  // at nothing; repoint them. Only links into this checkout count as ours.
+  try {
+    for (const path of await resources.relinkMovedSkills()) ctx.logger.info('relinked moved skill %s', path);
+  } catch (error) {
+    ctx.logger.warn('could not relink moved skills: %s', error.message);
+  }
+
   const protection = new SessionProtection({
     configDir: launch.configDir,
     projectDir: REPO_ROOT,

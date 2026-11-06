@@ -19,7 +19,9 @@ import { basename, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Service } from 'cordis';
 import express from 'express';
+import { REPO_ROOT } from '../../lib/paths.js';
 import { composePage, readContribution } from './compose.js';
+import { moveLegacyRelayConfig } from './relay-config.js';
 
 export const name = 'ui';
 
@@ -30,6 +32,7 @@ const PAGE_RE = /^\/(?:[A-Za-z0-9_-]+\.html)?$/;
 
 export const TEMPLATE = fileURLToPath(new URL('./client/index.html', import.meta.url));
 export const OWN_CONTRIBUTION = fileURLToPath(new URL('./client/page.json', import.meta.url));
+const RELAY_CONFIG = fileURLToPath(new URL('./client/js/relay-config.js', import.meta.url));
 
 function toPath(file) {
   return file instanceof URL || String(file).startsWith('file:') ? fileURLToPath(file) : resolve(String(file));
@@ -60,6 +63,12 @@ export default class UiService extends Service {
         res.type('application/javascript').set('Cache-Control', 'no-store')
           .send(`window.PANEL_RELAY_PAGE = ${JSON.stringify(launch.relayPage)};\n`);
       });
+    } else {
+      try {
+        if (moveLegacyRelayConfig(REPO_ROOT, RELAY_CONFIG)) ctx.logger.info('moved public/js/relay-config.js to %s', RELAY_CONFIG);
+      } catch (error) {
+        ctx.logger.warn('could not move public/js/relay-config.js: %s', error.message);
+      }
     }
 
     this.contribute(OWN_CONTRIBUTION);
