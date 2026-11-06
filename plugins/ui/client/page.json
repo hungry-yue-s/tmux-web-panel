@@ -3,7 +3,8 @@
   "head": [
     { "order": 50, "style": "/css/style.css?v=59" },
     { "order": 51, "style": "/css/workspace.css?v=4" },
-    { "order": 53, "style": "/css/mobile.css?v=7" }
+    { "order": 53, "style": "/css/mobile.css?v=7" },
+    { "order": 56, "style": "/css/blocks.css?v=2" }
   ],
   "body": [
     { "order": 5, "script": "/js/slots.js" },
@@ -17,6 +18,8 @@
     { "order": 130, "module": "/js/sort-windows.js?v=1" },
     { "order": 140, "script": "/js/windows.js?v=2" },
     { "order": 150, "script": "/js/link-detect.js?v=1" },
+    { "order": 175, "script": "/js/blocks-kit.js" },
+    { "order": 180, "script": "/js/block-host.js?v=1" },
     { "order": 200, "script": "/js/mobile-ui.js?v=2" },
     { "order": 310, "script": "/js/app-fullscreen.js?v=2" },
     { "order": 320, "script": "/js/app.js?v=18" },

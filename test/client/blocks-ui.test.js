@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import fs from 'node:fs';
 import { layoutPanes, controlEvents } from '../../bin/twp.mjs';
+import { BLOCKS } from '../helpers/blocks.js';
 
 let B;
 beforeAll(() => {
   const w = {};
-  new Function('window', 'Api', fs.readFileSync('plugins/files/client/js/blocks.js', 'utf8') + '\nwindow.Blocks = Blocks;')(w, {});
+  new Function('window', 'Api', BLOCKS + '\nwindow.Blocks = Blocks;')(w, {});
   B = w.Blocks._test;
 });
 
@@ -50,7 +51,7 @@ describe('line staging patches', () => {
 });
 
 describe('blocks on native glass', () => {
-  const css = fs.readFileSync('plugins/files/client/css/blocks.css', 'utf8');
+  const css = fs.readFileSync('plugins/ui/client/css/blocks.css', 'utf8');
   const glass = css.slice(css.indexOf('/* --- native glass'));
 
   it('lets the window material show through and tints each depth separately', () => {

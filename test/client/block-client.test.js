@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
-
-const BLOCKS = fs.readFileSync('plugins/files/client/js/blocks.js', 'utf8');
+import { BLOCKS } from '../helpers/blocks.js';
 
 let dom;
 afterEach(() => dom?.window.close());

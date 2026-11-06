@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { WORKSPACE_BLOCKS } from '../helpers/blocks.js';
+import { BLOCKS, WORKSPACE_BLOCKS } from '../helpers/blocks.js';
 
 const source = readFileSync('plugins/diagnostics/client/js/diagnostics.js', 'utf8');
 const apiSource = readFileSync('plugins/ui/client/js/api.js', 'utf8');
 const traceSource = readFileSync('plugins/terminal/client/js/terminal-trace.js', 'utf8');
-const blocksSource = readFileSync('plugins/files/client/js/blocks.js', 'utf8');
+const blocksSource = BLOCKS;
 const gitSource = WORKSPACE_BLOCKS;
 const TARGET = 'cc-windows';
 let dom;

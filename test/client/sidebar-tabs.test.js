@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
-import { WORKSPACE_BLOCKS } from '../helpers/blocks.js';
+import { BLOCKS, WORKSPACE_BLOCKS } from '../helpers/blocks.js';
 
 const INSTANCE = '1873:1700000000';
 
 const previewSource = fs.readFileSync('plugins/files/client/js/file-preview.js', 'utf8');
-const hostSource = fs.readFileSync('plugins/files/client/js/block-host.js', 'utf8');
+const hostSource = fs.readFileSync('plugins/ui/client/js/block-host.js', 'utf8');
 
 let dom;
 afterEach(() => dom?.window.close());
@@ -486,7 +486,6 @@ describe('blocks bound to a window', () => {
   });
 
   describe('the real Git block, with focus moving between repositories', () => {
-    const BLOCKS = fs.readFileSync('plugins/files/client/js/blocks.js', 'utf8');
     const staged = (root) => ({
       root, branch: 'main', files: [{ path: 'a.txt', staged: true, unstaged: false, index: 'M', worktree: ' ' }],
       detached: false, head: { hash: 'abc', subject: 'x' },
@@ -906,7 +905,7 @@ describe('tabs in the order the user puts them', () => {
   it('gives each tab an icon for what it shows', async () => {
     const { win, doc, host, preview } = setup();
     // The icons are the blocks' own, as on the page.
-    win.eval(fs.readFileSync('plugins/files/client/js/blocks.js', 'utf8'));
+    win.eval(BLOCKS);
     win.fetch = vi.fn((url) => {
       const path = new URL(String(url), 'https://panel.test/').searchParams.get('path') || '/tmp';
       const kind = /\.png$/.test(path) ? { isImage: true } : /\./.test(path) ? { isText: true } : { isDirectory: true };

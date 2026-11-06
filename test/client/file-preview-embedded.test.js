@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
+import { BLOCKS } from '../helpers/blocks.js';
 
 const source = readFileSync('plugins/files/client/js/file-preview.js', 'utf8');
 
@@ -32,7 +33,7 @@ const cells = (box) => [...box.querySelectorAll('.fp-xlsx-table td')].map((td) =
 describe('what a read-only render leaves out', () => {
   it('is the TODO.md board, which saves to the file on disk', () => {
     const w = {};
-    new Function('window', 'Api', readFileSync('plugins/files/client/js/blocks.js', 'utf8') + '\nwindow.Blocks = Blocks;')(w, {});
+    new Function('window', 'Api', BLOCKS + '\nwindow.Blocks = Blocks;')(w, {});
     expect(typeof w.Blocks.rendererFor('/repo/TODO.md')).toBe('function');
     expect(w.Blocks.rendererFor('/repo/TODO.md', true)).toBeNull();
     // Nothing else it renders writes: notebooks and patches still get theirs.

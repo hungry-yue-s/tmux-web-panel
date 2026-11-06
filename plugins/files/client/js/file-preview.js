@@ -4588,7 +4588,12 @@ var FilePreview = (function () {
       return Promise.resolve();
     }
     if (info.isArchive) return _renderArchive(body, info);
-    if (info.isSqlite && window.Blocks) return window.Blocks.renderSqlite(body, info);
+    if (info.isSqlite) {
+      // The sqlite plugin's view; without it, the file is only offered for download.
+      if (window.Blocks && window.Blocks.renderSqlite) return window.Blocks.renderSqlite(body, info);
+      _renderUnavailable(body, 'SQLite 预览没有启用。', source.rawUrl, filename);
+      return Promise.resolve();
+    }
     return source.loadContent().then(function (data) {
       if (!isCurrent()) return false;
       if (options.onContent) options.onContent(data.content);
@@ -4605,7 +4610,7 @@ var FilePreview = (function () {
       } else {
         _renderCode(body, data.content, data.language, options.targetLine);
         // Git changes in the gutter, like an editor.
-        if (options.gitGutter && window.Blocks) window.Blocks.decorateGitGutter(body, info.absPath);
+        if (options.gitGutter && window.Blocks && window.Blocks.decorateGitGutter) window.Blocks.decorateGitGutter(body, info.absPath);
       }
       return true;
     });

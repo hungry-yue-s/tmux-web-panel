@@ -132,7 +132,7 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 
 Git、浏览器等工具 block 与文件共用这个分窗（同一个标签条、宽度和隐藏按钮），不要再做第二个右侧栏：
 
-- 分窗归 `file-preview.js` 所有；`plugins/files/client/js/block-host.js` 只通过 `FilePreview.blockDock.sync()` 声明哪些 frame 属于标签条，block 的生命周期仍归它管。
+- 分窗归 `file-preview.js` 所有；`plugins/ui/client/js/block-host.js`（`ui` 插件；没有文件预览时 block 只能浮动）只通过 `FilePreview.blockDock.sync()` 声明哪些 frame 属于标签条，block 的生命周期仍归它管。
 - 切换文件 Tab 时文件 modal 离开 DOM，block 的 frame 只隐藏不移除，这样浏览器页面和未写完的提交说明都不会丢。
 - 文件 Tab 和 Git block 按窗口保存，浏览器 block 按服务器保存：切换窗口时文件和 Git 标签跟着换，浏览器标签保留。block 的归属由注册时的 `perWindow` 决定，`_persistDockState` 不写入 block，只记录它是否在最前（`activeBlock`）。
 - 切走窗口时 Git block 的 frame 只脱离 DOM、不销毁，这样没写完的提交说明不会丢；窗口的 block 要等访问到它才创建。在没有窗口的页面打开的 Git 先浮动，到第一个窗口时归属于它。

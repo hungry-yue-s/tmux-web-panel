@@ -1515,6 +1515,43 @@
   PanelSlots.commands.register({ id: 'git', order: 20, group: 'block', title: 'Git', icon: 'git', keys: 'Alt+Shift+G', code: 'KeyG', run: openGit, keywords: 'git diff stage commit branch push pull 提交 暂存 分支 历史' });
   Blocks.openGit = openGit;
 
+  // --- git gutter in the code preview ---------------------------------------------
+
+  function decorateGitGutter(body, absPath) {
+    ui.client().get('/api/git/line-changes', { path: absPath }).then(function (data) {
+      var gutter = body.querySelector('.fp-line-numbers');
+      if (!gutter) return;
+      var count = gutter.textContent.split('\n').length;
+      var marks = new Array(count + 1);
+      if (!data.tracked && data.untracked) {
+        for (var n = 1; n <= count; n++) marks[n] = 'added';
+      }
+      (data.changes || []).forEach(function (change) {
+        for (var line = change.start; line <= Math.min(change.end, count); line++) marks[line] = change.type;
+      });
+      if (!marks.some(Boolean)) return;
+      var html = [];
+      for (var i = 1; i <= count; i++) {
+        html.push(marks[i] ? '<span class="fp-git-' + marks[i] + '">' + i + '</span>' : String(i));
+      }
+      gutter.innerHTML = html.join('\n');
+      gutter.classList.add('fp-has-git');
+    }).catch(function () { /* not a repository: plain gutter */ });
+  }
+
+  Blocks.decorateGitGutter = decorateGitGutter;
+
+  // The file preview's "more" menu: Git for the repository the file is in.
+  Blocks.registerPreviewActions({ id: 'git', order: 30, items: function (file, ctx) {
+    var svgPaths = ui.iconPaths;
+    var items = [];
+    if (window.BlockHost) {
+      items.push({ label: 'Git', hint: '查看所在仓库的改动与历史', icon: svgPaths('git'),
+        run: function () { window.BlockHost.open('git', { path: file.isDirectory ? file.absPath : file.absPath.replace(/\/[^/]+$/, '') || '/', paneId: ctx.paneId }); } });
+    }
+    return items;
+  } });
+
   // --- boot ---
   window.addEventListener('hashchange', scheduleChip);
   // Another machine: what is on the chip and on its way to it is about the last one.

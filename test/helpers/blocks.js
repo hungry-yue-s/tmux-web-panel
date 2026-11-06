@@ -14,3 +14,16 @@ export const WORKSPACE_BLOCK_SCRIPTS = [
 ];
 
 export const WORKSPACE_BLOCKS = WORKSPACE_BLOCK_SCRIPTS.map((path) => readFileSync(path, 'utf8')).join('\n;\n');
+
+// What used to be blocks.js: the block kit (ui), then the file preview's
+// renderers it holds for each plugin: patches, the editor and the board
+// (files), notebooks (notebook), SQLite (sqlite). The Git gutter and the
+// preview's Git item come with the Git block, in WORKSPACE_BLOCKS.
+export const BLOCK_SCRIPTS = [
+  'plugins/ui/client/js/blocks-kit.js',
+  'plugins/files/client/js/file-blocks.js',
+  'plugins/notebook/client/js/notebook-block.js',
+  'plugins/sqlite/client/js/sqlite-block.js',
+];
+
+export const BLOCKS = BLOCK_SCRIPTS.map((path) => readFileSync(path, 'utf8')).join('\n;\n');

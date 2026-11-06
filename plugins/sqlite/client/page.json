@@ -1,0 +1,6 @@
+{
+  "serve": ["."],
+  "body": [
+    { "order": 194, "script": "/js/sqlite-block.js" }
+  ]
+}

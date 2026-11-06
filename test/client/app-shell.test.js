@@ -2,13 +2,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { loadSlots } from '../helpers/slots.js';
-import { WORKSPACE_BLOCKS } from '../helpers/blocks.js';
+import { BLOCKS, WORKSPACE_BLOCKS } from '../helpers/blocks.js';
 
 const ROUTER = readFileSync('plugins/ui/client/js/router.js', 'utf8');
 const STORE = readFileSync('plugins/ui/client/js/store.js', 'utf8');
 const SHELL = readFileSync('plugins/ui/client/js/app-shell.js', 'utf8');
 const SERVERS = readFileSync('plugins/ui/client/js/servers.js', 'utf8');
-const BLOCKS = readFileSync('plugins/files/client/js/blocks.js', 'utf8');
 
 const SHELL_DOM = `<!DOCTYPE html><html><body>
   <div class="ms-app sidebar-collapsed">

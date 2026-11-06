@@ -9,7 +9,11 @@ function commandsWith(without = []) {
   const win = dom.window;
   win.eval(readFileSync('plugins/ui/client/js/slots.js', 'utf8'));
   const noop = () => win.document.createElement('div');
-  win.Blocks = { ui: { el: noop, button: noop, iconButton: noop, toast: vi.fn(), errorText: String }, icon: noop };
+  win.Blocks = {
+    ui: { el: noop, button: noop, iconButton: noop, toast: vi.fn(), errorText: String },
+    icon: noop,
+    registerPreviewActions: vi.fn(),
+  };
   win.BlockHost = { register: vi.fn(), render: vi.fn(), open: vi.fn() };
   win.setInterval = () => 0;
   win.setTimeout = () => 0;
@@ -45,6 +49,33 @@ describe('PanelSlots on the composed page', () => {
     expect(commandsWith(['git', 'browser', 'metrics'])).toEqual([
       'shell', 'files', 'quick-open', 'board', 'hosts', 'theme', 'shortcuts', 'close-block', 'float-block', 'max-block',
     ]);
+  });
+
+  it('renders notebooks and SQLite, and offers Git in the preview, only with their plugins', () => {
+    const dom = new JSDOM('<!DOCTYPE html><body></body>', { url: 'http://localhost/', runScripts: 'outside-only' });
+    const win = dom.window;
+    win.eval(readFileSync('plugins/ui/client/js/blocks-kit.js', 'utf8'));
+    win.eval(readFileSync('plugins/files/client/js/file-blocks.js', 'utf8'));
+    const markdown = { isDirectory: false, isText: true, isMarkdown: true, rawContent: '# x', absPath: '/r/notes.md' };
+    expect(win.Blocks.rendererFor('/r/a.ipynb', true)).toBeNull();
+    expect(typeof win.Blocks.rendererFor('/r/fix.patch', true)).toBe('function');
+    expect(win.Blocks.renderSqlite).toBeUndefined();
+    expect(win.Blocks.previewActions(markdown, {}).map((item) => item.label)).toEqual(['编辑', '看板视图']);
+
+    win.eval(readFileSync('plugins/notebook/client/js/notebook-block.js', 'utf8'));
+    win.eval(readFileSync('plugins/sqlite/client/js/sqlite-block.js', 'utf8'));
+    expect(typeof win.Blocks.rendererFor('/r/a.ipynb', true)).toBe('function');
+    expect(typeof win.Blocks.renderSqlite).toBe('function');
+    dom.window.close();
+  });
+
+  it('loads the block kit before every script that registers with it', () => {
+    const kit = at('/js/blocks-kit.js');
+    expect(kit).toBeGreaterThan(-1);
+    for (const src of ['/js/block-host.js', '/js/file-blocks.js', '/js/notebook-block.js', '/js/sqlite-block.js',
+      '/js/git-block.js', '/js/browser-block.js', '/js/files-commands.js', '/js/workspace-commands.js']) {
+      expect(at(src)).toBeGreaterThan(kit);
+    }
   });
 
   it('registers each plugin section after the component it puts on the page', () => {
