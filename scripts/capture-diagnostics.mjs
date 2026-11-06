@@ -7,9 +7,12 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 
-const [action, outputDir, target = 'cc-windows'] = process.argv.slice(2);
-if (!['start', 'status', 'stop', 'download'].includes(action) || !outputDir || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(target) || target === 'local') {
-  console.error('Usage: node scripts/capture-diagnostics.mjs start|status|stop|download OUTPUT_DIR [SERVER_ID]');
+const [action, outputDir, target] = process.argv.slice(2);
+const validTarget = (value) => /^[a-z0-9][a-z0-9._-]{0,63}$/.test(value || '') && value !== 'local';
+if (!['start', 'status', 'stop', 'download'].includes(action) || !outputDir
+    || (action === 'start' && !validTarget(target)) || (target !== undefined && !validTarget(target))) {
+  console.error('Usage: node scripts/capture-diagnostics.mjs start OUTPUT_DIR REMOTE_SERVER_ID');
+  console.error('       node scripts/capture-diagnostics.mjs status|stop|download OUTPUT_DIR [REMOTE_SERVER_ID]');
   process.exit(1);
 }
 const configDir = path.join(os.homedir(), '.config/tmux-web-panel');
@@ -68,7 +71,8 @@ if (action === 'start') {
   }
 } else {
   manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
-  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(manifest.target) || !Array.isArray(manifest.captures)) throw new Error('Invalid capture manifest');
+  if (!validTarget(manifest.target) || !Array.isArray(manifest.captures)) throw new Error('Invalid capture manifest');
+  if (target !== undefined && target !== manifest.target) throw new Error('Server does not match the saved capture');
   for (const capture of manifest.captures) {
     if (!['node', 'hub'].includes(capture.role) || !/^[0-9a-f-]{36}$/.test(capture.id) || !['', '/n/' + manifest.target].includes(capture.prefix)) throw new Error('Invalid capture manifest');
     if (action === 'download') {

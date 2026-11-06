@@ -14,7 +14,8 @@ import { parseArgs } from 'node:util';
 import { createApp, defaultHome } from '../kernel/app.js';
 import { dumpEntries, resolveEntries } from '../kernel/profile.js';
 
-const STOP_TIMEOUT_MS = 5000;
+// Ending mosh processes may take longer than the rest; this only bounds a stall.
+const STOP_TIMEOUT_MS = 15_000;
 
 const RUNTIME_OPTIONS = ['config', 'port', 'host', 'auth', 'tls-cert', 'tls-key', 'http-port', 'poll-interval', 'max-connections'];
 

@@ -41,7 +41,7 @@ async function fixture() {
     return { stdout: '' };
   });
   const manager = new DesktopRuntime({ dataDir: join(home, 'Application Support/工作台'), runtimePath: bundle,
-    username: '新用户', password: 'test-password-2026', port: 0, launchAtLogin: false }, { run, home });
+    username: '新用户', password: 'test-password-2026', port: 0, launchAtLogin: false, prepareMosh: false }, { run, home });
   cleanups.push(() => rm(manager.socketRoot, { recursive: true, force: true }));
   manager.certificates = vi.fn(async () => {
     const path = join(manager.root, 'tls'); await mkdir(path, { recursive: true });
@@ -65,8 +65,12 @@ describe('desktop settings and lifecycle', () => {
     const settings = validateSettings({ password: 'valid-password', relay: { domain: 'MyBox.duckdns.org', pagesURL: 'https://example.github.io/panel' } });
     expect(settings.listenOnLAN).toBe(false);
     expect(settings.port).toBe(17681);
+    expect(settings.prepareMosh).toBe(true);
+    expect(validateSettings({ password: 'valid-password', prepareMosh: false }).prepareMosh).toBe(false);
+    expect(() => validateSettings({ password: 'valid-password', prepareMosh: 'yes' })).toThrow('Mosh');
     expect(verifyPassword('valid-password', settings.auth.salt, settings.auth.hash)).toBe(true);
     expect(JSON.stringify(settings)).not.toContain('valid-password');
+    expect(validateSettings({ prepareMosh: false }, settings).prepareMosh).toBe(false);
     expect(settings.relay.domain).toBe('mybox');
     expect(settings.relay.pagesURL).toBe('https://example.github.io/panel/');
     expect(() => validateSettings({ password: 'valid-password', relay: { pagesURL: 'javascript:alert(1)' } })).toThrow('HTTPS');
@@ -154,6 +158,142 @@ describe('desktop settings and lifecycle', () => {
     expect(await isPortAvailable(manager.input.port)).toBe(false);
     await expect(manager.execute('initialize')).rejects.toMatchObject({ code: 'PORT_IN_USE' });
     expect(calls.some(([, args]) => args[0] === 'bootstrap')).toBe(false);
+  });
+
+  it.skipIf(process.platform !== 'darwin')('prepares optional Mosh after core initialization using the shared helper', async () => {
+    const { manager, bundle, calls } = await fixture();
+    await mkdir(join(bundle, 'app/scripts'), { recursive: true });
+    await writeFile(join(bundle, 'app/scripts/install-mosh.sh'), 'isolated helper fixture');
+    manager.input.prepareMosh = undefined;
+    const original = manager.run;
+    let shellOptions;
+    manager.run = vi.fn(async (file, args, options) => {
+      if (file === '/bin/sh') {
+        expect(args[0]).toBe(join(bundle, 'app/scripts/install-mosh.sh'));
+        expect(calls.filter(([, words]) => words[0] === 'bootstrap')).toHaveLength(2);
+        shellOptions = options;
+        return { stdout: '>> checking components\nTWP_COMPONENT_RESULT=ready\n' };
+      }
+      return original(file, args, options);
+    });
+    const result = await manager.execute('initialize');
+    expect(result.ok).toBe(true);
+    expect(result.configuration.prepareMosh).toBe(true);
+    expect(result.status.moshPreparation).toMatchObject({ result: 'ready', reason: null });
+    expect(result.status.moshPreparation).not.toHaveProperty('available');
+    expect(shellOptions.env.TWP_MOSH_ROLE).toBe('both');
+    expect(shellOptions.env.TMUX).toBeUndefined();
+    expect(shellOptions.env.TMUX_PANE).toBeUndefined();
+    expect(shellOptions.env.TWP_SUDO_PASSWORD).toBeUndefined();
+    const events = await manager.events();
+    expect(events.at(-1)).toMatchObject({ id: 'mosh', status: 'complete' });
+    expect(events.findIndex(e => e.id === 'health')).toBeLessThan(events.findIndex(e => e.id === 'mosh'));
+  });
+
+  it.skipIf(process.platform !== 'darwin')('keeps the core initialized when optional Mosh needs Homebrew', async () => {
+    const { manager, bundle } = await fixture();
+    await mkdir(join(bundle, 'app/scripts'), { recursive: true });
+    await writeFile(join(bundle, 'app/scripts/install-mosh.sh'), 'isolated helper fixture');
+    manager.input.prepareMosh = true;
+    const original = manager.run;
+    manager.run = vi.fn(async (file, args, options) => {
+      if (file === '/bin/sh') throw Object.assign(new Error('private process failure'), {
+        stdout: 'private-process-output\nTWP_COMPONENT_RESULT=unsupported\nTWP_COMPONENT_REASON=homebrew_missing\n',
+      });
+      return original(file, args, options);
+    });
+    const result = await manager.execute('initialize');
+    expect(result.configuration.initialized).toBe(true);
+    expect(result.status.panelState).toBe('running');
+    expect(result.status.moshPreparation).toMatchObject({ result: 'unsupported', reason: 'homebrew_missing' });
+    const events = await manager.events();
+    expect(events.at(-1)).toMatchObject({ id: 'mosh', status: 'warning' });
+    expect(events.at(-1).message).toContain('https://brew.sh');
+    expect(JSON.stringify(events)).not.toContain('private-process-output');
+    expect(JSON.stringify(events)).not.toContain('private process failure');
+  });
+
+  it.skipIf(process.platform !== 'darwin')('records a skipped choice and does not invoke an optional package manager', async () => {
+    const { manager } = await fixture();
+    const result = await manager.execute('initialize');
+    expect(result.configuration.prepareMosh).toBe(false);
+    expect(result.status.moshPreparation.result).toBe('skipped');
+    expect(manager.run.mock.calls.some(([file]) => file === '/bin/sh')).toBe(false);
+  });
+
+  it.skipIf(process.platform !== 'darwin')('reports a missing helper as an optional warning instead of failing core setup', async () => {
+    const { manager } = await fixture();
+    manager.input.prepareMosh = true;
+    const result = await manager.execute('initialize');
+    expect(result.ok).toBe(true);
+    expect(result.status.moshPreparation).toMatchObject({ result: 'unsupported', reason: 'component_helper_missing' });
+    expect(result.configuration.initialized).toBe(true);
+  });
+
+  it.skipIf(process.platform !== 'darwin')('retries only Mosh preparation without starting or stopping core services', async () => {
+    const { manager, bundle, calls } = await fixture();
+    await mkdir(join(bundle, 'app/scripts'), { recursive: true });
+    await writeFile(join(bundle, 'app/scripts/install-mosh.sh'), 'isolated helper fixture');
+    await manager.execute('initialize');
+    await rm(join(bundle, 'app/scripts/install-mosh.sh'));
+    const bootstraps = calls.filter(([, args]) => args[0] === 'bootstrap').length;
+    const original = manager.run;
+    manager.start = vi.fn(async () => { throw new Error('Must not restart core services'); });
+    manager.stopPanel = vi.fn(async () => { throw new Error('Must not stop core services'); });
+    manager.run = vi.fn(async (file, args, options) => {
+      if (file === '/bin/sh') {
+        expect(args[0]).toContain('/runtime/unit-test/app/scripts/install-mosh.sh');
+        return { stdout: 'TWP_COMPONENT_RESULT=ready\n' };
+      }
+      return original(file, args, options);
+    });
+    const result = await manager.execute('prepare-mosh');
+    expect(result.status.moshPreparation.result).toBe('ready');
+    expect(result.configuration.prepareMosh).toBe(false);
+    expect(manager.start).not.toHaveBeenCalled();
+    expect(manager.stopPanel).not.toHaveBeenCalled();
+    expect(calls.filter(([, args]) => args[0] === 'bootstrap')).toHaveLength(bootstraps);
+    expect(calls.some(([, args]) => args[0] === 'bootout')).toBe(false);
+  });
+
+  it.skipIf(process.platform !== 'darwin')('uses the newly bundled helper to prepare an older runtime without replacing it', async () => {
+    const { manager, bundle } = await fixture();
+    await manager.execute('initialize');
+    const saved = JSON.parse(await readFile(manager.paths.configuration, 'utf8'));
+    await expect(stat(join(saved.runtimePath, 'app/scripts/install-mosh.sh'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await mkdir(join(bundle, 'app/scripts'), { recursive: true });
+    await writeFile(join(bundle, 'app/scripts/install-mosh.sh'), 'new client helper fixture');
+    const original = manager.run;
+    manager.start = vi.fn(async () => { throw new Error('Must not restart the existing runtime'); });
+    manager.run = vi.fn(async (file, args, options) => {
+      if (file === '/bin/sh') {
+        expect(args[0]).toBe(join(bundle, 'app/scripts/install-mosh.sh'));
+        return { stdout: 'TWP_COMPONENT_RESULT=ready\n' };
+      }
+      return original(file, args, options);
+    });
+    const result = await manager.execute('prepare-mosh');
+    expect(result.status.moshPreparation.result).toBe('ready');
+    expect(manager.start).not.toHaveBeenCalled();
+    expect(JSON.parse(await readFile(manager.paths.configuration, 'utf8')).runtimePath).toBe(saved.runtimePath);
+  });
+
+  it.skipIf(process.platform !== 'darwin')('does not mark a failed component process ready or expose extra preparation fields', async () => {
+    const { manager, bundle } = await fixture();
+    await mkdir(join(bundle, 'app/scripts'), { recursive: true });
+    await writeFile(join(bundle, 'app/scripts/install-mosh.sh'), 'isolated helper fixture');
+    await manager.execute('initialize');
+    const original = manager.run;
+    manager.run = vi.fn(async (file, args, options) => {
+      if (file === '/bin/sh') throw Object.assign(new Error('fixture exit failure'), { stdout: 'TWP_COMPONENT_RESULT=ready\n' });
+      return original(file, args, options);
+    });
+    const result = await manager.execute('prepare-mosh');
+    expect(result.status.moshPreparation).toMatchObject({ result: 'failed', reason: 'component_process_failed' });
+    const saved = JSON.parse(await readFile(manager.paths.configuration, 'utf8'));
+    saved.moshPreparation.privateToken = 'must-not-be-exported';
+    await writeFile(manager.paths.configuration, JSON.stringify(saved));
+    expect(JSON.stringify(await manager.inspect())).not.toContain('must-not-be-exported');
   });
 
   it.skipIf(process.platform !== 'darwin')('keeps failed initialization in the wizard and accepts corrected inputs on retry', async () => {

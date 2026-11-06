@@ -1,22 +1,38 @@
 import { it, expect } from 'vitest';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTmuxApi } from '../server/tmux.js';
 import { createPlugin } from '../plugins/tmux-agent/server.mjs';
+import { PRIVATE_TMUX_IDENTITY_FORMAT, parsePrivateTmuxIdentity, cleanupPrivateTmux } from './helpers/private-tmux.js';
 
 const exec = promisify(execFile);
+let tmuxBinary;
+// This opt-in integration uses POSIX sh jobs. Windows/MSYS2 needs a dedicated
+// harness; neither an inherited TMUX nor a native absolute tmux.exe may select a server.
+if (process.platform !== 'win32' && process.env.TMUX_AGENT_INTEGRATION === '1') {
+  try { tmuxBinary = execFileSync('which', ['tmux'], { encoding: 'utf8' }).trim(); } catch { /* optional local integration */ }
+}
 
-it.skipIf(process.env.TMUX_AGENT_INTEGRATION !== '1')('runs real persistent tmux jobs, preserves nonzero exit codes across plugin recreation and safely pastes literal text', async () => {
+it.skipIf(process.platform === 'win32' || process.env.TMUX_AGENT_INTEGRATION !== '1' || !tmuxBinary)('runs real persistent tmux jobs, preserves nonzero exit codes across plugin recreation and safely pastes literal text', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'panel-agent-'));
   const socket = join(dir, 'tmux.sock');
-  const invoke = (args) => exec('tmux', ['-S', socket, ...args], { timeout: 5000 });
-  let session;
+  const env = { ...process.env };
+  delete env.TMUX;
+  delete env.TMUX_PANE;
+  const invoke = (args, options = {}) => exec(tmuxBinary, ['-S', socket, ...args], { ...options, timeout: 5000, env });
+  const readIdentity = async () => parsePrivateTmuxIdentity((await invoke(['display-message', '-p', PRIVATE_TMUX_IDENTITY_FORMAT])).stdout, socket);
+  let session, identity, primaryError;
   try {
     session = (await invoke(['-f', '/dev/null', 'new-session', '-d', '-s', 'test', '-P', '-F', '#{session_id}', 'sh'])).stdout.trim();
-    const executor = { exec: (command, args, options) => exec(command, command === 'tmux' ? ['-S', socket, ...args] : args, { timeout: 5000, ...options }) };
+    identity = await readIdentity();
+    const executor = { tmuxBin: tmuxBinary, exec: (command, args, options) => {
+      if (command === tmuxBinary) return invoke(args, options);
+      if (command !== 'sh') throw new Error('Unexpected integration-test executable');
+      return exec('/bin/sh', args, { ...options, timeout: 5000, env });
+    } };
     const tmux = createTmuxApi(executor);
     const deps = { tmux, workspaceService: {}, jobDirectory: join(dir, 'jobs') };
     let plugin = createPlugin(deps);
@@ -59,8 +75,10 @@ it.skipIf(process.env.TMUX_AGENT_INTEGRATION !== '1')('runs real persistent tmux
     await invoke(['send-keys', '-t', result.paneId, 'PANEL_TASK_DONE_' + task.id, 'Enter']);
     await new Promise((r) => setTimeout(r, 100));
     expect((await plugin.getJob({ serverId: 'local', jobId: task.id })).status).toBe('replied');
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    if (session) await invoke(['kill-session', '-t', session]).catch(() => {});
-    await rm(dir, { recursive: true, force: true });
+    await cleanupPrivateTmux({ dir, socket, identity, readIdentity, killServer: () => invoke(['kill-server']), primaryError });
   }
 }, 15000);

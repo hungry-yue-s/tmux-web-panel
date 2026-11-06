@@ -15,6 +15,31 @@ export const MAX_INPUT_BYTES = 64 * 1024;
 /** In total, what may wait for a client that is not there yet: one frame at the socket's limit. */
 export const MAX_HELD_INPUT_BYTES = 1024 * 1024;
 
+/**
+ * permessage-deflate for the node's sockets. Terminal output is highly repetitive
+ * (escape sequences, redrawn lines), so deflate cuts a redraw several times over
+ * on a slow link. With context takeover, which this keeps for its shared
+ * dictionary, ws ignores `threshold` and compresses every frame unless told not to:
+ * see outputFrameOptions.
+ */
+export const SOCKET_DEFLATE = Object.freeze({
+  zlibDeflateOptions: { level: 4, memLevel: 8 },
+  threshold: 256,
+  concurrencyLimit: 8,
+});
+
+/** Output smaller than this, such as a keystroke echo, is sent uncompressed. */
+export const COMPRESS_MIN_BYTES = 256;
+
+/**
+ * ws.send options for one output frame. A small frame gains nothing from deflate
+ * and would wait for the zlib thread pool, as would every frame queued behind it
+ * on that socket; frame order is kept either way.
+ */
+export function outputFrameOptions(payload) {
+  return { compress: payload.length >= COMPRESS_MIN_BYTES || Buffer.byteLength(payload) >= COMPRESS_MIN_BYTES };
+}
+
 /** Query keys a client is allowed to influence. Anything else is ignored. */
 export const ALLOWED_QUERY_KEYS = Object.freeze(['cols', 'rows', 'nozoom', 'token']);
 

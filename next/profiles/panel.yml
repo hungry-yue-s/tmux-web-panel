@@ -44,6 +44,8 @@ plugins:
     use: agent-hub
   - id: servers
     use: servers
+  - id: mosh
+    use: mosh
   - id: panel-plugins
     use: panel-plugins
   - id: session-protection

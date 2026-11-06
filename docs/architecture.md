@@ -37,6 +37,35 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
    - ssh 进程退出时丢弃转发，下次请求时重新建立。
    - Node 返回 401 时丢弃配对信息，下次重新读取配对文件（Node 重装后令牌会变）。
    - 转发正常但 Node 没有应答（`NODE_NOT_RUNNING`）时，同样重新读取配对文件，因为端口可能已经变了。
+   - 经转发的 GET/HEAD（无请求体）在收到任何应答前连接被重置时，换新连接再问一次，只用首个请求剩下的时限；写请求、已开始的应答、超时、证书或令牌错误都不重放。
+6. **TLS 会话。** 同一转发、同一配对下的两个 Agent 共用一份内存会话缓存，新连接（包括终端升级）可以恢复会话。Node 在恢复的会话上拿不到对端证书，所以只缓存通过了指纹校验的连接产生的会话；一个连接要么出示固定的证书，要么完成了对这种会话的恢复。没有 0-RTT。新转发或重新配对时缓存清空。
+
+### 可选：直连 Node 的 HTTPS
+
+每台服务器可以分别为“终端”和“文件 / Git / 监控”选择 `transport.terminal`、`transport.api`：`ssh`（默认）或 `direct`。`direct` 用 SSH 主机的地址（`ssh -G` 解析别名）加配对文件里的端口，直接连 Node 自己的 HTTPS 监听：
+
+- 只在配对文件声明 TLS 时才会尝试，证书同样按指纹固定，令牌仍只在 Hub；经 ProxyJump/ProxyCommand 的主机不尝试。配对和健康检查仍走 SSH，SSH 仍是必需的。
+- 后台先用 `GET /api/node/info` 检查，通过后才使用；检查中、失败时一律走转发，不等待。失败原因只记固定短语（`[node-link] direct path`），不写地址。失败 5 分钟后再检查。
+- 直连上的请求在应答前失败：可重放的读改走转发（仍只算一次重试），写请求返回错误；除池化连接被关闭外，其余失败把直连标为不可用。直连上的终端升级在连上之前失败时改走转发（Node 没收到握手，不会出现两个客户端）；握手已发出则只结束这一个 socket。
+- 证书不符只让直连不可用，不重置 SSH 链路。
+- 前提是 Node 监听在 Hub 能访问的地址上。一键安装的 Node 只监听 127.0.0.1，直连对它不可用；是否改监听地址、开放端口由用户决定，面板不改防火墙。
+- 两条路径的对照用 `scripts/measure-node-paths.mjs <serverId>`（在 Hub 机器上运行，自建一条转发，不影响运行中的面板），随机交错的状态 socket ping，输出分位数、>1s 比例和 socket 计数字节数。单路径结果只能作为基线，不能称为对照；测量口径和 Mosh 的未完成验收门槛见 [Mac 验收记录](low-latency-validation.md)。
+
+### 可选：终端走 Mosh（实验）
+
+`transport.terminal = 'mosh'` 时，浏览器仍只连本机 Hub 的 WebSocket；Hub 在本机 PTY 里运行 `mosh-client`，经 UDP 连到 Node 上的 `mosh-server`，后者运行与普通终端相同的 tmux attach。预测回显发生在 Hub 这台机器的 mosh-client 里，所以只在 Hub 靠近浏览器时有意义（桌面客户端自带的面板）；手机连远端 Hub 时，预测发生在那台 Hub，不在手机上。Git、文件、监控照旧走 `transport.api`。
+
+- **只有 Hub 自己能开会话。** `POST/GET/DELETE /api/mosh/sessions[/:id]`（`server/api/mosh.js`）要求 node token 加上只有 Hub 自己的调用才带的 `x-twp-hub-call`；`/n/` 转发会剥掉这个头，`isRelayable` 也拒绝任何拼法的 `/api/mosh`。会话密钥只在 Hub 进程和 mosh-client 的环境里，不进浏览器、日志和诊断。
+- **会话 id 由 Hub 生成。** 应答没到也能按 id 结束；结束过的 id 记住 10 分钟，迟到的创建请求被拒；创建请求在应答前断开，Node 立即取消。启动中的会话计入上限。
+- **Windows 的 attach 证明。** mosh-server 打印 CONNECT 后才 fork 命令子进程，子进程要等第一个客户端包才 exec tmux。Node 在 CONNECT 时就把端口和密钥交给 Hub，但**客户端启动队列一直持有到** `tmux list-clients` 里出现父进程是这个 mosh-server 的客户端，再等 `CLIENT_SETTLE_MS`；期间按 `holdStart` 计为“启动中”，面板自己的客户端不离开（ENV-3）。20 秒内没有就结束会话并释放队列。面板的新客户端在同一会话上启动前，经 `addClientOwner` 先结束该会话上的 Mosh 客户端，结果不明则 `TERMINAL_BUSY`。
+- **结束只针对确认的进程。** `server/mosh/processes.js` 记录 pid、启动时间、可执行文件和（MSYS2 的）Windows pid；命令子进程 exec 后可执行文件和 Windows pid 会变，只按 pid+启动时间认。先结束 tmux 客户端，让 mosh-server 通知客户端后自行退出，再结束 mosh-server，最后才 KILL；仍有残留时报告 `clean: false`。自然退出的会话由定期清扫回收。关机时 `stopAll` 和 Hub 的 `closeAll` 完成后进程才退出。
+- **回退规则。** 缺组件、经跳板机、地址解析失败或未看到远端画面时，Hub 先确认本机客户端退出，再请 Node 结束会话；**只有两端确认干净**才转发到 SSH，否则以 503 拒绝。未确认的资源保留完整归属，跨链路换代仍计入 busy 和关机清理，不用新连接覆盖它。已经交给某个传输的输入不会再发给另一个。
+- **并发与重检。** 首次未验证的路径按服务器、link 实例和 generation 合并试探，其它新请求等待同一结论并再次检查，避免堆积多个失败的 Windows 接入。失败冷却为 10 分钟；配置变化和显式重新检测可清除已确认干净的负结果，周期健康轮询不清冷却。重试不关闭健康终端，也不清除待确认资源。Hub 客户端查找和 Node 组件能力均会重检，避免安装或移除组件后永久沿用旧结果。
+- **状态与预算。** 未验证、验证中、已验证、失败分别报告；只有当前链路的成功证据才标记 Mosh。已有桥接仍健康但新连接需回退或拒绝时单独报告原因。准备阶段在 `MoshTerminals.open` 内共享 15 秒绝对预算（包括 DNS、POST 和最多 8 秒的 contact 等待），清理独立等待实际结果；外层首次 Node/SSH 识别不算入这 15 秒。浏览器显式选择远端 Mosh 时最多等 60 秒，普通 SSH/direct 和本机仍为 20 秒，预算不是人为延迟，也不依赖可能过期的健康快照。极慢的冷启动仍可能耗尽总等待，此时失败并收拢资源，不能假称已完成回退。
+- **桥接期间。** WebSocket 使用 ping/pong 判断浏览器是否失联，不按无键盘输入清理。Hub 每 15 秒问 Node 会话是否还在；被接管或已结束就向页面发 exit 并以 1000 关闭（mosh 的结束消息可能丢失）。mosh-client 以 0 退出也以 1000 关闭，其它退出以 1011 让页面重连。
+- Windows 不作为 Mosh 客户端（ENV-6）。
+
+通道选择始终按服务器配置，默认仍是 SSH；保存首选通道只影响新连接，地址或认证变化才按原有规则重建链路。设置页中的 Hub 是运行面板服务的机器，不是手机；浏览器、Swift 和移动客户端共用这些规则。无 Node 的基础模式保持 SSH，并明确说明不能采用所选的 direct/Mosh。支持常见 SSH 配置别名（解析实际连接选项，`ProxyJump none` 不误判为跳板）；独立 UDP 公网地址/端口映射、多地址或地址族逐个试连尚未实现，NAT/双栈环境不能据 mock 覆盖宣称真实可用。
 
 主机密钥仍然走首次信任流程：先 `scan` 再 `trust`，只接受用户确认过的那一个指纹。`StrictHostKeyChecking` 始终为 `yes`。用户名加密码的认证方式通过 askpass 完成，密码不会出现在 argv 和环境变量里（`server/transport/ssh-connection.js`）。
 
@@ -78,20 +107,34 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 
 ## 一键安装 Node
 
-在基础模式服务器的页面上点“安装面板服务”，由 Hub 发起安装（`server/hub/node-installer.js`，接口为 `POST/GET /api/servers/:id/node/install`）。这是 Hub 唯一一处主动在远端运行程序的地方，必须由用户明确触发。
+在基础模式服务器的页面上点“安装面板服务”，由 Hub 发起安装（`server/hub/node-installer.js`，接口为 `POST/GET /api/servers/:id/node/install`）。安装与下述固定组件维护是 Hub 主动运行远端程序的唯一入口，必须由用户明确触发。
 
 1. **打包。** 把 Hub 自己的面板代码打包（Linux/macOS 目标还会带上 `vendor/tmux` 源码），经 sftp 上传到 `.cache/tmux-web-panel/panel.tgz`。版本一定与 Hub 一致，远端也不需要能访问 GitHub。
 2. **Linux / macOS：** 把 `scripts/remote/install-node.sh` 经 stdin 交给 `sh -s` 执行。
    - 缺少的编译依赖用包管理器安装（apt / dnf / yum / pacman / apk / zypper / brew）。需要 sudo 且没有免密时，返回 `needs_password`，界面向用户索要 sudo 密码。密码只随本次脚本经 stdin 传过去，不写日志也不保存。
    - Node.js 不满 20 时，下载官方二进制包到 `~/.local/share/tmux-web-panel/`，不需要 sudo。
    - 执行 `npm ci --omit=dev`，然后 `NODE_ONLY=1 HOST=127.0.0.1 scripts/install-service.sh install`（会编译项目自带的 tmux）。
-3. **Windows：** 把 `scripts/remote/install-node.ps1` 用 `powershell -EncodedCommand` 执行（全是普通字符）。
+3. **Windows：** 用固定且简短的 `powershell -EncodedCommand` 入口从 stdin 读取 UTF-8 的 `scripts/remote/install-node.ps1`，避免默认 cmd shell 的命令长度限制。
    - 用 winget 补装 Node.js 和 MSYS2；
    - 执行 `npm ci`；
    - 运行 `install-service.ps1 install -ListenHost 127.0.0.1 -NodeOnly`。
 4. **完成。** 安装结束后，Hub 立即重新配对。服务器从基础模式切换到完整模式，远端 tmux 里的会话不受影响。
 
 `NODE_ONLY=1`：这样安装的 Node 没有登录页可用，API 和 WebSocket 只接受 node token。即使同一台机器上有其他用户，他们也无法访问这个 Node 的接口。
+
+### 可选 Mosh 组件
+
+Linux、macOS 与 Windows 的新安装在核心服务就绪后默认尝试准备 Mosh，失败仅报告组件警告，保留已安装的面板与 SSH。Windows 使用 `scripts/install-mosh.ps1`，Linux/macOS 使用可独立执行或经 stdin 运行的 `scripts/install-mosh.sh`；远程安装和本机安装调用同一实现，不重复安装。`TMUX_PANEL_SKIP_MOSH=1` 或 `TWP_SKIP_MOSH=1` 可跳过，Windows 另支持 `-SkipMosh`；面板首次安装选项也可取消勾选。已就绪的二进制先验证版本，随后直接完成，不执行包操作。
+
+角色分别检查：Node 需要 `mosh-server`，Linux/macOS Hub 需要 `mosh-client`，同机兼任时检查两者。Windows Hub 的客户端能力保持 `client_platform`，但可作为 Node 准备服务端。Swift 内置工作台的独立初始化路径同样有默认可选准备和显式重试；上次准备结果与实时 Node 能力分开显示。安装组件不修改通道偏好，也不宣称 UDP 已连通。
+
+已有机器通过 `POST /api/servers/:id/components/mosh/install` 显式补装或重新检查，`id=local` 处理本机 Hub。它与完整 Node 安装共用每台服务器一个任务和进度日志；`operation` 区分 `node` / `mosh`，两个状态读取入口返回同一最新任务。组件任务只运行固定脚本，不重新运行完整安装、不打包、不上传应用、不执行 npm、不改变服务和 tmux 生命周期。sudo 密码只用于当前调用，经脚本 stdin 传递，不写入任务状态或配置；Windows 需要管理员处理时给维护提示，不索取 sudo 密码。
+
+准备结果区分 `ready`、`skipped`、`needs_password`、`maintenance_required`、`unsupported`、`failed`。脚本先检查包管理器和安装计划；已有共享包需要升级、替换、删除，或计划无法确认时转维护处理。不自动全量升级系统，不删除包管理器锁，不关闭签名校验，不自动安装 Homebrew。断网、包缓存不足和权限问题可以在面板查看原因并重试；组件失败不会阻断 SSH。
+
+组件完成后通过可信 Hub 专用的 `POST /api/mosh/components/refresh` 更新 Node 能力缓存；该接口要求 Node token 和 Hub 调用标记，不能由浏览器转发访问，也不启动终端。旧 Node 不支持此接口时保留正常的能力缓存过期行为。健康信息分别提供服务端 `capabilities.mosh` 和客户端 `capabilities.moshClient`，仅包含可用状态、版本与原因，不包含二进制路径。补装成功只刷新能力，不重建健康链路。
+
+2026-11-04 验证：全量 2491 通过、29 跳过、0 失败；Windows 安装策略另在原生 PowerShell 的隔离函数中覆盖 28 个场景，无真实包操作。Linux 各包管理器路径使用 shim 验证，不等于所有发行版实机认证。Windows 短命令入口已实测传输超过 12KB 的脚本和中文，最终传输相关回归 114/114。Swift 主程序编译通过，独立设置自测的编译执行边界见 [ENV-7](known-issues.md#env-7-swift-设置自测编译产物收到-sigkill2026-11-04)。
 
 ## 插件（tmux-agent）
 
@@ -100,7 +143,7 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 ## 不变量
 
 - Node 的 API 不接受 serverId。需要指定别的机器时，一律通过 Hub 的 `/n/:serverId`。
-- 已装 Node 的机器，Hub 不在远端执行命令。新增功能只写在 Node 上，远程服务器自动就能用。基础模式只覆盖工作区和终端，不要往里加文件、监控之类的远程脚本，那些功能的入口是“安装 Node”。
+- 已装 Node 的机器，日常功能由 Node 本地执行；仅显式的 Node 安装和固定 Mosh 组件维护可通过 `NodeInstaller` 执行受控安装脚本。基础模式只覆盖工作区和终端，不要往里加文件、监控之类的远程脚本，那些功能的入口是“安装 Node”。
 - 基础模式下发往远端的只有两种形式：`sh -s`（脚本走 stdin），或单个单词的 pty 命令（经 sftp 上传的脚本路径）。不要拼接带参数的远程命令行。
 - 转发入口只认登录令牌。node token 只能用来访问那台 Node 自己的 API，不能用它让一个 Hub 再链式转发到下一台机器。
 - 配对文件和 node token 只对本人可读。在 Windows 上用 `icacls` 去掉继承的访问权限。

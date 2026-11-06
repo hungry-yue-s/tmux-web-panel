@@ -9,7 +9,7 @@
  */
 
 import { AppError, ErrorCode } from './errors.js';
-import { LOCAL_SERVER_ID } from './registry.js';
+import { DEFAULT_TRANSPORT, LOCAL_SERVER_ID } from './registry.js';
 
 export const ServerState = Object.freeze({
   UNKNOWN: 'unknown',
@@ -50,7 +50,7 @@ function unavailableWorkspace(transport) {
 }
 
 /** Maps a node's self-description onto the status the UI renders. */
-export function statusFromNodeInfo(serverId, info, { transport, latencyMs, now }) {
+export function statusFromNodeInfo(serverId, info, { transport, latencyMs, now, paths = null }) {
   const tmux = info && info.tmux ? info.tmux : { available: false, version: null, reason: 'unknown' };
   const capabilities = (info && info.capabilities) || {};
   const at = new Date(now).toISOString();
@@ -73,11 +73,15 @@ export function statusFromNodeInfo(serverId, info, { transport, latencyMs, now }
       metrics: capabilities.metrics || { available: false, level: 'none' },
       files: capabilities.files || { available: false },
       processStats: capabilities.processStats || { available: false },
+      ...(capabilities.mosh ? { mosh: capabilities.mosh } : {}),
+      ...(capabilities.moshClient ? { moshClient: capabilities.moshClient } : {}),
     },
     workspace: tmux.available
       ? { provider: 'tmux', transport, persistence: 'tmux' }
       : unavailableWorkspace(transport),
     node: { installed: true, version: info?.version || null },
+    // Which way each kind of traffic takes to a remote node (NodeLink.paths).
+    ...(paths ? { paths } : {}),
   };
 }
 
@@ -120,13 +124,14 @@ export class HealthService {
    * @param {import('../hub/link-pool.js').LinkPool} deps.links
    * @param {() => Promise<object>} deps.localInfo this node's /api/node/info
    */
-  constructor({ registry, links, localInfo, now = () => Date.now(), onStatus = null } = {}) {
+  constructor({ registry, links, localInfo, now = () => Date.now(), onStatus = null, moshStatus = null } = {}) {
     if (!registry) throw new Error('HealthService requires a registry');
     if (!links) throw new Error('HealthService requires a link pool');
     if (typeof localInfo !== 'function') throw new Error('HealthService requires localInfo');
     this.registry = registry;
     this.links = links;
     this._localInfo = localInfo;
+    this._moshStatus = moshStatus;
     this._now = now;
     this._onStatus = onStatus;
     /** serverId -> { status, inFlight, generation, nextPollAt, failureCount } */
@@ -280,11 +285,26 @@ export class HealthService {
 
   async _probeRemote(server, startedAt) {
     if (await this.links.mode(server.id) === 'node') {
-      const info = await this.links.link(server.id).info();
-      return statusFromNodeInfo(server.id, info, { transport: 'ssh', latencyMs: this._now() - startedAt, now: this._now() });
+      const link = this.links.link(server.id);
+      const info = await link.info();
+      const paths = typeof link.paths === 'function' ? link.paths() : null;
+      const mosh = paths && this._moshStatus
+        ? this._moshStatus(server.id, { link, capability: info?.capabilities?.mosh }) : null;
+      if (mosh) {
+        paths.mosh = mosh;
+        if (mosh.status === 'up' && !mosh.fallbackReason) paths.terminal = 'mosh';
+      }
+      return statusFromNodeInfo(server.id, info, { transport: 'ssh', latencyMs: this._now() - startedAt, now: this._now(), paths });
     }
     const facts = await this.links.basic(server.id).detect({ force: true });
-    return statusFromBasic(server.id, facts, { latencyMs: this._now() - startedAt, now: this._now() });
+    const status = statusFromBasic(server.id, facts, { latencyMs: this._now() - startedAt, now: this._now() });
+    const wanted = { ...DEFAULT_TRANSPORT, ...server.transport };
+    status.paths = {
+      wanted, api: 'ssh', terminal: 'ssh',
+      direct: Object.values(wanted).includes('direct') ? { status: 'down', reason: 'node_not_installed' } : null,
+      mosh: wanted.terminal === 'mosh' ? { status: 'down', reason: 'node_not_installed' } : null,
+    };
+    return status;
   }
 
   /** Applies a probe result unless a newer generation invalidated it. */
@@ -319,6 +339,7 @@ export class HealthService {
         workspace: status.workspace,
         facts: status.facts,
         node: status.node,
+        ...(status.paths ? { paths: status.paths } : {}),
       });
     }
   }

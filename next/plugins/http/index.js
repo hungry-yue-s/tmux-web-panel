@@ -24,6 +24,7 @@ import { Service } from 'cordis';
 import compression from 'compression';
 import express from 'express';
 import { WebSocketServer } from 'ws';
+import { SOCKET_DEFLATE } from '../../lib/terminal/protocol.js';
 import { compilePath, HttpError, matchPath, readJson, sendError, sendJson } from './router.js';
 
 export { HttpError, readJson, sendJson } from './router.js';
@@ -110,13 +111,9 @@ export default class HttpService extends Service {
       noServer: true,
       // A terminal frame is keystrokes or a paste; nothing legitimate is larger.
       maxPayload: 1024 * 1024,
-      // Terminal output is highly repetitive: deflate cuts it several times over
-      // on a slow link. Keystroke echoes stay below the threshold.
-      perMessageDeflate: {
-        zlibDeflateOptions: { level: 4, memLevel: 8 },
-        threshold: 256,
-        concurrencyLimit: 8,
-      },
+      // Keystroke echoes go out uncompressed because each output frame says so
+      // (outputFrameOptions); the threshold alone does not do it.
+      perMessageDeflate: SOCKET_DEFLATE,
     });
   }
 

@@ -171,12 +171,12 @@ describe('the dock taking its final space before the terminal measures', () => {
     expect(win.document.body.classList.contains('fp-side-open')).toBe(false);
   });
 
-  it('gives the space back when none of the files can be opened any more', async () => {
+  it('gives the space back when the node confirms every saved file is missing', async () => {
     const first = setup({ context: null });
     const key = first.preview._test.dockStateKey('local', '@0', INSTANCE);
     first.win.close();
     const { win, doc, preview } = setup({ context: null, storage: { [key]: saved() } });
-    win.fetch = vi.fn(() => Promise.resolve({ status: 404, json: () => Promise.resolve({ success: false, error: 'gone' }) }));
+    win.fetch = vi.fn(() => Promise.resolve({ status: 404, json: () => Promise.resolve({ success: false, error: 'File not found' }) }));
     const finished = preview.switchDockContext('local', '@0', INSTANCE);
     expect(doc.querySelector('.fp-dock')).not.toBeNull();
     await finished;

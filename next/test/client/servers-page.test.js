@@ -32,6 +32,37 @@ function render(ctx, id, health, section = 'connection') {
 const checkedAt = '2026-10-21T10:00:00.000Z';
 
 describe('ServersPage real connection facts and actions', () => {
+  it.each(['unknown', 'checking', 'down', 'up'])('describes new-connection routing without claiming existing sockets switched (%s)', (status) => {
+    const ctx = setup();
+    const view = render(ctx, 'remote', { state: 'online', checkedAt, node: { installed: true }, capabilities: {},
+      paths: { wanted: { terminal: 'mosh', api: 'ssh' }, terminal: status === 'up' ? 'mosh' : 'ssh', api: 'ssh',
+        mosh: { status, reason: status === 'down' ? 'client_platform' : null } } });
+    expect(view.textContent).toContain('新连接选路');
+    expect(view.textContent).toContain('已有终端保持当前连接');
+    if (status === 'unknown') expect(view.textContent).toContain('待首次连接验证');
+    if (status === 'checking') expect(view.textContent).toContain('Mosh 验证中');
+    if (status === 'down') expect(view.textContent).toContain('Hub 所在平台暂不支持 Mosh 客户端');
+    if (status !== 'up') expect(view.textContent).not.toContain('终端 Mosh');
+  });
+
+  it('explains why basic mode does not adopt the saved Mosh/direct selection', () => {
+    const ctx = setup();
+    const view = render(ctx, 'remote', { state: 'online', checkedAt, node: { installed: false }, capabilities: {},
+      paths: { wanted: { terminal: 'mosh', api: 'direct' }, terminal: 'ssh', api: 'ssh',
+        mosh: { status: 'down', reason: 'node_not_installed' }, direct: { status: 'down', reason: 'node_not_installed' } } });
+    expect(view.textContent).toContain('未安装面板服务，使用基础 SSH');
+    expect(view.textContent).toContain('终端 SSH 隧道');
+  });
+
+  it('does not promise a new SSH terminal while an older Mosh client has unconfirmed cleanup', () => {
+    const ctx = setup();
+    const view = render(ctx, 'remote', { state: 'online', checkedAt, capabilities: {},
+      paths: { terminal: 'ssh', api: 'ssh', mosh: { status: 'up', reason: null, fallbackReason: 'cleanup_unconfirmed' } } });
+    expect(view.textContent).toContain('终端 暂不可用');
+    expect(view.textContent).toContain('已有 Mosh 连接保持');
+    expect(view.textContent).toContain('旧连接清理未确认');
+    expect(view.textContent).not.toContain('终端 Mosh');
+  });
   it('exposes every settings category in the mobile page and folds host operations', () => {
     const ctx = setup();
     ctx.win.MobileUI = { isMobile: () => true };
@@ -202,6 +233,7 @@ describe('ServersPage basic mode', () => {
       expect(card).toBeTruthy();
       expect(card.textContent).toContain('远端 tmux 会话');
       expect(card.querySelector('[data-action="install-node"]').textContent).toContain('安装面板服务');
+      expect(card.querySelector('[data-prepare-mosh]').checked).toBe(true);
       expect(view.textContent).not.toContain('本机性能');
     }
   });
@@ -244,5 +276,122 @@ describe('ServersPage basic mode', () => {
     const view = render(ctx, 'remote', { ...basicHealth, node: { installed: true } }, 'performance');
     expect(view.querySelector('.install-node-card')).toBeNull();
     expect(view.textContent).toContain('本机性能');
+  });
+});
+
+describe('ServersPage Mosh component management', () => {
+  const healthy = { state: 'online', checkedAt, node: { installed: true }, capabilities: {} };
+
+  it('shows installed server capability separately from UDP reachability', () => {
+    const ctx = setup();
+    const card = render(ctx, 'remote', { ...healthy, capabilities: { mosh: { available: true, version: '1.4.0' } } })
+      .querySelector('.mosh-component-card');
+    expect(card.textContent).toContain('组件就绪');
+    expect(card.textContent).toContain('已安装 · 1.4.0');
+    expect(card.textContent).toContain('不代表 UDP 已连通');
+    expect(card.querySelector('[data-action="install-mosh"]')).toBeNull();
+  });
+
+  it('prepares the local Hub when only its client component is missing', () => {
+    const ctx = setup();
+    const card = render(ctx, 'local', { ...healthy, capabilities: { mosh: { available: true, version: '1.4.0' },
+      moshClient: { available: false, reason: 'mosh_client_not_found' } } }).querySelector('.mosh-component-card');
+    expect(card.textContent).toContain('Hub 客户端');
+    expect(card.textContent).toContain('Hub 使用的 Mosh 客户端');
+    expect(card.querySelector('[data-action="install-mosh"]')).not.toBeNull();
+  });
+
+  it('does not try to install an unsupported Windows Hub client when its server is ready', () => {
+    const ctx = setup();
+    const card = render(ctx, 'local', { ...healthy, capabilities: { mosh: { available: true, version: '1.4.0' },
+      moshClient: { available: false, reason: 'client_platform' } } }).querySelector('.mosh-component-card');
+    expect(card.textContent).toContain('当前 Windows Hub 不支持');
+    expect(card.querySelector('[data-action="install-mosh"]')).toBeNull();
+  });
+
+  it('retains the running job log and prevents a second install', () => {
+    const ctx = setup();
+    ctx.win.MsApp = { installJob: () => ({ operation: 'mosh', state: 'running', step: '检查软件包', log: ['download <package>'], pollError: true }) };
+    const card = render(ctx, 'remote', healthy).querySelector('.mosh-component-card');
+    expect(card.querySelector('[role="status"]').textContent).toContain('检查软件包');
+    expect(card.querySelector('.install-log').textContent).toContain('download <package>');
+    expect(card.querySelector('.install-log').querySelector('package')).toBeNull();
+    expect(card.textContent).toContain('已显示的进度会保留');
+    expect(card.querySelector('[data-action="install-mosh"]')).toBeNull();
+  });
+
+  it.each(['failed', 'needs_password', 'maintenance_required', 'unsupported'])('gives a recovery action for component state %s', (state) => {
+    const ctx = setup();
+    ctx.win.MsApp = { installJob: () => ({ operation: 'mosh', state, log: [], error: { message: 'package check failed' } }) };
+    const card = render(ctx, 'remote', healthy).querySelector('.mosh-component-card');
+    expect(card.querySelector('[data-action="install-mosh"]')).not.toBeNull();
+    if (state === 'maintenance_required') {
+      expect(card.textContent).toContain('请安排维护后重新检查');
+      expect(card.querySelector('button').textContent).toContain('维护后重新检查');
+    }
+  });
+
+  it('shows a non-blocking warning when Node succeeded but optional Mosh needs attention', () => {
+    const ctx = setup();
+    ctx.win.MsApp = { installJob: () => ({ operation: 'node', state: 'succeeded', component: { result: 'maintenance_required' }, log: [] }) };
+    const card = render(ctx, 'remote', healthy).querySelector('.mosh-component-card');
+    expect(card.textContent).toContain('面板服务已安装，Mosh 尚未准备完成');
+    expect(card.querySelector('[data-action="install-mosh"]')).not.toBeNull();
+    expect(card.textContent).not.toContain('正在重新连接');
+  });
+
+  it('does not mistake a component success for a full panel installation', () => {
+    const ctx = setup();
+    ctx.win.MsApp = { installJob: () => ({ operation: 'mosh', state: 'succeeded', result: 'ready', log: [] }) };
+    const card = ctx.Page._installCard({ id: 'remote' }, { node: { installed: false } });
+    expect(card).not.toContain('安装完成');
+    expect(card).toContain('安装面板服务');
+  });
+
+  it('shows Windows administrative recovery without a sudo prompt label', () => {
+    const ctx = setup();
+    ctx.win.MsApp = { installJob: () => ({ operation: 'mosh', state: 'maintenance_required', component: { reason: 'windows_admin_required' }, log: [] }) };
+    const card = render(ctx, 'remote', { ...healthy, facts: { platform: 'windows' } }).querySelector('.mosh-component-card');
+    expect(card.textContent).toContain('需要 Windows 管理员权限');
+    expect(card.textContent).not.toContain('sudo 密码');
+  });
+
+  it('waits for a new capability snapshot after a successful preparation', () => {
+    const ctx = setup();
+    ctx.win.MsApp = { installJob: () => ({ operation: 'mosh', state: 'succeeded', result: 'ready', finishedAt: '2026-10-21T10:00:10.000Z', log: [] }) };
+    const card = render(ctx, 'remote', { ...healthy, capabilities: { mosh: { available: false, reason: 'mosh_server_not_found' } } }).querySelector('.mosh-component-card');
+    expect(card.textContent).toContain('更新检测中');
+    expect(card.querySelector('[data-action="install-mosh"]')).toBeNull();
+    const refreshed = render(ctx, 'remote', { ...healthy, checkedAt: '2026-10-21T10:00:30.000Z', capabilities: { mosh: { available: false, reason: 'mosh_server_unusable' } } }).querySelector('.mosh-component-card');
+    expect(refreshed.textContent).toContain('当前检测尚未就绪');
+    expect(refreshed.querySelector('[data-action="install-mosh"]')).not.toBeNull();
+  });
+
+  it('explains a shared runtime upgrade as maintenance while leaving SSH available', () => {
+    const ctx = setup();
+    ctx.win.MsApp = { installJob: () => ({ operation: 'mosh', state: 'maintenance_required', component: { reason: 'shared_runtime_upgrade_required' }, log: [] }) };
+    const card = render(ctx, 'remote', healthy).querySelector('.mosh-component-card');
+    expect(card.textContent).toContain('需要升级正在使用的共享运行组件');
+    expect(card.textContent).toContain('现有 SSH 连接可继续使用');
+    expect(card.textContent).not.toContain('shared_runtime_upgrade_required');
+    expect(card.querySelector('[data-action="install-mosh"]').textContent).toContain('维护后重新检查');
+  });
+
+  it('explains an unusable noninteractive sudo policy without asking for the same password again', () => {
+    const ctx = setup();
+    ctx.win.MsApp = { installJob: () => ({ operation: 'mosh', state: 'maintenance_required', component: { reason: 'sudo_noninteractive_unavailable' }, log: [] }) };
+    const card = render(ctx, 'remote', healthy).querySelector('.mosh-component-card');
+    expect(card.textContent).toContain('密码已验证');
+    expect(card.textContent).toContain('无需重复输入密码');
+    expect(card.querySelector('[data-action="install-mosh"]').textContent).toContain('维护后重新检查');
+  });
+
+  it('gives a readable fallback for an unrecognized component failure reason', () => {
+    const ctx = setup();
+    ctx.win.MsApp = { installJob: () => ({ operation: 'mosh', state: 'failed', component: { reason: 'new_internal_reason' }, log: ['new_internal_reason'] }) };
+    const card = render(ctx, 'remote', healthy).querySelector('.mosh-component-card');
+    expect(card.querySelector('.install-progress').textContent).toContain('请查看安装日志');
+    expect(card.querySelector('.install-progress').textContent).not.toContain('new_internal_reason');
+    expect(card.querySelector('.install-log').textContent).toContain('new_internal_reason');
   });
 });

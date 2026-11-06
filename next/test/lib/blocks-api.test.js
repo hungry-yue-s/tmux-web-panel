@@ -66,6 +66,12 @@ describe('git parsers', () => {
     expect(rows[1]).toEqual({ graph: '|\\', commit: null });
   });
 
+  it('keeps every parent of a merge and distinguishes roots from older records', () => {
+    const record = (hash, parents) => `* \x1f${hash}\x1f${hash}\x1fMe\x1fnow\x1f\x1fsubject\x1f${parents}`;
+    const rows = parseLog(record('merge', 'one two three') + '\n' + record('root', ''));
+    expect(rows.map((r) => r.commit.parents)).toEqual([['one', 'two', 'three'], []]);
+  });
+
   it('pairs a commit\'s file statuses with their line counts', () => {
     const names = 'M\0a.js\0R087\0old name.md\0new name.md\0A\0logo.png\0';
     const stats = '3\t1\ta.js\0' + '2\t2\t\0old name.md\0new name.md\0' + '-\t-\tlogo.png\0';
@@ -137,6 +143,9 @@ describe('git block API', () => {
 
     res = await request(app).get('/api/git/log').query({ path });
     expect(res.body.data.rows.filter((r) => r.commit).map((r) => r.commit.subject)).toEqual(['add four', 'first']);
+    const commits = res.body.data.rows.filter((r) => r.commit).map((r) => r.commit);
+    expect(commits[0].parents).toEqual([commits[1].hash]);
+    expect(commits[1].parents).toEqual([]);
 
     res = await request(app).get('/api/git/line-changes').query({ path: path + '/a.txt' });
     expect(res.body.data.changes).toEqual([{ type: 'modified', start: 2, end: 2 }]);

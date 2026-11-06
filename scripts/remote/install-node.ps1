@@ -83,7 +83,9 @@ foreach ($candidate in ($TwpPorts -split ' ')) {
 if (-not $port) { Fail "no free port among: $TwpPorts" }
 
 Log "install service on 127.0.0.1:$port"
-$code = Native { & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $App 'scripts\install-service.ps1') install -ListenHost 127.0.0.1 -Port $port -NodeOnly -NodeBin $node }
+$optional = @()
+if ($env:TWP_SKIP_MOSH -eq '1' -or $env:TMUX_PANEL_SKIP_MOSH -eq '1') { $optional += '-SkipMosh' }
+$code = Native { & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $App 'scripts\install-service.ps1') install -ListenHost 127.0.0.1 -Port $port -NodeOnly -NodeBin $node @optional }
 if ($code -ne 0) { Fail 'install-service.ps1 failed' }
 
 Log 'wait for the pairing file'

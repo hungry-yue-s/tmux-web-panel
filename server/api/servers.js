@@ -43,7 +43,7 @@ export function createServersRouter({ serverService }) {
     res.status(204).end();
   }));
 
-  router.post('/:serverId/probe', handle(async (req) => serverService.probe(requireServerId(req))));
+  router.post('/:serverId/probe', handle(async (req) => serverService.probe(requireServerId(req), { retryTransport: true })));
 
   router.post('/:serverId/host-key/scan', handle(async (req) => serverService.scanHostKey(requireServerId(req))));
 

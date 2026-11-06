@@ -34,11 +34,13 @@
 不变量：
 
 - **Node 的 API 不带 serverId**（`/api/workspace`、`/api/metrics/*`、`/api/files/*`、`/ws/terminal/:paneId` 等）。要访问其它机器，一律走 Hub 的 `/n/:serverId`（`server/hub/proxy.js`）；前端统一用 `Api.nodeUrl` / `Api.activeUrl` 拼路径，不要再写死 `/api/servers/:id/...` 这种按服务器分的机器接口。
-- **对已装 Node 的机器，Hub 不在远端执行命令**。SSH 只用来做两件事：sftp 读取配对文件 `~/.config/tmux-web-panel/node.json`，以及维持一条 `ssh -N -L` 端口转发（`server/transport/ssh-connection.js`、`server/hub/node-link.js`）。新功能只在 Node 上实现，远程服务器就会自动拥有。
+- **对已装 Node 的机器，日常功能由 Node 本地执行**。SSH 用于 sftp 读取配对文件 `~/.config/tmux-web-panel/node.json`，以及维持一条 `ssh -N -L` 端口转发（`server/transport/ssh-connection.js`、`server/hub/node-link.js`）。唯一的安装维护例外是用户显式触发的 `NodeInstaller`：完整 Node 安装，或固定的 Mosh 组件准备脚本；组件补装不打包替换应用、不重启服务。不得把此例外用于 Git、文件、监控或任意远程命令入口。
 - **基础模式**（能 SSH 登录、没装面板，`server/hub/basic/`）只提供工作区和终端。发往远端的只能是 `sh -s`（脚本走 stdin），或单个单词的 pty 命令（经 sftp 上传的脚本路径）；不要拼接带参数的远程命令行，因为 Windows OpenSSH 在 pty 模式下会把它拆碎。文件、监控等功能不要在基础模式里另写远程实现，那些功能的入口是“安装 Node”（`server/hub/node-installer.js`、`scripts/remote/install-node.*`）。
 - **只在 Hub 上处理、不转发的接口**：`/api/auth`、`/api/servers`、`/api/plugins`、`/api/managed-resources`、`/api/share`（`isRelayable` / `Api.isHubPath` 两处须一致）。
 - **node token**（配对文件里的令牌）只能用来访问那台 Node 自己的 API。`/n/` 转发入口只接受登录令牌，防止一个 Hub 经另一个 Hub 链式转发。
-- HTTPS Node 按配对文件里的证书指纹固定，升级请求（WebSocket）也走同样的固定证书 agent（`pinnedAgent`）；不要退回 `rejectUnauthorized: false` 却不校验指纹。
+- HTTPS Node 按配对文件里的证书指纹固定，升级请求（WebSocket）也走同样的固定证书 agent（`pinnedAgent`）；不要退回 `rejectUnauthorized: false` 却不校验指纹。Node 在恢复的 TLS 会话上报告空证书：`pinnedAgent` 只缓存通过指纹的连接的会话，恢复成功即视为同一证书；不要换成 https.Agent 自带的会话缓存（它会缓存未校验的会话，恢复时又过不了指纹检查，进而重置整条链路）。
+- **直连是可选的**（`transport.api` / `transport.terminal` = `direct`，默认 `ssh`）：只在 TLS + 指纹固定下进行，令牌不离开 Hub，检查通过才用，失败回到转发；直连失败不得重置 SSH 链路。配对和健康检查始终走 SSH。
+- **Mosh 终端是可选实验**（`transport.terminal = 'mosh'`，见 docs/architecture.md）：`/api/mosh` 只认 node token 加 `x-twp-hub-call`，转发时剥掉该头且不转发该路径，密钥不进浏览器和日志。Windows 上必须看到 `list-clients` 里出现该 mosh-server 的子进程才释放客户端启动队列，不得改回“CONNECT 后等固定时间”。结束进程前核对记录的身份（`server/mosh/processes.js`），不凭历史 PID；Node 没确认清理干净时 Hub 不得回退到另一个 attach。由 Node 拉起的 tmux（mosh-server 的命令）必须删掉继承的 `TMUX`/`TMUX_PANE`。Windows 不作 Mosh 客户端（ENV-6）。
 
 ## tmux server 守护与会话持久化
 
@@ -64,7 +66,7 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 - **客户端变更期间的输入留给下一个客户端**：网关的 `early`（接入前）和连接的 `heldInput`（从接受一次改变尺寸的 resize 起，到新客户端建立或尺寸改回）都只投递一次，总量受 `MAX_HELD_INPUT_BYTES` 限制，超过就以 1009 关闭并清空。不要把输入写给马上要结束的客户端。已经写入的，`_killClient` 按字节数等 server 读完（`INPUT_READ_*`，有上限）：这是尽力保护，不保证长粘贴，也不是 DA 问题的修复，不要拿它替代排队；没写过输入的客户端不等
 - **Windows 上新窗格依赖 tmux 全局环境里的 `MSYS2_PATH_TYPE=inherit`**：没有它，MSYS2 登录 shell 会把 PATH 重置到最小集，窗格里找不到 claude、Node、Git（`docs/known-issues.md` ENV-2）。`run-tmux-server.ps1`、`server/msys.js` 和会话保护的 `_applyOptions` 三处保证，不要去掉
 - **Windows 上结束终端控制台要能证明没人在用**：`conhost.exe` 只能按 `pty.spawn` 的精确时间窗认领，不加余量（实测 30 个全部落在窗内）。进程里每个 `pty.spawn` 都必须经 `trackConsoleSpawn`（`server/terminal/console-reaper.js`），它把时间窗记到 pty 退出；一个控制台还可能属于活着的 pty、或一个窗里不止一个控制台，就不结束。宁可漏清，不扩大窗口，也不要批量清理来历不明的 `conhost.exe`
-- **环境问题要记录并由服务管理**：现象、证据和结论写进 `docs/known-issues.md`，检测和恢复做进服务，不靠人工救场。不要在默认 tmux server 上做接入、resize、断开实验，一律用 `tmux -L` 或 `TMUX_TMPDIR`
+- **环境问题要记录并由服务管理**：现象、证据和结论写进 `docs/known-issues.md`，检测和恢复做进服务，不靠人工救场。不要在默认 tmux server 上做接入、resize、断开实验。每条实验命令显式带 `tmux -S <私有 socket>` 或 `-L <唯一名称>`，并从实验及全部子进程环境移除 `TMUX` / `TMUX_PANE`；仅设置 `TMUX_TMPDIR` 不能隔离继承了 `TMUX` 的进程。清理前用同一组参数核对 `socket_path` 和 server PID 确实属于本次实验，无法确认归属就不结束。Windows 的绝对 tmux 路径会绕过 PATH 中的 shell 包装，不能把 POSIX 包装当作 Windows 隔离证明。
 - **没有会话时绝不保存**：那次空快照会成为 `last`，下次重启就什么也恢复不了。`save.sh` 只能由 `SessionProtection` 在有会话时调用
 - **用户自己在 `~/.tmux.conf` 里加载了 tmux-resurrect（常见于 TPM + continuum）时，面板不自动保存和恢复**（`mode: 'external'`），只提供立即保存和找回会话，避免两套机制互相覆盖或重复恢复
 - **从 Windows 的 Node 调 MSYS2 程序（tmux）必须用 `msysExecArgs`**（`server/msys.js`）：Node 默认把 `"` 转义成 `\"`，MSYS 不认，布局字符串、带引号的命令或名字会被拆碎

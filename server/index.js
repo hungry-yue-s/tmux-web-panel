@@ -61,6 +61,7 @@ import { WorkspaceService } from './workspace/service.js';
 import { MetricsService } from './metrics/service.js';
 import { collectLocalMetrics } from './metrics/local-collector.js';
 import { TerminalGateway } from './terminal/gateway.js';
+import { SOCKET_DEFLATE } from './terminal/protocol.js';
 import { createServersRouter } from './api/servers.js';
 import { createWorkspaceRouter } from './api/workspace.js';
 import { createMetricsRouter } from './api/metrics.js';
@@ -72,6 +73,9 @@ import { createNodeProxy, relayNodeUpgrade } from './hub/proxy.js';
 import { BasicHost } from './hub/basic/basic-host.js';
 import { createBasicHttp, createBasicUpgrade } from './hub/basic/basic-routes.js';
 import { NodeInstaller } from './hub/node-installer.js';
+import { MoshTerminals } from './hub/mosh-terminal.js';
+import { MoshService } from './mosh/server.js';
+import { createMoshRouter } from './api/mosh.js';
 import { createNodeInstallRouter } from './api/node-install.js';
 import pty from 'node-pty';
 import { trackConsoleSpawn } from './terminal/console-reaper.js';
@@ -250,7 +254,11 @@ if (apiGuarded) {
   app.use('/api', tokenAuth(tokenMap, { isServiceToken: nodeIdentity.isNodeToken }));
 }
 
-const localNodeInfo = () => collectNodeInfo({ tmuxVersion: tmux.tmuxVersion });
+// Mosh sessions on this node, for a hub's mosh-client, and mosh terminals this hub runs. Set below.
+let moshService = null;
+let moshTerminals = null;
+const localNodeInfo = () => collectNodeInfo({ tmuxVersion: tmux.tmuxVersion,
+  mosh: () => moshService.capability(), moshClient: () => moshTerminals.clientCapability() });
 app.get('/api/node/info', handle(async () => localNodeInfo()));
 app.use('/api/diagnostics', createDiagnosticsRouter({ diagnostics }));
 
@@ -394,14 +402,9 @@ const wss = new WebSocketServer({
   noServer: true,
   // A terminal frame is keystrokes or a paste; nothing legitimate is larger.
   maxPayload: 1024 * 1024,
-  // Terminal output is highly repetitive (escape sequences, redrawn lines):
-  // deflate cuts it several times over on a slow link. Keystroke echoes stay
-  // below the threshold and go out uncompressed.
-  perMessageDeflate: {
-    zlibDeflateOptions: { level: 4, memLevel: 8 },
-    threshold: 256,
-    concurrencyLimit: 8,
-  },
+  // Keystroke echoes go out uncompressed because each output frame says so
+  // (outputFrameOptions); the threshold alone does not do it.
+  perMessageDeflate: SOCKET_DEFLATE,
 });
 
 const terminalManager = new TerminalManager({
@@ -418,27 +421,47 @@ const workspaceService = new WorkspaceService({
   onChange: (revision) => statusMonitor.broadcastWorkspaceChanged(revision),
 });
 
+moshService = new MoshService({ workspace: workspaceService, terminalManager });
+moshTerminals = new MoshTerminals({ registry: serverRegistry, links, wss });
+
 const healthService = new HealthService({
   registry: serverRegistry,
   links,
   localInfo: localNodeInfo,
+  moshStatus: (serverId, context) => moshTerminals.status(serverId, context),
   onStatus: (status) => statusMonitor.broadcastServerStatus(status),
 });
 
 const metricsService = new MetricsService({ collector: collectLocalMetrics });
 
-const serverService = new ServerService({ registry: serverRegistry, links, health: healthService });
+const serverService = new ServerService({ registry: serverRegistry, links, health: healthService, mosh: moshTerminals });
 
 const terminalGateway = new TerminalGateway({ workspace: workspaceService, terminalManager });
 
 app.use('/api/workspace', createWorkspaceRouter({ workspaceService }));
 app.use('/api/metrics', createMetricsRouter({ metricsService }));
+const refreshMoshComponents = async () => {
+  const [server, client] = await Promise.all([moshService.refreshCapability(), moshTerminals.clientCapability({ force: true })]);
+  return { server: { available: server.available, version: server.version, reason: server.reason }, client };
+};
+app.use('/api/mosh', createMoshRouter({ mosh: moshService, isNodeToken: nodeIdentity.isNodeToken, refreshComponents: refreshMoshComponents }));
 const nodeInstaller = new NodeInstaller({
   links,
+  registry: serverRegistry,
   projectDir: join(__dirname, '..'),
   onInstalled: (serverId) => {
     healthService.invalidate(serverId);
     healthService.probe(serverId, { force: true }).catch(() => {});
+  },
+  onComponentInstalled: async (serverId) => {
+    if (serverId === 'local') await refreshMoshComponents();
+    else {
+      // Older Nodes may not expose this yet; their normal capability cache still expires.
+      await links.link(serverId).requestJson('POST', '/api/mosh/components/refresh', undefined, { timeout: 10_000 }).catch(() => {});
+    }
+    moshTerminals.retry(serverId);
+    healthService.invalidate(serverId);
+    await healthService.probe(serverId, { force: true }).catch(() => {});
   },
 });
 
@@ -490,6 +513,7 @@ server.on('upgrade', (req, socket, head) => {
   // Another server's socket is relayed whole; /n/local/... is rewritten in place.
   const relayed = relayNodeUpgrade(req, socket, head, {
     basic: basicUpgrade,
+    mosh: moshTerminals,
     registry: serverRegistry,
     links,
     authorize: (upgradeReq) => !(config.auth || config.nodeOnly) || wsTokenAuth(tokenMap, upgradeReq),
@@ -566,9 +590,18 @@ function shutdown(signal) {
   // Destroy all terminal PTY connections
   terminalManager.destroyAll();
 
-  // Stop server health polling and close every port forward.
+  // Mosh: terminals this hub runs end their node sessions, sessions this node runs
+  // end their processes (the tmux server stays). Both finish before the process goes.
+  const moshBusy = moshService.sessions.size > 0 || moshTerminals.busy();
+  const moshStopped = Promise.all([
+    moshTerminals.closeAll().catch(() => false),
+    moshService.stopAll().catch(() => false),
+  ]);
+
+  // Stop server health polling and close every port forward, after the mosh
+  // terminals have ended their sessions through them.
   healthService.stop();
-  links.closeAll();
+  moshStopped.finally(() => links.closeAll());
 
   // Close all WebSocket connections
   for (const client of wss.clients) {
@@ -584,17 +617,18 @@ function shutdown(signal) {
     server.close(async () => {
       console.log('Server closed.');
       await diagnosticsStopped;
+      await moshStopped;
       flushTokenPersistence(tokenMap);
       process.exit(0);
     });
   });
 
-  // Force exit after 5 seconds if graceful shutdown stalls
+  // Force exit if graceful shutdown stalls; ending mosh processes may take longer.
   setTimeout(() => {
     console.error('Forced exit after timeout.');
     flushTokenPersistence(tokenMap);
     process.exit(1);
-  }, 5000);
+  }, moshBusy ? 15_000 : 5000);
 }
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));

@@ -12,12 +12,12 @@ import { promisify } from 'node:util';
 import { TMUX_BIN, msysExecArgs } from './msys.js';
 import { AppError, ErrorCode } from './servers/errors.js';
 import { ConsoleReaper, trackConsoleSpawn } from './terminal/console-reaper.js';
-import { MAX_HELD_INPUT_BYTES } from './terminal/protocol.js';
+import { MAX_HELD_INPUT_BYTES, ServerMessage, outputFrameOptions } from './terminal/protocol.js';
 import { tmuxEnv, tmuxServerArgs, tmuxServerShellArgs } from './tmux-server.js';
 
 const execFileAsync = promisify(execFile);
 
-const PANE_ID_PATTERN = /^%\d+$/;
+export const PANE_ID_PATTERN = /^%\d+$/;
 const PING_INTERVAL_MS = 30_000;
 const REAP_INTERVAL_MS = 60_000;
 
@@ -26,7 +26,7 @@ const CLIENT_STARTED_MARKER = '\x1b[?1049h';
 const CLIENT_START_WAIT_MS = 1500;
 // How long a Windows client stays after it has started before it may be replaced.
 // With about 300ms to start, that is the 1100ms lifetime measured clean.
-const CLIENT_SETTLE_MS = 800;
+export const CLIENT_SETTLE_MS = 800;
 // How long an ended client may take to go. Past that nothing starts: see _clearForStart.
 const CLIENT_GONE_WAIT_MS = 1500;
 const CLIENT_GONE_POLL_MS = 5;
@@ -242,6 +242,8 @@ export class TerminalManager {
     this._inputReadBy = new WeakMap();
     this._clientTurn = Promise.resolve();
     this._shuttingDown = false;
+    /** @type {Set<{ endClientsOn: (sessionTarget: string) => Promise<boolean> }>} see addClientOwner */
+    this._owners = new Set();
 
     this._tmux = options.tmux ?? (async (args) => String((await execFileAsync(
       TMUX_BIN, ...msysExecArgs([...tmuxServerArgs(), ...args], { timeout: 5000, windowsHide: true, env: tmuxEnv() }),
@@ -373,7 +375,9 @@ export class TerminalManager {
       alive: true,
       osc52Pending: '', // carry-over for OSC 52 split across PTY chunks
       output: createOutputBatcher((data) => {
-        if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'output', data }));
+        if (ws.readyState !== ws.OPEN) return;
+        const frame = ServerMessage.output(data);
+        ws.send(frame, outputFrameOptions(frame));
       }),
       onPtyExit: options.onPtyExit,
       spawnPty,
@@ -728,6 +732,48 @@ export class TerminalManager {
     });
   }
 
+  /**
+   * Runs `fn` to end a client someone else started, such as mosh-server's tmux, on
+   * Windows in the turn and only once no client is starting: the same guard our own
+   * clients' ends keep (see _endClient). At once elsewhere. `fn` must not wait for a
+   * later turn.
+   */
+  inClientTurn(fn) {
+    if (this.platform !== 'win32') return Promise.resolve().then(fn);
+    return this._inClientTurn(async () => {
+      await this._nothingStarting();
+      return fn();
+    });
+  }
+
+  /** Waits until no client, ours or held for someone else, is starting. @private */
+  async _nothingStarting() {
+    while (this._starting.size > 0) await Promise.all([...this._starting.values()].map((entry) => entry.over));
+  }
+
+  /**
+   * Clients this manager did not spawn but must clear like its own: before a new
+   * client starts on a session, `owner.endClientsOn(sessionTarget)` ends theirs on
+   * it, inside the turn, and resolves true only once they are known to have gone.
+   */
+  addClientOwner(owner) {
+    this._owners.add(owner);
+  }
+
+  /**
+   * A client someone else is starting counts as starting until `over` settles:
+   * meanwhile none of ours leaves (see whenClientCanStart). Windows only.
+   */
+  holdStart(over) {
+    if (this.platform !== 'win32') return;
+    const token = {};
+    const done = Promise.resolve(over).catch(() => {}).then(() => {
+      this._starting.delete(token);
+      for (const waiting of [...this._waitingToEnd]) this._endClient(waiting);
+    });
+    this._starting.set(token, { over: done, finish: () => {} });
+  }
+
   /** @private */
   _inClientTurn(fn) {
     const turn = this._clientTurn.then(fn, fn);
@@ -761,6 +807,20 @@ export class TerminalManager {
         this._takeOver(connectionId, conn);
       }
     }
+    await this._settle(cancelled);
+    if (this._owners.size === 0 || cancelled()) return;
+    // Clients of others on this session go too, now that nothing is starting, and
+    // must be known to be gone: a second client next to one whose end is
+    // unconfirmed is what -d would leave.
+    for (const owner of this._owners) {
+      if (cancelled()) return;
+      if (!await owner.endClientsOn(sessionTarget)) throw new AppError(ErrorCode.TERMINAL_BUSY, TERMINAL_BUSY_MESSAGE);
+    }
+    await this._settle(cancelled);
+  }
+
+  /** Waits until no client is starting or leaving. @private */
+  async _settle(cancelled) {
     while (!cancelled()) {
       const busy = [...this._starting.values()].map((entry) => entry.over).concat([...this._leaving.values()]);
       if (busy.length === 0) {

@@ -2,13 +2,19 @@
 //
 // - The registry of servers, their health (one GET /api/node/info each), and
 //   one SSH link per server: SFTP for the pairing file plus an `ssh -N -L`
-//   forward. Nothing is ever executed on a machine that runs a Node.
+//   forward. Day-to-day work runs on the Node itself; the only remote
+//   execution is the installer the user starts explicitly.
 // - /n/:serverId/… is relayed untouched to that Node, before compression and
 //   body parsing (order -50). Login tokens only: a node token cannot chain hubs.
 // - Basic mode (SSH login, no panel) gets a workspace and terminals from this
 //   hub; those terminals are local PTYs running ssh, so each spawn goes
 //   through trackConsoleSpawn like every other PTY.
-// - Installing a Node on a server (POST /api/servers/:id/install-node).
+// - Mosh terminals this hub runs to a Node (transport.terminal = 'mosh'),
+//   reported in the health and relayed in place of the WebSocket attach.
+// - Installing a Node, or the Mosh components, on a server.
+//
+// Shutting down, the mosh terminals end their Node sessions through the
+// links before the links close.
 
 import pty from 'node-pty';
 import { ServerRegistry } from '../../lib/servers/registry.js';
@@ -18,6 +24,7 @@ import { LinkPool } from '../../lib/hub/link-pool.js';
 import { createNodeProxy, relayNodeUpgrade } from '../../lib/hub/proxy.js';
 import { BasicHost } from '../../lib/hub/basic/basic-host.js';
 import { createBasicHttp, createBasicUpgrade } from '../../lib/hub/basic/basic-routes.js';
+import { MoshTerminals } from '../../lib/hub/mosh-terminal.js';
 import { NodeInstaller } from '../../lib/hub/node-installer.js';
 import { createNodeInstallRouter } from '../../lib/api/node-install.js';
 import { createServersRouter } from '../../lib/api/servers.js';
@@ -59,7 +66,14 @@ export async function apply(ctx) {
     configDir,
     createBasicHost: (connection) => new BasicHost({ connection, spawnPty: spawnBasicPty }),
   });
-  ctx.effect(() => () => links.closeAll(), 'servers.links');
+  const mosh = new MoshTerminals({ registry, links, wss: ctx.http.wss });
+  // One effect, so the order holds: mosh terminals end their Node sessions
+  // through the links, then the links close.
+  ctx.effect(() => async () => {
+    await mosh.closeAll().catch(() => false);
+    links.closeAll();
+  }, 'servers.links');
+  ctx.effect(() => ctx.node.setCapability('moshClient', () => mosh.clientCapability()), 'servers.mosh-client');
 
   // Relayed requests stream untouched: before compression and body parsers.
   ctx.http.use(createNodeProxy({
@@ -74,6 +88,7 @@ export async function apply(ctx) {
   const basicUpgrade = createBasicUpgrade({ links, wss: ctx.http.wss, terminalManager: ctx.terminals });
   ctx.http.useUpgrade(({ req, socket, head }) => relayNodeUpgrade(req, socket, head, {
     basic: basicUpgrade,
+    mosh,
     registry,
     links,
     authorize: auth.authorizeRelayUpgrade,
@@ -83,6 +98,7 @@ export async function apply(ctx) {
     registry,
     links,
     localInfo: () => ctx.node.info(),
+    moshStatus: (serverId, context) => mosh.status(serverId, context),
     onStatus: (status) => ctx.emit('status/server-status', status),
   });
   ctx.effect(() => {
@@ -90,13 +106,26 @@ export async function apply(ctx) {
     return () => health.stop();
   }, 'servers.health');
 
-  const service = new ServerService({ registry, links, health });
+  const service = new ServerService({ registry, links, health, mosh });
   const installer = new NodeInstaller({
     links,
+    registry,
     projectDir: REPO_ROOT,
     onInstalled: (serverId) => {
       health.invalidate(serverId);
       health.probe(serverId, { force: true }).catch(() => {});
+    },
+    onComponentInstalled: async (serverId) => {
+      if (serverId === 'local') {
+        // The mosh plugin refreshes this Node's components.
+        await ctx.parallel('mosh/refresh-components').catch(() => {});
+      } else {
+        // Older Nodes may not expose this yet; their normal capability cache still expires.
+        await links.link(serverId).requestJson('POST', '/api/mosh/components/refresh', undefined, { timeout: 10_000 }).catch(() => {});
+      }
+      mosh.retry(serverId);
+      health.invalidate(serverId);
+      await health.probe(serverId, { force: true }).catch(() => {});
     },
   });
 
@@ -112,5 +141,5 @@ export async function apply(ctx) {
     }
   }, BASIC_REAP_MS);
 
-  ctx.provide('servers', Object.freeze({ registry, links, health, service, installer }));
+  ctx.provide('servers', Object.freeze({ registry, links, health, service, installer, mosh }));
 }

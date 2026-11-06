@@ -65,7 +65,7 @@ README 重做过程中实际踩到、观察到或验证过的问题。每条都�
 - 历次退出留下的孤儿窗格进程没有清理，判断不了里面是否还有用户的程序，需要人工确认。
 - 包装脚本的探测偶尔会失败。20:45 之后 `tmux-server.log` 有两次在 server 运行时又记录 `starting`，接着是 `open terminal failed: not a terminal` 和退出码 1：这是新起的 `tmux -D` 连上现有 server 后失败，不是 server 退出（pid 从 19:04 起没变）。两次都发生在全量测试运行期间（20:55:25 到 20:56:13、22:10:43 到 22:11:33），同一段时间面板日志有 5 次 tmux 命令失败。负载导致超时只是推测，未证实。手动起的 server 上这没有影响；计划任务的 server 上，连续 3 次没有应答（约 1 分钟）会被结束，再靠自动恢复回来，届时窗格里的程序要重新打开。
 
-**实验规则。** 不要在默认 tmux server 上做接入、resize、断开实验，只碰临时会话也不行，会话隔离不等于 server 隔离。一律用 `tmux -L <name>` 或 `TMUX_TMPDIR`，每条命令带超时。不要在普通 shell 里手动起默认 socket 的 tmux。
+**实验规则。** 不要在默认 tmux server 上做接入、resize、断开实验，只碰临时会话也不行，会话隔离不等于 server 隔离。每条命令显式用 `tmux -S <私有 socket>` 或 `-L <唯一名称>`，带超时，并从实验及全部子进程环境移除 `TMUX` / `TMUX_PANE`。`TMUX_TMPDIR` 不能覆盖继承的 `TMUX` socket，不能单独作为隔离。清理前以相同 socket 参数核对 `socket_path` 和 server PID 归属；无法核对就不结束。不要在普通 shell 里手动起默认 socket 的 tmux。Windows 使用绝对 tmux 可执行路径时，PATH 中的 POSIX 包装不会提供隔离。
 
 ### ENV-2 Windows：手动启动的 tmux server，窗格里找不到 claude（2026-10-30）
 
@@ -174,6 +174,57 @@ node-pty 报告退出比进程消失晚约 1 秒（中位 1.0 到 1.4 秒），�
 - 客户端结束后一直不退出时，面板的新接入会持续 `TERMINAL_BUSY`，直到它退出；此时日志有 `has not gone after being ended`。实验中没有遇到过。
 - pcon 内层的应答路径不受面板控制。
 - 现场再出现时，先看 `tmux -vv` 日志里 `keys are` 的内容和当时有没有客户端变更，判断属于哪一条。
+
+### ENV-4 Windows：系统自带 ssh.exe 的端口转发每次往返多约 30ms（2026-11-03）
+
+**现象。** 在 Windows 上作为 Hub 时，经 SSH 转发的每次往返比直连慢约 30ms。
+
+**证据。** 同一台 Windows Server 2025，同一个 sshd（OpenSSH_for_Windows_9.5），同一个 Node（HTTPS，7681），已打开的 `/ws/status` 上随机交错的 WebSocket ping，每条 300 个样本，一次只有一个在途：
+
+| 路径 | p50 | p95 | p99 |
+|------|-----|-----|-----|
+| `C:\Windows\System32\OpenSSH\ssh.exe -N -L` | 32.6ms | 46.0ms | 62.8ms |
+| Git for Windows 的 MSYS `ssh.exe`（OpenSSH 10.6p1）`-N -L` | 1.7ms | 10.2ms | 25.7ms |
+| 直连内网地址 | 1.0ms | 6.1ms | 20.4ms |
+
+另一轮（`scripts/measure-node-paths.mjs`，500 个样本）系统 ssh.exe 转发 p50 32.8ms、直连 1.1ms。
+
+**结论。** 已证实：多出的约 30ms 来自 Windows 自带的 ssh **客户端**，sshd 一侧只多约 0.8ms。原因（例如计时器粒度约 15.6ms 的两倍）未证实。所以 Mac 作 Hub、Windows 作 Node 时，这条不适用，直连在 Windows 一侧几乎省不出时间。
+
+**还没处理。** 面板在 Windows 上仍用系统 ssh.exe。换客户端会引入对 Git for Windows 或 MSYS2 openssh 的依赖，需要另行决定。
+
+### ENV-5 实验进程继承 TMUX 时，TMUX_TMPDIR 不足以隔离（2026-11-03）
+
+**已确认的操作事故。** Mosh smoke 只设置了 `TMUX_TMPDIR`，但继承了窗格中的 `TMUX`；没有 `-L` / `-S` 的清理命令因此结束了默认 server。旧实例 `937593:1793354641` 后来变为 `185256:1793677232`。执行该实验的 Claude 在私有 socket 上复核优先级后确认了错误；主控也核对了项目 tmux 源码的 socket 选择逻辑：只有命令行未指定 `-L` / `-S` 时才采用 `TMUX`，随后才按目录构造默认路径。创建了临时目录或其中存在一个 socket，不足以证明每条命令都用了它。
+
+**影响边界。** 默认 server 被结束会中断其会话和进程；自动恢复只能重建窗口结构和重新运行命令，不能恢复原进程内存。主控确认当前同名窗口可读，不能据此声称原任务完整保留。中断前后快照及其它集成测试的隔离仍需分别核查，不把它们列为已通过。
+
+**防止重现。** 实验、真实组件测试及其清理全部显式使用同一个私有 `-S` socket 或唯一 `-L` 名称，移除所有子进程的 `TMUX` / `TMUX_PANE`，每条命令有超时。结束 server 前先用相同参数读取并核对 socket 路径和 PID 的归属。Windows 的产品代码可能直接调用绝对路径的 MSYS2 tmux，不能依赖 PATH 里的 POSIX 包装隔离；不具备 Windows 隔离实现的测试应明确跳过，而非一边失败一边访问默认 server。Mosh 实验在隔离与生命周期验收前保持不可用于正式连接。
+
+### ENV-6 Windows：ConPTY 下的 mosh-client 会丢尺寸、偶尔不再响应（2026-11-03）
+
+**现象。** 在 Windows 上用 node-pty 运行 MSYS2 的 `mosh-client`（mosh 1.4.0-6）时，尺寸变化有时到不了 mosh-server；连续快速改尺寸时，mosh-client 还会自行退出（exit 1，“mosh did not shut down cleanly”）。个别轮次里它整体不再响应：既不发尺寸，也收不到服务端的结束消息。
+
+**证据。** 全部在私有 `-L` / `-S` tmux 上，mosh UDP 只绑 127.0.0.1。
+
+| 场景 | 结果 |
+|------|------|
+| 10 次尺寸连发，间隔 15ms | 11 轮中 5 轮 mosh-client 退出；最终尺寸多数不是最后一次 |
+| 同上，间隔 200ms | 8 轮中 1 轮丢了最后一次 |
+| 单次改尺寸（生命周期验收第 9–23 轮，共 15 轮） | 6 轮没生效，其中 3 轮在与全量测试并发、主机 CPU 接近满载时；空闲的最后 3 轮都生效 |
+| 每次失败时比对 `stty -F <mosh pty>` 与 tmux 客户端尺寸 | 始终相同，都是旧尺寸 |
+
+**结论。** 已证实：丢失发生在客户端一侧，mosh-server 的 pty 和 tmux 只是没收到新尺寸；服务端 pty 到 tmux 的尺寸跟随在所有轮次中都正确。原因（ConPTY 的窗口事件、MSYS2 运行时的 SIGWINCH）未查。macOS 的 mosh-client 跑在真实 pty 上，是否有同样问题未测。
+
+**服务现在怎么处理。** Windows 不作为 Mosh 客户端：Hub 在 Windows 上报告 `client_platform`，不提供 Mosh 终端（`server/hub/mosh-terminal.js` 的 `findMoshClient`）。Windows 作为 Node 运行 mosh-server 不受影响。Hub 桥接期间定期向 Node 询问会话是否还在，客户端漏收结束消息时页面也会关闭，不会一直停在冻结画面。
+
+### ENV-7：Swift 设置自测编译产物收到 SIGKILL（2026-11-04）
+
+**现象。** `scripts/test-macos-shell.sh` 的 endpoint/原生顶栏编译自测通过；含 `DesktopSetupManager.swift` 的设置自测编译成功，但新版本连续两次执行收到 SIGKILL（137）。原版本的一次对照执行通过。Swift 主程序 `swift build -j 2` 编译链接成功，脚本附带的设置源码解释执行也通过；后者仅作逻辑补充，不能替代编译产物执行验收。
+
+**证据边界。** 对应时段 amfid 对新旧测试产物都记录 `AppleMobileFileIntegrityError -423`，说明 ad-hoc 签名或证书链不被识别；syspolicyd 同时记录评估。尚无直接证据将两次 SIGKILL 归因于某条策略或本轮代码。保留原始退出码，不把源码解释通过、主程序构建成功或旧版本对照通过写成该编译自测已通过。
+
+**处理。** 不关闭系统验证、不更改企业防护或签名信任策略。正式分发仍需已有发布流程中的 Developer ID/公证配置；本轮未替换用户正在运行的 Swift 应用。此限制不影响 Node/组件脚本回归与既有会话只读核对，后续签名执行验证需单独取得通过证据。
 
 ## 捕获环境备注
 

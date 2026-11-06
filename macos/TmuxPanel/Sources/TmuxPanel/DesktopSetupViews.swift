@@ -16,6 +16,7 @@ struct DesktopWelcomeView: View {
     @State private var confirmation = ""
     @State private var port = "17681"
     @State private var launchAtLogin = true
+    @State private var prepareMosh = true
     @State private var showAdvanced = false
 
     private var valid: Bool {
@@ -40,7 +41,7 @@ struct DesktopWelcomeView: View {
                     step("checkmark.circle", "检查并进入", "你能看到每一步的实际进度")
                 }
                 Spacer(minLength: 16)
-                Text("无需 Homebrew、Xcode 或命令行安装。\n手机与远程访问可稍后配置。")
+                Text("核心工作台无需 Homebrew、Xcode 或命令行安装。\n可选 Mosh 可能需要 Homebrew，可跳过。")
                     .font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(5)
             }
             .padding(36).frame(width: 300, alignment: .leading)
@@ -66,6 +67,9 @@ struct DesktopWelcomeView: View {
                                     .font(.caption).foregroundStyle(.red)
                             }
                             Toggle("登录 Mac 后自动保持工作台可用", isOn: $launchAtLogin)
+                            Toggle("同时准备 Mosh（可选）", isOn: $prepareMosh)
+                            Text("用于增强远程终端连接。会尝试通过已有 Homebrew 准备组件，失败不影响核心工作台；UDP 连通性需要在使用时验证。")
+                                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                             DisclosureGroup("高级选项", isExpanded: $showAdvanced) {
                                 setupField("本机端口") { TextField("17681", text: $port).frame(width: 140) }
                                     .padding(.top, 12)
@@ -83,6 +87,7 @@ struct DesktopWelcomeView: View {
                             request.port = Int(port)
                             request.listenOnLAN = false
                             request.launchAtLogin = launchAtLogin
+                            request.prepareMosh = prepareMosh
                             Task {
                                 if await setup.perform("initialize", request: request) {
                                     password = ""; confirmation = ""
@@ -108,6 +113,7 @@ struct DesktopWelcomeView: View {
             username = setup.configuration?.username ?? "admin"
             port = String(setup.configuration?.initialized == true ? (setup.configuration?.port ?? 17681) : (setup.status?.suggestedPort ?? setup.configuration?.port ?? 17681))
             launchAtLogin = setup.configuration?.launchAtLogin ?? true
+            prepareMosh = setup.configuration?.prepareMosh ?? true
         }
     }
 
@@ -196,6 +202,7 @@ private struct DesktopOverviewView: View {
                 component("内置 tmux", value: setup.status?.tmuxVersion ?? "等待检查", running: setup.status?.tmuxVersion != nil)
                 component("面板服务", value: stateLabel(setup.status?.panelState), running: setup.status?.panelState == "running")
                 component("会话守护", value: stateLabel(setup.status?.tmuxState), running: setup.status?.tmuxState == "running")
+                component("上次 Mosh 准备", value: moshPreparationLabel, running: setup.status?.moshPreparation?.result == "ready")
             }
             .padding(.horizontal, 16).background(SetupStyle.surface, in: RoundedRectangle(cornerRadius: 14))
             if let endpoint = setup.status?.endpoint {
@@ -212,6 +219,23 @@ private struct DesktopOverviewView: View {
             }
             .disabled(setup.isBusy)
             if setup.isManaged {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("可选 Mosh 组件").font(.headline)
+                        Spacer()
+                        Button(setup.status?.moshPreparation?.result == "ready" ? "重新检查 Mosh 组件" : "准备 Mosh 组件") {
+                            Task { await setup.perform("prepare-mosh") }
+                        }.disabled(setup.isBusy)
+                    }
+                    Text(moshPreparationHint)
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text("这里记录上次准备结果。实时组件能力和 UDP 连通性请在工作台的连接页面查看；准备组件不会重启面板或 tmux。")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if setup.status?.moshPreparation?.reason == "homebrew_missing" {
+                        Link("查看 Homebrew 安装说明", destination: URL(string: "https://brew.sh")!)
+                    }
+                }
+                Divider()
                 HStack {
                     Button("启动面板") { Task { await setup.perform("start") } }
                     Button("重启面板") { Task { await setup.perform("restart") } }
@@ -236,6 +260,32 @@ private struct DesktopOverviewView: View {
             if let logs = setup.paths?.logs {
                 DisclosureGroup("查看最近日志") { DesktopLogPreview(directory: logs).padding(.top, 12) }
             }
+        }
+    }
+
+    private var moshPreparationLabel: String {
+        switch setup.status?.moshPreparation?.result {
+        case "ready": return "已完成"
+        case "skipped": return "已跳过"
+        case "maintenance_required": return "需要维护"
+        case "needs_password": return "需要安装权限"
+        case "unsupported": return "当前环境未就绪"
+        case "failed": return "未完成"
+        default: return "尚未准备"
+        }
+    }
+
+    private var moshPreparationHint: String {
+        let previous = setup.status?.moshPreparation
+        if previous?.reason == "homebrew_missing" { return "未找到 Homebrew。可先按官方说明安装，再回来准备 Mosh；无需为此重新初始化工作台。" }
+        if previous?.reason == "component_helper_missing" { return "当前客户端缺少 Mosh 准备脚本，请更新客户端安装包后重试。" }
+        switch previous?.result {
+        case "ready": return "上次已成功准备组件；这不代表当前网络已经支持 Mosh。"
+        case "skipped": return "上次选择跳过 Mosh，工作台仍可使用 SSH。需要时可在此单独准备。"
+        case "maintenance_required": return "安装计划涉及已有组件或安装环境维护。请先处理环境，再重新检查；不会自动升级共享运行组件。"
+        case "needs_password": return "当前账户缺少安装权限。请在具备权限的环境处理后重试，工作台登录密码不能用作系统提权密码。"
+        case "unsupported", "failed": return "上次未能完成组件准备。请检查网络与包管理器后重试，核心工作台仍可使用。"
+        default: return "通过系统包管理器检查并安装缺少的组件，核心工作台与 SSH 可继续使用。"
         }
     }
 
@@ -597,8 +647,8 @@ private struct SetupProgressView: View {
         .background(SetupStyle.surface, in: RoundedRectangle(cornerRadius: 14))
         .accessibilityElement(children: .contain)
     }
-    private func symbol(_ status: String) -> String { ["complete", "completed", "done", "success"].contains(status) ? "checkmark.circle.fill" : ["error", "failed"].contains(status) ? "exclamationmark.circle.fill" : "circle" }
-    private func color(_ status: String) -> Color { ["complete", "completed", "done", "success"].contains(status) ? .green : ["error", "failed"].contains(status) ? .red : .secondary }
+    private func symbol(_ status: String) -> String { ["complete", "completed", "done", "success"].contains(status) ? "checkmark.circle.fill" : ["error", "failed", "warning"].contains(status) ? "exclamationmark.circle.fill" : "circle" }
+    private func color(_ status: String) -> Color { ["complete", "completed", "done", "success"].contains(status) ? .green : ["error", "failed"].contains(status) ? .red : status == "warning" ? .orange : .secondary }
 }
 
 private struct SetupErrorView: View {

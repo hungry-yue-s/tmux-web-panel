@@ -68,6 +68,15 @@ describe('statusFromNodeInfo', () => {
     expect(status.capabilities.tmux).toMatchObject({ available: false, reason: 'command_not_found' });
     expect(status.workspace.provider).toBe('unavailable');
   });
+
+  it('preserves a node Mosh capability without inventing it for older nodes', () => {
+    const info = nodeInfo();
+    info.capabilities.mosh = { available: false, version: null, reason: 'mosh_server_not_found' };
+    expect(statusFromNodeInfo('box', info, { transport: 'ssh', latencyMs: 1, now: 0 }).capabilities.mosh)
+      .toEqual(info.capabilities.mosh);
+    expect(statusFromNodeInfo('old', nodeInfo(), { transport: 'ssh', latencyMs: 1, now: 0 }).capabilities)
+      .not.toHaveProperty('mosh');
+  });
 });
 
 describe('HealthService', () => {
@@ -107,6 +116,42 @@ describe('HealthService', () => {
       onStatus: (status) => statuses.push(status),
     });
   }
+
+  it.each(['unknown', 'checking', 'up', 'down'])('uses current-link evidence for Mosh state %s', async (status) => {
+    const server = await registry.create({ ...REMOTE, transport: { terminal: 'mosh' } });
+    const info = nodeInfo();
+    info.capabilities.mosh = { available: true, version: '1.4.0', reason: null };
+    const link = { info: vi.fn(async () => info), paths: () => ({ wanted: server.transport, api: 'ssh', terminal: 'ssh' }) };
+    links.link = () => link;
+    const moshStatus = vi.fn(() => ({ status, reason: status === 'down' ? 'no_contact' : null }));
+    const service = new HealthService({ registry, links, localInfo, now: () => now, moshStatus, onStatus: (value) => statuses.push(value) });
+    const result = await service.probe(server.id);
+    expect(moshStatus).toHaveBeenCalledWith(server.id, { link, capability: info.capabilities.mosh });
+    expect(result.paths.terminal).toBe(status === 'up' ? 'mosh' : 'ssh');
+    expect(result.paths.mosh.status).toBe(status);
+    expect(result.capabilities.mosh).toEqual(info.capabilities.mosh);
+    expect(statuses.at(-1).paths).toEqual(result.paths);
+  });
+
+  it('reports basic SSH fallback for persisted Mosh/direct preferences', async () => {
+    const server = await registry.create({ ...REMOTE, transport: { terminal: 'mosh', api: 'direct' } });
+    mode.mockResolvedValue('basic');
+    const result = await makeService().probe(server.id);
+    expect(result.node.installed).toBe(false);
+    expect(result.paths).toEqual({ wanted: { terminal: 'mosh', api: 'direct' }, api: 'ssh', terminal: 'ssh',
+      mosh: { status: 'down', reason: 'node_not_installed' }, direct: { status: 'down', reason: 'node_not_installed' } });
+    expect(basicDetect).toHaveBeenCalledOnce();
+  });
+
+  it('does not call a new connection Mosh when only an older bridge remains healthy', async () => {
+    const server = await registry.create({ ...REMOTE, transport: { terminal: 'mosh' } });
+    links.link = () => ({ info: async () => nodeInfo(), paths: () => ({ api: 'ssh', terminal: 'ssh' }) });
+    const service = new HealthService({ registry, links, localInfo,
+      moshStatus: () => ({ status: 'up', reason: null, fallbackReason: 'cleanup_unconfirmed' }) });
+    const result = await service.probe(server.id);
+    expect(result.paths.terminal).toBe('ssh');
+    expect(result.paths.mosh.fallbackReason).toBe('cleanup_unconfirmed');
+  });
 
   it('requires a registry, a link pool and local info', () => {
     expect(() => new HealthService({ links, localInfo })).toThrow(/registry/);

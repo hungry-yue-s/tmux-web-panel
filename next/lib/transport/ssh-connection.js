@@ -420,6 +420,9 @@ export class SshConnection {
         stderrTail = (stderrTail + chunk).slice(-STDERR_KEEP);
         onOutput(String(chunk));
       });
+      // A refused SSH session can close stdin before the installer is fully sent.
+      // Its exit/error below settles the job; EPIPE must not crash the Hub.
+      child.stdin.on('error', () => {});
       child.once('error', (err) => { clearTimeout(timer); reject(classifySshError(err)); });
       child.once('close', async (code) => {
         clearTimeout(timer);
@@ -513,12 +516,14 @@ export class SshConnection {
         host: address.host,
         port: address.port ? Number(address.port) : 22,
         hostKeyAlias: ssh.knownHostAlias || null,
+        proxied: Boolean(ssh.proxyJump && String(ssh.proxyJump).trim().toLowerCase() !== 'none'),
         source: 'record',
       };
     }
 
     const { stdout } = await new Promise((resolve, reject) => {
-      this._execFile(SSH_BIN, ['-G', ssh.configHost], { timeout, maxBuffer: DEFAULT_MAX_BUFFER }, (err, out, stderrOut) => {
+      const argv = buildSshArgs(this.server, { knownHostsPath: this.knownHostsPath, leading: ['-G'] });
+      this._execFile(SSH_BIN, argv, { timeout, maxBuffer: DEFAULT_MAX_BUFFER }, (err, out, stderrOut) => {
         if (err && !out) {
           reject(classifySshError(Object.assign(err, { stderr: stderrOut })));
           return;
@@ -539,6 +544,8 @@ export class SshConnection {
       port: Number(config.port || address.port || 22),
       // An explicit record alias wins; otherwise honor the one from ssh config.
       hostKeyAlias: ssh.knownHostAlias || config.hostkeyalias || null,
+      // Reached through another machine: its address may mean nothing from here.
+      proxied: [config.proxyjump, config.proxycommand].some((value) => value && value.toLowerCase() !== 'none'),
       source: 'ssh-config',
     };
   }

@@ -136,7 +136,8 @@ npm test
 | `files` | — | launch, http | 文件、上传、Git、SQLite、notebook、`twp open` |
 | `metrics` | `metrics` | http | 系统与进程监控、历史、窗口资源、场景发现 |
 | `agent-hub` | `agentHub` | launch, http | Agent 控制台、用量、预热、集团模型中继 |
-| `servers` | `servers` | launch, http, auth, node, terminals, timer | 服务器列表、健康、SSH 链路、`/n/` 转发、基础模式、安装 Node |
+| `servers` | `servers` | launch, http, auth, node, terminals, timer | 服务器列表、健康、SSH 链路与直连、`/n/` 转发、基础模式、Hub 侧 Mosh 终端、安装 Node 与 Mosh 组件；关机时 Mosh 终端先经链路结束会话，再关链路 |
+| `mosh` | `mosh` | http, node, workspace, terminals, servers | Node 侧 Mosh 会话（`/api/mosh` 只认 node token 加 hub 标记），按 tmux 插件选的 server 接入；卸载时结束其进程 |
 | `panel-plugins` | `panelPlugins` | launch, http, tmux, workspace, servers | tmux-agent 等面板插件与 MCP |
 | `session-protection` | `managedResources`, `sessionProtection` | launch, http, tmux | 托管资源；会话保护（私有 server 时关闭） |
 | `client` | `client` | http | 浏览器端 Cordis 内核、import map、客户端条目清单（`/client/manifest.json`） |
@@ -150,6 +151,9 @@ npm test
 | `status/server-status (status)` | servers | status |
 | `status/notifications (notifications)` | notifications（Agent 事件） | status |
 | `status/event (event)` | files（`twp open`） | status |
+| `mosh/refresh-components` | servers（本机装完 Mosh 组件后，`parallel` 等它完成） | mosh |
+
+可选组件的能力（`mosh`、`moshClient`）由提供方经 `ctx.node.setCapability(name, probe)` 报进 `/api/node/info`，包在 `ctx.effect` 里随插件撤销。
 
 ## 浏览器端
 
@@ -180,7 +184,8 @@ npm test
 - **隔离规则**（来自“不在用户 tmux 上做实验”）：每个用到 tmux 的测试和冒烟都经 `tmux` 插件选私有 server（`-L`），`kill-server` 之前先 `display -p '#{socket_path}'` 断言是私有路径；配置目录（`launch` 的 `env.TMUX_PANEL_CONFIG_DIR`）和配对文件所在的家目录（`node` 的 `home`）指向临时目录；会读 `~/.claude`、`~/.codex` 或起模型中继的 `agent-hub` 关掉。
 - 冒烟时像服务脚本一样带上 `LANG=C.UTF-8 LC_CTYPE=C.UTF-8`（`run-panel.ps1`、systemd 单元都设置了）。没有 UTF-8 locale 时 tmux 命令客户端把中文会话名输出成 `____`，再拿它去查就找不到。
 - **MSYS2 的 tmux 退出后不删除 socket 文件**，测试要自己删。在 Git Bash 里直接运行 MSYS2 的 tmux 去启动 server 会挂住（server 继承了 shell 的输出管道），准备会话请用 Node 的 `execFile`。
-- 这台 Windows 机器上，旧仓库原本就有一批测试失败（文件权限位、本机没有的工具与路径等），`test/lib/` 里同样的 12 个文件照样失败：`api/codex-usage`、`api/dsh-tui`、`api/enterprise-runtime`、`api/qoder-capabilities`、`api/qoder-usage`、`api/token-switch-claude-relay`、`auth`、`scene-discover/lazygit`、`server-registry`、`ssh-connection`、`terminal-utf8`、`totp`；`plugin-management` 的一项时好时坏。新的失败不在此列，就是回归。
+- 这台 Windows 机器上，旧仓库原本就有一批测试失败（文件权限位、本机没有的工具与路径等），`test/lib/` 里同样的 11 个文件照样失败：`api/codex-usage`、`api/dsh-tui`、`api/enterprise-runtime`、`api/qoder-capabilities`、`api/qoder-usage`、`api/token-switch-claude-relay`、`auth`、`scene-discover/lazygit`、`server-registry`、`ssh-connection`、`totp`；`plugin-management` 的一项时好时坏。`test/client/` 全部通过。新的失败不在此列，就是回归。
+- 合并 master 时：前端文件和前端测试靠 git 的改名识别自动跟到插件目录；`server/` 的改动要生成补丁、路径改成 `next/lib/` 后 `git apply --3way`，`server/index.js` 的接线改动手工翻译成插件；改过或新增的服务端测试重新复制到 `test/lib/` 并改路径。
 - 根目录的 `vitest.config.js` 排除了 `next/**`，旧测试和新测试各跑各的。
 
 ## 迁移路线

@@ -85,6 +85,31 @@ export function slugify(name) {
 }
 
 /**
+ * How the hub reaches a node, chosen separately for terminals and for everything
+ * else (files, Git, monitoring). `ssh` is the port forward; `direct` is the node's
+ * own HTTPS listener at the SSH host's address, still pinned and still with the
+ * token kept on the hub, falling back to the forward whenever it does not answer.
+ * A terminal may also take `mosh` (hub/mosh-terminal.js), which falls back the same way.
+ */
+export const TRANSPORT_CHOICES = Object.freeze({ api: ['ssh', 'direct'], terminal: ['ssh', 'direct', 'mosh'] });
+export const DEFAULT_TRANSPORT = Object.freeze({ api: 'ssh', terminal: 'ssh' });
+
+function normalizeTransport(input, previous) {
+  const transport = { ...DEFAULT_TRANSPORT };
+  for (const [key, choices] of Object.entries(TRANSPORT_CHOICES)) {
+    if (previous && choices.includes(previous[key])) transport[key] = previous[key];
+  }
+  if (input === undefined || input === null) return transport;
+  if (typeof input !== 'object' || Array.isArray(input)) throw fieldError('transport must be an object', 'transport');
+  for (const [key, choices] of Object.entries(TRANSPORT_CHOICES)) {
+    if (input[key] === undefined) continue;
+    if (!choices.includes(input[key])) throw fieldError(`transport.${key} must be one of ${choices.join(', ')}`, `transport.${key}`);
+    transport[key] = input[key];
+  }
+  return transport;
+}
+
+/**
  * Validates and normalizes a client-supplied server declaration. Throws
  * AppError(VALIDATION_ERROR) with the offending field so the UI can highlight it.
  */
@@ -173,6 +198,7 @@ export function normalizeServerInput(input, { existing = null } = {}) {
     kind: 'remote',
     address: { host, port: normalizePort(portSource), user },
     ssh: { configHost, identityFile, proxyJump, knownHostAlias, authMethod, ...(password ? { password, passwordRevision } : {}) },
+    transport: normalizeTransport(input.transport, existing && existing.transport),
     enabled,
   };
 }
@@ -426,6 +452,7 @@ export class ServerRegistry {
         usesIdentityFile: Boolean(server.ssh && server.ssh.identityFile),
         usesProxyJump: Boolean(server.ssh && server.ssh.proxyJump),
       },
+      ...(server.kind === 'remote' ? { transport: { ...DEFAULT_TRANSPORT, ...server.transport } } : {}),
       enabled: server.enabled !== false,
       immutable: Boolean(server.immutable),
       createdAt: server.createdAt || null,

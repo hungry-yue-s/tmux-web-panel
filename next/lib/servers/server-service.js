@@ -10,15 +10,17 @@
 
 import { AppError, ErrorCode } from './errors.js';
 import { LOCAL_SERVER_ID } from './registry.js';
+import { connectionKey } from '../transport/ssh-connection.js';
 
 export class ServerService {
-  constructor({ registry, links, health }) {
+  constructor({ registry, links, health, mosh = null }) {
     if (!registry) throw new Error('ServerService requires a registry');
     if (!links) throw new Error('ServerService requires a link pool');
     if (!health) throw new Error('ServerService requires a health service');
     this.registry = registry;
     this.links = links;
     this.health = health;
+    this.mosh = mosh;
   }
 
   /** Drops every cache derived from a server's connection details. */
@@ -58,8 +60,14 @@ export class ServerService {
   }
 
   async update(serverId, patch) {
+    const previous = this.registry.require(serverId);
+    const previousKey = connectionKey(previous);
+    const previousEnabled = previous.enabled;
     const server = await this.registry.update(serverId, patch);
-    if (patch && (patch.address || patch.ssh || patch.enabled !== undefined)) this._invalidate(serverId);
+    const connectionChanged = previousKey !== connectionKey(server) || previousEnabled !== server.enabled;
+    if (connectionChanged) this._invalidate(serverId);
+    else if (patch?.transport) this.health.invalidate(serverId);
+    if (patch?.transport && server.kind !== 'local') this.mosh?.retry(serverId);
     if (server.enabled !== false) this.probe(serverId).catch(() => {});
     return { ...this.registry.toPublic(server), status: this.health.getStatus(serverId) };
   }
@@ -74,8 +82,12 @@ export class ServerService {
     this.health.forget(serverId);
   }
 
-  probe(serverId, { force = true } = {}) {
-    this.registry.require(serverId);
+  probe(serverId, { force = true, retryTransport = false } = {}) {
+    const server = this.registry.require(serverId);
+    if (retryTransport && server.kind !== 'local') {
+      this.mosh?.retry(serverId);
+      this.health.invalidate(serverId);
+    }
     return this.health.probe(serverId, { force });
   }
 

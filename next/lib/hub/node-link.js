@@ -16,6 +16,7 @@ import net from 'node:net';
 import tls from 'node:tls';
 
 import { AppError, ErrorCode } from '../servers/errors.js';
+import { DEFAULT_TRANSPORT } from '../servers/registry.js';
 import { NODE_PROTOCOL } from '../node/identity.js';
 import { diagnostics } from '../diagnostics.js';
 
@@ -30,6 +31,20 @@ const CONNECT_TIMEOUT_MS = 10_000;
 const READ_ANSWER_TIMEOUT_MS = 60_000;
 const WRITE_ANSWER_TIMEOUT_MS = 5 * 60_000;
 const UPGRADE_TIMEOUT_MS = 15_000;
+// A connection dropped under a request: what a pooled socket the node closed looks like.
+const RETRYABLE_READ_ERRORS = new Set(['ECONNRESET', 'EPIPE']);
+// Not worth a second attempt with less time than this left.
+const MIN_RETRY_MS = 1000;
+// The node's own listener: how long its check may take, and how long a failed one stands.
+const DIRECT_CHECK_TIMEOUT_MS = 5_000;
+const DIRECT_RECHECK_MS = 5 * 60_000;
+
+/** True when a request may carry a body, which a retry could not send again. */
+function hasRequestBody(headers) {
+  if (headers['transfer-encoding']) return true;
+  const length = headers['content-length'];
+  return length !== undefined && length !== '0';
+}
 
 /** Headers that describe one hop and must not be forwarded (RFC 9110 §7.6.1). */
 export const HOP_BY_HOP = new Set([
@@ -39,9 +54,11 @@ export const HOP_BY_HOP = new Set([
 
 /**
  * Request headers the hub must not pass to a node: the browser's own
- * credentials, and the browser's Host/Origin, which describe the hub.
+ * credentials, the browser's Host/Origin, which describe the hub, and the mark
+ * of the hub's own calls, which a browser must not be able to forge.
  */
-const STRIP_REQUEST = new Set(['host', 'authorization', 'cookie', 'origin', 'referer']);
+export const HUB_CALL_HEADER = 'x-twp-hub-call';
+const STRIP_REQUEST = new Set(['host', 'authorization', 'cookie', 'origin', 'referer', HUB_CALL_HEADER]);
 
 export function forwardRequestHeaders(headers, token) {
   const out = {};
@@ -110,16 +127,57 @@ function waitForListener(port, timeoutMs, failed) {
   });
 }
 
-/** An https.Agent that accepts exactly one certificate, by SHA-256 fingerprint. */
-export function pinnedAgent(fingerprint, { keepAlive = true } = {}) {
+/**
+ * TLS sessions a link may resume. It holds only sessions from connections whose
+ * certificate passed the pin, lives in memory, and belongs to one forward of one
+ * pairing: a new tunnel or pairing starts with an empty one.
+ */
+export function createSessionCache() {
+  let session = null;
+  return {
+    get: () => session,
+    set: (value) => { session = value; },
+    clear: () => { session = null; },
+  };
+}
+
+/**
+ * An https.Agent that accepts exactly one certificate, by SHA-256 fingerprint.
+ *
+ * Every connection is checked before the request goes out. A full handshake shows
+ * the certificate and it must match. A resumed one shows none at all (Node reports
+ * an empty certificate), so it passes only when it resumed a session from `sessions`:
+ * finishing a resumption proves the node holds the secret of a handshake that did
+ * match. Resumption is never 0-RTT here; the request is sent after the handshake.
+ */
+export function pinnedAgent(fingerprint, { keepAlive = true, sessions = createSessionCache() } = {}) {
   const agent = new https.Agent({ keepAlive, maxSockets: 16 });
   agent.createConnection = (options) => {
-    const socket = tls.connect({ ...options, rejectUnauthorized: false, servername: undefined });
+    const offered = sessions.get();
+    const socket = tls.connect({ ...options, rejectUnauthorized: false, servername: undefined, ...(offered ? { session: offered } : {}) });
+    let verified = false;
+    // TLS 1.2 hands its session over before the handshake completes; keep it until the pin passed.
+    let early = null;
+    socket.on('session', (session) => {
+      if (verified) sessions.set(session);
+      else early = session;
+    });
     // Runs before any buffered request bytes are flushed, so a wrong
     // certificate never sees the node token.
     socket.once('secureConnect', () => {
-      const presented = socket.getPeerCertificate()?.fingerprint256;
-      if (presented !== fingerprint) socket.destroy(new AppError(ErrorCode.NODE_AUTH_FAILED, 'Node TLS certificate does not match its pairing file'));
+      const resumed = Boolean(offered) && socket.isSessionReused();
+      if (!resumed && socket.getPeerCertificate()?.fingerprint256 !== fingerprint) {
+        sessions.clear();
+        socket.destroy(new AppError(ErrorCode.NODE_AUTH_FAILED, 'Node TLS certificate does not match its pairing file'));
+        return;
+      }
+      verified = true;
+      if (early) sessions.set(early);
+      early = null;
+    });
+    // A handshake that failed may have failed on the session it offered.
+    socket.once('close', (hadError) => {
+      if (hadError && !verified && offered && sessions.get() === offered) sessions.clear();
     });
     return socket;
   };
@@ -155,30 +213,47 @@ export function watchUpgradeSocket(socket) {
  * onStall is told directly: a request still queued for a socket reports its own
  * destruction only once it gets one, which may be never.
  */
-function stallGuard(upstream, { queueMs, connectMs, answerMs, onStall, onConnectStall }) {
+function stallGuard(upstream, { queueMs, connectMs, answerMs, deadline, onStall, onConnectStall }) {
   let timer = null;
+  let deadlineTimer = null;
+  let stopped = false;
   let phase = 'queue';
-  const clear = () => {
+  const clearPhase = () => {
     clearTimeout(timer);
     timer = null;
   };
-  const arm = (ms, deadLink) => {
+  const clear = () => {
+    stopped = true;
+    clearPhase();
+    clearTimeout(deadlineTimer);
+    deadlineTimer = null;
+  };
+  const expire = (deadLink) => {
+    if (stopped) return;
     clear();
-    timer = setTimeout(() => {
-      const err = Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' });
-      upstream.destroy(err);
-      onStall(err, phase);
-      if (deadLink) deadLink();
-    }, ms);
+    const err = Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' });
+    upstream.destroy(err);
+    onStall(err, phase);
+    if (deadLink) deadLink();
+  };
+  const arm = (ms, deadLink) => {
+    clearPhase();
+    if (stopped) return;
+    timer = setTimeout(() => expire(deadLink), ms);
     if (timer.unref) timer.unref();
   };
   arm(queueMs);
+  // A retry shares the first attempt's deadline, including queue, connect and send.
+  if (deadline !== undefined) {
+    deadlineTimer = setTimeout(() => expire(), Math.max(0, deadline - performance.now()));
+    if (deadlineTimer.unref) deadlineTimer.unref();
+  }
   upstream.once('socket', (socket) => {
-    clear();
+    clearPhase();
     if (!socket.connecting) return;
     phase = 'connect';
     arm(connectMs, onConnectStall);
-    socket.once(socket instanceof tls.TLSSocket ? 'secureConnect' : 'connect', clear);
+    socket.once(socket instanceof tls.TLSSocket ? 'secureConnect' : 'connect', clearPhase);
   });
   upstream.once('finish', () => { phase = 'answer'; arm(answerMs); });
   upstream.once('response', clear);
@@ -199,6 +274,45 @@ function upstreamError(err) {
   return new AppError(ErrorCode.SERVER_OFFLINE, 'Node request failed');
 }
 
+/** Small internal JSON calls need a wall limit, even while waiting for a socket. */
+function smallJsonRequest(client, target, { timeout, payload, onRequest }) {
+  return new Promise((resolve, reject) => {
+    let req = null;
+    let answer = null;
+    let settled = false;
+    const finish = (err, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err) {
+        req?.destroy(err);
+        answer?.destroy();
+        reject(err);
+      } else resolve(value);
+    };
+    const interrupted = () => finish(Object.assign(new Error('response interrupted'), { code: 'ECONNRESET' }));
+    const timer = setTimeout(() => finish(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })), timeout);
+    if (timer.unref) timer.unref();
+    try {
+      req = client.request(target, (res) => {
+        if (settled) { res.on('error', () => {}); res.destroy(); return; }
+        answer = res;
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.once('end', () => finish(null, { status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
+        res.on('error', (err) => finish(err));
+        res.once('aborted', interrupted);
+        res.once('close', interrupted);
+      });
+      // TLS teardown can report another error after the one that settled the call.
+      req.on('error', (err) => finish(err));
+      req.once('close', () => { if (!answer) interrupted(); });
+      onRequest(req, () => finish(Object.assign(new Error('cancelled'), { code: 'ECANCELED' })));
+      if (!settled) req.end(payload || undefined);
+    } catch (err) { finish(err); }
+  });
+}
+
 /**
  * One line for every forward that goes down, so the next unexplained disconnect can
  * be traced. Fixed reasons, error codes and exit status only: no URL, header, token,
@@ -213,11 +327,16 @@ export class NodeLink {
    * @param {object} deps
    * @param {import('../transport/ssh-connection.js').SshConnection} deps.connection
    */
-  constructor({ connection, freePort = freeLoopbackPort, readyTimeoutMs = READY_TIMEOUT_MS, stallLimits = {} }) {
+  constructor({ connection, freePort = freeLoopbackPort, readyTimeoutMs = READY_TIMEOUT_MS, stallLimits = {},
+    directCheckTimeoutMs = DIRECT_CHECK_TIMEOUT_MS, now = () => Date.now() }) {
     this.connection = connection;
     this.serverId = connection.id;
     this._freePort = freePort;
     this._readyTimeoutMs = readyTimeoutMs;
+    this._directCheckTimeoutMs = directCheckTimeoutMs;
+    this._now = now;
+    /** The node's own listener, when the server asks for it: see _route. */
+    this._direct = null;
     this._stallLimits = {
       queue: QUEUE_TIMEOUT_MS,
       connect: CONNECT_TIMEOUT_MS,
@@ -230,8 +349,23 @@ export class NodeLink {
     this._tunnel = null; // { child, port }
     this._agent = null;
     this._upgradeAgent = null;
+    // Upgraded sockets leave their Agent; this link still owns their lifetime.
+    this._upgraded = new Set();
+    // Bumped whenever the pairing is dropped: whatever was started for the old one is over.
+    this.generation = 0;
+    // Other things running for this pairing, such as a hub-side mosh terminal (see adopt).
+    this._adopted = new Set();
     this._connecting = null;
     this._closed = false;
+  }
+
+  /**
+   * Something that runs for this link outside its sockets. A reset or close calls
+   * its `end(reason)`, as it ends upgraded sockets. Returns a function to let go.
+   */
+  adopt(owned) {
+    this._adopted.add(owned);
+    return () => this._adopted.delete(owned);
   }
 
   get ready() {
@@ -271,9 +405,12 @@ export class NodeLink {
     });
     this._pairing = pairing;
     this._tunnel = tunnel;
-    this._agent = pairing.tls ? pinnedAgent(pairing.tlsFingerprint) : new http.Agent({ keepAlive: true, maxSockets: 16 });
+    // Both agents talk to the same node through the same forward, so a terminal's
+    // handshake may resume what a request already negotiated. Never across tunnels.
+    const sessions = createSessionCache();
+    this._agent = pairing.tls ? pinnedAgent(pairing.tlsFingerprint, { sessions }) : new http.Agent({ keepAlive: true, maxSockets: 16 });
     // Upgraded sockets leave their agent for good, so they get one without a pool.
-    this._upgradeAgent = pairing.tls ? pinnedAgent(pairing.tlsFingerprint, { keepAlive: false }) : new http.Agent({ keepAlive: false });
+    this._upgradeAgent = pairing.tls ? pinnedAgent(pairing.tlsFingerprint, { keepAlive: false, sessions }) : new http.Agent({ keepAlive: false });
   }
 
   _dropTunnel(reason = 'reset', detail) {
@@ -290,6 +427,15 @@ export class NodeLink {
   /** Forget the pairing too, e.g. after the node rejected our token. */
   reset(reason, detail) {
     this._dropTunnel(reason, detail);
+    this._closeDirect();
+    for (const { browser, upstream } of this._upgraded) {
+      upstream.destroy();
+      browser.destroy();
+    }
+    this._upgraded.clear();
+    this.generation += 1;
+    for (const owned of [...this._adopted]) owned.end(reason);
+    this._adopted.clear();
     this._pairing = null;
   }
 
@@ -328,9 +474,9 @@ export class NodeLink {
     return headers;
   }
 
-  _traceRequest(request, path, began, ensureMs) {
+  _traceRequest(request, path, began, ensureMs, via = 'ssh') {
     if (!diagnostics.status().active) return;
-    const context = { ...diagnostics.currentContext(), serverId: this.serverId, path, provider: 'node-link' };
+    const context = { ...diagnostics.currentContext(), serverId: this.serverId, path, provider: 'node-link', via };
     const queuedAt = performance.now();
     const note = (phase, fields = {}) => diagnostics.record('proxy', {
       ...context, phase, ensureMs, durationMs: performance.now() - began, ...fields,
@@ -365,26 +511,20 @@ export class NodeLink {
     const tunnel = this._tunnel;
     const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
     const headers = this._diagnosticHeaders(forwardRequestHeaders({ accept: 'application/json' }, this._pairing.token));
+    // The hub asking for itself; relayed browser requests never carry this.
+    headers[HUB_CALL_HEADER] = '1';
     if (payload) {
       headers['content-type'] = 'application/json';
       headers['content-length'] = String(payload.length);
     }
     const target = this._target(path, headers, method);
     if (freshConnection) target.agent = this._upgradeAgent;
-    const { status, text } = await new Promise((resolve, reject) => {
-      const req = this._client().request(target, (res) => {
-        const chunks = [];
-        res.on('data', (chunk) => chunks.push(chunk));
-        res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
-        res.on('error', (err) => reject(upstreamError(err)));
-      });
-      this._traceRequest(req, path, began, ensureMs);
-      req.setTimeout(timeout, () => req.destroy(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })));
-      req.on('error', (err) => {
-        this._noteUpstreamError(tunnel, err);
-        reject(upstreamError(err));
-      });
-      req.end(payload || undefined);
+    const { status, text } = await smallJsonRequest(this._client(), target, {
+      timeout, payload,
+      onRequest: (req) => this._traceRequest(req, path, began, ensureMs),
+    }).catch((err) => {
+      this._noteUpstreamError(tunnel, err);
+      throw upstreamError(err);
     });
     if (status === 401) {
       // The node was reinstalled or its token rotated: re-pair next time.
@@ -440,7 +580,20 @@ export class NodeLink {
     if (err && err.code === ErrorCode.NODE_AUTH_FAILED) this._resetIfCurrent(tunnel, 'cert-changed', { code: err.code });
   }
 
-  /** Streams one browser request to the node and the answer back. */
+  /**
+   * Streams one browser request to the node and the answer back.
+   *
+   * A read the connection drops before any answer is asked once more, on a new
+   * connection: a pooled socket the node had just closed fails exactly like that,
+   * and the browser should not see an error for it. Only a GET or HEAD without a
+   * body, only while the browser is still there and the forward is the same one,
+   * and only within what is left of the first attempt's time. Writes, answers that
+   * have started, timeouts and certificate or token failures are never repeated.
+   *
+   * On the direct way (see _route), that one second attempt takes the forward
+   * instead, and any failure but a stale pooled socket sends the next requests
+   * through the forward too until a later check.
+   */
   async proxy(req, res, path) {
     const began = performance.now();
     await this.ensure();
@@ -448,42 +601,101 @@ export class NodeLink {
     // The browser may have gone while the forward came up.
     if (res.destroyed || res.writableEnded) return;
     const tunnel = this._tunnel;
-    const upstream = this._client().request(
-      this._target(stripTokenParam(path), this._diagnosticHeaders(forwardRequestHeaders(req.headers, this._pairing.token)), req.method),
-      (answer) => {
-        if (answer.statusCode === 401) this._resetIfCurrent(tunnel, 'auth-rejected', { code: 'HTTP_401' });
-        res.writeHead(answer.statusCode, forwardResponseHeaders(answer.headers));
-        answer.pipe(res);
-      },
-    );
-    this._traceRequest(upstream, path, began, ensureMs);
+    const read = /^(GET|HEAD)$/i.test(req.method);
+    const replayable = read && !hasRequestBody(req.headers);
+    const target = this._target(stripTokenParam(path), this._diagnosticHeaders(forwardRequestHeaders(req.headers, this._pairing.token)), req.method);
     const fail = (err) => {
       if (res.writableEnded) return;
       if (res.headersSent) { res.destroy(); return; }
       const appError = upstreamError(err);
       res.status(appError.status).json({ success: false, data: null, error: appError.toJSON(), meta: { requestId: null } });
     };
-    stallGuard(upstream, {
-      queueMs: this._stallLimits.queue,
-      connectMs: this._stallLimits.connect,
-      answerMs: /^(GET|HEAD)$/i.test(req.method) ? this._stallLimits.read : this._stallLimits.write,
-      onStall: (err, phase) => {
-        diagnostics.record('proxy', { ...req.diagnosticContext, serverId: this.serverId, path,
-          phase, timedOut: true, transportCode: err.code, durationMs: performance.now() - began });
-        fail(err);
-      },
-      onConnectStall: () => this._dropDeadTunnel(tunnel),
-    });
-    upstream.on('error', (err) => {
-      this._noteUpstreamError(tunnel, err);
-      fail(err);
-    });
+    let current = null;
+    let browserGone = false;
     // Closing the browser side (e.g. an aborted download) ends the upstream too.
-    res.on('close', () => { if (!res.writableFinished) upstream.destroy(); });
-    req.pipe(upstream);
+    res.on('close', () => {
+      if (res.writableFinished) return;
+      browserGone = true;
+      current?.destroy();
+    });
+
+    /**
+     * retry: false for the first attempt, 'fresh' for the same way on a new
+     * connection, 'forward' for the forward after the direct way failed.
+     */
+    const send = ({ route, retry, limits, deadline }) => {
+      const upstream = this._client().request({ ...target, host: route.host, port: route.port, agent: retry === 'fresh' ? route.upgradeAgent : route.agent }, (answer) => {
+        if (answer.statusCode === 401) this._resetIfCurrent(tunnel, 'auth-rejected', { code: 'HTTP_401' });
+        res.writeHead(answer.statusCode, forwardResponseHeaders(answer.headers));
+        answer.pipe(res);
+      });
+      current = upstream;
+      let sentAt = null;
+      let settled = false;
+      upstream.once('finish', () => { sentAt = performance.now(); });
+      this._traceRequest(upstream, path, began, ensureMs, route.via);
+      // Measured from the moment the first request went out, or from the start if it never did.
+      const timeLeft = () => limits.answerMs - (performance.now() - (sentAt ?? began));
+      const again = (getRoute, kind, err) => {
+        const left = timeLeft();
+        if (retry || !replayable || res.headersSent || browserGone || this._tunnel !== tunnel || left < MIN_RETRY_MS) return false;
+        const nextRoute = getRoute();
+        diagnostics.record('proxy', { ...req.diagnosticContext, serverId: this.serverId, path, via: nextRoute.via,
+          phase: 'retry', retry: kind, transportCode: err?.code, reusedSocket: Boolean(upstream.reusedSocket), durationMs: performance.now() - began });
+        send({ route: nextRoute, retry: kind, deadline: (sentAt ?? began) + limits.answerMs,
+          limits: { queueMs: left, connectMs: Math.min(this._stallLimits.connect, left), answerMs: left } });
+        return true;
+      };
+      const settle = (err) => {
+        if (settled) return;
+        settled = true;
+        if (route.via === 'direct') {
+          // A pooled socket the node closed is not the direct way failing; anything else is.
+          if (!(RETRYABLE_READ_ERRORS.has(err?.code) && upstream.reusedSocket)) this._directFailed(route.direct, directFailureReason(err));
+          // Either way the forward is known to work, so the one second attempt goes there.
+          if (!again(() => this._forwardRoute(), 'forward', err)) fail(err);
+          return;
+        }
+        this._noteUpstreamError(tunnel, err);
+        if (RETRYABLE_READ_ERRORS.has(err?.code) && again(() => route, 'fresh', err)) return;
+        fail(err);
+      };
+      stallGuard(upstream, {
+        ...limits,
+        deadline,
+        onStall: (err, phase) => {
+          diagnostics.record('proxy', { ...req.diagnosticContext, serverId: this.serverId, path, via: route.via,
+            phase, timedOut: true, transportCode: err.code, retry, durationMs: performance.now() - began });
+          // Nothing reached the node over a direct way that never connected: the forward may still answer.
+          if (route.via === 'direct' && phase === 'connect') { settle(err); return; }
+          settled = true;
+          fail(err);
+        },
+        // A retry's short remaining budget says nothing about the shared tunnel.
+        onConnectStall: route.via === 'ssh' && !retry ? () => this._dropDeadTunnel(tunnel) : undefined,
+      });
+      upstream.on('error', settle);
+      if (retry) upstream.end();
+      else req.pipe(upstream);
+    };
+
+    send({
+      route: this._route('api'),
+      retry: false,
+      limits: {
+        queueMs: this._stallLimits.queue,
+        connectMs: this._stallLimits.connect,
+        answerMs: read ? this._stallLimits.read : this._stallLimits.write,
+      },
+    });
   }
 
-  /** Relays a WebSocket upgrade byte-for-byte after the node accepts it. */
+  /**
+   * Relays a WebSocket upgrade byte-for-byte after the node accepts it. Terminals
+   * take the way chosen for terminals; the status socket counts as monitoring. When
+   * the direct way cannot even connect, nothing reached the node, so the forward is
+   * asked instead; once the handshake was sent, a failure ends this socket only.
+   */
   async proxyUpgrade(req, socket, head, path) {
     const began = performance.now();
     watchUpgradeSocket(socket);
@@ -501,23 +713,56 @@ export class NodeLink {
     headers.connection = 'Upgrade';
     headers.upgrade = 'websocket';
     const tunnel = this._tunnel;
-    const upstream = this._client().request({ ...this._target(stripTokenParam(path), headers, 'GET'), agent: this._upgradeAgent });
-    this._traceRequest(upstream, path, began, ensureMs);
+    const kind = stripTokenParam(path).startsWith('/ws/terminal/') ? 'terminal' : 'api';
+    this._openUpgrade({ req, socket, head, path, headers, tunnel, began, ensureMs, route: this._route(kind) });
+  }
+
+  _openUpgrade({ req, socket, head, path, headers, tunnel, began, ensureMs, route }) {
+    const upstream = this._client().request({ ...this._target(stripTokenParam(path), headers, 'GET'), host: route.host, port: route.port, agent: route.upgradeAgent });
+    this._traceRequest(upstream, path, began, ensureMs, route.via);
     const abandon = () => upstream.destroy();
     socket.once('close', abandon);
+    // Connected: the handshake may be on its way to the node. A certificate the pin
+    // refused has been destroyed by then and counts as never connected.
+    let connected = false;
+    upstream.once('socket', (raw) => {
+      if (!raw.connecting) { connected = true; return; }
+      raw.once(raw instanceof tls.TLSSocket ? 'secureConnect' : 'connect', () => { connected = !raw.destroyed; });
+    });
+    // The forward instead, only while nothing has reached the node and the browser waits.
+    const fallBack = (err) => {
+      if (route.via !== 'direct') return false;
+      this._directFailed(route.direct, directFailureReason(err));
+      if (connected || socket.destroyed || this._tunnel !== tunnel) return false;
+      socket.off('close', abandon);
+      upstream.destroy();
+      diagnostics.record('proxy', { serverId: this.serverId, path, via: 'ssh', phase: 'retry', retry: 'forward',
+        transportCode: err?.code, durationMs: performance.now() - began });
+      this._openUpgrade({ req, socket, head, path, headers, tunnel, began, ensureMs, route: this._forwardRoute() });
+      return true;
+    };
+    let fellBack = false;
     stallGuard(upstream, {
       queueMs: this._stallLimits.queue,
       connectMs: this._stallLimits.connect,
       answerMs: this._stallLimits.upgrade,
       onStall: (err, phase) => {
-        diagnostics.record('proxy', { serverId: this.serverId, path, phase, timedOut: true,
+        diagnostics.record('proxy', { serverId: this.serverId, path, via: route.via, phase, timedOut: true,
           transportCode: err.code, durationMs: performance.now() - began });
+        if (phase === 'connect' && fallBack(err)) { fellBack = true; return; }
         if (!socket.destroyed) socket.end('HTTP/1.1 504 Gateway Timeout\r\nConnection: close\r\n\r\n');
       },
-      onConnectStall: () => this._dropDeadTunnel(tunnel),
+      onConnectStall: route.via === 'ssh' ? () => this._dropDeadTunnel(tunnel) : undefined,
     });
     upstream.on('upgrade', (answer, upstreamSocket, upstreamHead) => {
       socket.off('close', abandon);
+      if (this._closed || this._tunnel !== tunnel || socket.destroyed || socket.writableEnded || upstreamSocket.destroyed) {
+        upstreamSocket.destroy();
+        socket.destroy();
+        return;
+      }
+      const bridge = { browser: socket, upstream: upstreamSocket };
+      this._upgraded.add(bridge);
       const lines = [`HTTP/1.1 ${answer.statusCode} ${answer.statusMessage || 'Switching Protocols'}`];
       for (let i = 0; i < answer.rawHeaders.length; i += 2) lines.push(`${answer.rawHeaders[i]}: ${answer.rawHeaders[i + 1]}`);
       socket.write(lines.join('\r\n') + '\r\n\r\n');
@@ -525,7 +770,11 @@ export class NodeLink {
       if (head && head.length) upstreamSocket.write(head);
       upstreamSocket.pipe(socket);
       socket.pipe(upstreamSocket);
-      const end = () => { upstreamSocket.destroy(); socket.destroy(); };
+      const end = () => {
+        this._upgraded.delete(bridge);
+        upstreamSocket.destroy();
+        socket.destroy();
+      };
       upstreamSocket.on('error', end);
       socket.on('error', end);
       upstreamSocket.on('close', end);
@@ -537,10 +786,147 @@ export class NodeLink {
       answer.resume();
     });
     upstream.on('error', (err) => {
-      this._noteUpstreamError(tunnel, err);
+      if (fellBack) return;
+      if (route.via === 'ssh') this._noteUpstreamError(tunnel, err);
+      else if (fallBack(err)) return;
       // A stall has already answered, and ending that socket here would cut it off.
       if (!err || err.code !== 'ETIMEDOUT') socket.destroy();
     });
     upstream.end();
   }
+
+  /** The forward: always there once ensure() has resolved. */
+  _forwardRoute() {
+    return { via: 'ssh', host: '127.0.0.1', port: this._tunnel.port, agent: this._agent, upgradeAgent: this._upgradeAgent };
+  }
+
+  /**
+   * The way to the node for `kind` ('api' or 'terminal'): the node's own listener
+   * when the server asks for it and a check confirmed it, the forward otherwise. A
+   * way wanted but not confirmed starts a check in the background; nothing waits.
+   */
+  _route(kind) {
+    if (this.connection.server?.transport?.[kind] !== 'direct') return this._forwardRoute();
+    const direct = this._directFor(this._pairing);
+    if (direct.status !== 'up') return this._forwardRoute();
+    return { via: 'direct', host: direct.host, port: direct.port, agent: direct.agent, upgradeAgent: direct.upgradeAgent, direct };
+  }
+
+  /** The current direct way for `pairing`, starting a check when there is none or a failed one is old. */
+  _directFor(pairing) {
+    const current = this._direct;
+    if (current && current.pairing === pairing
+      && (current.status !== 'down' || this._now() - current.checkedAt < DIRECT_RECHECK_MS)) return current;
+    this._closeDirect({ idleOnly: true });
+    const direct = { pairing, status: 'checking', reason: null, checkedAt: this._now(), host: null, port: pairing.port, agent: null, upgradeAgent: null };
+    this._direct = direct;
+    direct.checked = this._checkDirect(direct);
+    return direct;
+  }
+
+  /**
+   * Asks the node for its info on its own listener, at the address SSH uses for
+   * the host. Only over TLS, pinned like the forward: the token never crosses a
+   * network in the clear, and never reaches another certificate.
+   */
+  async _checkDirect(direct) {
+    const deadline = performance.now() + this._directCheckTimeoutMs;
+    let targetTimer = null;
+    try {
+      if (!direct.pairing.tls) throw Object.assign(new Error('no tls'), { directReason: 'no-tls' });
+      const target = await new Promise((resolve, reject) => {
+        targetTimer = setTimeout(() => reject(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })), this._directCheckTimeoutMs);
+        if (targetTimer.unref) targetTimer.unref();
+        direct.cancelCheck = () => reject(Object.assign(new Error('cancelled'), { code: 'ECANCELED' }));
+        Promise.resolve().then(() => this.connection.resolveTarget()).then(resolve, reject);
+      });
+      clearTimeout(targetTimer);
+      targetTimer = null;
+      if (target.proxied) throw Object.assign(new Error('proxied'), { directReason: 'proxied' });
+      if (this._direct !== direct) return;
+      const left = deadline - performance.now();
+      if (left <= 0) throw Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' });
+      const sessions = createSessionCache();
+      direct.host = target.host;
+      direct.agent = pinnedAgent(direct.pairing.tlsFingerprint, { sessions });
+      direct.upgradeAgent = pinnedAgent(direct.pairing.tlsFingerprint, { keepAlive: false, sessions });
+      const headers = forwardRequestHeaders({ accept: 'application/json' }, direct.pairing.token);
+      const { status } = await smallJsonRequest(https, {
+        host: direct.host, port: direct.port, path: '/api/node/info', method: 'GET', headers, agent: direct.agent,
+      }, {
+        timeout: left,
+        onRequest: (_req, cancel) => { direct.cancelCheck = cancel; },
+      });
+      if (status !== 200) throw Object.assign(new Error('status'), { directReason: `http-${status}` });
+      if (this._direct !== direct) return;
+      direct.status = 'up';
+      direct.checkedAt = this._now();
+      logDirect(this.serverId, 'up', null);
+    } catch (err) {
+      this._directFailed(direct, err.directReason || directFailureReason(err));
+    } finally {
+      clearTimeout(targetTimer);
+      direct.cancelCheck = null;
+    }
+  }
+
+  /**
+   * The direct way failed: new requests take the forward until a later check.
+   * Streams already open on it go on; only idle sockets are closed.
+   */
+  _directFailed(direct, reason) {
+    if (!direct || this._direct !== direct || direct.status === 'down') return;
+    direct.status = 'down';
+    direct.reason = reason;
+    direct.checkedAt = this._now();
+    closeIdle(direct.agent);
+    closeIdle(direct.upgradeAgent);
+    logDirect(this.serverId, 'down', reason);
+  }
+
+  _closeDirect({ idleOnly = false } = {}) {
+    const direct = this._direct;
+    this._direct = null;
+    if (!direct) return;
+    direct.cancelCheck?.();
+    for (const agent of [direct.agent, direct.upgradeAgent]) {
+      if (!agent) continue;
+      if (idleOnly) closeIdle(agent);
+      else agent.destroy();
+    }
+  }
+
+  /**
+   * Which way each kind of traffic takes right now, for the server's status. Also
+   * keeps a wanted direct way checked: a failed one is tried again after a while.
+   */
+  paths() {
+    const wanted = { ...DEFAULT_TRANSPORT, ...this.connection.server?.transport };
+    const wantsDirect = Object.values(wanted).includes('direct');
+    if (!wantsDirect && this._direct) this._closeDirect({ idleOnly: true });
+    const direct = wantsDirect && this._pairing ? this._directFor(this._pairing) : null;
+    const taken = (kind) => (wanted[kind] === 'direct' && direct?.status === 'up' ? 'direct' : 'ssh');
+    return {
+      wanted,
+      api: taken('api'),
+      terminal: taken('terminal'),
+      direct: direct ? { status: direct.status, reason: direct.reason, checkedAt: new Date(direct.checkedAt).toISOString() } : null,
+    };
+  }
+}
+
+/** A short, fixed reason for a direct way that failed; never an address or message. */
+function directFailureReason(err) {
+  if (err instanceof AppError && err.code === ErrorCode.NODE_AUTH_FAILED) return 'cert-mismatch';
+  if (err && typeof err.code === 'string' && /^E[A-Z_]+$/.test(err.code)) return err.code.toLowerCase();
+  return 'failed';
+}
+
+function closeIdle(agent) {
+  if (!agent) return;
+  for (const sockets of Object.values(agent.freeSockets || {})) for (const socket of sockets) socket.destroy();
+}
+
+function logDirect(serverId, status, reason) {
+  console.warn('[node-link] direct path', JSON.stringify({ at: new Date().toISOString(), serverId, status, reason }));
 }

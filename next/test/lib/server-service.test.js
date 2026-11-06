@@ -93,6 +93,19 @@ describe('ServerService', () => {
       expect(registry.get('api-linux').name).toBe('Renamed');
     });
 
+    it('changing transport with unchanged connection fields keeps live terminals and retries only the new selection', async () => {
+      const retry = vi.fn();
+      service.mosh = { retry };
+      await service.update('api-linux', { address: { ...REMOTE.address }, ssh: {}, transport: { terminal: 'mosh' } });
+      expect(links.invalidate).not.toHaveBeenCalled();
+      expect(health.invalidate).toHaveBeenCalledWith('api-linux');
+      expect(retry).toHaveBeenCalledExactlyOnceWith('api-linux');
+      retry.mockClear();
+      await service.update('api-linux', { name: 'Only a name' });
+      expect(retry).not.toHaveBeenCalled();
+      expect(links.invalidate).not.toHaveBeenCalled();
+    });
+
     it('a connection change closes the forward and re-checks', async () => {
       await service.update('api-linux', { address: { host: '10.9.9.9', user: 'deploy' } });
 
@@ -105,6 +118,20 @@ describe('ServerService', () => {
       await expect(service.update('api-linux', { address: { host: '10.9.9.9', user: 'deploy' } })).resolves.toBeTruthy();
       expect(registry.get('api-linux').address.host).toBe('10.9.9.9');
     });
+  });
+
+  it('only an explicit transport retry clears its verdict, never routine or local health checks', async () => {
+    const retry = vi.fn();
+    service.mosh = { retry };
+    await service.create(REMOTE);
+    await service.probe('api-linux');
+    expect(retry).not.toHaveBeenCalled();
+    links.invalidate.mockClear();
+    await service.probe('api-linux', { retryTransport: true });
+    expect(retry).toHaveBeenCalledExactlyOnceWith('api-linux');
+    expect(links.invalidate).not.toHaveBeenCalled();
+    await service.probe(LOCAL_SERVER_ID, { retryTransport: true });
+    expect(retry).toHaveBeenCalledTimes(1);
   });
 
   describe('remove', () => {

@@ -38,6 +38,8 @@ describe('Router.parse / Router.serialize round trip', () => {
     ['#/servers', { name: 'servers', params: {} }],
     ['#/servers/new', { name: 'servers', params: { intent: 'new' } }],
     ['#/servers/prod/performance', { name: 'server', params: { serverId: 'prod', section: 'performance' } }],
+    ['#/servers/local/sessions', { name: 'server', params: { serverId: 'local', section: 'sessions' } }],
+    ['#/servers/prod/sessions', { name: 'server', params: { serverId: 'prod', section: 'sessions' } }],
     ['#/servers/local/claude', { name: 'server', params: { serverId: 'local', section: 'claude' } }],
     ['#/servers/local/codex', { name: 'server', params: { serverId: 'local', section: 'codex' } }],
     ['#/servers/prod/connection', { name: 'server', params: { serverId: 'prod', section: 'connection' } }],

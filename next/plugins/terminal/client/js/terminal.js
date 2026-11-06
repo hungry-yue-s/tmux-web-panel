@@ -656,6 +656,8 @@ var TERMINAL_FONT_FAMILY = "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mo
 var CORE_FONT_WAIT_MS = 1500;
 /** How long a socket may take to bring up its attach client before it counts as dropped. */
 var TERMINAL_CONNECT_TIMEOUT_MS = 20000;
+/** An explicitly selected Mosh attempt may also need cleanup and a safe SSH fallback. */
+var MOSH_TERMINAL_CONNECT_TIMEOUT_MS = 60000;
 
 /** The core slice, at most CORE_FONT_WAIT_MS: true, false (unusable) or null (timed out). */
 function _coreFontWait() {
@@ -785,6 +787,16 @@ function connectTerminalWs(paneId, term, nozoom, onReady) {
 
   var ws = new WebSocket(wsUrl);
   var diagnosticServerId = TerminalTarget.serverId;
+  var connectTimeoutMs = TERMINAL_CONNECT_TIMEOUT_MS;
+  var shell = window.AppShell;
+  if (diagnosticServerId && diagnosticServerId !== 'local' && shell && shell.server) {
+    var server = shell.server(diagnosticServerId);
+    if (server && server.kind === 'remote' && server.transport && server.transport.terminal === 'mosh') {
+      // Health is a snapshot: its old failure may expire or be explicitly retried
+      // while this socket opens. The selected route, not that snapshot, owns the budget.
+      connectTimeoutMs = MOSH_TERMINAL_CONNECT_TIMEOUT_MS;
+    }
+  }
   if (window.Diagnostics) window.Diagnostics.watchSocket(ws, term, diagnosticServerId);
   if (term._trace) term._trace.connecting(term.cols, term.rows);
 
@@ -793,7 +805,7 @@ function connectTerminalWs(paneId, term, nozoom, onReady) {
   // and nothing here may retry blindly.
   ws._connectTimer = setTimeout(function () {
     if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
-  }, TERMINAL_CONNECT_TIMEOUT_MS);
+  }, connectTimeoutMs);
 
   ws.onopen = function () {
     if (terminalState.term !== term) { _closeTerminalWs(ws); return; }

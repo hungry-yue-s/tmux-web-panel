@@ -4,6 +4,10 @@
 //
 // `home` (the directory holding ~/.config/tmux-web-panel/node.json) exists so
 // tests and smoke runs never overwrite the real pairing file.
+//
+// Optional components report themselves in the info through
+// `setCapability(name, probe)` (e.g. mosh, moshClient); the caller wraps it
+// in ctx.effect so the capability goes away with the plugin that set it.
 
 import { homedir } from 'node:os';
 import { initNodeIdentity } from '../../lib/node/identity.js';
@@ -25,9 +29,21 @@ export async function apply(ctx, config) {
     tlsCertPath: launch.tls ? launch.tls.cert : null,
     home: config?.home || homedir(),
   });
-  const info = () => collectNodeInfo({ tmuxVersion: () => ctx.tmux.version() });
+  /** capability name → probe returning { available, version, reason } */
+  const capabilities = new Map();
+  const info = () => collectNodeInfo({
+    tmuxVersion: () => ctx.tmux.version(),
+    mosh: capabilities.get('mosh') ?? null,
+    moshClient: capabilities.get('moshClient') ?? null,
+  });
+  const setCapability = (capability, probe) => {
+    capabilities.set(capability, probe);
+    return () => {
+      if (capabilities.get(capability) === probe) capabilities.delete(capability);
+    };
+  };
   const router = express.Router();
   router.get('/', handle(async () => info()));
   ctx.http.mount('/api/node/info', router);
-  ctx.provide('node', Object.freeze({ ...identity, info }));
+  ctx.provide('node', Object.freeze({ ...identity, info, setCapability }));
 }
