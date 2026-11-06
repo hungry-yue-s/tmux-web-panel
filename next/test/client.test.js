@@ -3,6 +3,7 @@ import { Context } from 'cordis';
 import { afterEach, describe, expect, it } from 'vitest';
 import ClientService from '../plugins/client/index.js';
 import HttpService from '../plugins/http/index.js';
+import UiService from '../plugins/ui/index.js';
 
 let running = [];
 
@@ -10,13 +11,14 @@ afterEach(async () => {
   for (const fiber of running.splice(0)) await fiber.dispose();
 });
 
-async function startClient() {
+async function start({ ui = true } = {}) {
   const ctx = new Context();
-  ctx.provide('launch', { host: '127.0.0.1', port: 0, tls: null, httpPort: null });
+  ctx.provide('launch', { host: '127.0.0.1', port: 0, tls: null, httpPort: null, managedRuntime: false });
   const http = ctx.plugin(HttpService, { port: 0 });
   await http;
   running.push(http);
-  await ctx.plugin(ClientService, { title: '测试面板' });
+  if (ui) await ctx.plugin(UiService);
+  await ctx.plugin(ClientService);
   return { ctx, base: `http://127.0.0.1:${ctx.get('http').port}` };
 }
 
@@ -38,26 +40,22 @@ function importMapOf(html) {
 }
 
 describe('client service', () => {
-  it('renders the page with an import map of content-hashed module URLs', async () => {
-    const { base } = await startClient();
-    const page = await fetch(`${base}/client/`);
-    expect(page.headers.get('cache-control')).toBe('no-cache');
-    const html = await page.text();
-    expect(html).toContain('<title>测试面板</title>');
-    expect(html).toMatch(/src="\/client\/boot\.js\?h=[0-9a-f]{12}"/);
+  it('puts an import map of content-hashed module URLs and the boot script into the main page', async () => {
+    const { base } = await start();
+    const html = await (await fetch(`${base}/`)).text();
     const { imports } = importMapOf(html);
     expect(imports.cordis).toMatch(/^\/client\/vendor\/cordis\/index\.js\?h=[0-9a-f]{12}$/);
     expect(imports.cosmokit).toMatch(/^\/client\/vendor\/cosmokit\/index\.mjs\?h=/);
     expect(imports['@twp/client']).toMatch(/^\/client\/lib\/index\.js\?h=/);
-    expect(imports['/client/core/shell.js']).toMatch(/^\/client\/core\/shell\.js\?h=/);
-    // The same page again revalidates to 304.
-    const again = await fetch(`${base}/client/`, { headers: { 'If-None-Match': page.headers.get('etag') } });
-    expect(again.status).toBe(304);
+    expect(imports['/client/core/api.js']).toMatch(/^\/client\/core\/api\.js\?h=/);
+    expect(html).toMatch(/<script type="module" src="\/client\/boot\.js\?h=[0-9a-f]{12}"><\/script>/);
+    // Before any module script of the page itself.
+    expect(html.indexOf('type="importmap"')).toBeLessThan(html.indexOf('type="module"'));
   });
 
   it('caches a hashed URL for a year and revalidates an unhashed one', async () => {
-    const { base } = await startClient();
-    const { imports } = importMapOf(await (await fetch(`${base}/client/`)).text());
+    const { base } = await start();
+    const { imports } = importMapOf(await (await fetch(`${base}/`)).text());
     const hashed = await fetch(base + imports.cordis);
     expect(hashed.status).toBe(200);
     expect(hashed.headers.get('content-type')).toMatch(/^text\/javascript/);
@@ -69,15 +67,15 @@ describe('client service', () => {
   });
 
   it('serves nothing outside its roots', async () => {
-    const { base } = await startClient();
+    const { base } = await start();
     expect(await rawGet(base, '/client/..%2f..%2fpackage.json')).toBe(404);
     expect(await rawGet(base, '/client/%2e%2e/kernel/app.js')).toBe(404);
     expect(await rawGet(base, '/client/vendor/cordis/../package.json')).toBe(404);
     expect(await rawGet(base, '/client/nope.js')).toBe(404);
   });
 
-  it('lists the core services, then each entry, and drops an entry with its plugin', async () => {
-    const { ctx, base } = await startClient();
+  it('lists the core services, then each entry, publicly, and drops an entry with its plugin', async () => {
+    const { ctx, base } = await start({ ui: false });
     const fiber = ctx.plugin({
       name: 'feature',
       inject: ['client'],
@@ -86,17 +84,26 @@ describe('client service', () => {
       },
     });
     await fiber;
-    const manifest = await (await fetch(`${base}/api/client/manifest`)).json();
-    expect(manifest.title).toBe('测试面板');
-    expect(manifest.entries.slice(0, 2).map((entry) => entry.url)).toEqual(['/client/core/api.js', '/client/core/shell.js']);
-    const entry = manifest.entries[2];
+    const manifest = await (await fetch(`${base}/client/manifest.json`)).json();
+    expect(manifest.entries[0].url).toBe('/client/core/api.js');
+    const entry = manifest.entries[1];
     expect(entry.url).toMatch(/^\/@plugin\/[0-9a-f]{10}\/index\.js$/);
     expect(entry.config).toEqual({ refresh: 1 });
     expect((await fetch(base + entry.url)).status).toBe(200);
 
     await fiber.dispose();
-    const after = await (await fetch(`${base}/api/client/manifest`)).json();
-    expect(after.entries).toHaveLength(2);
+    const after = await (await fetch(`${base}/client/manifest.json`)).json();
+    expect(after.entries).toHaveLength(1);
     expect((await fetch(base + entry.url)).status).toBe(404);
+  });
+
+  it('leaves the main page alone when the client service goes away', async () => {
+    const { ctx, base } = await start();
+    expect(await (await fetch(`${base}/`)).text()).toContain('type="importmap"');
+    ctx.registry.delete(ClientService);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const html = await (await fetch(`${base}/`)).text();
+    expect(html).not.toContain('type="importmap"');
+    expect(html).toContain('/js/ms-app.js');
   });
 });

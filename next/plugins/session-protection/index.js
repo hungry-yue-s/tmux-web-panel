@@ -54,4 +54,6 @@ export async function apply(ctx) {
   }, 'session-protection.loop');
   ctx.http.mount('/api/session-protection', createSessionProtectionRouter({ protection }));
   ctx.provide('sessionProtection', protection);
+  // The front end, where there are pages at all.
+  ctx.inject(['ui'], (ctx) => ctx.ui.contribute(new URL('./client/page.json', import.meta.url)));
 }

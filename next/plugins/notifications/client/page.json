@@ -1,0 +1,6 @@
+{
+  "serve": ["."],
+  "body": [
+    { "order": 220, "script": "/js/notifications.js?v=6" }
+  ]
+}

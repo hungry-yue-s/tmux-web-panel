@@ -1,0 +1,65 @@
+import { indexSource as composedIndex } from '../helpers/pages.js';
+import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+
+const styles = readFileSync('plugins/ui/client/css/style.css', 'utf8');
+const appSource = readFileSync('plugins/ui/client/js/app.js', 'utf8');
+const indexSource = composedIndex();
+
+describe('global UI system', () => {
+  it('defines theme-derived surface, radius, control and focus tokens', () => {
+    ['--ui-radius-sm', '--ui-radius-md', '--ui-control-sm', '--ui-surface',
+      '--ui-border-soft', '--ui-shadow-md'].forEach((token) => {
+      expect(styles).toContain(token);
+    });
+    expect(styles).toContain('button:focus-visible');
+    expect(styles).toContain('@media (prefers-reduced-motion: reduce)');
+  });
+
+  it('uses reusable SVG icons for sidebar actions and collapse states', () => {
+    expect(appSource).toContain('function _appIcon(name)');
+    expect(appSource).toContain('class="app-icon"');
+    expect(appSource).toContain("_appIcon('notifications')");
+    expect(appSource).toContain("_appIcon('fullscreen')");
+    expect(appSource).toContain("_sidebarCollapseContent(collapsed)");
+    expect(indexSource.match(/class="app-icon"/g)).toHaveLength(4);
+    expect(indexSource).toContain('id="btn-app-fullscreen"');
+  });
+
+  it('keeps desktop and mobile navigation layouts explicitly covered', () => {
+    expect(styles).toMatch(/#sidebar\.collapsed[\s\S]*?width:\s*52px/);
+    expect(styles).toContain('@media (max-width: 767px)');
+    expect(styles).toMatch(/#topbar[\s\S]*?min-height:\s*52px/);
+    expect(indexSource).toMatch(/href="\/css\/style\.css\?v=\d+"/);
+    expect(indexSource).toContain('/js/app-fullscreen.js?v=2');
+    expect(indexSource).toMatch(/src="\/js\/app\.js\?v=\d+"/);
+  });
+
+  it('keeps the mobile terminal header compact while exposing a workspace sheet', () => {
+    expect(indexSource).toContain('class="mobile-workspace-trigger"');
+    expect(indexSource).toContain('data-action="mobile-workspace"');
+    expect(styles).toContain('.ms-mobile-workspace-sheet');
+    expect(styles).toContain('.ms-mobile-workspace-tools');
+    expect(styles).toMatch(/\.mobile-header\s*\{[\s\S]*?height:\s*48px;[\s\S]*?min-height:\s*48px;/);
+    expect(styles).toMatch(/\.ms-topbar,\s*\.ms-topbar\.terminal-layout\s*\{\s*display:\s*none/);
+    expect(styles).not.toContain('.mobile-header {\n  flex-wrap: wrap;');
+  });
+
+  it('lets long status pages scroll without unlocking the terminal viewport', () => {
+    expect(styles).toMatch(/\.ms-app\.mode-status \.ms-main,[\s\S]*?\.ms-app\.mode-settings \.ms-main\s*\{[\s\S]*?height:\s*100vh;[\s\S]*?overflow-y:\s*auto/);
+    expect(styles).toMatch(/@media \(max-width:\s*767px\)[\s\S]*?\.ms-app\.mode-status \.ms-main,[\s\S]*?height:\s*calc\(100dvh - env\(safe-area-inset-bottom, 0px\)\);[\s\S]*?overflow-y:\s*auto/);
+    expect(styles).toMatch(/@media \(max-width:\s*767px\)[\s\S]*?\.ms-app\.mode-terminal \.ms-main\s*\{[\s\S]*?height:\s*calc\(100dvh - env\(safe-area-inset-bottom, 0px\)\);[\s\S]*?display:\s*flex;[\s\S]*?flex-direction:\s*column;[\s\S]*?overflow:\s*hidden/);
+    expect(styles).toMatch(/\.ms-content\.terminal-mode\s*\{[\s\S]*?width:\s*100%;[\s\S]*?max-width:\s*100%;[\s\S]*?min-width:\s*0;[\s\S]*?flex:\s*1 1 auto/);
+    expect(styles).toMatch(/\.ms-content\.terminal-mode \.terminal-stage,[\s\S]*?\.ms-content\.terminal-mode \.terminal-view,[\s\S]*?\.ms-content\.terminal-mode \.terminal-container\s*\{[\s\S]*?width:\s*100%;[\s\S]*?min-width:\s*0;/);
+  });
+
+  it('keeps the new-shell terminal inside the exact remaining content height', () => {
+    expect(styles).toMatch(/\.ms-content\.terminal-mode \.terminal-view\s*\{[\s\S]*?height:\s*100%;[\s\S]*?max-height:\s*100%/);
+    expect(styles).toMatch(/\.ms-app\.mode-terminal \.ms-main\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto/);
+    expect(styles).toMatch(/\.ms-app\.mode-terminal \.ms-content\.terminal-mode\s*\{[\s\S]*?grid-column:\s*1;[\s\S]*?grid-row:\s*2;[\s\S]*?height:\s*auto/);
+  });
+
+  it('colors the fractional terminal row remainder with the active theme', () => {
+    expect(styles).toMatch(/\.terminal-container \.xterm-viewport\s*\{\s*background-color:\s*var\(--bg-primary\)/);
+  });
+});

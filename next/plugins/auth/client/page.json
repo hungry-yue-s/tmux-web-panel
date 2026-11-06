@@ -1,0 +1,6 @@
+{
+  "serve": ["."],
+  "body": [
+    { "order": 10, "script": "/js/auth.js?v=2" }
+  ]
+}

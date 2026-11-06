@@ -235,9 +235,12 @@ describe('ConsoleReaper', () => {
     });
 
     it('is the only way this codebase starts a pty, so no console goes unaccounted for', () => {
+      // Server code only: the plugins' client/ directories run in the browser
+      // (and hold minified vendor files this line-wise scan would choke on).
       const files = ['lib', 'plugins'].flatMap((dir) => readdirSync(join(NEXT_ROOT, dir), { recursive: true })
-        .filter((name) => String(name).endsWith('.js') && !String(name).includes('node_modules'))
-        .map((name) => join(NEXT_ROOT, dir, String(name))));
+        .map(String)
+        .filter((name) => name.endsWith('.js') && !name.split(/[\\/]/).some((part) => part === 'client' || part === 'node_modules'))
+        .map((name) => join(NEXT_ROOT, dir, name)));
       const spawns = [];
       for (const file of files) {
         const text = readFileSync(file, 'utf8');

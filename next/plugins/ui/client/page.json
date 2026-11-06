@@ -1,0 +1,29 @@
+{
+  "serve": ["."],
+  "head": [
+    { "order": 50, "style": "/css/style.css?v=59" },
+    { "order": 51, "style": "/css/workspace.css?v=4" },
+    { "order": 53, "style": "/css/mobile.css?v=7" }
+  ],
+  "body": [
+    { "order": 30, "script": "/js/theme.js?v=7" },
+    { "order": 70, "script": "/js/router.js?v=4" },
+    { "order": 80, "script": "/js/store.js?v=4" },
+    { "order": 90, "script": "/js/api.js?v=3" },
+    { "order": 100, "script": "/js/terminal-target.js?v=5" },
+    { "order": 110, "script": "/js/panes.js?v=3" },
+    { "order": 120, "script": "/js/sessions.js?v=2" },
+    { "order": 130, "module": "/js/sort-windows.js?v=1" },
+    { "order": 140, "script": "/js/windows.js?v=2" },
+    { "order": 150, "script": "/js/link-detect.js?v=1" },
+    { "order": 160, "script": "/js/panel-presentation.js" },
+    { "order": 200, "script": "/js/mobile-ui.js?v=2" },
+    { "order": 310, "script": "/js/app-fullscreen.js?v=2" },
+    { "order": 320, "script": "/js/app.js?v=18" },
+    { "order": 330, "script": "/js/command-palette.js?v=5" },
+    { "order": 340, "script": "/js/layout-picker.js?v=2" },
+    { "order": 350, "script": "/js/app-shell.js?v=20" },
+    { "order": 360, "script": "/js/servers.js?v=15" },
+    { "order": 390, "script": "/js/ms-app.js?v=27" }
+  ]
+}

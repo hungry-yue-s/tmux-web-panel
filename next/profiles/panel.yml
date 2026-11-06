@@ -2,7 +2,7 @@
 #
 # Settings come from the environment and --config exactly as before (see
 # plugins/launch). Change the composition with a patch (<home>/patch.yml or
-# --patch), not by editing this file; `twp --dump-config` prints the result.
+# --patch), not by editing this file; `panel --dump-config` prints the result.
 # See docs/architecture.md.
 name: panel
 plugins:

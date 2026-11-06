@@ -9,32 +9,32 @@
 ```
 next/
   kernel/      profile 与补丁、loader、createApp —— 内核只做组装
-  plugins/     每个功能一个插件：服务端接线，以及（将来）它的浏览器端
+  plugins/     每个功能一个插件：服务端接线（index.js）和它的前端（client/，含 page.json）
   lib/         从旧 server/ 搬来的、验证过的业务模块（路由、TerminalManager、会话保护……）
-  client/      浏览器端内核：boot、核心服务 api / shell、共享 DOM 工具
+  client/      浏览器端的 Cordis 内核：boot、核心服务 api、共享 DOM 工具
   profiles/    panel.yml：整个产品
   vendor/      Cordis、cosmokit、timer 的发布版
-  test/        内核与插件的测试；test/lib/ 是随模块迁来的旧测试
+  test/        内核与插件的测试；test/lib/、test/client/ 是随代码迁来的旧服务端与前端测试
 ```
 
 **`lib/` 与 `plugins/` 的分工。** 旧代码的问题不在业务模块，而在组装：`server/index.js` 用 657 行手工接线、手工排启动顺序、手工列关机步骤。重写把组装换成插件，把验证过的模块原样搬进 `lib/`（相对引用不变，旧测试随之迁来，作为对等规格）。插件负责“什么时候、以什么依赖、向哪里注册”，`lib/` 负责“怎么做”。之后可以在不动组装的前提下逐个重构 `lib/` 里的模块。
 
-**仓库路径。** 迁移期间 `next/` 在仓库里面，不是 JavaScript 模块的共享资源——`scripts/`（服务安装、远程安装、Windows 采样）、`vendor/tmux-plugins/`、`plugins/`（tmux-agent 目录）、`skills/`、版本号所在的 `package.json`、页面所在的 `public/`——仍在仓库根目录，统一经 `lib/paths.js` 的 `repoPath()` 取得（`TWP_REPO_ROOT` 可覆盖）。不要在代码里写相对于当前目录的路径。
+**仓库路径。** 迁移期间 `next/` 在仓库里面，不是 JavaScript 模块的共享资源——`scripts/`（服务安装、远程安装、Windows 采样）、`vendor/tmux-plugins/`、`plugins/`（tmux-agent 目录）、`skills/`、版本号所在的 `package.json`——仍在仓库根目录，统一经 `lib/paths.js` 的 `repoPath()` 取得（`TWP_REPO_ROOT` 可覆盖）。不要在代码里写相对于当前目录的路径。
 
 ## 运行
 
 ```sh
 cd next
 npm install
-node bin/twp.js                    # profile panel，配置照旧来自环境变量 / --config
-node bin/twp.js --dump-config      # 打印组装结果，不启动
-node bin/twp.js --patch my.yml     # 叠加一层补丁
+node bin/panel.js                    # profile panel，配置照旧来自环境变量 / --config
+node bin/panel.js --dump-config      # 打印组装结果，不启动
+node bin/panel.js --patch my.yml     # 叠加一层补丁
 npm test
 ```
 
-`twp` 接受旧服务端的全部命令行选项（`--config`、`--port`、`--host`、`--auth`、`--tls-cert`、`--tls-key`、`--http-port`、`--poll-interval`、`--max-connections`），由 `launch` 插件读取，所以服务管理器把 `node server/index.js` 换成 `node next/bin/twp.js` 不需要改任何配置。
+`bin/panel.js` 接受旧服务端的全部命令行选项（`--config`、`--port`、`--host`、`--auth`、`--tls-cert`、`--tls-key`、`--http-port`、`--poll-interval`、`--max-connections`），由 `launch` 插件读取，所以服务管理器把 `node server/index.js` 换成 `node next/bin/panel.js` 不需要改任何配置。
 
-**不要用 `twp` 直接跑在生产状态上做实验。** 默认配置目录就是正式面板的 `~/.config/tmux-web-panel`（令牌、通知、服务器列表、会话保护设置），`node` 插件还会改写 `~/.config/tmux-web-panel/node.json`（Hub 读的配对文件）。实验和冒烟一律用补丁把这些指走，并选私有 tmux server，见“测试”。
+**不要用 `bin/panel.js` 直接跑在生产状态上做实验。** 默认配置目录就是正式面板的 `~/.config/tmux-web-panel`（令牌、通知、服务器列表、会话保护设置），`node` 插件还会改写 `~/.config/tmux-web-panel/node.json`（Hub 读的配对文件）。实验和冒烟一律用补丁把这些指走，并选私有 tmux server，见“测试”。
 
 ## 内核：五个概念
 
@@ -42,7 +42,7 @@ npm test
 - **服务**：继承 `Service` 并在构造时 `super(ctx, '<name>')` 的类，或在 `apply` 里 `ctx.provide('<name>', value)` 的值。别的插件通过 `ctx.<name>` 使用它，而不是 import 它的实现。
 - **inject**：插件声明依赖的服务，全部就绪才启动；任一依赖消失，插件随之卸载，依赖回来再重新启动。加载顺序由依赖决定，不靠手工排列。
 - **事件**：`ctx.on` / `emit` / `serial` / `waterfall` 等，监听器同样随插件卸载。
-- **可逆副作用**：注册经 `ctx.effect(() => { …; return dispose })`。插件卸载时，它注册的路由、定时器、监听器、DOM 节点和提供的服务按相反顺序撤销。**没有一个插件写关机逻辑**；`twp` 收到 SIGTERM 就释放 loader，整个应用按依赖倒序停下。
+- **可逆副作用**：注册经 `ctx.effect(() => { …; return dispose })`。插件卸载时，它注册的路由、定时器、监听器、DOM 节点和提供的服务按相反顺序撤销。**没有一个插件写关机逻辑**；`panel` 收到 SIGTERM 就释放 loader，整个应用按依赖倒序停下。
 
 ### 用 Cordis 必须知道的六件事
 
@@ -61,7 +61,7 @@ npm test
 2. home 补丁：`$TWP_HOME/patch.yml`，默认 `~/.config/tmux-web-panel/next/patch.yml`；
 3. 每个 `--patch <file>`，按命令行顺序。
 
-`twp --dump-config` 打印叠完的结果和参与的每一层。打印出的任何条目都能被补丁替换；除此之外没有别的地方会挂载插件。
+`panel --dump-config` 打印叠完的结果和参与的每一层。打印出的任何条目都能被补丁替换；除此之外没有别的地方会挂载插件。
 
 条目：
 
@@ -89,7 +89,7 @@ npm test
 
 补丁里写错 id、插入重复 id、出现未知字段都会报错并指出文件和位置，不静默忽略。
 
-启动时任一条目 `failed`，`twp` 停掉已启动的插件并以退出码 1 结束，交给服务管理器重启；条目 `pending`（等待一个没人提供的服务）只打警告。运行中可以经 `ctx.loader.setDisabled(id, bool)` 关掉或打开条目。
+启动时任一条目 `failed`，`panel` 停掉已启动的插件并以退出码 1 结束，交给服务管理器重启；条目 `pending`（等待一个没人提供的服务）只打警告。运行中可以经 `ctx.loader.setDisabled(id, bool)` 关掉或打开条目。
 
 ## HTTP 管线
 
@@ -139,8 +139,8 @@ npm test
 | `servers` | `servers` | launch, http, auth, node, terminals, timer | 服务器列表、健康、SSH 链路、`/n/` 转发、基础模式、安装 Node |
 | `panel-plugins` | `panelPlugins` | launch, http, tmux, workspace, servers | tmux-agent 等面板插件与 MCP |
 | `session-protection` | `managedResources`, `sessionProtection` | launch, http, tmux | 托管资源；会话保护（私有 server 时关闭） |
-| `client` | `client` | http | 浏览器端内核、import map、客户端条目清单（`/client/`） |
-| `ui` | — | launch, http | 页面与静态资源（内容哈希），桌面版的中继配置 |
+| `client` | `client` | http | 浏览器端 Cordis 内核、import map、客户端条目清单（`/client/manifest.json`） |
+| `ui` | `ui` | launch, http | 主页面的组装、各插件前端的静态目录（内容哈希）、桌面版的中继配置 |
 
 插件之间的广播走事件，不互相持有引用：
 
@@ -153,13 +153,29 @@ npm test
 
 ## 浏览器端
 
-- 现在的页面是 `ui` 插件托管的原有前端（`public/`），与旧服务端提供的完全相同。
-- `client` 插件提供浏览器端的 Cordis 内核：`/client/` 的纯插件外壳页，import map 把 `cordis`、`cosmokit`、`@cordisjs/plugin-timer`、`@twp/client` 和每个模块 URL 映射到带内容哈希的 URL，`/api/client/manifest` 列出要加载的客户端条目（先核心服务 `api`、`shell`，再是各功能用 `ctx.client.entry()` 注册的条目）。没有构建步骤。
-- 前端模块逐个改成客户端插件，见路线。
+**前端也归插件所有。** 原来的 `public/` 按功能拆进各插件的 `client/` 目录：外壳、路由、侧栏、设置页在 `ui`，终端、xterm、字体切片、移动端工具盘在 `terminal`，文件预览与 block 在 `files`，登录页在 `auth`，监控在 `metrics`，Agent 控制台在 `agent-hub`，通知、诊断、管理页、会话保护各在自己的插件。URL 一个没变（`/js/terminal.js` 还是 `/js/terminal.js`）：每个插件把自己的 `client/` 挂在 `/`，按注册顺序查找。
+
+**主页面是组装出来的。** `ui` 的 `client/index.html` 只是模板，`<!--ui:head-->` / `<!--ui:body-->` 处放进各插件 `client/page.json` 声明的样式、脚本和字体预载：
+
+```json
+{
+  "serve": ["."],
+  "head": [{ "order": 10, "style": "/vendor/xterm/xterm.css?v=6.0.0" }, { "order": 20, "preload": "/fonts/tpm/…woff2" }],
+  "body": [{ "order": 210, "script": "/js/terminal.js?v=25" }, { "order": 130, "module": "/js/sort-windows.js?v=1" }]
+}
+```
+
+- 插件在 `apply` 里 `ctx.inject(['ui'], (ctx) => ctx.ui.contribute(new URL('./client/page.json', import.meta.url)))`：有页面时才贡献，插件卸载时它的脚本和目录一起从页面消失。
+- `order` 是全局顺序，跨插件排序，保证脚本按依赖先后加载（旧脚本之间通过全局对象互相调用）。新增脚本时按它依赖谁、谁依赖它选一个空位；现在的顺序与原 `index.html` 逐字节一致。
+- 可选功能（通知、监控、Agent 控制台、管理页、会话保护、诊断）关掉后页面照常工作：外壳对它们的全局对象都先判断存在。外壳、终端、文件三者互相依赖，作为一组使用。
+- `?v=` 只是标记，渲染时替换成内容哈希 `?h=`；页面每次校验，资源缓存一年，改了文件刷新即生效，不用重启。
+- 字体切片由 `scripts/build-font-subsets.mjs` 生成，写进 `terminal` 的 `client/`，核心片的预载就是它 `page.json` 里的 `preload` 项。
+
+**浏览器端内核。** `client` 插件把 import map（`cordis`、`cosmokit`、`@cordisjs/plugin-timer`、`@twp/client` 和每个模块 URL → 带内容哈希的 URL）和 `/client/boot.js` 放进组装出的页面。boot 只建根上下文，按公开的 `/client/manifest.json`（登录前就要能读）挂载核心服务 `api` 和各功能用 `ctx.client.entry()` 注册的客户端插件，与旧脚本并存、不碰它们的 DOM。浏览器控制台里 `twp` 就是根上下文。旧脚本以后可以逐个改写成这样的客户端插件。
 
 ## 测试
 
-- `npm test`（在 `next/` 下）。`test/` 是内核与插件的测试，`test/lib/` 是随模块迁来的旧测试（引用从 `../server/` 改为 `../../lib/`，仓库资源经 `repoPath()`）。
+- `npm test`（在 `next/` 下）。`test/` 是内核与插件的测试；`test/lib/` 是随模块迁来的旧服务端测试（引用从 `../server/` 改为 `../../lib/`，仓库资源经 `repoPath()`）；`test/client/` 是随前端迁来的旧测试，读主页面的用 `test/helpers/pages.js` 的组装结果，按文件名找脚本的用 `clientPath()`。全部一次跑可能内存不够，可以按目录分开跑。
 - `test/panel.test.js` 用真实输入启动整个 `panel` profile：`AUTH`、临时配置目录与家目录、私有 tmux server，覆盖登录、`/api` 守卫、工作区、WebSocket 鉴权、终端接入和运行时关闭插件。
 - **隔离规则**（来自“不在用户 tmux 上做实验”）：每个用到 tmux 的测试和冒烟都经 `tmux` 插件选私有 server（`-L`），`kill-server` 之前先 `display -p '#{socket_path}'` 断言是私有路径；配置目录（`launch` 的 `env.TMUX_PANEL_CONFIG_DIR`）和配对文件所在的家目录（`node` 的 `home`）指向临时目录；会读 `~/.claude`、`~/.codex` 或起模型中继的 `agent-hub` 关掉。
 - 冒烟时像服务脚本一样带上 `LANG=C.UTF-8 LC_CTYPE=C.UTF-8`（`run-panel.ps1`、systemd 单元都设置了）。没有 UTF-8 locale 时 tmux 命令客户端把中文会话名输出成 `____`，再拿它去查就找不到。
@@ -171,5 +187,6 @@ npm test
 
 1. **已完成**：内核与组装（profile、补丁、`--dump-config`、运行时开关）。
 2. **已完成**：服务端全部跑在插件上（阶段 A）——旧 `server/` 的模块进 `lib/`，`server/index.js` 的全部接线拆成上表的插件，旧服务端测试迁来；页面由 `ui` 插件照旧提供，产品功能与旧服务端对等。
-3. 切换部署（阶段 C）：`install-service.sh` / `.ps1`、`run-panel.ps1`、桌面版运行时与 macOS 打包改为启动 `next/bin/twp.js`；先在一台机器上验证，再删除根目录的 `server/`。
-4. 前端插件化（阶段 D）：把 `public/js/*` 的全局脚本逐个改成 ES 模块，按功能归入插件的 `client/`，由服务端插件 `ctx.client.entry()` 注册；页面改由 `client` 插件组装，旧测试随之迁到 `test/`。完成后删除根目录的 `public/`，`next/` 移到仓库根。
+3. **已完成**：前端归插件（阶段 D 第一步）——`public/` 拆进各插件的 `client/`，主页面由 `ui` 组装，前端测试迁到 `test/client/`。
+4. 切换部署（阶段 C）：`install-service.sh` / `.ps1`、`run-panel.ps1`、桌面版运行时与 macOS 打包改为启动 `next/bin/panel.js`；先在一台机器上验证，再删除根目录的 `server/`。
+5. 前端模块化（阶段 D 之后）：把旧的全局脚本逐个改写成 ES 模块的客户端插件（`ctx.client.entry()`），全局对象换成服务；可以随功能迭代逐步做，不阻塞部署。

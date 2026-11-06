@@ -32,4 +32,6 @@ export function apply(ctx) {
   }, 'metrics.perf-history');
 
   ctx.provide('metrics', metrics);
+  // The front end, where there are pages at all.
+  ctx.inject(['ui'], (ctx) => ctx.ui.contribute(new URL('./client/page.json', import.meta.url)));
 }

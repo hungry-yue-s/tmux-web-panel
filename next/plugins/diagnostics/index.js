@@ -38,4 +38,6 @@ export function apply(ctx) {
 
   ctx.http.mount('/api/diagnostics', createDiagnosticsRouter({ diagnostics }));
   ctx.provide('diagnostics', diagnostics);
+  // The front end, where there are pages at all.
+  ctx.inject(['ui'], (ctx) => ctx.ui.contribute(new URL('./client/page.json', import.meta.url)));
 }

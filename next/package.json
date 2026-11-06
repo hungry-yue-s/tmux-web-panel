@@ -5,10 +5,10 @@
   "description": "tmux-web-panel rebuilt on the Cordis plugin kernel: everything is a plugin",
   "type": "module",
   "bin": {
-    "twp": "bin/twp.js"
+    "tmux-panel": "bin/panel.js"
   },
   "scripts": {
-    "start": "node bin/twp.js",
+    "start": "node bin/panel.js",
     "test": "vitest run"
   },
   "engines": {

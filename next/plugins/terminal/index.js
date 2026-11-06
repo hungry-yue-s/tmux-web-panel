@@ -39,4 +39,6 @@ export function apply(ctx) {
   }, 'terminal.manager');
 
   ctx.provide('terminals', manager);
+  // The front end, where there are pages at all.
+  ctx.inject(['ui'], (ctx) => ctx.ui.contribute(new URL('./client/page.json', import.meta.url)));
 }

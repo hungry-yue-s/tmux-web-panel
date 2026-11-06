@@ -1,0 +1,6 @@
+{
+  "serve": ["."],
+  "body": [
+    { "order": 20, "script": "/js/diagnostics.js" }
+  ]
+}

@@ -38,4 +38,6 @@ export function apply(ctx, config) {
   ctx.http.mount('/api/sqlite', createSqliteRouter({ pathGuard }));
   ctx.http.mount('/api/notebook', createNotebookRouter({ pathGuard }));
   ctx.http.mount('/api/open', createOpenRouter({ pathGuard, broadcast: (event) => ctx.emit('status/event', event) }));
+  // The front end, where there are pages at all.
+  ctx.inject(['ui'], (ctx) => ctx.ui.contribute(new URL('./client/page.json', import.meta.url)));
 }

@@ -107,6 +107,9 @@ export function apply(ctx) {
     });
   }
 
+  // The login page and the script that keeps the token, where there are pages.
+  ctx.inject(['ui'], (ctx) => ctx.ui.contribute(new URL('./client/page.json', import.meta.url)));
+
   ctx.provide('auth', Object.freeze({
     enabled,
     guarded,

@@ -1,5 +1,7 @@
 // The browser runs the same kernel as the server. Boot only creates the root
-// context; every service and view is a plugin named by the server's manifest.
+// context; every service is a plugin named by the server's manifest. It runs
+// beside the page's own scripts and never touches their DOM: a failure here
+// is logged, not shown.
 
 import { Context, Logger } from 'cordis';
 import Timer from '@cordisjs/plugin-timer';
@@ -18,22 +20,13 @@ ctx.logger.exporter({
 
 ctx.plugin(Timer);
 
-// For the browser console: twp.registry, twp.get('shell'), …
+// For the browser console: twp.registry, twp.get('api'), …
 globalThis.twp = ctx;
 
-function showFatal(text) {
-  const app = document.getElementById('app');
-  const message = document.createElement('p');
-  message.className = 'boot-message boot-error';
-  message.textContent = text;
-  app.replaceChildren(message);
-}
-
 async function start() {
-  const response = await fetch('/api/client/manifest', { headers: { Accept: 'application/json' } });
+  const response = await fetch('/client/manifest.json', { headers: { Accept: 'application/json' } });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const manifest = await response.json();
-  if (manifest.title) document.title = manifest.title;
   for (const entry of manifest.entries) {
     try {
       const mod = await import(entry.url);
@@ -45,5 +38,5 @@ async function start() {
 }
 
 start().catch((error) => {
-  showFatal(`面板加载失败：${error?.message ?? error}`);
+  ctx.logger('boot').error('client plugins did not start: %s', error?.message ?? error);
 });

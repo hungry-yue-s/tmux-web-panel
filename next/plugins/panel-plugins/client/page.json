@@ -1,0 +1,6 @@
+{
+  "serve": ["."],
+  "body": [
+    { "order": 370, "script": "/js/management.js?v=3" }
+  ]
+}

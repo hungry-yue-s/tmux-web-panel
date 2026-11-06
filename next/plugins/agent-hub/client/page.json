@@ -1,0 +1,6 @@
+{
+  "serve": ["."],
+  "body": [
+    { "order": 260, "script": "/js/agent-hub.js?v=11" }
+  ]
+}

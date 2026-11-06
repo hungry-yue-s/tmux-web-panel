@@ -1,13 +1,15 @@
-// `ctx.client`: the browser side of the panel.
+// `ctx.client`: the browser side of the Cordis kernel.
 //
-// The browser runs the same Cordis kernel as the server. Which client plugins
-// it loads is decided here, not in the page: each server plugin that has a UI
-// registers its client entry with `ctx.client.entry(url)`, and the page loads
-// whatever the manifest lists. Disposing the server plugin removes its entry.
+// The pages load the same kernel as the server. Which client plugins a page
+// runs is decided here, not in the page: a server plugin that has a client
+// part registers it with `ctx.client.entry(url)`, and the boot script loads
+// whatever /client/manifest.json lists. Disposing the server plugin removes
+// its entry.
 //
 // No bundler: the page carries an import map that pins every module URL to a
 // hash of its content (`?h=…`), so modules are cached for a year and a changed
-// file is a new URL. The page itself is always revalidated.
+// file is a new URL. When the `ui` page composer is present, the import map
+// and the boot script are part of every composed page.
 
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
@@ -21,12 +23,10 @@ export const name = 'client';
 
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 const MODULE_RE = /\.m?js$/;
-const ASSET_REF_RE = /(\b(?:src|href)=")(\/client\/[^"?#]+)(?:\?[^"#]*)?(")/g;
 const TYPES = {
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
-  '.html': 'text/html; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
@@ -41,15 +41,13 @@ const BARE = {
   '@twp/client': '/client/lib/index.js',
 };
 
-/** The client's own services: every page loads these before any plugin entry. */
-const CORE_ENTRIES = ['/client/core/api.js', '/client/core/shell.js'];
+/** Services every page gets before any plugin entry. */
+const CORE_ENTRIES = ['/client/core/api.js'];
+
+const BOOT = '/client/boot.js';
 
 function shortHash(text) {
   return createHash('sha256').update(text).digest('hex').slice(0, 10);
-}
-
-function escapeHtml(text) {
-  return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
 async function walk(dir, prefix = '') {
@@ -68,18 +66,11 @@ async function walk(dir, prefix = '') {
   return files;
 }
 
-/**
- * @typedef {object} ClientConfig
- * @property {string} [title] page title
- */
-
 export default class ClientService extends Service {
   static inject = ['http'];
 
-  /** @param {ClientConfig} [config] */
-  constructor(ctx, config) {
+  constructor(ctx) {
     super(ctx, 'client');
-    this.title = config?.title ?? 'tmux 面板';
     /** url prefix → { dir, refs } */
     this.roots = new Map();
     /** { url, config } in registration order */
@@ -93,13 +84,18 @@ export default class ClientService extends Service {
     this._addRoot('/client/vendor/plugin-timer/', join(ROOT, 'vendor', 'plugin-timer', 'lib'));
     this._addRoot('/client/', join(ROOT, 'client'));
 
-    // The plugin-only shell. The site's own pages (the ui plugin) live at /.
-    ctx.http.get('/client/', ({ res }) => this._sendPage(res));
-    ctx.http.get('/client/index.html', ({ res }) => this._sendPage(res));
-    ctx.http.get('/api/client/manifest', () => this.manifest());
+    // Public: it names modules that are public anyway, and the pages boot
+    // before anyone has logged in.
+    ctx.http.get('/client/manifest.json', () => this.manifest());
     for (const pattern of ['/client/*', '/@plugin/*']) {
       ctx.http.get(pattern, ({ req, res, url }) => this._sendFile(req, res, url));
     }
+
+    // Composed pages carry the import map and the boot script.
+    ctx.inject(['ui'], (ctx) => {
+      ctx.ui.part('head', 1, async () => `<script type="importmap">${JSON.stringify(await this.importMap()).replace(/</g, '\\u003c')}</script>`);
+      ctx.ui.part('body', 1000, async () => `<script type="module" src="${await this.hashedUrl(BOOT)}"></script>`);
+    });
   }
 
   /**
@@ -124,12 +120,9 @@ export default class ClientService extends Service {
     }, `client.entry(${basename(dirname(dir))})`);
   }
 
-  /** What the page loads: the core services, then each plugin entry. */
+  /** What a page loads: the core services, then each plugin entry. */
   manifest() {
-    return {
-      title: this.title,
-      entries: [...CORE_ENTRIES.map((url) => ({ url, config: null })), ...this.entries],
-    };
+    return { entries: [...CORE_ENTRIES.map((url) => ({ url, config: null })), ...this.entries] };
   }
 
   /** Maps each bare specifier and every module URL to its content-hashed URL. */
@@ -148,6 +141,11 @@ export default class ClientService extends Service {
       }
     }
     return { imports };
+  }
+
+  async hashedUrl(url) {
+    const hash = await this._hashOf(url);
+    return hash ? `${url}?h=${hash}` : url;
   }
 
   _addRoot(prefix, dir) {
@@ -198,35 +196,6 @@ export default class ClientService extends Service {
     const hash = createHash('sha256').update(await readFile(file)).digest('hex').slice(0, 12);
     this.hashes.set(file, { mtimeMs: info.mtimeMs, size: info.size, hash });
     return hash;
-  }
-
-  async renderPage() {
-    const template = await readFile(join(ROOT, 'client', 'index.html'), 'utf8');
-    const refs = [...new Set([...template.matchAll(ASSET_REF_RE)].map((match) => match[2]))];
-    const hashes = new Map(await Promise.all(refs.map(async (ref) => [ref, await this._hashOf(ref)])));
-    // `<` is escaped so no file name can close the script element early.
-    const map = JSON.stringify(await this.importMap()).replace(/</g, '\\u003c');
-    return template
-      .replace('<!--title-->', escapeHtml(this.title))
-      .replace('<!--importmap-->', `<script type="importmap">${map}</script>`)
-      .replace(ASSET_REF_RE, (whole, before, path, after) => {
-        const hash = hashes.get(path);
-        return hash ? `${before}${path}?h=${hash}${after}` : whole;
-      });
-  }
-
-  async _sendPage(res) {
-    const html = await this.renderPage();
-    const etag = `"${shortHash(html)}"`;
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('ETag', etag);
-    if (res.req.headers['if-none-match'] === etag) {
-      res.writeHead(304);
-      res.end();
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': TYPES['.html'], 'Content-Length': Buffer.byteLength(html) });
-    res.end(res.req.method === 'HEAD' ? undefined : html);
   }
 
   async _sendFile(req, res, url) {

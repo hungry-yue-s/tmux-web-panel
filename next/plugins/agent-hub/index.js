@@ -29,4 +29,6 @@ export function apply(ctx) {
   }, 'agent-hub.background');
 
   ctx.provide('agentHub', service);
+  // The front end, where there are pages at all.
+  ctx.inject(['ui'], (ctx) => ctx.ui.contribute(new URL('./client/page.json', import.meta.url)));
 }

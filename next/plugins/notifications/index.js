@@ -24,4 +24,6 @@ export function apply(ctx) {
   }));
   ctx.provide('notifications', store);
   ctx.provide('agentEvents', agentEvents);
+  // The front end, where there are pages at all.
+  ctx.inject(['ui'], (ctx) => ctx.ui.contribute(new URL('./client/page.json', import.meta.url)));
 }

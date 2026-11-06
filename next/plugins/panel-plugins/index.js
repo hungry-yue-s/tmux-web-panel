@@ -32,4 +32,6 @@ export async function apply(ctx) {
   await manager.load();
   ctx.http.mount('/api/plugins', createPluginsRouter(manager));
   ctx.provide('panelPlugins', manager);
+  // The front end, where there are pages at all.
+  ctx.inject(['ui'], (ctx) => ctx.ui.contribute(new URL('./client/page.json', import.meta.url)));
 }
