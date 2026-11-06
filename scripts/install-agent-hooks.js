@@ -129,9 +129,11 @@ function uninstallHooks(agent, root) {
 async function update(agent, uninstall) {
   const spec = AGENTS[agent];
   const root = await readJson(spec.path, spec.root);
+  const result = uninstall ? uninstallHooks(agent, root) : installHooks(agent, root);
+  // Nothing to change: leave the file, and no backup of it, behind.
+  if ((result.added ?? result.removed) === 0) return { agent, path: spec.path, backup: null, ...result };
   await mkdir(dirname(spec.path), { recursive: true });
   const backupPath = await backup(spec.path);
-  const result = uninstall ? uninstallHooks(agent, root) : installHooks(agent, root);
   await writeFile(spec.path, JSON.stringify(root, null, 2) + '\n');
   return { agent, path: spec.path, backup: backupPath, ...result };
 }

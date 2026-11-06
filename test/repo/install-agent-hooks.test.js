@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -11,7 +11,9 @@ const EVENTS = ['Stop', 'PermissionRequest', 'Notification', 'StopFailure', 'Ses
 async function runInstaller(home, ...args) {
   return execFileAsync('node', ['scripts/install-agent-hooks.js', ...args], {
     cwd: process.cwd(),
-    env: { ...process.env, HOME: home },
+    // os.homedir() reads USERPROFILE on Windows: with HOME alone, the
+    // installer would write the real ~/.qoder and ~/.codex there.
+    env: { ...process.env, HOME: home, USERPROFILE: home },
   });
 }
 
@@ -41,12 +43,31 @@ describe('install-agent-hooks', () => {
     }
   });
 
+  it('leaves the files, and no backups, when everything is already installed or removed', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'agent-hooks-'));
+    try {
+      await runInstaller(home, 'all');
+      const before = await readFile(join(home, '.codex', 'hooks.json'), 'utf8');
+      await runInstaller(home, 'all');
+      expect(await readdir(join(home, '.qoder'))).toEqual(['settings.json']);
+      expect(await readdir(join(home, '.codex'))).toEqual(['hooks.json']);
+      expect(await readFile(join(home, '.codex', 'hooks.json'), 'utf8')).toBe(before);
+
+      await runInstaller(home, 'all', '--uninstall');
+      await runInstaller(home, 'all', '--uninstall');
+      expect((await readdir(join(home, '.codex'))).filter((name) => name.includes('.bak-'))).toHaveLength(1);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('does not duplicate earlier manually-installed Qoder hook names', async () => {
     const home = await mkdtemp(join(tmpdir(), 'agent-hooks-'));
     try {
       const qoderDir = join(home, '.qoder');
-      await execFileAsync('mkdir', ['-p', qoderDir]);
-      await execFileAsync('sh', ['-c', `cat > ${JSON.stringify(join(qoderDir, 'settings.json'))} <<'JSON'\n{"hooks":{"Stop":[{"matcher":"*","hooks":[{"name":"tmux-web-panel-Stop","type":"command","command":"old"}]}]}}\nJSON`]);
+      await mkdir(qoderDir, { recursive: true });
+      await writeFile(join(qoderDir, 'settings.json'),
+        '{"hooks":{"Stop":[{"matcher":"*","hooks":[{"name":"tmux-web-panel-Stop","type":"command","command":"old"}]}]}}\n');
 
       await runInstaller(home, 'qoder');
       const qoder = await readJson(join(home, '.qoder', 'settings.json'));
