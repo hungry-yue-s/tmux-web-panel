@@ -93,7 +93,7 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 
 ## 移动端工具盘交互契约
 
-移动输入工具台 + 底部工具盘（drawer）在 `plugins/terminal/client/js/terminal.js` 的 `_createFabPanel` 和 `plugins/terminal/client/js/fab-drawer.js` 中实现；`.fab-tool` 保留为工具触发器的兼容类。修改时必须尊重以下约定：
+移动输入工具台 + 底部工具盘（drawer）在 `plugins/terminal/client/js/terminal.js` 的 `_createFabPanel` 和 `plugins/keypad/client/js/fab-drawer.js`（`keypad` 插件，关掉时终端没有工具盘）中实现；`.fab-tool` 保留为工具触发器的兼容类。修改时必须尊重以下约定：
 
 - **软键盘与工具盘互斥**：xterm 的 `.xterm-helper-textarea` focus = 系统软键盘唤起的唯一信号。`document.addEventListener('focusin', ...)` 哨兵监听：drawer open 且 focus 命中 textarea 时自动 `toggleDrawer(false)`。不要引入绕过这个哨兵的 focus 调用。
 - **iOS 手势上下文**：`term.focus()` 必须在用户 tap 的 touchend/click 回调里**直接同步调用**——塞进 `setTimeout` 会让 iOS Safari 判定非用户手势而拒绝唤起软键盘。

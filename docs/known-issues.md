@@ -11,8 +11,8 @@ README 重做过程中实际踩到、观察到或验证过的问题。每条都�
 | 5 | 已解决 | CLAUDE.md 与代码漂移（分窗宽度上限 820px）。CLAUDE.md 现写明最大为可用工作区的 70%、不再设 820px 上限 | `CLAUDE.md`「文件预览分窗契约」 | — |
 | 6 | 低 | 仓库根目录散落一次性截图与证书文件。`claude-auto-detect.png`、`drawer-*.png`、`nexus-*.png`、`terminal-*.png`、`tmux-render-abnormal.png`、`layout-test-open.png`、`cert.pem`、`key.pem` 都只靠 `.gitignore` 兜底，工作树里长期存在 | `git status` 与根目录列表 | 从工作树移除，证书类文件不应留在仓库目录 |
 | 7 | 低 | 性能页对任何已登录客户端暴露进程名与会话名，Top 压力来源和 Windows 与系统进程两块都是。单机自用没问题，多人共用一个面板时是信息泄露面 | `plugins/metrics/client/js/perf-panel.js`，`lib/api/` 下 window-stats 相关 | 共享部署时加配置项或脱敏，README 截图需 sanitize（本次已做） |
-| 8 | 待验证 | 移动端 drawer 按键在合成 touch 序列后抽屉关闭，和「按键不退出」契约不符。可能是 touch 坐标命中抽屉拖拽热区，或 focus 哨兵把合成事件判成软键盘信号 | `CLAUDE.md`「移动端工具盘交互契约」，`plugins/terminal/client/js/fab-drawer.js` | 真机复现，若属实给 kbd 按钮加 `touch-action` 或阻止拖拽判定 |
-| 9 | 待验证 | 场景自动识别延迟。pane 内进程改名为 `claude`（`exec -a`）后约 5s，drawer 场景芯片仍显示「终端」 | `plugins/terminal/client/js/fab-scene.js:13-264`，`lib/monitor.js` 的 pane-cmd 事件 | 核对 pane-cmd 推送周期与 ps 名称读取，必要时缩短探测间隔 |
+| 8 | 待验证 | 移动端 drawer 按键在合成 touch 序列后抽屉关闭，和「按键不退出」契约不符。可能是 touch 坐标命中抽屉拖拽热区，或 focus 哨兵把合成事件判成软键盘信号 | `CLAUDE.md`「移动端工具盘交互契约」，`plugins/keypad/client/js/fab-drawer.js` | 真机复现，若属实给 kbd 按钮加 `touch-action` 或阻止拖拽判定 |
+| 9 | 待验证 | 场景自动识别延迟。pane 内进程改名为 `claude`（`exec -a`）后约 5s，drawer 场景芯片仍显示「终端」 | `plugins/keypad/client/js/fab-scene.js:13-264`，`lib/monitor.js` 的 pane-cmd 事件 | 核对 pane-cmd 推送周期与 ps 名称读取，必要时缩短探测间隔 |
 | 10 | 待验证 | `/css/style.css` 偶发加载不完整。捕获过程中多次出现整页无样式或半样式渲染，`link.sheet` 存在但布局规则缺失，重试即恢复，疑似共享 Chrome 上该请求被截断或复位 | 捕获脚本 `ensureStyled` 与 `assertReady` 的重试日志 | 给静态资源加 `onerror` 重试或内联关键 CSS，若确认与本仓库服务端无关则忽略 |
 | 11 | 低 | README 旧文案严重落后于实现，没提多服务器工作台、性能与 Claude/Codex 页、场景抽屉、Mermaid 导出、归档预览这些 | 旧 `README.md` | 本次已重写，后续大功能同步更新 README |
 

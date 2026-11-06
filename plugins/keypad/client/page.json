@@ -1,0 +1,9 @@
+{
+  "serve": ["."],
+  "body": [
+    { "order": 270, "script": "/js/fab-scene.js?v=4" },
+    { "order": 280, "script": "/js/fab-heat.js?v=1" },
+    { "order": 290, "script": "/js/fab-migrate.js?v=1" },
+    { "order": 300, "script": "/js/fab-drawer.js?v=4" }
+  ]
+}

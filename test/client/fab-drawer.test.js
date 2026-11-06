@@ -2,9 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
-const sceneSource = readFileSync('plugins/terminal/client/js/fab-scene.js', 'utf8');
-const heatSource = readFileSync('plugins/terminal/client/js/fab-heat.js', 'utf8');
-const drawerSource = readFileSync('plugins/terminal/client/js/fab-drawer.js', 'utf8');
+const sceneSource = readFileSync('plugins/keypad/client/js/fab-scene.js', 'utf8');
+const heatSource = readFileSync('plugins/keypad/client/js/fab-heat.js', 'utf8');
+const drawerSource = readFileSync('plugins/keypad/client/js/fab-drawer.js', 'utf8');
 const terminalSource = readFileSync('plugins/terminal/client/js/terminal.js', 'utf8');
 let dom;
 

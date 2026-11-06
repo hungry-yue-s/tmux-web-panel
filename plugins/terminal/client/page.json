@@ -14,10 +14,6 @@
     { "order": 40, "script": "/js/terminal-fonts-data.js" },
     { "order": 50, "script": "/js/terminal-fonts.js" },
     { "order": 60, "script": "/js/terminal-trace.js" },
-    { "order": 210, "script": "/js/terminal.js?v=25" },
-    { "order": 270, "script": "/js/fab-scene.js?v=4" },
-    { "order": 280, "script": "/js/fab-heat.js?v=1" },
-    { "order": 290, "script": "/js/fab-migrate.js?v=1" },
-    { "order": 300, "script": "/js/fab-drawer.js?v=4" }
+    { "order": 210, "script": "/js/terminal.js?v=25" }
   ]
 }

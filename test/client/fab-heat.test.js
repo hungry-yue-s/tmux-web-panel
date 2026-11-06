@@ -5,7 +5,7 @@ const dom = new JSDOM('', { url: 'http://localhost/' });
 globalThis.window = dom.window;
 globalThis.localStorage = dom.window.localStorage;
 
-await import('../../plugins/terminal/client/js/fab-heat.js');
+await import('../../plugins/keypad/client/js/fab-heat.js');
 const FabHeat = globalThis.window.FabHeat;
 
 describe('FabHeat', () => {
