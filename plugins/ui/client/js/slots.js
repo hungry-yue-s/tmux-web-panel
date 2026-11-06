@@ -8,6 +8,8 @@
 
 (function (global) {
   'use strict';
+  // Loaded twice (a test, a cached page), the first registrations stay.
+  if (global.PanelSlots) return;
 
   function slot() {
     var items = [];
@@ -50,5 +52,16 @@
      *   { id, label, order, render() → html, mount?(host) }
      */
     settingsSections: slot(),
+    /**
+     * Commands for the palette, the Alt+Shift shortcuts and the shortcut sheet:
+     *   { id, order, group: 'block' | 'nav' | 'window', title, icon, keys, code, keywords, run() }
+     * `code` is the KeyboardEvent.code that, with Alt+Shift, runs it.
+     */
+    commands: slot(),
+    /**
+     * What `twp open` from a pane does on the page, by event type (the id):
+     *   { id: 'open-file' | 'open-url', run(event) }
+     */
+    openers: slot(),
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -3,8 +3,8 @@
 // Blocks: built-in tools next to the shell. This file holds the shared UI kit
 // (icons, keys, spinners, dialogs, toasts, diffs) and the blocks that render
 // inside the file preview: SQLite, notebooks, patches, the TODO.md board and
-// the editor. Tool blocks that live in BlockHost (git, browser) and the
-// pickers are in blocks-workspace.js.
+// the editor. Tool blocks that live in BlockHost are their plugins' (git,
+// browser); the pickers and commands are in plugins/ui (workspace-commands.js).
 
 var Blocks = (function () {
   'use strict';
@@ -1675,7 +1675,7 @@ var Blocks = (function () {
     renderSqlite: renderSqlite,
     decorateGitGutter: decorateGitGutter,
     previewActions: previewActions,
-    // shared kit for blocks-workspace.js and the palette
+    // shared kit for the Git and browser blocks, the workspace pickers and the palette
     icon: icon,
     ui: {
       CDN: CDN, loadScript: loadScript, loadCss: loadCss, esc: esc, el: el, button: button, iconButton: iconButton,

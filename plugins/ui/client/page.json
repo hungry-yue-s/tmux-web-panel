@@ -24,6 +24,7 @@
     { "order": 340, "script": "/js/layout-picker.js?v=2" },
     { "order": 350, "script": "/js/app-shell.js?v=20" },
     { "order": 360, "script": "/js/servers.js?v=15" },
-    { "order": 390, "script": "/js/ms-app.js?v=27" }
+    { "order": 390, "script": "/js/ms-app.js?v=27" },
+    { "order": 410, "script": "/js/workspace-commands.js" }
   ]
 }

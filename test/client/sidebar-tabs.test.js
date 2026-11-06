@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
+import { WORKSPACE_BLOCKS } from '../helpers/blocks.js';
 
 const INSTANCE = '1873:1700000000';
 
@@ -486,7 +487,6 @@ describe('blocks bound to a window', () => {
 
   describe('the real Git block, with focus moving between repositories', () => {
     const BLOCKS = fs.readFileSync('plugins/files/client/js/blocks.js', 'utf8');
-    const WORKSPACE_BLOCKS = fs.readFileSync('plugins/files/client/js/blocks-workspace.js', 'utf8');
     const staged = (root) => ({
       root, branch: 'main', files: [{ path: 'a.txt', staged: true, unstaged: false, index: 'M', worktree: ' ' }],
       detached: false, head: { hash: 'abc', subject: 'x' },

@@ -2,13 +2,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { loadSlots } from '../helpers/slots.js';
+import { WORKSPACE_BLOCKS } from '../helpers/blocks.js';
 
 const ROUTER = readFileSync('plugins/ui/client/js/router.js', 'utf8');
 const STORE = readFileSync('plugins/ui/client/js/store.js', 'utf8');
 const SHELL = readFileSync('plugins/ui/client/js/app-shell.js', 'utf8');
 const SERVERS = readFileSync('plugins/ui/client/js/servers.js', 'utf8');
 const BLOCKS = readFileSync('plugins/files/client/js/blocks.js', 'utf8');
-const WORKSPACE_BLOCKS = readFileSync('plugins/files/client/js/blocks-workspace.js', 'utf8');
 
 const SHELL_DOM = `<!DOCTYPE html><html><body>
   <div class="ms-app sidebar-collapsed">
@@ -499,7 +499,7 @@ describe('AppShell window bar', () => {
     const chip = (ctx) => ctx.document.querySelector('.pane-git-chip');
     const entries = (ctx) => ({
       'the shortcut': () => ctx.document.dispatchEvent(new ctx.win.KeyboardEvent('keydown', { altKey: true, shiftKey: true, code: 'KeyG', bubbles: true })),
-      'the command palette': () => ctx.win.Blocks.commands().find((command) => command.id === 'git').run(),
+      'the command palette': () => ctx.win.PanelSlots.commands.get('git').run(),
       'Blocks.openGit': () => ctx.win.Blocks.openGit(),
     });
 

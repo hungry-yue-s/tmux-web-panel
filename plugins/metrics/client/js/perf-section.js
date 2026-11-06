@@ -31,4 +31,13 @@
       if (perf && typeof perf.stop === 'function') perf.stop();
     },
   });
+
+  // The task manager: this page for the server in view.
+  global.PanelSlots.commands.register({
+    id: 'tasks', order: 70, group: 'block', title: '任务管理器', icon: 'activity', keys: 'Alt+Shift+M', code: 'KeyM',
+    keywords: 'process cpu memory 进程 性能 资源',
+    run: function () {
+      global.Router.go({ name: 'server', params: { serverId: global.Api.activeServerId(), section: 'performance' } });
+    },
+  });
 })(typeof window !== 'undefined' ? window : globalThis);

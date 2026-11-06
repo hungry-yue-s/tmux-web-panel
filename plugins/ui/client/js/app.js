@@ -1665,8 +1665,10 @@ class StatusSocket {
           return;
         }
         if (data && (data.type === 'open-file' || data.type === 'open-url')) {
-          // `twp open` from a pane; only a visible tab acts so background tabs stay quiet.
-          if (typeof Blocks !== 'undefined' && document.visibilityState === 'visible') Blocks.handleOpenEvent(data);
+          // `twp open` from a pane, handled by whichever plugin opens that kind
+          // (PanelSlots.openers); only a visible tab acts so background tabs stay quiet.
+          var opener = typeof PanelSlots !== 'undefined' ? PanelSlots.openers.get(data.type) : null;
+          if (opener && document.visibilityState === 'visible') opener.run(data);
           return;
         }
         if (data && data.type === 'pane-cmd') {

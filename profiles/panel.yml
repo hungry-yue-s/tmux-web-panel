@@ -55,6 +55,8 @@ plugins:
     use: notebook
   - id: open
     use: open
+  - id: browser
+    use: browser
   - id: share
     use: share
   # What the machine is doing

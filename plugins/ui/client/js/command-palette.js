@@ -136,14 +136,17 @@ var CommandPalette = (function () {
     });
   }
 
+  /** Every plugin's commands (PanelSlots.commands, slots.js), in their order. */
   function commandItems() {
-    if (typeof Blocks === 'undefined' || !Blocks.commands) return [];
-    return Blocks.commands().map(function (command) {
-      command.key = 'command:' + (command.id || command.display);
-      command.section = 'commands';
-      command.search = normalized(command.display + ' ' + (command.keywords || ''));
-      command.recent = -1;
-      return command;
+    if (typeof PanelSlots === 'undefined') return [];
+    return PanelSlots.commands.list().map(function (c) {
+      return {
+        id: c.id, display: c.title, meta: '', keys: c.keys, keywords: c.keywords, icon: c.icon, run: c.run, kind: '命令',
+        key: 'command:' + c.id,
+        section: 'commands',
+        search: normalized(c.title + ' ' + (c.keywords || '')),
+        recent: -1,
+      };
     });
   }
 

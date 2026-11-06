@@ -10,6 +10,6 @@
     { "order": 170, "script": "/js/file-preview.js?v=52" },
     { "order": 180, "script": "/js/block-host.js?v=1" },
     { "order": 190, "script": "/js/blocks.js?v=2" },
-    { "order": 400, "script": "/js/blocks-workspace.js?v=1" }
+    { "order": 404, "script": "/js/files-commands.js" }
   ]
 }
