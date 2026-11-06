@@ -32,7 +32,7 @@ function setup(width = 1440, native = false) {
     window.webkit = { messageHandlers: { tmuxPanelAppearance: { postMessage: vi.fn() } } };
   }
   window.eval(readFileSync('plugins/ui/client/js/theme.js', 'utf8'));
-  window.eval(readFileSync('plugins/ui/client/js/panel-presentation.js', 'utf8'));
+  window.eval(readFileSync('plugins/files/client/js/panel-presentation.js', 'utf8'));
   new Function('window', 'document', 'fetch', 'Auth', source)(window, window.document, fetch, {
     headers: () => headers, wsTokenParam: () => 'token=document-test',
   });

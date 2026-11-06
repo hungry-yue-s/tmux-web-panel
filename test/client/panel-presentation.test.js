@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
-const engine = readFileSync('plugins/ui/client/js/panel-presentation.js', 'utf8');
+const engine = readFileSync('plugins/files/client/js/panel-presentation.js', 'utf8');
 const themes = readFileSync('plugins/ui/client/js/theme.js', 'utf8');
 const example = readFileSync(repoPath('skills/panel-presentation/assets/example.html'), 'utf8');
 const html = '<!doctype html><meta name="tmux-panel-presentation" content="1">'
