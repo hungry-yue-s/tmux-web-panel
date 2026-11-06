@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { createEnterpriseRuntime } from '../../../lib/agent-providers/enterprise-runtime.js';
+import { sqliteExec, sqliteRows } from '../../helpers/sqlite.js';
+import { POSIX_MODES } from '../../helpers/permissions.js';
 
 const roots = [];
 const runtimes = [];
@@ -19,7 +20,7 @@ async function fixture() {
   roots.push(home);
   await mkdir(join(home, '.cc-switch'));
   const database = join(home, '.cc-switch/cc-switch.db');
-  execFileSync('sqlite3', [database, 'create table providers(id text,app_type text,name text,settings_config text,category text,created_at integer,meta text,is_current integer,in_failover_queue integer,primary key(id,app_type));']);
+  sqliteExec(database, 'create table providers(id text,app_type text,name text,settings_config text,category text,created_at integer,meta text,is_current integer,in_failover_queue integer,primary key(id,app_type));');
   const client = { getCatalog: vi.fn(async () => ({ models: [{ ...MODEL }] })),
     checkQuota: vi.fn(async () => ({ available: true })), gatewayHeaders: vi.fn(async () => ({ 'X-Switch-Token': 'upstream-only', 'X-CC-Model-ID': MODEL.id, 'X-App-Tag': 'Codex' })) };
   const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ id: 'r1', status: 'completed',
@@ -65,11 +66,11 @@ describe('embedded enterprise runtime', () => {
     const claude = await runtime.prepare('claude', MODEL.id);
     expect(codex.requiresNativeProxy).toBe(false);
     expect(claude.requiresNativeProxy).toBe(false);
-    const rows = JSON.parse(execFileSync('sqlite3', ['-readonly', '-json', database, 'select app_type,is_current,settings_config,meta from providers'], { encoding: 'utf8' }));
+    const rows = sqliteRows(database, 'select app_type,is_current,settings_config,meta from providers');
     expect(rows.map((row) => row.is_current)).toEqual([0, 0]);
     expect(JSON.parse(rows.find((row) => row.app_type === 'claude').meta).apiFormat).toBe('anthropic');
     expect(JSON.parse(rows.find((row) => row.app_type === 'claude').settings_config).env.ANTHROPIC_AUTH_TOKEN).toBe(config.key);
-    expect((await stat(join(home, '.config/tmux-web-panel/enterprise-relay.json'))).mode & 0o777).toBe(0o600);
+    if (POSIX_MODES) expect((await stat(join(home, '.config/tmux-web-panel/enterprise-relay.json'))).mode & 0o777).toBe(0o600);
     await expect(stat(join(home, '.codex/auth.json'))).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(runtime.prepare('qoder', MODEL.id)).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
     client.checkQuota.mockResolvedValue({ available: false });
@@ -98,9 +99,9 @@ describe('embedded enterprise runtime', () => {
   it('refuses to replace a different configuration in a currently active owned row', async () => {
     const { runtime, database } = await fixture();
     const provider = await runtime.prepare('claude', MODEL.id);
-    execFileSync('sqlite3', [database, `update providers set is_current=1,settings_config='{}' where id='${provider.providerId}'`]);
+    sqliteExec(database, `update providers set is_current=1,settings_config='{}' where id='${provider.providerId}'`);
     await expect(runtime.prepare('claude', MODEL.id)).rejects.toMatchObject({ code: 'PROVIDER_CHANGED' });
-    const row = JSON.parse(execFileSync('sqlite3', ['-readonly', '-json', database, 'select settings_config,is_current from providers'], { encoding: 'utf8' }))[0];
+    const row = sqliteRows(database, 'select settings_config,is_current from providers')[0];
     expect(row).toEqual({ settings_config: '{}', is_current: 1 });
   });
 
