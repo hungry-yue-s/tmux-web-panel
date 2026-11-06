@@ -1,0 +1,4 @@
+{
+  "serve": ["."],
+  "head": [{ "order": 59, "style": "/css/workbench.css" }]
+}

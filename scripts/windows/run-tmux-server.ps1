@@ -5,6 +5,7 @@ param([Parameter(Mandatory = $true)][string]$ConfigPath)
 $ErrorActionPreference = 'Stop'
 $cfg = Get-Content -Raw -LiteralPath $ConfigPath | ConvertFrom-Json
 $tmux = $cfg.tmuxBin
+$msysBin = Join-Path $cfg.msys2Root 'usr\bin'
 # Windows PowerShell turns redirected native stderr into a terminating error
 # under 'Stop'; the probe below expects "no server running" on stderr.
 $ErrorActionPreference = 'Continue'
@@ -22,7 +23,7 @@ $env:SHELL = '/usr/bin/bash'
 $env:MSYS = 'noglob'
 $env:LANG = 'C.UTF-8'
 $env:LC_CTYPE = 'C.UTF-8'
-$env:PATH = (Split-Path -Parent $tmux) + ';' + $env:PATH
+$env:PATH = (Split-Path -Parent $tmux) + ';' + $msysBin + ';' + $env:PATH
 
 New-Item -ItemType Directory -Force -Path $cfg.logDir | Out-Null
 $log = Join-Path $cfg.logDir 'tmux-server.log'
@@ -54,7 +55,7 @@ function Get-ServerPid {
 
 # tmux reports its MSYS pid; only MSYS can say which Windows process that is.
 function Get-WindowsPid([string]$MsysPid) {
-  $cat = Join-Path (Split-Path -Parent $tmux) 'cat.exe'
+  $cat = Join-Path $msysBin 'cat.exe'
   $value = & $cat "/proc/$MsysPid/winpid" 2> $null
   if ($LASTEXITCODE -ne 0 -or -not $value) { return $null }
   return [int]"$value".Trim()
@@ -81,7 +82,7 @@ while ($true) {
   # WaitForExit, not Start-Process -Wait: -Wait also waits for every
   # descendant, so a program left running from a pane would keep a dead tmux
   # server from ever being restarted.
-  $setsid = Join-Path (Split-Path -Parent $tmux) 'setsid.exe'
+  $setsid = Join-Path $msysBin 'setsid.exe'
   $proc = Start-Process -FilePath cmd.exe -ArgumentList "/d /s /c `"`"$setsid`" -w `"$tmux`" -D >> `"$log`" 2>&1`"" `
     -WindowStyle Hidden -PassThru
 

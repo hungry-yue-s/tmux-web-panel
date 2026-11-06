@@ -32,6 +32,8 @@ plugins:
     use: status
   - id: terminal
     use: terminal
+  - id: control-terminal
+    use: control-terminal
   - id: pins
     use: pins
   - id: share
@@ -52,5 +54,7 @@ plugins:
     use: session-protection
   - id: client
     use: client
+  - id: workbench
+    use: workbench
   - id: ui
     use: ui

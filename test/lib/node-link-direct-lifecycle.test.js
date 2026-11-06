@@ -62,6 +62,25 @@ beforeEach(() => { vi.spyOn(console, 'warn').mockImplementation(() => {}); });
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe('direct node-link lifecycle', () => {
+  it('ignores a certificate failure arriving from a replaced terminal lane', () => {
+    const f = fixture();
+    const api = f.link._tunnel;
+    const oldLane = { port: 8124, upgradeAgent: { destroy: vi.fn() }, child: { exitCode: 0 } };
+    const newLane = { port: 8125, upgradeAgent: { destroy: vi.fn() }, child: { exitCode: 0 } };
+    f.link._terminalTunnel = oldLane;
+    const browser = socket();
+    try {
+      f.link._openUpgrade({ req: {}, socket: browser, head: Buffer.alloc(0), path: '/ws/pane-stream/%251',
+        headers: {}, tunnel: api, began: performance.now(), ensureMs: 0,
+        route: { via: 'ssh', kind: 'terminal', lane: oldLane, host: 'fixture.invalid', port: 8124, upgradeAgent: oldLane.upgradeAgent } });
+      f.link._terminalTunnel = newLane;
+      f.requests.at(-1).emit('error', Object.assign(new Error('old certificate'), { code: 'NODE_AUTH_FAILED' }));
+      expect(f.link._tunnel).toBe(api);
+      expect(f.link._terminalTunnel).toBe(newLane);
+      expect(f.link.generation).toBe(0);
+    } finally { f.dispose(); }
+  });
+
   it.each(['reset', 'close'])('settles an in-flight direct read safely after link %s without replay', async (operation) => {
     const f = fixture();
     const req = new PassThrough();

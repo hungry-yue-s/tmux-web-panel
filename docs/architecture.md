@@ -25,13 +25,13 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 
 实现：`lib/hub/proxy.js`（`createNodeProxy` / `relayNodeUpgrade`），`plugins/ui/client/js/api.js`。
 
-## 链路：SFTP 配对 + 一条 SSH 端口转发
+## 链路：SFTP 配对 + 独立的 API 与终端 SSH 转发
 
 `lib/hub/node-link.js` 中的 `NodeLink` 对应一台服务器，`lib/hub/link-pool.js` 按 serverId 缓存这些链路。
 
 1. **配对。** Node 启动时写出仅本人可读的 `~/.config/tmux-web-panel/node.json`，内容为 `{ protocol, host, port, tls, tlsFingerprint, token }`（`lib/node/identity.js`）。Hub 用 `sftp -b -` 读取这个文件。sftp 是 SSH 的子系统，不经过登录 shell，所以对端是 cmd.exe、PowerShell、fish 还是 bash 都没有影响。
-2. **转发。** 起一个常驻的 `ssh -N -L 127.0.0.1:<本地随机端口>:<host>:<port>`，带 `ExitOnForwardFailure=yes`。SSH 只当加密管道用，**从不在远端执行命令**。
-3. **请求。** 所有 HTTP 请求和 WebSocket 都走这一个转发（使用 keep-alive agent）。Hub 会去掉浏览器带来的 Authorization、Cookie、Origin、Referer 以及 `?token=`，换成 `Authorization: Bearer <node token>`。
+2. **转发。** API 与终端各自按需建立常驻的 `ssh -N -L 127.0.0.1:<本地随机端口>:<host>:<port>`，带 `ExitOnForwardFailure=yes`。终端禁用 ControlMaster 复用，确保两条物理 TCP 连接。SSH 只当加密管道用，**从不在远端执行命令**。
+3. **请求。** HTTP、状态等走 API 转发，terminal、pane-stream、native-window WebSocket 走终端转发。HTTP 复用 keep-alive agent，终端保持各自的 WebSocket 长连接。Hub 会去掉浏览器带来的 Authorization、Cookie、Origin、Referer 以及 `?token=`，换成 `Authorization: Bearer <node token>`。
 4. **TLS。** 如果 Node 用 HTTPS，Hub 只接受与配对文件中指纹一致的证书。校验发生在 `secureConnect` 阶段，早于任何请求字节，所以证书不对时令牌不会被发出去。
 5. **恢复。**
    - ssh 进程退出时丢弃转发，下次请求时重新建立。
@@ -51,9 +51,13 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 - 前提是 Node 监听在 Hub 能访问的地址上。一键安装的 Node 只监听 127.0.0.1，直连对它不可用；是否改监听地址、开放端口由用户决定，面板不改防火墙。
 - 两条路径的对照用 `scripts/measure-node-paths.mjs <serverId>`（在 Hub 机器上运行，自建一条转发，不影响运行中的面板），随机交错的状态 socket ping，输出分位数、>1s 比例和 socket 计数字节数。单路径结果只能作为基线，不能称为对照；测量口径和 Mosh 的未完成验收门槛见 [Mac 验收记录](low-latency-validation.md)。
 
+### 原生 tmux 工作台
+
+运行中的 tmux 报告 `native_client_protocol=1` 时，窗口入口优先使用 `/ws/native-window/:windowId`：Node 保持一个原生 tmux 客户端，浏览器渲染整个窗口。prefix、布局、状态栏、复制模式与 popup 均为原生行为，断线靠同一输出流中的完整原生重绘恢复。Windows 通过 MSYS PTY 适配器绕开 ConPTY；resize 不更换客户端。旧终端入口和旧 Node 继续工作；更新二进制不会自动升级运行中的 server。协议、生命周期、工具来源与构建说明见 [原生工作台设计](local-workbench-design.md)。
+
 ### 可选：终端走 Mosh（实验）
 
-`transport.terminal = 'mosh'` 时，浏览器仍只连本机 Hub 的 WebSocket；Hub 在本机 PTY 里运行 `mosh-client`，经 UDP 连到 Node 上的 `mosh-server`，后者运行与普通终端相同的 tmux attach。预测回显发生在 Hub 这台机器的 mosh-client 里，所以只在 Hub 靠近浏览器时有意义（桌面客户端自带的面板）；手机连远端 Hub 时，预测发生在那台 Hub，不在手机上。Git、文件、监控照旧走 `transport.api`。
+Mosh 仅用于旧 `/ws/terminal`；原生工作台和 pane-stream 不走 Mosh，使用 SSH 转发或已验证的 HTTPS 直连。`transport.terminal = 'mosh'` 时，浏览器仍只连本机 Hub 的 WebSocket；Hub 在本机 PTY 里运行 `mosh-client`，经 UDP 连到 Node 上的 `mosh-server`，后者运行与普通终端相同的 tmux attach。预测回显发生在 Hub 这台机器的 mosh-client 里，所以只在 Hub 靠近浏览器时有意义（桌面客户端自带的面板）；手机连远端 Hub 时，预测发生在那台 Hub，不在手机上。Git、文件、监控照旧走 `transport.api`。
 
 - **只有 Hub 自己能开会话。** `POST/GET/DELETE /api/mosh/sessions[/:id]`（`lib/api/mosh.js`）要求 node token 加上只有 Hub 自己的调用才带的 `x-twp-hub-call`；`/n/` 转发会剥掉这个头，`isRelayable` 也拒绝任何拼法的 `/api/mosh`。会话密钥只在 Hub 进程和 mosh-client 的环境里，不进浏览器、日志和诊断。
 - **会话 id 由 Hub 生成。** 应答没到也能按 id 结束；结束过的 id 记住 10 分钟，迟到的创建请求被拒；创建请求在应答前断开，Node 立即取消。启动中的会话计入上限。
@@ -109,7 +113,7 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 
 在基础模式服务器的页面上点“安装面板服务”，由 Hub 发起安装（`lib/hub/node-installer.js`，接口为 `POST/GET /api/servers/:id/node/install`）。安装与下述固定组件维护是 Hub 主动运行远端程序的唯一入口，必须由用户明确触发。
 
-1. **打包。** 把 Hub 自己的面板代码打包（Linux/macOS 目标还会带上 `vendor/tmux` 源码），经 sftp 上传到 `.cache/tmux-web-panel/panel.tgz`。版本一定与 Hub 一致，远端也不需要能访问 GitHub。
+1. **打包。** 把 Hub 自己的面板代码打包（各平台都带上 `vendor/tmux` 源码与项目补丁），经 sftp 上传到 `.cache/tmux-web-panel/panel.tgz`。版本一定与 Hub 一致，远端也不需要能访问 GitHub。
 2. **Linux / macOS：** 把 `scripts/remote/install-node.sh` 经 stdin 交给 `sh -s` 执行。
    - 缺少的编译依赖用包管理器安装（apt / dnf / yum / pacman / apk / zypper / brew）。需要 sudo 且没有免密时，返回 `needs_password`，界面向用户索要 sudo 密码。密码只随本次脚本经 stdin 传过去，不写日志也不保存。
    - Node.js 不满 20 时，下载官方二进制包到 `~/.local/share/tmux-web-panel/`，不需要 sudo。

@@ -10,7 +10,7 @@
     tmux-web-panel  node bin/panel.js, restarted 3 s after any exit
 
   Requirements: Node.js for Windows (node-pty uses ConPTY) and MSYS2. The
-  MSYS2 tmux package is installed with pacman when it is missing.
+  project tmux is built from vendor/tmux; missing build dependencies are installed with pacman.
 
   Settings are stored in %USERPROFILE%\.config\tmux-web-panel\windows-service.json
   readable only by the current user, because it holds the AUTH password.
@@ -99,17 +99,9 @@ function Resolve-Node {
 }
 
 function Resolve-Tmux {
-  $usrBin = Join-Path $Msys2Root 'usr\bin'
-  $tmux = Join-Path $usrBin 'tmux.exe'
-  if (Test-Path -LiteralPath $tmux) { return $tmux }
-  $pacman = Join-Path $usrBin 'pacman.exe'
-  if (-not (Test-Path -LiteralPath $pacman)) {
-    throw "MSYS2 not found at $Msys2Root. Install it (winget install MSYS2.MSYS2) or pass -Msys2Root."
-  }
-  Write-Host 'Installing tmux with MSYS2 pacman...'
-  & $pacman -S --needed --noconfirm tmux
-  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $tmux)) { throw 'pacman could not install tmux.' }
-  return $tmux
+  # Project-patched control streams and complete snapshots are required on every
+  # platform. Publish an immutable version; keep any running server untouched.
+  return (& (Join-Path $PSScriptRoot 'build-tmux-windows.ps1') -Msys2Root $Msys2Root)
 }
 
 function Get-MsysHome {
@@ -232,12 +224,21 @@ function Stop-TaskTree([string]$Name) {
   # Ask the server itself to exit; the wrapper is gone and will not respawn it.
   if ($Name -eq $TmuxTask) {
     $tmux = Join-Path $Msys2Root 'usr\bin\tmux.exe'
+    $runtimeRoot = $Msys2Root
+    if (Test-Path -LiteralPath $ConfigFile) {
+      $saved = Get-Content -Raw -LiteralPath $ConfigFile | ConvertFrom-Json
+      $tmux = $saved.tmuxBin
+      $runtimeRoot = $saved.msys2Root
+    }
     if (Test-Path -LiteralPath $tmux) {
       $previous = $env:MSYS
-      $env:MSYS = 'noglob'
-      $ErrorActionPreference = 'Continue'
-      & $tmux kill-server *> $null
-      $env:MSYS = $previous
+      $previousPath = $env:PATH
+      try {
+        $env:MSYS = 'noglob'
+        $env:PATH = (Join-Path $runtimeRoot 'usr\bin') + ';' + $env:PATH
+        $ErrorActionPreference = 'Continue'
+        & $tmux kill-server *> $null
+      } finally { $env:MSYS = $previous; $env:PATH = $previousPath }
     }
   }
 }
@@ -361,7 +362,11 @@ function Show-Status {
     $cfg = Get-Content -Raw -LiteralPath $ConfigFile | ConvertFrom-Json
     $listening = Get-NetTCPConnection -State Listen -LocalPort $cfg.port -ErrorAction SilentlyContinue
     Write-Host ("port {0}: {1}" -f $cfg.port, $(if ($listening) { 'listening' } else { 'not listening' }))
-    Invoke-Native { & $cfg.tmuxBin list-sessions 2>&1 | ForEach-Object { Write-Host "  $_" } }
+    $previousPath = $env:PATH
+    try {
+      $env:PATH = (Join-Path $cfg.msys2Root 'usr\bin') + ';' + $env:PATH
+      Invoke-Native { & $cfg.tmuxBin list-sessions 2>&1 | ForEach-Object { Write-Host "  $_" } }
+    } finally { $env:PATH = $previousPath }
   }
 }
 

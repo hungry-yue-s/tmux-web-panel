@@ -1,0 +1,47 @@
+/* tmux owns borders, pane titles, status, selection and layout. */
+.wb-stage.terminal-view { position:relative; display:flex; flex-direction:column; width:100%; height:100%; min-width:0; min-height:0; overflow:hidden; border:0; border-radius:0; box-shadow:none; color:var(--workspace-text,var(--text-primary)); background:var(--workspace-bg,var(--bg-primary)); }
+.wb-stage [hidden], .wb-toolbar[hidden] { display:none!important; }
+.wb-window-terminal { position:relative; flex:1 1 0; min-width:0; min-height:0; overflow:hidden; }
+.wb-window-terminal > .xterm { height:100%; padding:0; }
+.wb-window-terminal .xterm-viewport { background:var(--workspace-bg,var(--bg-primary)); }
+.wb-toolbar { display:flex; justify-content:flex-end; align-items:center; flex:0 0 32px; padding:0 6px; }
+.wb-toolbar-actions { display:flex; align-items:center; }
+.wb-button { appearance:none; min-height:32px; padding:6px 10px; border:0; border-radius:6px; color:inherit; background:transparent; font:inherit; font-size:12px; cursor:pointer; touch-action:manipulation; white-space:nowrap; }
+.wb-button:hover, .wb-icon-button:hover { color:var(--workspace-text,var(--text-primary)); background:var(--workspace-hover,var(--bg-hover)); }
+.wb-button:focus-visible, .wb-icon-button:focus-visible { outline:2px solid var(--workspace-accent,var(--accent-blue)); outline-offset:-2px; }
+.wb-icon-button { display:flex; align-items:center; justify-content:center; width:28px; height:28px; padding:0; border:0; border-radius:6px; color:var(--workspace-muted,var(--text-secondary)); background:transparent; cursor:pointer; }
+.wb-icon-button svg { width:16px; height:16px; }
+.wb-workbench-menu { position:relative; }
+.wb-workbench-menu summary { list-style:none; }
+.wb-workbench-menu summary::-webkit-details-marker { display:none; }
+.wb-command-menu { position:absolute; top:calc(100% + 6px); right:0; z-index:70; display:flex; flex-direction:column; width:180px; padding:5px; border:1px solid var(--workspace-line-strong,var(--border)); border-radius:8px; color:var(--workspace-text,var(--text-primary)); background:var(--workspace-panel,var(--bg-card)); }
+.wb-menu-item { min-height:34px; text-align:left; }
+.wb-notice { flex:0 0 auto; margin:0; padding:8px 12px; background:color-mix(in srgb,var(--accent-yellow) 10%,transparent); font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+.wb-window-message { position:absolute; top:45px; left:12px; right:12px; z-index:3; width:fit-content; max-width:calc(100% - 24px); padding:8px 10px; border:1px solid var(--workspace-line,var(--border)); border-radius:5px; color:var(--workspace-text,var(--text-primary)); background:var(--workspace-panel,var(--bg-card)); font-size:12px; pointer-events:none; }
+.wb-view-state { margin-left:auto; padding-left:6px; color:var(--workspace-muted,var(--text-secondary)); font-size:10px; white-space:nowrap; }
+.wb-view-stale > .ms-icon { opacity:.5; }
+.wb-empty { padding:24px; color:var(--workspace-muted,var(--text-secondary)); font-size:13px; line-height:1.7; }
+.wb-touch-copy { position:absolute; top:8px; right:12px; z-index:8; min-width:80px; min-height:44px; padding:8px 12px; border:1px solid var(--workspace-accent,var(--accent-blue)); border-radius:7px; color:var(--workspace-text,var(--text-primary)); background:var(--workspace-panel,var(--bg-card)); font:inherit; font-size:13px; touch-action:manipulation; }
+.wb-stage .fab-drawer-mount { z-index:90; }
+html[data-native-transparency] .wb-stage.terminal-view,
+html[data-native-transparency] .wb-window-terminal,
+html[data-native-transparency] .wb-window-terminal .xterm-viewport { background:transparent!important; }
+.wb-mobile .wb-toolbar { flex-basis:44px; }
+.wb-mobile .wb-icon-button, .wb-actions-mobile .wb-icon-button { width:44px; height:44px; }
+.wb-mobile .wb-menu-item { min-height:44px; font-size:13px; }
+.wb-mobile .wb-mobile-tools { padding-left:8px; padding-right:8px; gap:5px; }
+.wb-mobile .mobile-terminal-quick-keys { gap:3px; }
+.wb-mobile .mobile-terminal-quick-keys button { min-width:44px; padding:0 7px; }
+.wb-mobile.drawer-pushed { transition:none; }
+.wb-history { width:min(1000px,calc(100vw - 32px)); height:min(760px,calc(100dvh - 48px)); padding:0; border:1px solid var(--workspace-line,var(--border)); border-radius:12px; color:var(--workspace-text,var(--text-primary)); background:var(--workspace-panel,var(--bg-card)); }
+.wb-history[open] { display:flex; flex-direction:column; }
+.wb-history::backdrop { background:color-mix(in srgb,var(--workspace-bg,var(--bg-primary)) 65%,transparent); backdrop-filter:blur(5px); }
+.wb-history-header, .wb-history-footer { display:flex; align-items:center; justify-content:space-between; flex:0 0 auto; gap:12px; padding:8px 14px; border-bottom:1px solid var(--workspace-line,var(--border-subtle)); font-size:13px; }
+.wb-history-header strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wb-history-header .wb-button, .wb-history-footer .wb-button { min-height:44px; }
+.wb-history-footer { justify-content:flex-start; border-top:1px solid var(--workspace-line,var(--border-subtle)); border-bottom:0; }
+.wb-history-hint, .wb-history-status { flex:0 0 auto; margin:0; padding:6px 14px; color:var(--workspace-muted,var(--text-secondary)); font-size:12px; line-height:1.5; }
+.wb-history-content { flex:1 1 0; min-height:0; margin:0; padding:12px 14px; overflow:auto; color:inherit; background:var(--workspace-bg,var(--bg-primary)); font:13px/1.6 'Tmux Panel Mono',ui-monospace,monospace; white-space:pre; tab-size:8; scrollbar-color:var(--workspace-line-strong,var(--border)) transparent; scrollbar-width:thin; }
+.wb-history-content:focus-visible { outline:2px solid var(--workspace-accent,var(--accent-blue)); outline-offset:-2px; }
+.wb-history .wb-button:disabled { opacity:.45; cursor:default; }
+@media (prefers-reduced-motion:reduce) { .wb-stage *, .wb-stage *::after { transition:none!important; animation:none!important; } }

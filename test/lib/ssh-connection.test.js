@@ -461,6 +461,7 @@ describe('SshConnection', () => {
     expect(spawned[0].bin).toBe('ssh');
     expect(spawned[0].argv.slice(0, 3)).toEqual(['-N', '-L', '127.0.0.1:41000:127.0.0.1:7681']);
     expect(spawned[0].argv).toEqual(expect.arrayContaining(['ExitOnForwardFailure=yes', 'StrictHostKeyChecking=yes']));
+    expect(spawned[0].argv).toEqual(expect.arrayContaining(['ControlMaster=no', 'ControlPath=none', 'ControlPersist=no']));
     expect(spawned[0].argv.at(-1)).toBe('deploy@10.0.0.21');
   });
 

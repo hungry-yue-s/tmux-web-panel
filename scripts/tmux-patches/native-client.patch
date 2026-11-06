@@ -1,0 +1,488 @@
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -90,6 +90,7 @@
+ 	attributes.c \
+ 	cfg.c \
+ 	client.c \
++	panel-pty.c \
+ 	cmd-attach-session.c \
+ 	cmd-bind-key.c \
+ 	cmd-break-pane.c \
+--- a/tmux.c
++++ b/tmux.c
+@@ -399,6 +399,9 @@
+ 	uint64_t				 flags = 0;
+ 	const struct options_table_entry	*oe;
+ 	u_int					 i;
++
++	if (argc > 1 && strcmp(argv[1], "--panel-pty") == 0)
++		panel_pty_main(&argc, &argv);
+ 
+ 	if (setlocale(LC_CTYPE, "en_US.UTF-8") == NULL &&
+ 	    setlocale(LC_CTYPE, "C.UTF-8") == NULL) {
+--- a/tmux.h
++++ b/tmux.h
+@@ -2205,6 +2205,8 @@
+ 	struct cmdq_list	*queue;
+ 
+ 	struct control_state	*control_state;
++	char			 panel_snapshot[33];
++	int			 panel_snapshot_failed;
+ 	u_int			 pause_age;
+ 
+ 	pid_t			 pid;
+@@ -4268,3 +4270,8 @@
+ void			 hyperlinks_free(struct hyperlinks *);
+ 
+ #endif /* TMUX_H */
++
++/* panel-pty.c */
++void panel_pty_main(int *, char ***);
++
++void tty_panel_bootstrap(struct tty *);
+--- /dev/null
++++ b/panel-pty.c
+@@ -0,0 +1,290 @@
++/* Native PTY transport for panel clients. The child remains a normal tmux client. */
++#include <sys/types.h>
++#include <sys/ioctl.h>
++#include <sys/wait.h>
++
++#include <errno.h>
++#include <fcntl.h>
++#include <poll.h>
++#include <signal.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++
++#include "tmux.h"
++
++#define PANEL_INPUT_LIMIT (1024 * 1024)
++#define PANEL_OUTPUT_LIMIT (8 * 1024 * 1024)
++#define PANEL_CHUNK 65536
++
++static volatile sig_atomic_t panel_stop;
++
++static void
++panel_signal(int sig)
++{
++	if (sig != SIGCHLD)
++		panel_stop = 1;
++}
++
++static uint32_t
++panel_number(const u_char *p)
++{
++	return ((uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 |
++	    (uint32_t)p[2] << 8 | p[3]);
++}
++
++static int
++panel_frame(struct evbuffer *out, int type, const void *data, size_t size)
++{
++	u_char header[5];
++
++	if (size > PANEL_INPUT_LIMIT ||
++	    EVBUFFER_LENGTH(out) + sizeof header + size > PANEL_OUTPUT_LIMIT)
++		return (-1);
++	header[0] = type;
++	header[1] = size >> 24;
++	header[2] = size >> 16;
++	header[3] = size >> 8;
++	header[4] = size;
++	evbuffer_add(out, header, sizeof header);
++	evbuffer_add(out, data, size);
++	return (0);
++}
++
++static int
++panel_input(struct evbuffer *in, struct evbuffer *pending, int fd, pid_t pid)
++{
++	const u_char *data;
++	uint32_t size, cols, rows;
++	struct winsize ws;
++
++	while (EVBUFFER_LENGTH(in) >= 5) {
++		data = EVBUFFER_DATA(in);
++		size = panel_number(data + 1);
++		if (size > PANEL_INPUT_LIMIT)
++			return (-1);
++		if (EVBUFFER_LENGTH(in) < 5 + size)
++			return (0);
++		switch (data[0]) {
++		case 'I':
++			if (EVBUFFER_LENGTH(pending) + size > PANEL_INPUT_LIMIT)
++				return (-1);
++			evbuffer_add(pending, data + 5, size);
++			break;
++		case 'R':
++			if (size != 8)
++				return (-1);
++			/* Preserve input/resize ordering across short PTY writes. */
++			if (EVBUFFER_LENGTH(pending) != 0)
++				return (0);
++			cols = panel_number(data + 5);
++			rows = panel_number(data + 9);
++			if (cols < 2 || cols > 4096 || rows < 2 || rows > 4096)
++				return (-1);
++			memset(&ws, 0, sizeof ws);
++			ws.ws_col = cols;
++			ws.ws_row = rows;
++			if (ioctl(fd, TIOCSWINSZ, &ws) == -1)
++				return (-1);
++			/* Some PTY implementations do not notify the client itself. */
++			kill(pid, SIGWINCH);
++			break;
++		case 'X':
++			return (size == 0 ? 1 : -1);
++		default:
++			return (-1);
++		}
++		evbuffer_drain(in, size + 5);
++	}
++	return (0);
++}
++
++/* Returns only in the forkpty child, which continues through the usual main. */
++void
++panel_pty_main(int *argc, char ***argv)
++{
++	struct evbuffer *in, *pending, *out;
++	struct pollfd fds[3];
++	struct sigaction sa;
++	struct winsize ws;
++	char name[PATH_MAX], hello[PATH_MAX + 100], result[100], extra;
++	u_char data[PANEL_CHUNK];
++	u_int cols, rows;
++	int fd, status = 0, reaped = 0, closing = 0, failed = 0, ended = 0;
++	int n, rc, code, killed = 0;
++	ssize_t count;
++	pid_t pid, waited;
++	uint64_t deadline = 0, now;
++	size_t room;
++
++	if (*argc < 4 || sscanf((*argv)[2], "%ux%u%c", &cols, &rows,
++	    &extra) != 2 || cols < 2 || cols > 4096 || rows < 2 || rows > 4096)
++		errx(1, "--panel-pty requires COLSxROWS (2..4096) and tmux arguments");
++	memset(&ws, 0, sizeof ws);
++	ws.ws_col = cols;
++	ws.ws_row = rows;
++	pid = forkpty(&fd, name, NULL, &ws);
++	if (pid == -1)
++		err(1, "forkpty");
++	if (pid == 0) {
++		*argc -= 2;
++		memmove(*argv + 1, *argv + 3, *argc * sizeof **argv);
++		optind = 1;
++		return;
++	}
++
++	memset(&sa, 0, sizeof sa);
++	sigemptyset(&sa.sa_mask);
++	sa.sa_handler = panel_signal;
++	sigaction(SIGCHLD, &sa, NULL);
++	sigaction(SIGTERM, &sa, NULL);
++	sigaction(SIGHUP, &sa, NULL);
++	sigaction(SIGINT, &sa, NULL);
++	sa.sa_handler = SIG_IGN;
++	sigaction(SIGPIPE, &sa, NULL);
++	setblocking(STDIN_FILENO, 0);
++	setblocking(STDOUT_FILENO, 0);
++	setblocking(fd, 0);
++	in = evbuffer_new();
++	pending = evbuffer_new();
++	out = evbuffer_new();
++	if (in == NULL || pending == NULL || out == NULL) {
++		close(fd);
++		kill(pid, SIGHUP);
++		_exit(1);
++	}
++	/* PTY paths contain no JSON metacharacters on supported platforms. */
++	if (strpbrk(name, "\"\\\n\r") != NULL) {
++		close(fd);
++		kill(pid, SIGHUP);
++		_exit(1);
++	}
++	n = xsnprintf(hello, sizeof hello,
++	    "{\"protocol\":1,\"pid\":%ld,\"tty\":\"%s\"}", (long)pid, name);
++	panel_frame(out, 'H', hello, n);
++
++	for (;;) {
++		now = get_timer();
++		if (!reaped) {
++			waited = waitpid(pid, &status, WNOHANG);
++			if (waited == pid) {
++				reaped = 1;
++				deadline = now + 2000;
++			} else if (waited == -1 && errno != EINTR) {
++				reaped = failed = 1;
++				status = 1 << 8;
++				deadline = now + 2000;
++			}
++		}
++		if (!closing && !reaped && !panel_stop) {
++			rc = panel_input(in, pending, fd, pid);
++			if (rc != 0) {
++				closing = 1;
++				failed = rc < 0;
++			}
++		}
++		if (panel_stop)
++			closing = 1;
++		if (closing && fd != -1) {
++			close(fd);
++			fd = -1;
++			if (!reaped)
++				kill(pid, SIGHUP);
++			deadline = now + 2000;
++			if (failed)
++				evbuffer_drain(out, EVBUFFER_LENGTH(out));
++		}
++		if (reaped && (fd == -1 || now >= deadline) && !ended) {
++			if (fd != -1) {
++				close(fd);
++				fd = -1;
++			}
++			if (WIFSIGNALED(status))
++				n = xsnprintf(result, sizeof result,
++				    "{\"exitCode\":null,\"signal\":%d}", WTERMSIG(status));
++			else {
++				code = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
++				n = xsnprintf(result, sizeof result,
++				    "{\"exitCode\":%d,\"signal\":null}", code);
++			}
++			if (panel_frame(out, 'E', result, n) != 0)
++				failed = 1;
++			ended = 1;
++			deadline = now + 2000;
++		}
++		if (ended && (EVBUFFER_LENGTH(out) == 0 || now >= deadline))
++			break;
++		if (closing && !reaped && now >= deadline) {
++			if (killed)
++				_exit(1);
++			killed = 1;
++			kill(pid, SIGKILL);
++			deadline = now + 2000;
++		}
++		memset(fds, 0, sizeof fds);
++		fds[0].fd = closing || reaped ? -1 : STDIN_FILENO;
++		room = PANEL_INPUT_LIMIT + 5 - EVBUFFER_LENGTH(in) -
++		    EVBUFFER_LENGTH(pending);
++		/* Keep observing EOF even when a socketpair input queue is full. */
++		fds[0].events = POLLIN;
++		fds[1].fd = STDOUT_FILENO;
++		fds[1].events = EVBUFFER_LENGTH(out) != 0 ? POLLOUT : 0;
++		fds[2].fd = fd;
++		fds[2].events = POLLIN;
++		if (EVBUFFER_LENGTH(pending) != 0 && !reaped)
++			fds[2].events |= POLLOUT;
++		rc = poll(fds, 3, 100);
++		if (rc == -1) {
++			if (errno == EINTR)
++				continue;
++			failed = closing = 1;
++			continue;
++		}
++		if (fds[1].revents & (POLLERR|POLLHUP|POLLNVAL)) {
++			failed = closing = 1;
++			evbuffer_drain(out, EVBUFFER_LENGTH(out));
++		} else if (fds[1].revents & POLLOUT) {
++			count = write(STDOUT_FILENO, EVBUFFER_DATA(out), EVBUFFER_LENGTH(out));
++			if (count > 0)
++				evbuffer_drain(out, count);
++			else if (count < 0 && errno != EINTR && errno != EAGAIN)
++				failed = closing = 1;
++		}
++		if (fds[0].revents & (POLLIN|POLLHUP|POLLERR)) {
++			if (room > sizeof data)
++				room = sizeof data;
++			count = read(STDIN_FILENO, data, room != 0 ? room : 1);
++			if (count > 0 && room == 0)
++				failed = closing = 1;
++			else if (count > 0)
++				evbuffer_add(in, data, count);
++			else if (count == 0 || (errno != EINTR && errno != EAGAIN))
++				closing = 1;
++		}
++		if (fd != -1 && (fds[2].revents & POLLOUT)) {
++			count = write(fd, EVBUFFER_DATA(pending), EVBUFFER_LENGTH(pending));
++			if (count > 0)
++				evbuffer_drain(pending, count);
++			else if (count < 0 && errno != EINTR && errno != EAGAIN)
++				failed = closing = 1;
++		}
++		if (fd != -1 && (fds[2].revents & (POLLIN|POLLHUP|POLLERR))) {
++			count = read(fd, data, sizeof data);
++			if (count > 0) {
++				if (panel_frame(out, 'O', data, count) != 0)
++					failed = closing = 1;
++			} else if (count == 0 || (errno != EINTR && errno != EAGAIN)) {
++				close(fd);
++				fd = -1;
++				if (!reaped) {
++					closing = 1;
++					kill(pid, SIGHUP);
++					deadline = now + 2000;
++				}
++			}
++		}
++	}
++	/* Never restore blocking stdout or run a stdio flush on this binary pipe. */
++	_exit(failed ? 1 : 0);
++}
+--- a/cmd-refresh-client.c
++++ b/cmd-refresh-client.c
+@@ -34,8 +34,8 @@
+ 	.name = "refresh-client",
+ 	.alias = "refresh",
+ 
+-	.args = { "A:B:cC:Df:r:F:lLRSt:U", 0, 1, NULL },
+-	.usage = "[-cDlLRSU] [-A pane:state] [-B name:what:format] "
++	.args = { "A:B:cC:Df:r:F:lLQ:RSt:U", 0, 1, NULL },
++	.usage = "[-cDlLRSU] [-Q nonce] [-A pane:state] [-B name:what:format] "
+ 		 "[-C XxY] [-f flags] [-r pane:report] " CMD_TARGET_CLIENT_USAGE
+ 		 " [adjustment]",
+ 
+@@ -182,6 +182,31 @@
+ 	const char		*errstr;
+ 	u_int			 adjust;
+ 	struct args_value	*av;
++
++	if (args_has(args, 'Q')) {
++		const char *nonce = args_get(args, 'Q');
++
++		if (strlen(nonce) != 32 ||
++		    strspn(nonce, "0123456789abcdef") != 32) {
++			cmdq_error(item, "snapshot nonce must be 32 lowercase hex digits");
++			return (CMD_RETURN_ERROR);
++		}
++		if ((tc->flags & (CLIENT_CONTROL|CLIENT_SUSPENDED|CLIENT_EXIT)) ||
++		    !(tty->flags & TTY_STARTED) || tc->session == NULL ||
++		    tc->session->curw == NULL || tc->session->curw->window->active == NULL) {
++			cmdq_error(item, "client cannot render a snapshot");
++			return (CMD_RETURN_ERROR);
++		}
++		if (*tc->panel_snapshot != '\0') {
++			cmdq_error(item, "client snapshot already pending");
++			return (CMD_RETURN_ERROR);
++		}
++		strlcpy(tc->panel_snapshot, nonce, sizeof tc->panel_snapshot);
++		tc->panel_snapshot_failed = 0;
++		tc->flags |= CLIENT_STATUSFORCE;
++		server_redraw_client(tc);
++		return (CMD_RETURN_NORMAL);
++	}
+ 
+ 	if (args_has(args, 'c') ||
+ 	    args_has(args, 'L') ||
+--- a/format.c
++++ b/format.c
+@@ -6892,6 +6892,7 @@
+ 	struct paste_buffer	*pb;
+ 
+ 	format_add(ft, "pane_snapshot_version", "%d", 1);
++	format_add(ft, "native_client_protocol", "%d", 1);
+ 
+ 	if (c != NULL && c->name != NULL)
+ 		log_debug("%s: c=%s", __func__, c->name);
+--- a/server-client.c
++++ b/server-client.c
+@@ -2438,6 +2438,8 @@
+ 	struct timeval		 tv = { .tv_usec = 1000 };
+ 	static struct event	 ev;
+ 	size_t			 n;
++	char			 marker[512];
++	int			 snapshot;
+ 
+ 	if (c->flags & (CLIENT_CONTROL|CLIENT_SUSPENDED))
+ 		return;
+@@ -2487,6 +2489,19 @@
+ 	log_debug("%s: redraw needed", c->name);
+ 	tflags = tty->flags & (TTY_BLOCK|TTY_FREEZE|TTY_NOCURSOR);
+ 	tty->flags = (tty->flags & ~(TTY_BLOCK|TTY_FREEZE))|TTY_NOCURSOR;
++	snapshot = (*c->panel_snapshot != '\0');
++	if (snapshot) {
++		xsnprintf(marker, sizeof marker,
++		    "\033P+twppanel;%s;begin;{\"protocol\":1,"
++		    "\"instanceId\":\"%ld:%lld\",\"clientPid\":%ld,"
++		    "\"sessionId\":\"$%u\",\"windowId\":\"@%u\","
++		    "\"paneId\":\"%%%u\",\"cols\":%u,\"rows\":%u}\033\\",
++		    c->panel_snapshot, (long)getpid(), (long long)start_time.tv_sec,
++		    (long)c->pid, s->id, w->id, w->active->id, tty->sx, tty->sy);
++		tty_puts(tty, marker);
++		tty_panel_bootstrap(tty);
++	}
++
+ 
+ 	/*
+ 	 * If not redrawing the entire window, check whether each pane needs to
+@@ -2528,6 +2543,19 @@
+ 	 * All the redraw flags can now be cleared. Also record how many bytes
+ 	 * were written.
+ 	 */
++	if (snapshot) {
++		/* The fence includes cursor, mouse modes and the final sync end. */
++		server_client_reset_state(c);
++		xsnprintf(marker, sizeof marker, "\033P+twppanel;%s;end\033\\",
++		    c->panel_snapshot);
++		tty_puts(tty, marker);
++		*c->panel_snapshot = '\0';
++		if (c->panel_snapshot_failed) {
++			evbuffer_drain(tty->out, EVBUFFER_LENGTH(tty->out));
++			c->exit_message = xstrdup("native snapshot exceeded output limit");
++			c->flags |= CLIENT_EXIT;
++		}
++	}
+ 	c->flags &= ~(CLIENT_ALLREDRAWFLAGS|CLIENT_STATUSFORCE);
+ 	c->redraw = EVBUFFER_LENGTH(tty->out);
+ 	log_debug("%s: redraw added %zu bytes", c->name, c->redraw);
+--- a/tty.c
++++ b/tty.c
+@@ -627,6 +627,13 @@
+ tty_add(struct tty *tty, const char *buf, size_t len)
+ {
+ 	struct client	*c = tty->client;
++
++	/* A snapshot is atomic: overflow fails this client, never a partial baseline. */
++	if (*c->panel_snapshot != '\0' &&
++	    (c->panel_snapshot_failed || EVBUFFER_LENGTH(tty->out) + len > 8 * 1024 * 1024)) {
++		c->panel_snapshot_failed = 1;
++		return;
++	}
+ 
+ 	if (tty->flags & TTY_BLOCK) {
+ 		tty->discarded += len;
+@@ -3201,3 +3208,30 @@
+ 	if (tty_term_has(tty->term, TTYC_SPB))
+ 		tty_putcode_ii(tty, TTYC_SPB, pb->state, pb->progress);
+ }
++
++/* Re-establish outer terminal state without touching the PTY or native input state. */
++void
++tty_panel_bootstrap(struct tty *tty)
++{
++	struct client *c = tty->client;
++
++	tty_puts(tty, "\033c");
++	tty_putcode(tty, TTYC_SMCUP);
++	tty_putcode(tty, TTYC_SMKX);
++	tty_putcode(tty, TTYC_CLEAR);
++	if (tty_acs_needed(tty))
++		tty_putcode(tty, TTYC_ENACS);
++	if (tty_term_has(tty->term, TTYC_ENBP))
++		tty_putcode(tty, TTYC_ENBP);
++	if (tty->term->flags & TERM_VT100LIKE)
++		tty_puts(tty, "\033[?2031h");
++	tty->flags &= ~TTY_SYNCING;
++	tty->cstyle = SCREEN_CURSOR_DEFAULT;
++	tty->ccolour = -2;
++	free(c->title);
++	c->title = NULL;
++	free(c->path);
++	c->path = NULL;
++	c->progress_bar.state = -1;
++	tty_update_features(tty);
++}

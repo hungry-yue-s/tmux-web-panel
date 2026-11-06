@@ -1,0 +1,784 @@
+diff --git a/cmd-capture-pane.c b/cmd-capture-pane.c
+index a9ed4bc4..b00f25c7 100644
+--- a/cmd-capture-pane.c
++++ b/cmd-capture-pane.c
+@@ -18,8 +18,12 @@
+ 
+ #include <sys/types.h>
+ 
++#include <netinet/in.h>
++#include <resolv.h>
++
+ #include <stdlib.h>
+ #include <string.h>
++#include <unistd.h>
+ 
+ #include "tmux.h"
+ 
+@@ -42,8 +46,8 @@ const struct cmd_entry cmd_capture_pane_entry = {
+ 	.name = "capture-pane",
+ 	.alias = "capturep",
+ 
+-	.args = { "ab:CeE:FHJLMNpPqRS:Tt:", 0, 0, NULL },
+-	.usage = "[-aCeFHJLMNpPqRT] " CMD_BUFFER_USAGE " [-E end-line] "
++	.args = { "ab:CeE:FHJLMNpPqQRS:Tt:", 0, 0, NULL },
++	.usage = "[-aCeFHJLMNpPqQRT] " CMD_BUFFER_USAGE " [-E end-line] "
+ 		 "[-S start-line] " CMD_TARGET_PANE_USAGE,
+ 
+ 	.target = { 't', CMD_FIND_PANE, 0 },
+@@ -411,7 +415,8 @@ cmd_capture_pane_exec(struct cmd *self, struct cmdq_item *item)
+ 	struct args		*args = cmd_get_args(self);
+ 	struct client		*c = cmdq_get_client(item);
+ 	struct window_pane	*wp = cmdq_get_target(item)->wp;
+-	char			*buf, *cause;
++	char			*buf, *cause, *encoded;
++	struct evbuffer		*snapshot;
+ 	const char		*bufname;
+ 	size_t			 len;
+ 
+@@ -425,7 +430,38 @@ cmd_capture_pane_exec(struct cmd *self, struct cmdq_item *item)
+ 	}
+ 
+ 	len = 0;
+-	if (args_has(args, 'R'))
++	if (args_has(args, 'Q')) {
++		if ((c->flags & CLIENT_CONTROL) && (c->session == NULL ||
++		    winlink_find_by_window(&c->session->windows, wp->window) == NULL)) {
++			cmdq_error(item, "pane is not in the control session");
++			return (CMD_RETURN_ERROR);
++		}
++		if ((c->flags & CLIENT_CONTROL) &&
++		    TAILQ_NEXT(TAILQ_FIRST(&wp->window->winlinks), wentry) != NULL) {
++			cmdq_error(item, "linked windows require the compatibility terminal");
++			return (CMD_RETURN_ERROR);
++		}
++		/* One synchronous command is the snapshot/output boundary. Discard
++		 * queued output already represented by the snapshot, then resume at
++		 * the pane's current offset. No shell, hook or event-loop yield. */
++		if (c->flags & CLIENT_CONTROL)
++			control_set_pane_off(c, wp);
++		snapshot = input_snapshot(wp);
++		len = 4 * ((EVBUFFER_LENGTH(snapshot) + 2) / 3) + 1;
++		encoded = xmalloc(len);
++		b64_ntop(EVBUFFER_DATA(snapshot), EVBUFFER_LENGTH(snapshot),
++		    encoded, len);
++		xasprintf(&buf, "{\"version\":1,\"paneId\":\"%%%u\","
++		    "\"instanceId\":\"%ld:%lld\",\"windowId\":\"@%u\","
++		    "\"cols\":%u,\"rows\":%u,\"data\":\"%s\"}", wp->id,
++		    (long)getpid(), (long long)start_time.tv_sec, wp->window->id,
++		    screen_size_x(&wp->base), screen_size_y(&wp->base), encoded);
++		free(encoded);
++		evbuffer_free(snapshot);
++		len = strlen(buf);
++		if (c->flags & CLIENT_CONTROL)
++			control_set_pane_on(c, wp);
++	} else if (args_has(args, 'R'))
+ 		buf = cmd_capture_pane_grid(wp, &len);
+ 	else if (args_has(args, 'P') && !args_has(args, 'H'))
+ 		buf = cmd_capture_pane_pending(args, wp, &len);
+diff --git a/control.c b/control.c
+index 7f76ff9e..036cbe26 100644
+--- a/control.c
++++ b/control.c
+@@ -18,6 +18,8 @@
+  */
+ 
+ #include <sys/types.h>
++#include <sys/socket.h>
++#include <sys/ioctl.h>
+ 
+ #include <errno.h>
+ #include <event.h>
+@@ -112,6 +114,11 @@ struct control_state {
+ 	struct bufferevent		*read_event;
+ 	struct bufferevent		*write_event;
+ 
++	/* Pipe clients relay stdio through peer IPC: MSYS cannot pass fds. */
++	struct bufferevent		*relay_event;
++	struct client_file		*relay_input;
++	int				 relay_fd;
++
+ 	struct monitor_set		*subs;
+ 
+ 	/*
+@@ -652,8 +659,17 @@ control_all_done(struct client *c)
+ {
+ 	struct control_state	*cs = c->control_state;
+ 
++	int pending = 0;
++
+ 	if (!TAILQ_EMPTY(&cs->all_blocks))
+ 		return (0);
++	if (cs->relay_event != NULL) {
++		if (EVBUFFER_LENGTH(cs->relay_event->input) != 0 ||
++		    EVBUFFER_LENGTH(cs->relay_event->output) != 0)
++			return (0);
++		if (ioctl(cs->relay_fd, FIONREAD, &pending) == 0 && pending != 0)
++			return (0);
++	}
+ 	return (EVBUFFER_LENGTH(cs->write_event->output) == 0);
+ }
+ 
+@@ -906,12 +922,91 @@ control_sub_change(struct monitor_change *change, __unused void *data)
+ 	}
+ }
+ 
++/* Whether file IPC belongs to this client's control transport. */
++int
++control_is_relay(struct client *c)
++{
++	return (c != NULL && c->control_state != NULL &&
++	    c->control_state->relay_event != NULL);
++}
++
++/* Read the control client's stdin, forwarded by its existing peer protocol. */
++static void
++control_relay_input(struct client *c, __unused const char *path, int error,
++    int closed, struct evbuffer *buffer, __unused void *arg)
++{
++	struct control_state *cs = c->control_state;
++
++	if (cs == NULL || cs->relay_event == NULL)
++		return;
++	if (closed || error != 0) {
++		cs->relay_input = NULL;
++		c->flags |= CLIENT_EXIT;
++		return;
++	}
++	if (EVBUFFER_LENGTH(cs->relay_event->output) +
++	    EVBUFFER_LENGTH(buffer) > 1024 * 1024) {
++		c->flags |= CLIENT_EXIT;
++		return;
++	}
++	bufferevent_write_buffer(cs->relay_event, buffer);
++}
++
++/* Write ordered control output through the client's stdout file stream. */
++static void
++control_relay_output(struct bufferevent *bev, void *arg)
++{
++	struct client *c = arg;
++	struct evbuffer *buffer = bev->input;
++	size_t size = EVBUFFER_LENGTH(buffer);
++
++	if (size != 0) {
++		file_print_buffer(c, EVBUFFER_DATA(buffer), size);
++		evbuffer_drain(buffer, size);
++	}
++}
++
++static void
++control_relay_error(__unused struct bufferevent *bev, __unused short what,
++    void *arg)
++{
++	struct client *c = arg;
++
++	c->flags |= CLIENT_EXIT;
++}
++
+ /* Initialize for control mode. */
+ void
+ control_start(struct client *c)
+ {
+ 	struct control_state	*cs;
++	int			 pair[2];
+ 
++	cs = c->control_state = xcalloc(1, sizeof *cs);
++	cs->relay_fd = -1;
++	/* A pipe has no ttyname. Relay its bytes over the authenticated local
++	 * peer connection instead of relying on SCM_RIGHTS (absent on MSYS).
++	 * Use the same path on Unix so its ordering is exercised there too. */
++	if (~c->flags & CLIENT_CONTROLCONTROL &&
++	    (c->ttyname == NULL || *c->ttyname == '\0')) {
++		if (socketpair(AF_UNIX, SOCK_STREAM, PF_UNSPEC, pair) != 0)
++			fatal("socketpair failed");
++		if (c->fd != -1)
++			close(c->fd);
++		if (c->out_fd != -1)
++			close(c->out_fd);
++		c->fd = pair[0];
++		c->out_fd = dup(c->fd);
++		if (c->out_fd == -1)
++			fatal("dup failed");
++		cs->relay_fd = pair[1];
++		setblocking(cs->relay_fd, 0);
++		cs->relay_event = bufferevent_new(cs->relay_fd,
++		    control_relay_output, NULL, control_relay_error, c);
++		if (cs->relay_event == NULL)
++			fatalx("out of memory");
++		bufferevent_enable(cs->relay_event, EV_READ|EV_WRITE);
++	}
+ 	if (c->flags & CLIENT_CONTROLCONTROL) {
+ 		close(c->out_fd);
+ 		c->out_fd = -1;
+@@ -919,7 +1014,6 @@ control_start(struct client *c)
+ 		setblocking(c->out_fd, 0);
+ 	setblocking(c->fd, 0);
+ 
+-	cs = c->control_state = xcalloc(1, sizeof *cs);
+ 	RB_INIT(&cs->panes);
+ 	RB_INIT(&cs->windows);
+ 	TAILQ_INIT(&cs->pending_list);
+@@ -953,7 +1047,11 @@ control_start(struct client *c)
+ void
+ control_ready(struct client *c)
+ {
+-	bufferevent_enable(c->control_state->read_event, EV_READ);
++	struct control_state *cs = c->control_state;
++
++	bufferevent_enable(cs->read_event, EV_READ);
++	if (cs->relay_event != NULL && cs->relay_input == NULL)
++		cs->relay_input = file_read(c, "-", control_relay_input, NULL);
+ }
+ 
+ /* Discard all output for a client. */
+@@ -994,6 +1092,12 @@ control_stop(struct client *c)
+ 		return;
+ 
+ 	monitor_destroy(cs->subs);
++	if (cs->relay_input != NULL)
++		file_cancel(cs->relay_input);
++	if (cs->relay_event != NULL) {
++		bufferevent_free(cs->relay_event);
++		close(cs->relay_fd);
++	}
+ 
+ 	TAILQ_FOREACH_SAFE(cl, &cs->deferred, entry, cl1) {
+ 		TAILQ_REMOVE(&cs->deferred, cl, entry);
+diff --git a/file.c b/file.c
+index 83691db5..5e0c9d6b 100644
+--- a/file.c
++++ b/file.c
+@@ -108,7 +108,8 @@ file_create_with_client(struct client *c, int stream, client_file_cb cb,
+ {
+ 	struct client_file	*cf;
+ 
+-	if (c != NULL && (c->flags & CLIENT_ATTACHED))
++	if (c != NULL && (c->flags & CLIENT_ATTACHED) &&
++	    !control_is_relay(c))
+ 		c = NULL;
+ 
+ 	cf = xcalloc(1, sizeof *cf);
+@@ -184,9 +185,9 @@ int
+ file_can_print(struct client *c)
+ {
+ 	if (c == NULL ||
+-	    (c->flags & CLIENT_ATTACHED) ||
+ 	    (c->flags & CLIENT_DEAD) ||
+-	    (c->flags & CLIENT_CONTROL))
++	    ((c->flags & (CLIENT_ATTACHED|CLIENT_CONTROL)) &&
++	    !control_is_relay(c)))
+ 		return (0);
+ 	return (1);
+ }
+@@ -381,8 +382,8 @@ file_read(struct client *c, const char *path, client_file_cb cb, void *cbdata)
+ 
+ 		fd = STDIN_FILENO;
+ 		if (c == NULL ||
+-		    (c->flags & CLIENT_ATTACHED) ||
+-		    (c->flags & CLIENT_CONTROL)) {
++		    ((c->flags & (CLIENT_ATTACHED|CLIENT_CONTROL)) &&
++		    !control_is_relay(c))) {
+ 			cf->error = EBADF;
+ 			goto done;
+ 		}
+@@ -481,6 +482,16 @@ file_push(struct client_file *cf)
+ 	msg = xmalloc(sizeof *msg);
+ 	left = EVBUFFER_LENGTH(cf->buffer);
+ 	while (left != 0) {
++		/* A stopped pipe reader must not make the server's imsg queue
++		 * unbounded. At most 512 MAX_IMSGSIZE messages remain queued. */
++		if (cf->c != NULL && control_is_relay(cf->c) &&
++		    proc_queued_messages(cf->peer) >= 512) {
++			evbuffer_drain(cf->buffer, left);
++			cf->c->flags |= CLIENT_EXIT;
++			control_discard_all(cf->c);
++			free(msg);
++			return;
++		}
+ 		sent = left;
+ 		if (sent > MAX_IMSGSIZE - IMSG_HEADER_SIZE - sizeof *msg)
+ 			sent = MAX_IMSGSIZE - IMSG_HEADER_SIZE - sizeof *msg;
+@@ -593,6 +604,7 @@ file_write_open(struct client_files *files, struct tmuxpeer *peer,
+ 		goto reply;
+ 	}
+ 	cf = file_create_with_peer(peer, files, msg->stream, cb, cbdata);
++	cf->control_relay = !close_received && msg->fd == STDOUT_FILENO;
+ 	if (cf->closed) {
+ 		error = EBADF;
+ 		goto reply;
+@@ -616,6 +628,8 @@ file_write_open(struct client_files *files, struct tmuxpeer *peer,
+ 		goto reply;
+ 	}
+ 
++	if (cf->control_relay)
++		setblocking(cf->fd, 0);
+ 	cf->event = bufferevent_new(cf->fd, NULL, file_write_callback,
+ 	    file_write_error_callback, cf);
+ 	if (cf->event == NULL)
+@@ -645,8 +659,14 @@ file_write_data(struct client_files *files, struct imsg *imsg)
+ 		fatalx("unknown stream number");
+ 	log_debug("write %zu to file %d", size, cf->stream);
+ 
+-	if (cf->event != NULL)
++	if (cf->event != NULL) {
++		if (cf->control_relay &&
++		    EVBUFFER_LENGTH(cf->event->output) + size > 16 * 1024 * 1024) {
++			proc_disconnect_peer(cf->peer);
++			return;
++		}
+ 		bufferevent_write(cf->event, msg + 1, size);
++	}
+ }
+ 
+ /* Handle a file write close message (client). */
+@@ -719,7 +739,20 @@ file_read_callback(__unused struct bufferevent *bev, void *arg)
+ 		msg = xrealloc(msg, msglen);
+ 		msg->stream = cf->stream;
+ 		memcpy(msg + 1, bdata, bsize);
+-		proc_send(cf->peer, MSG_READ, -1, msg, msglen);
++		if (cf->control_relay &&
++		    proc_queued_messages(cf->peer) >= 512) {
++			bufferevent_disable(cf->event, EV_READ);
++			proc_disconnect_peer(cf->peer);
++			free(msg);
++			return;
++		}
++		if (proc_send(cf->peer, MSG_READ, -1, msg, msglen) != 0 &&
++		    cf->control_relay) {
++			bufferevent_disable(cf->event, EV_READ);
++			proc_disconnect_peer(cf->peer);
++			free(msg);
++			return;
++		}
+ 
+ 		evbuffer_drain(cf->event->input, bsize);
+ 	}
+@@ -754,6 +787,7 @@ file_read_open(struct client_files *files, struct tmuxpeer *peer,
+ 		goto reply;
+ 	}
+ 	cf = file_create_with_peer(peer, files, msg->stream, cb, cbdata);
++	cf->control_relay = !close_received && msg->fd == STDIN_FILENO;
+ 	if (cf->closed) {
+ 		error = EBADF;
+ 		goto reply;
+@@ -777,6 +811,8 @@ file_read_open(struct client_files *files, struct tmuxpeer *peer,
+ 		goto reply;
+ 	}
+ 
++	if (cf->control_relay)
++		setblocking(cf->fd, 0);
+ 	cf->event = bufferevent_new(cf->fd, file_read_callback, NULL,
+ 	    file_read_error_callback, cf);
+ 	if (cf->event == NULL)
+diff --git a/format.c b/format.c
+index d88c29d6..01824343 100644
+--- a/format.c
++++ b/format.c
+@@ -6891,6 +6891,8 @@ format_defaults(struct format_tree *ft, struct client *c, struct session *s,
+ {
+ 	struct paste_buffer	*pb;
+ 
++	format_add(ft, "pane_snapshot_version", "%d", 1);
++
+ 	if (c != NULL && c->name != NULL)
+ 		log_debug("%s: c=%s", __func__, c->name);
+ 	else
+diff --git a/grid.c b/grid.c
+index 53c8c2cb..c219321c 100644
+--- a/grid.c
++++ b/grid.c
+@@ -1062,7 +1062,7 @@ grid_string_cells_add_hyperlink(char *buf, size_t len, const char *id,
+  * Returns ANSI code to set particular attributes (colour, bold and so on)
+  * given a current state.
+  */
+-static void
++void
+ grid_string_cells_code(const struct grid_cell *lastgc,
+     const struct grid_cell *gc, char *buf, size_t len, int flags,
+     struct screen *sc, int *has_link)
+diff --git a/input.c b/input.c
+index 8f58d9bc..dc52b080 100644
+--- a/input.c
++++ b/input.c
+@@ -955,6 +955,256 @@ input_pending(struct input_ctx *ictx)
+ 	return (ictx->since_ground);
+ }
+ 
++/* A checkpoint for control clients. Unlike capture-pane text, this includes
++ * the parser's current pen and saved state, so the next byte has the same
++ * meaning after reconnect. It never writes to or resets the running pane. */
++static void
++input_snapshot_pen(struct evbuffer *out, struct screen *s,
++    const struct grid_cell *cell)
++{
++	struct grid_cell gc = *cell;
++	char code[8192];
++	int link = 0;
++
++	gc.attr &= ~GRID_ATTR_CHARSET;
++	evbuffer_add_printf(out, "\033[0m\033]8;;\033\\");
++	grid_string_cells_code(&grid_default_cell, &gc, code, sizeof code,
++	    GRID_STRING_WITH_SEQUENCES, s, &link);
++	evbuffer_add(out, code, strlen(code));
++}
++
++static void
++input_snapshot_charset(struct evbuffer *out, const struct input_cell *cell)
++{
++	evbuffer_add_printf(out, "\033(%c\033)%c%c", cell->g0set ? '0' : 'B',
++	    cell->g1set ? '0' : 'B', cell->set ? '\016' : '\017');
++}
++
++/* Paint real cells, expanding stored tabs rather than interpreting them using
++ * today's tab stops. Full rows preserve wrapped-line boundaries. */
++static void
++input_snapshot_line(struct evbuffer *out, struct screen *s, struct grid *gd,
++    u_int y, u_int width)
++{
++	struct grid_cell gc, last = grid_default_cell;
++	char code[8192];
++	u_int x, n;
++	int link = 0;
++
++	evbuffer_add_printf(out, "\033[0m\017\033(B\033)0");
++	for (x = 0; x < width; x++) {
++		grid_get_cell(gd, x, y, &gc);
++		if (gc.flags & GRID_FLAG_PADDING)
++			continue;
++		grid_string_cells_code(&last, &gc, code, sizeof code,
++		    GRID_STRING_WITH_SEQUENCES, s, &link);
++		evbuffer_add(out, code, strlen(code));
++		last = gc;
++		if (gc.flags & GRID_FLAG_TAB) {
++			for (n = 0; n < gc.data.width; n++)
++				evbuffer_add(out, " ", 1);
++		} else
++			evbuffer_add(out, gc.data.data, gc.data.size);
++	}
++	evbuffer_add_printf(out, "\033]8;;\033\\");
++}
++
++static void
++input_snapshot_grid(struct evbuffer *out, struct screen *s, struct grid *gd,
++    u_int first, u_int count, u_int width)
++{
++	u_int y;
++	const struct grid_line *line;
++
++	for (y = first; y < first + count; y++) {
++		input_snapshot_line(out, s, gd, y, width);
++		line = grid_peek_line(gd, y);
++		if (y + 1 < first + count &&
++		    (line == NULL || (~line->flags & GRID_LINE_WRAPPED)))
++			evbuffer_add(out, "\r\n", 2);
++	}
++}
++
++static void
++input_snapshot_colour(struct evbuffer *out, int command, int index, int colour)
++{
++	u_char r, g, b;
++	if (colour < 0 || !(colour & COLOUR_FLAG_RGB))
++		return;
++	colour_split_rgb(colour, &r, &g, &b);
++	if (command == 4)
++		evbuffer_add_printf(out, "\033]4;%d;rgb:%02x/%02x/%02x\033\\",
++		    index, r, g, b);
++	else
++		evbuffer_add_printf(out, "\033]%d;rgb:%02x/%02x/%02x\033\\",
++		    command, r, g, b);
++}
++
++/* Restore a copy when the application resized inside the alternate screen.
++ * The saved normal grid still has its original width. Cropping it to today's
++ * width loses cells; use tmux's own alternate-screen restore and reflow, without
++ * changing the live pane. Copy only the checkpoint's bounded history. */
++static void
++input_snapshot_normal(struct screen *s, struct screen *normal)
++{
++	struct grid *gd;
++	u_int hsize = s->grid->hsize > 2000 ? 2000 : s->grid->hsize;
++
++	screen_init(normal, screen_size_x(s), screen_size_y(s), 2000);
++	gd = normal->grid;
++	gd->linedata = xreallocarray(gd->linedata, hsize + gd->sy,
++	    sizeof *gd->linedata);
++	memset(gd->linedata + gd->sy, 0, hsize * sizeof *gd->linedata);
++	gd->hsize = hsize;
++	gd->flags = s->grid->flags;
++	grid_duplicate_lines(gd, 0, s->grid, s->grid->hsize - hsize,
++	    hsize + gd->sy);
++	normal->saved_grid = grid_create(s->saved_grid->sx,
++	    s->saved_grid->sy, 0);
++	grid_duplicate_lines(normal->saved_grid, 0, s->saved_grid, 0,
++	    s->saved_grid->sy);
++	normal->cx = s->cx;
++	normal->cy = s->cy;
++	normal->mode = s->mode;
++	normal->saved_cx = s->saved_cx;
++	normal->saved_cy = s->saved_cy;
++	normal->saved_cell = s->saved_cell;
++	normal->saved_flags = s->saved_flags;
++	screen_alternate_off(normal, NULL, 1);
++}
++
++struct evbuffer *
++input_snapshot(struct window_pane *wp)
++{
++	struct input_ctx *ictx = wp->ictx;
++	struct screen *s = &wp->base;
++	struct screen normal;
++	struct grid *history = s->grid, *saved = s->saved_grid;
++	struct evbuffer *out = evbuffer_new();
++	struct grid_cell gc;
++	u_int x, y, sx = screen_size_x(s), sy = screen_size_y(s), first;
++	u_int saved_cx = s->saved_cx, saved_cy = s->saved_cy;
++	int reflow = saved != NULL && (saved->sx != sx || saved->sy != sy);
++	int mode = s->mode, cursor;
++	static const struct { int flag; int number; } modes[] = {
++		{ MODE_KCURSOR, 1 }, { MODE_WRAP, 7 }, { MODE_CURSOR, 25 },
++		{ MODE_MOUSE_STANDARD, 1000 }, { MODE_MOUSE_BUTTON, 1002 },
++		{ MODE_MOUSE_ALL, 1003 }, { MODE_FOCUSON, 1004 },
++		{ MODE_MOUSE_UTF8, 1005 }, { MODE_MOUSE_SGR, 1006 },
++		{ MODE_BRACKETPASTE, 2004 }, { MODE_THEME_UPDATES, 2031 }
++	};
++	if (reflow) {
++		input_snapshot_normal(s, &normal);
++		history = saved = normal.grid;
++		saved_cx = normal.cx;
++		saved_cy = normal.cy;
++	}
++
++	/* RIS clears old parser state, palette and both buffers in xterm. */
++	evbuffer_add_printf(out, "\033c\033[?25l\033[?7h\033[?6l\033[4l");
++	input_snapshot_colour(out, 10, 0, wp->palette.fg);
++	input_snapshot_colour(out, 11, 0, wp->palette.bg);
++	input_snapshot_colour(out, 12, 0, s->ccolour);
++	if (wp->palette.palette != NULL) {
++		for (x = 0; x < 256; x++)
++			input_snapshot_colour(out, 4, x, wp->palette.palette[x]);
++	}
++	/* Bound the checkpoint; older scrollback is retrieved on demand. */
++	first = history->hsize > 2000 ? history->hsize - 2000 : 0;
++	if (history->hsize > first) {
++		input_snapshot_grid(out, s, history, first,
++		    history->hsize - first, sx);
++		evbuffer_add(out, "\r\n", 2);
++	}
++	if (s->saved_grid != NULL) {
++		input_snapshot_grid(out, s, saved, saved->hsize, saved->sy, sx);
++		input_snapshot_pen(out, s, &s->saved_cell);
++		evbuffer_add_printf(out, "\033[%u;%uH\033[?1049h\033[H",
++		    saved_cy < sy ? saved_cy + 1 : 1,
++		    saved_cx < sx ? saved_cx + 1 : sx);
++		input_snapshot_grid(out, s, s->grid, s->grid->hsize, sy, sx);
++	} else
++		input_snapshot_grid(out, s, s->grid, s->grid->hsize, sy, sx);
++	if (reflow)
++		screen_free(&normal);
++
++	/* Tab stops and scrolling margins are independent of drawn cells. */
++	evbuffer_add_printf(out, "\033[3g");
++	for (x = 0; x < sx; x++) {
++		if (bit_test(s->tabs, x))
++			evbuffer_add_printf(out, "\033[1;%uH\033H", x + 1);
++	}
++	evbuffer_add_printf(out, "\033[%u;%ur", s->rupper + 1, s->rlower + 1);
++
++	/* DECSC state must be installed before the live cursor/pen. */
++	evbuffer_add_printf(out, "\033[?6%c", ictx->old_mode & MODE_ORIGIN ? 'h' : 'l');
++	y = ictx->old_cy;
++	if ((ictx->old_mode & MODE_ORIGIN) && y >= s->rupper)
++		y -= s->rupper;
++	evbuffer_add_printf(out, "\033[%u;%uH", y + 1,
++	    ictx->old_cx < sx ? ictx->old_cx + 1 : sx);
++	input_snapshot_pen(out, s, &ictx->old_cell.cell);
++	input_snapshot_charset(out, &ictx->old_cell);
++	evbuffer_add_printf(out, "\0337\033[?6%c", mode & MODE_ORIGIN ? 'h' : 'l');
++	y = s->cy;
++	if ((mode & MODE_ORIGIN) && y >= s->rupper)
++		y -= s->rupper;
++	evbuffer_add_printf(out, "\033[%u;%uH", y + 1,
++	    s->cx < sx ? s->cx + 1 : sx);
++	/* Restore deferred autowrap by repainting the final cell in place. */
++	if (s->cx >= sx) {
++		x = sx - 1;
++		grid_get_cell(s->grid, x, s->grid->hsize + s->cy, &gc);
++		if ((gc.flags & GRID_FLAG_PADDING) && x > 0) {
++			x--;
++			grid_get_cell(s->grid, x, s->grid->hsize + s->cy, &gc);
++			evbuffer_add_printf(out, "\033[%u;%uH", y + 1, x + 1);
++		}
++		input_snapshot_pen(out, s, &gc);
++		evbuffer_add(out, gc.data.data, gc.data.size);
++	}
++	input_snapshot_pen(out, s, &ictx->cell.cell);
++	input_snapshot_charset(out, &ictx->cell);
++	/* Reset first: DECRST of any mouse tracking mode clears all of them. */
++	for (x = 0; x < nitems(modes); x++) {
++		if (~mode & modes[x].flag)
++			evbuffer_add_printf(out, "\033[?%dl", modes[x].number);
++	}
++	for (x = 0; x < nitems(modes); x++) {
++		if (mode & modes[x].flag)
++			evbuffer_add_printf(out, "\033[?%dh", modes[x].number);
++	}
++	evbuffer_add_printf(out, "\033[4%c\033[20%c\033%c",
++	    mode & MODE_INSERT ? 'h' : 'l', mode & MODE_CRLF ? 'h' : 'l',
++	    mode & MODE_KKEYPAD ? '=' : '>');
++	cursor = s->cstyle == SCREEN_CURSOR_UNDERLINE ? 4 :
++	    (s->cstyle == SCREEN_CURSOR_BAR ? 6 : 2);
++	if (mode & MODE_CURSOR_BLINKING)
++		cursor--;
++	evbuffer_add_printf(out, "\033[%d q", cursor);
++	if (mode & EXTENDED_KEY_MODES)
++		evbuffer_add_printf(out, "\033[>4;%dm",
++		    mode & MODE_KEYS_EXTENDED_2 ? 2 : 1);
++	/* REP depends on the last printed character, not just the screen. When
++	 * INPUT_LAST is set no completed cursor/mode command followed that print,
++	 * so repainting its existing cell restores the parser's repeat register.
++	 * In insert mode remove that cell first, then insert it back unchanged. */
++	if ((ictx->flags & INPUT_LAST) && ictx->last.width != 0 &&
++	    s->cx >= ictx->last.width) {
++		x = s->cx - ictx->last.width;
++		evbuffer_add_printf(out, "\033[%u;%uH", y + 1, x + 1);
++		if (mode & MODE_INSERT)
++			evbuffer_add_printf(out, "\033[%uP", ictx->last.width);
++		evbuffer_add(out, ictx->last.data, ictx->last.size);
++	}
++	/* UTF-8 is accumulated separately from escape sequences in tmux. */
++	if (ictx->utf8started)
++		evbuffer_add(out, ictx->utf8data.data, ictx->utf8data.have);
++	evbuffer_add(out, EVBUFFER_DATA(ictx->since_ground),
++	    EVBUFFER_LENGTH(ictx->since_ground));
++	return (out);
++}
++
+ /* Change input state. */
+ static void
+ input_set_state(struct input_ctx *ictx, const struct input_transition *itr)
+diff --git a/proc.c b/proc.c
+index bfe1fbe2..5b1193ad 100644
+--- a/proc.c
++++ b/proc.c
+@@ -358,6 +358,24 @@ proc_kill_peer(struct tmuxpeer *peer)
+ 	peer->flags |= PEER_BAD;
+ }
+ 
++/* Drop a private control transport without waiting for a stopped peer to
++ * drain. Dispatch remains deferred so callers may finish their callbacks. */
++void
++proc_disconnect_peer(struct tmuxpeer *peer)
++{
++	peer->flags |= PEER_BAD;
++	shutdown(peer->ibuf.fd, SHUT_RDWR);
++	event_active(&peer->event, EV_WRITE, 0);
++}
++
++/* Every queued message is bounded by MAX_IMSGSIZE. Control relays use this
++ * conservative bound to disconnect a stopped reader without blocking tmux. */
++u_int
++proc_queued_messages(struct tmuxpeer *peer)
++{
++	return (imsgbuf_queuelen(&peer->ibuf));
++}
++
+ void
+ proc_flush_peer(struct tmuxpeer *peer)
+ {
+diff --git a/server-client.c b/server-client.c
+index 78e92f35..8a3cc320 100644
+--- a/server-client.c
++++ b/server-client.c
+@@ -2941,8 +2941,14 @@ server_client_dispatch_identify(struct client *c, struct imsg *imsg)
+ 	log_debug("client %p name is %s", c, c->name);
+ 
+ #ifdef __CYGWIN__
+-	c->fd = open(c->ttyname, O_RDWR|O_NOCTTY);
+-	c->out_fd = dup(c->fd);
++	/* A pipe control client has no tty to reopen. control_start relays its
++	 * stdio over the peer protocol instead of SCM_RIGHTS. */
++	if ((~c->flags & CLIENT_CONTROL) ||
++	    (c->flags & CLIENT_CONTROLCONTROL) ||
++	    (c->ttyname != NULL && *c->ttyname != '\0')) {
++		c->fd = open(c->ttyname, O_RDWR|O_NOCTTY);
++		c->out_fd = dup(c->fd);
++	}
+ #endif
+ 
+ 	if (c->flags & CLIENT_CONTROL)
+diff --git a/tmux.h b/tmux.h
+index b961b67d..50828fa6 100644
+--- a/tmux.h
++++ b/tmux.h
+@@ -2092,6 +2092,7 @@ struct client_file {
+ 	int				 fd;
+ 	int				 error;
+ 	int				 closed;
++	int				 control_relay;
+ 
+ 	client_file_cb			 cb;
+ 	void				*data;
+@@ -2602,6 +2603,8 @@ struct tmuxpeer *proc_add_peer(struct tmuxproc *, int,
+ void	proc_remove_peer(struct tmuxpeer *);
+ void	proc_kill_peer(struct tmuxpeer *);
+ void	proc_flush_peer(struct tmuxpeer *);
++u_int	proc_queued_messages(struct tmuxpeer *);
++void	proc_disconnect_peer(struct tmuxpeer *);
+ void	proc_toggle_log(struct tmuxproc *);
+ pid_t	proc_fork_and_daemon(int *);
+ uid_t	proc_get_peer_uid(struct tmuxpeer *);
+@@ -3425,6 +3428,7 @@ struct input_ctx *input_init(struct window_pane *, struct bufferevent *,
+ void	 input_free(struct input_ctx *);
+ void	 input_reset(struct input_ctx *, int);
+ struct evbuffer *input_pending(struct input_ctx *);
++struct evbuffer *input_snapshot(struct window_pane *);
+ void	 input_parse_pane(struct window_pane *);
+ void	 input_parse_buffer(struct window_pane *, const u_char *, size_t);
+ void	 input_parse_screen(struct input_ctx *, struct screen *,
+@@ -3505,6 +3509,8 @@ void	 grid_clear(struct grid *, u_int, u_int, u_int, u_int, u_int);
+ void	 grid_clear_lines(struct grid *, u_int, u_int, u_int);
+ void	 grid_move_lines(struct grid *, u_int, u_int, u_int, u_int);
+ void	 grid_move_cells(struct grid *, u_int, u_int, u_int, u_int, u_int);
++void	 grid_string_cells_code(const struct grid_cell *, const struct grid_cell *,
++	     char *, size_t, int, struct screen *, int *);
+ char	*grid_string_cells(struct grid *, u_int, u_int, u_int,
+ 	     struct grid_cell **, int, struct screen *);
+ void	 grid_duplicate_lines(struct grid *, u_int, struct grid *, u_int,
+@@ -4022,6 +4028,7 @@ u_int	monitor_get_fire_count(struct monitor_set *, const char *);
+ time_t	monitor_get_fire_time(struct monitor_set *, const char *);
+ 
+ /* control.c */
++int	 control_is_relay(struct client *);
+ void	control_discard(struct client *);
+ void	control_discard_all(struct client *);
+ void	control_start(struct client *);
+--- a/client.c
++++ b/client.c
+@@ -415,6 +415,11 @@
+ 		if (client_exittype == MSG_DETACHKILL && ppid > 1)
+ 			kill(ppid, SIGHUP);
+ 	} else if (client_flags & CLIENT_CONTROL) {
++		/* MSYS dup descriptors do not reliably share O_NONBLOCK. Set the
++		 * original stdout before stdio can flush a final control message. */
++		if ((~client_flags & CLIENT_CONTROLCONTROL) &&
++		    !isatty(STDOUT_FILENO))
++			setblocking(STDOUT_FILENO, 0);
+ 		if (client_exitreason != CLIENT_EXIT_NONE)
+ 			printf("%%exit %s\n", client_exit_message());
+ 		else
+@@ -432,7 +437,12 @@
+ 
+ 	/* Restore the streams to blocking. */
+ 	setblocking(STDIN_FILENO, 1);
+-	setblocking(STDOUT_FILENO, 1);
++	/* A stopped pipe reader may have left %exit in stdio after EAGAIN.
++	 * Restoring blocking here makes the atexit flush hang indefinitely.
++	 * TTY clients still get their original descriptor mode back. */
++	if ((~client_flags & CLIENT_CONTROL) ||
++	    (client_flags & CLIENT_CONTROLCONTROL) || isatty(STDOUT_FILENO))
++		setblocking(STDOUT_FILENO, 1);
+ 	setblocking(STDERR_FILENO, 1);
+ 
+ 	return (client_exitval);

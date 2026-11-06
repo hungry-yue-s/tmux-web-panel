@@ -15,6 +15,7 @@
     provider: 'tmux',
     sessionId: null,
     windowId: null,
+    viewId: null,
 
     set: function (target) {
       var next = target || {};
@@ -23,6 +24,7 @@
       this.provider = next.provider || 'tmux';
       this.sessionId = next.sessionId || null;
       this.windowId = next.windowId || null;
+      this.viewId = next.viewId || null;
       if (previous !== this.serverId && typeof global.dispatchEvent === 'function' && typeof global.CustomEvent === 'function') {
         global.dispatchEvent(new global.CustomEvent('terminal-target-server', { detail: { serverId: this.serverId } }));
       }

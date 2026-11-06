@@ -114,11 +114,11 @@ describe('NodeInstaller', () => {
     expect(JSON.stringify(status)).not.toContain('TWP_SUDO_PASSWORD');
   });
 
-  it('installs Windows through PowerShell without the tmux source', async () => {
-    const { installer, connection, pack } = setup({ platform: 'windows', tmux: false });
+  it('installs Windows through PowerShell with the native tmux source', async () => {
+    const { installer, connection, pack } = setup({ platform: 'windows' });
     installer.start('box');
     expect((await finish(installer)).state).toBe('succeeded');
-    expect(pack).toHaveBeenCalledWith(expect.any(String), expect.any(String), { includeTmux: false });
+    expect(pack).toHaveBeenCalledWith(expect.any(String), expect.any(String), { includeTmux: true });
     expect(connection.stream.mock.calls[0][0][0]).toBe('powershell');
   });
 
@@ -138,8 +138,8 @@ describe('NodeInstaller', () => {
     expect(status.step).toBe('npm ci');
   });
 
-  it('refuses a POSIX install when this panel has no tmux source to send', async () => {
-    const { installer, connection } = setup({ tmux: false });
+  it.each(['linux', 'windows'])('refuses a %s install when this panel has no tmux source to send', async platform => {
+    const { installer, connection } = setup({ platform, tmux: false });
     installer.start('box');
     const status = await finish(installer);
     expect(status.state).toBe('failed');

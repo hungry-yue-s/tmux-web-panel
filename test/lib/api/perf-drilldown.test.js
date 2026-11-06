@@ -53,7 +53,7 @@ describe('/api/perf/drilldown', () => {
 
   it('truncates cmdline to 200 chars', async () => {
     // covered by samplePidDetail returning short strings; ensure presence of trim logic in endpoint
-    const res = await request(buildApp()).get('/api/perf/drilldown?session=main&windowIndex=0');
+    const res = await request(buildApp()).get('/api/perf/drilldown?session=main&windowIndex=0').expect(200);
     res.body.data.procs.forEach((p) => expect(p.cmdline.length).toBeLessThanOrEqual(200));
   });
 });

@@ -382,8 +382,21 @@ var Blocks = (function () {
     };
   }
 
+  function localViewContext(focused) {
+    var snapshot = typeof Store !== 'undefined' && Store.getState ? Store.getState() : null;
+    var route = snapshot && snapshot.route;
+    if (!route || route.name !== 'workbench') return null;
+    var params = route.params || {};
+    var local = window.Workbench && window.Workbench.currentContext();
+    if (local && local.onTerminal && local.serverId === params.serverId && local.viewId === params.viewId) return Object.assign({}, local);
+    return { onTerminal: true, serverId: params.serverId || 'local', viewId: params.viewId, paneId: null,
+      key: ['workbench', params.serverId, params.viewId, 'pending'].join('\u0000') };
+  }
+
   /** The pane in view: its cwd anchors quick-open and new files. Git follows focus instead. */
   function currentContext() {
+    var local = localViewContext(false);
+    if (local) return local;
     var snapshot = typeof Store !== 'undefined' && Store.getState ? Store.getState() : null;
     var params = (snapshot && snapshot.route && snapshot.route.params) || {};
     var legacy = typeof state !== 'undefined' ? state : {};
@@ -402,6 +415,8 @@ var Blocks = (function () {
    * `key` changes whenever an answer found for this one no longer applies.
    */
   function selectedContext() {
+    var local = localViewContext(false);
+    if (local) return local;
     var snapshot = typeof Store !== 'undefined' && Store.getState ? Store.getState() : null;
     var route = (snapshot && snapshot.route) || {};
     var params = route.params || {};
@@ -428,6 +443,17 @@ var Blocks = (function () {
    * cannot say, as the pane the terminal attached with would be the wrong answer.
    */
   function focusedContext() {
+    var local = localViewContext(false);
+    if (local) {
+      return Promise.resolve().then(function () {
+        if (!window.Workbench || !window.Workbench.focusedContext) throw new Error('原生终端尚未确认当前窗格');
+        return window.Workbench.focusedContext();
+      }).then(function (fresh) {
+        var now = localViewContext(false);
+        if (!fresh || !fresh.paneId || !now || now.serverId !== fresh.serverId || now.viewId !== fresh.viewId) throw new Error('原生终端焦点已变化或尚未确认');
+        return Object.assign({}, fresh);
+      });
+    }
     var ctx = selectedContext();
     if (!ctx.paneId || typeof _resolveFocusedPaneId !== 'function') return Promise.resolve(ctx);
     return _resolveFocusedPaneId().then(function (paneId) {

@@ -39,9 +39,19 @@ function fakeWs() {
 }
 
 describe('TerminalManager pane quota', () => {
+  let processKill;
   beforeEach(() => {
+    // These PTYs have fixture PIDs: teardown must never signal a real process
+    // or leave a real-time SIGKILL callback for the following Windows tests.
+    vi.useFakeTimers();
+    processKill = vi.spyOn(process, 'kill').mockReturnValue(true);
     spawn.mockReset();
     spawn.mockImplementation(() => fakeTerm());
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    processKill.mockRestore();
+    vi.useRealTimers();
   });
 
   it('limits attachments per pane id on this machine', () => {

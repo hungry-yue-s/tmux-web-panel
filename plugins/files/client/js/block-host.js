@@ -19,6 +19,7 @@ var BlockHost = (function () {
 
   var STORAGE_PREFIX = 'twp_blocks_v1:';
   var WINDOW_STORAGE_PREFIX = 'twp_window_blocks_v1:';
+  var VIEW_STORAGE_PREFIX = 'twp_view_blocks_v1:';
   var FLOAT_MIN_W = 360;
   var FLOAT_MIN_H = 240;
   var COMPACT_WIDTH = 900;
@@ -128,6 +129,7 @@ var BlockHost = (function () {
 
   function storageKey(scope) {
     if (scope.indexOf('\u0000') < 0) return STORAGE_PREFIX + encodeURIComponent(scope);
+    if (scope.split('\u0000')[1] === 'local-view') return VIEW_STORAGE_PREFIX + encodeURIComponent(scope);
     // tmux reuses window ids after a restart, so without its instance id a window
     // cannot be told from an earlier one: memory only, the same as file tabs.
     return scope.split('\u0000')[1] ? WINDOW_STORAGE_PREFIX + encodeURIComponent(scope) : null;
@@ -216,7 +218,7 @@ var BlockHost = (function () {
   /** Windows that are gone take their blocks with them, like their file tabs. */
   function forgetWindows(serverId, isLive) {
     var gone = function (scope) {
-      return scope.indexOf(serverId + '\u0000') === 0 && !isLive(scope);
+      return scope.indexOf(serverId + '\u0000') === 0 && scope.split('\u0000')[1] !== 'local-view' && !isLive(scope);
     };
     var removed = false;
     instances.slice().forEach(function (instance) {

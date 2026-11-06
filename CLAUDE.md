@@ -34,7 +34,7 @@
 不变量：
 
 - **Node 的 API 不带 serverId**（`/api/workspace`、`/api/metrics/*`、`/api/files/*`、`/ws/terminal/:paneId` 等）。要访问其它机器，一律走 Hub 的 `/n/:serverId`（`lib/hub/proxy.js`）；前端统一用 `Api.nodeUrl` / `Api.activeUrl` 拼路径，不要再写死 `/api/servers/:id/...` 这种按服务器分的机器接口。
-- **对已装 Node 的机器，日常功能由 Node 本地执行**。SSH 用于 sftp 读取配对文件 `~/.config/tmux-web-panel/node.json`，以及维持一条 `ssh -N -L` 端口转发（`lib/transport/ssh-connection.js`、`lib/hub/node-link.js`）。唯一的安装维护例外是用户显式触发的 `NodeInstaller`：完整 Node 安装，或固定的 Mosh 组件准备脚本；组件补装不打包替换应用、不重启服务。不得把此例外用于 Git、文件、监控或任意远程命令入口。
+- **对已装 Node 的机器，日常功能由 Node 本地执行**。SSH 用于 sftp 读取配对文件 `~/.config/tmux-web-panel/node.json`，以及分别为 API 和终端维持独立的 `ssh -N -L` 端口转发（`lib/transport/ssh-connection.js`、`lib/hub/node-link.js`）。唯一的安装维护例外是用户显式触发的 `NodeInstaller`：完整 Node 安装，或固定的 Mosh 组件准备脚本；组件补装不打包替换应用、不重启服务。不得把此例外用于 Git、文件、监控或任意远程命令入口。
 - **基础模式**（能 SSH 登录、没装面板，`lib/hub/basic/`）只提供工作区和终端。发往远端的只能是 `sh -s`（脚本走 stdin），或单个单词的 pty 命令（经 sftp 上传的脚本路径）；不要拼接带参数的远程命令行，因为 Windows OpenSSH 在 pty 模式下会把它拆碎。文件、监控等功能不要在基础模式里另写远程实现，那些功能的入口是“安装 Node”（`lib/hub/node-installer.js`、`scripts/remote/install-node.*`）。
 - **只在 Hub 上处理、不转发的接口**：`/api/auth`、`/api/servers`、`/api/plugins`、`/api/managed-resources`、`/api/share`（`isRelayable` / `Api.isHubPath` 两处须一致）。
 - **node token**（配对文件里的令牌）只能用来访问那台 Node 自己的 API。`/n/` 转发入口只接受登录令牌，防止一个 Hub 经另一个 Hub 链式转发。
@@ -57,10 +57,10 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 不变量：
 
 - **部署必须使用 `vendor/tmux` 子模块构建的 tmux**：`install-service.sh install` 会调用 `scripts/build-tmux.sh`，原子部署到 `~/.local/share/tmux-web-panel/bin/tmux`，不得退回系统 `PATH` 中的 tmux
-  - 唯一例外是 Windows：使用 MSYS2 打包的 tmux（`C:\msys64\usr\bin\tmux.exe`，带 MSYS 运行时补丁），由 `lib/msys.js` 解析；tmux 进程必须带 `MSYS=noglob`，否则 MSYS 会把 `#{session_id}` 这类参数做花括号展开。pane 路径是 MSYS 路径（`/home/me`、`/c/...`），读写文件前经 `toNativePath` 转换
+  - Windows 同样构建 vendor 源码与项目补丁：`scripts/build-tmux-windows.ps1` 在 MSYS2 中构建，按内容哈希安装到不可变路径，避免覆盖运行中的 exe。DLL、cat、setsid 等从 MSYS2 根目录定位，不能按托管 tmux.exe 的父目录推断。`msysExecArgs` 必须传入真实 argv0 并启用 `MSYS=noglob`，否则路径引号或 `#{session_id}` 会被错误解释。pane 路径经 `toNativePath` 转换。
 - **`~/.tmux.conf` 必须保留 `set -g exit-empty off`**：否则开机启动的空 server 等不到面板来恢复就自己退出了
 - **不要在 `tmux-server.service` 里预创建会话**（如 `tmux new-session -d -s main`）：同名会话不会被恢复，启动超过 2 分钟后才看到的 server 也不再恢复
-- **Windows 上不得 resize 运行中的 tmux 客户端，也不得用 node-pty 的 `kill` 关闭它**：两者都可能带走整个 tmux server 和所有会话（`docs/known-issues.md` ENV-1）。尺寸变化走 `TerminalManager._setClientSize`（新客户端替换旧的），断开走 `_endClient`（只结束客户端进程），`conhost.exe` 由 `ConsoleReaper` 延后回收
+- **旧 `/ws/terminal` 的 Windows ConPTY 路径不得 resize 运行中的 tmux 客户端，也不得用 node-pty 的 `kill` 关闭它**：两者都可能带走整个 tmux server 和所有会话（`docs/known-issues.md` ENV-1）。尺寸变化走 `TerminalManager._setClientSize`（新客户端替换旧的），断开走 `_endClient`（只结束客户端进程），`conhost.exe` 由 `ConsoleReaper` 延后回收
 - **Windows 上面板的 tmux 客户端一次只变更一个**：server 逐字节读新客户端的终端应答，这期间有客户端离开（别的会话的也算）就可能丢字节，剩下的会当按键进窗格（`docs/known-issues.md` ENV-3）。所以新接入和替换都排队经 `TerminalManager.whenClientCanStart` / `_inClientTurn`：确认旧客户端的进程已消失才启动，启动窗口内不结束别的客户端（`_endClient` 排队）。不要改回先启动新的、靠 `-d` 踢旧的；换 ConPTY DLL 也不是修复，实测同样漏。排队期间已取消的请求不得产生任何副作用。结束后超时仍活着就让接入失败并可重试（`TERMINAL_BUSY`，关闭码 1011），不并排启动；不要对同一个 pid 再结束一次（可能已被复用），只等 `onExit` 或确认 pid 已不存在。`onExit` 之后任何路径都不得再结束它
 - **Windows 上被接管的连接立即失效，不等 `onExit`**：`onExit` 可能比进程消失晚约 1 秒，这段时间里旧 socket 的 resize 会反过来把会话抢回去。`_takeOver` / `_retire` 立刻把连接移出 `connections`、关闭 socket（接管用 1000，页面不再重连），`_leaving` 等待和 `onExit` 里的释放照常进行；消息入口先校验连接仍有效
 - **客户端变更期间的输入留给下一个客户端**：网关的 `early`（接入前）和连接的 `heldInput`（从接受一次改变尺寸的 resize 起，到新客户端建立或尺寸改回）都只投递一次，总量受 `MAX_HELD_INPUT_BYTES` 限制，超过就以 1009 关闭并清空。不要把输入写给马上要结束的客户端。已经写入的，`_killClient` 按字节数等 server 读完（`INPUT_READ_*`，有上限）：这是尽力保护，不保证长粘贴，也不是 DA 问题的修复，不要拿它替代排队；没写过输入的客户端不等
@@ -77,6 +77,17 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 - 启停 tmux server：`systemctl --user {start,stop,restart} tmux-server`
 - 手动 `tmux kill-server` 后 unit 重启会拉起空 server，面板在下一次检查（≤20 秒）时自动恢复；也可以在“会话”页面的“找回会话”里按时间点恢复单个会话（作为新会话，不影响正在运行的）
 - 只恢复窗口结构、目录，并按页面上勾选的程序重新打开（claude 用 `--continue`、codex 用 `resume --last` 接着上次的对话）；不恢复进程内存状态
+
+## 原生工作台契约
+
+完整设计见 [docs/local-workbench-design.md](docs/local-workbench-design.md)。`native-window` 使用真实 tmux 客户端，一个 xterm 渲染完整窗口；布局、prefix、自定义绑定、copy-mode、状态栏和 popup 的权威都在 tmux，不在浏览器。
+
+- NativeWindowPool 保留每个标签页的客户端，刷新/断线重新订阅并获取原子重绘，普通 focus 和相同 resize 不得 reset。关闭订阅不等于终止窗格。
+- `--panel-pty` 在 Unix/MSYS 内拥有自己的 PTY；此新路径原地 resize，只释放自己创建的 attach，不经过 ConPTY。前述 ConPTY 禁令及 Windows 客户端替换队列仍适用于旧路径，不能因此放宽。
+- 原生握手应答通过 response 回到同一 PTY；用户 input 等恢复完成。快照验证实例和 pid，按完整 begin/end 边界与直播串行解析，不能以 capture-pane 文本或分块 reset 代替。
+- Git 等焦点相关操作必须 context-request 即时查询真实 pid/tty；轮询缓存不能作为点击当刻的答案。viewId 只标识本地工具归属，不冒充 tmux windowId。
+- `native_client_protocol` 检查运行中的 server。只更新二进制不代表旧 server 已升级；不得为了开启工作台结束现有任务。
+- 终端与 API 的 SSH 转发使用独立物理连接；终端禁用 ControlMaster 复用。身份或证书改变时才整体失效，单条通道的迟到错误不能断开另一条健康通道。
 
 ## 终端首屏契约
 

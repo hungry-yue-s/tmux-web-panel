@@ -12,6 +12,7 @@ $env:PORT = [string]$cfg.port
 $env:HOST = [string]$cfg.host
 $env:TMUX_BIN = $cfg.tmuxBin
 $env:MSYS2_ROOT = $cfg.msys2Root
+$env:PATH = (Split-Path -Parent $cfg.tmuxBin) + ';' + (Join-Path $cfg.msys2Root 'usr\bin') + ';' + $env:PATH
 $env:LANG = 'C.UTF-8'
 $env:LC_CTYPE = 'C.UTF-8'
 if ($cfg.auth) { $env:AUTH = $cfg.auth }

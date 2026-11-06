@@ -21,7 +21,7 @@ async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), 'tmux-desktop-unit-'));
   cleanups.push(() => rm(dir, { recursive: true, force: true }));
   const bundle = join(dir, '客户端 & bundle'), home = join(dir, '测试 & user');
-  await mkdir(join(bundle, 'bin'), { recursive: true }); await mkdir(join(bundle, 'app/server'), { recursive: true });
+  await mkdir(join(bundle, 'bin'), { recursive: true }); await mkdir(join(bundle, 'app/bin'), { recursive: true });
   for (const p of ['bin/node', 'bin/tmux', 'app/bin/panel.js']) await writeFile(join(bundle, p), 'fixture', { mode: 0o755 });
   await writeFile(join(bundle, 'manifest.json'), JSON.stringify({ buildId: 'unit-test', arch: process.arch, nodeVersion: 'v24-test', tmuxVersion: 'test', tmuxSourceCommit: 'a'.repeat(40) }));
   await mkdir(join(bundle, 'app/plugins/ui/client/js'), { recursive: true });

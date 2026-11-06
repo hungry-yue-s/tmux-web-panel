@@ -500,6 +500,19 @@ describe('AppShell window bar', () => {
       'Blocks.openGit': () => ctx.win.Blocks.openGit(),
     });
 
+    it('accepts a fresh native focus reply on the first click without cancelling its own updated key', async () => {
+      const { ctx, get, open } = focusSetup();
+      ctx.Store.setRoute({ name: 'workbench', params: { serverId: 'local', viewId: 'v1' } });
+      let current = { onTerminal: true, serverId: 'local', viewId: 'v1', clientId: 'native', paneId: '%95', key: 'cached' };
+      ctx.win.Workbench = { currentContext: () => current, focusedContext: async () => {
+        current = { ...current, paneId: '%7', key: 'fresh' };
+        return { ...current, focusRequestKey: 'cached' };
+      } };
+      ctx.win.Blocks.openGit();
+      await vi.waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith('git', { path: '/repo/focused' }));
+      expect(get.mock.calls[0][1].paneId).toBe('%7'); ctx.win.close();
+    });
+
     it('asks about the tmux active pane, not the pane in the route or the one attached with', async () => {
       const { ctx, get, open } = focusSetup({ focused: '%7' });
       ctx.win.Blocks.openGit();

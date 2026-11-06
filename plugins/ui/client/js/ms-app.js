@@ -34,6 +34,7 @@
     _serversRequest: null,
     /** What the live terminal shows, so showing it again does not attach again. */
     _terminalMountKey: null,
+    _workbenchMountKey: null,
     _resolvingDefaultWindow: false,
 
     /**
@@ -128,6 +129,9 @@
         if (global.FilePreview && typeof global.FilePreview.reconcileWorkspace === 'function') {
           global.FilePreview.reconcileWorkspace(serverId, workspace);
         }
+        if (global.Workbench && typeof global.Workbench.reconcileWorkspace === 'function') {
+          global.Workbench.reconcileWorkspace(serverId, workspace);
+        }
         this._workspaceReadAt[serverId] = Date.now();
         global.Store.setWorkspace(serverId, workspace);
         return workspace;
@@ -193,8 +197,12 @@
       }
       global.document.querySelectorAll('.mobile-header > .mobile-pane-strip, .mobile-header > .terminal-refresh-btn')
         .forEach(node => node.remove());
+      if (route.name !== 'workbench' && this._workbenchMountKey) {
+        if (global.Workbench) global.Workbench.unmount();
+        this._workbenchMountKey = null;
+      }
       if (route.name !== 'terminal') {
-        this._setDockContext(null, null);
+        if (route.name !== 'workbench') this._setDockContext(null, null);
         // Otherwise its attach client stays connected with nothing on screen.
         this._terminalMountKey = null;
         this._resolvingDefaultWindow = false;
@@ -205,6 +213,11 @@
       this._teardownAgentHub();
       this._teardownSessionProtection();
       const serverId = (route.params && route.params.serverId) || 'local';
+
+      if (route.name === 'workbench') {
+        await this._renderWorkbench(route, serverId, view, generation);
+        return;
+      }
 
       if (route.name === 'servers') {
         // Status mode is always a selected server, never a list to click through.
@@ -263,6 +276,45 @@
       }
 
       await this._renderTerminal(route, serverId, view, generation);
+    },
+
+    async _renderWorkbench(route, serverId, view, generation) {
+      const viewId = route.params.viewId;
+      const key = serverId + '\u0000' + viewId;
+      if (this._workbenchMountKey === key && view.querySelector('#ms-workbench-host')) return;
+      if (global.Workbench) global.Workbench.unmount();
+      this._workbenchMountKey = null;
+      global.TerminalTarget.set({ serverId, viewId, provider: 'tmux' });
+      if (global.state) global.state.currentTab = 'terminal';
+      view.classList.add('terminal-mode');
+      view.innerHTML = '<section class="section terminal-stage" id="ms-workbench-host"></section>';
+      const host = view.querySelector('#ms-workbench-host');
+      if (!global.Workbench) {
+        host.textContent = '正在加载本地工作台…';
+        return;
+      }
+      const saved = global.Workbench.get(viewId);
+      if (!saved || saved.serverId !== serverId) {
+        this._setDockContext(null, null);
+        host.textContent = '此原生工作台不存在。旧版原型布局数据仍保留，请从现有窗口打开工作台。';
+        return;
+      }
+      // The saved view can attach immediately; the sidebar's machine tree catches up separately.
+      if (!global.AppShell.workspace(serverId)) this.refreshWorkspace(serverId, { shared: true });
+      global.AppShell.setHeader((global.AppShell.server(serverId) || {}).name || serverId, saved.title || '本地工作台', '');
+      if (global.FilePreview && global.FilePreview.switchViewContext) global.FilePreview.switchViewContext(serverId, viewId);
+      this._workbenchMountKey = key;
+      await global.Workbench.render(serverId, viewId, { container: host });
+      if (generation !== this._routeGeneration) return;
+      this._syncWorkbenchContext(global.Workbench.currentContext());
+    },
+
+    _syncWorkbenchContext(context) {
+      const route = global.Router.current();
+      if (!context || route.name !== 'workbench' || context.serverId !== route.params.serverId || context.viewId !== route.params.viewId) return;
+      global.TerminalTarget.set({ ...context, provider: 'tmux' });
+      if (global.state) global.state.currentPane = context.paneId || null;
+      global.AppShell.render();
     },
 
     /** Returns the PerfPanel mode owned by this status route. */
@@ -658,6 +710,10 @@
       // The user may have gone elsewhere meanwhile, maybe to another server. This
       // tree must not reach that page's header, terminal or dock.
       if (generation !== this._routeGeneration || !global.Router.isSame(global.Router.current(), route)) return;
+      if (route.name === 'workbench') {
+        global.AppShell.render();
+        return;
+      }
       if (!workspace) {
         await this._onRoute(route);
         return;
@@ -812,6 +868,7 @@
           actions.closeSession && ['close-session', '关闭', true],
         ]
         : [
+          global.Workbench && ['open-legacy-terminal', '打开兼容终端', false],
           actions.renameWindow && ['rename-window', '重命名', false],
           actions.closeWindow && ['close-window', '关闭', true],
         ];
@@ -844,6 +901,13 @@
 
     /** Single delegated listener for the whole shell. */
     _bindEvents() {
+      global.addEventListener('workbench-focus-changed', event => this._syncWorkbenchContext(event.detail));
+      global.addEventListener('workbench-views-changed', () => global.AppShell.render());
+      global.addEventListener('workbench-ready', () => {
+        global.AppShell.render();
+        const route = global.Router.current();
+        if (route.name === 'workbench') this._onRoute(route).catch(err => this._reportRouteFailure(err));
+      });
       global.document.addEventListener('input', (event) => {
         if (!global.Theme) return;
         if (event.target.id === 'native-transparency') global.Theme.setTransparency(event.target.value);
@@ -976,6 +1040,31 @@
         name: node.dataset.entityName || (row && row.dataset.entityName) || null,
       };
 
+      if (action === 'new-workbench' || action === 'open-workbench') {
+        if (!global.Workbench) throw new Error('本地工作台尚未加载');
+        const generation = this._routeGeneration;
+        const route = global.Router.current();
+        const workspace = global.AppShell.workspace(serverId) || await this.refreshWorkspace(serverId, { shared: true });
+        if (generation !== this._routeGeneration || !global.Router.isSame(global.Router.current(), route)) return;
+        const sessionId = node.dataset.session || (row && row.dataset.session);
+        const session = global.AppShell._findSession(workspace, sessionId);
+        if (!session || !workspace.instanceId) throw new Error('请等待会话读取完成');
+        const windowId = node.dataset.window || (row && row.dataset.window);
+        const win = (session.windows || []).find(item => item.id === windowId) || (!windowId && ((session.windows || []).find(item => item.active) || (session.windows || [])[0]));
+        if (windowId && !win) throw new Error('此窗口已不存在，请刷新会话列表');
+        const existing = global.Workbench.list ? global.Workbench.list(serverId).find(item => item.instanceId === workspace.instanceId && item.sessionId === sessionId && item.windowId === (win && win.id)) : null;
+        const created = existing || await global.Workbench.create({ serverId, sessionId, instanceId: workspace.instanceId, ...(win ? { windowId: win.id } : {}), title: (win && win.name) || session.name });
+        if (generation === this._routeGeneration && global.Router.isSame(global.Router.current(), route)) global.Workbench.open(created.id);
+        return;
+      }
+
+      if (action === 'open-legacy-terminal') {
+        const sessionId = node.dataset.session || (row && row.dataset.session);
+        const windowId = node.dataset.window || (row && row.dataset.window);
+        global.Router.go({ name: 'terminal', params: { serverId, sessionId, windowId } });
+        return;
+      }
+
       if (action === 'detach-status') {
         const route = global.Router.current();
         if (route.name !== 'server') return;
@@ -1008,8 +1097,11 @@
         const route = global.Router.current();
         const server = global.AppShell.server(serverId);
         const paneId = global.AppShell.mobilePaneId(route);
-        if (route.name !== 'terminal' || !server || !paneId) return;
-        if (global.FilePreview) global.FilePreview.openFile('.', paneId);
+        if ((route.name !== 'terminal' && route.name !== 'workbench') || !server || !paneId) return;
+        if (global.FilePreview) {
+          if (route.name === 'workbench') global.FilePreview.openFile('.', paneId, { source: { serverId, paneId } });
+          else global.FilePreview.openFile('.', paneId);
+        }
         return;
       }
       if (action === 'mobile-workspace') {

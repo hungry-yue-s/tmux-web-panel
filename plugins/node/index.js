@@ -35,6 +35,8 @@ export async function apply(ctx, config) {
     tmuxVersion: () => ctx.tmux.version(),
     mosh: capabilities.get('mosh') ?? null,
     moshClient: capabilities.get('moshClient') ?? null,
+    controlTerminal: capabilities.get('controlTerminal') ?? null,
+    nativeWindow: capabilities.get('nativeWindow') ?? null,
   });
   const setCapability = (capability, probe) => {
     capabilities.set(capability, probe);

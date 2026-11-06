@@ -313,7 +313,19 @@
 
       var sessions = workspace.sessions || [];
       var actions = workspace.actions || {};
-      var head = '<div class="tree-section-head"><span>会话</span>'
+      var workbench = global.Workbench;
+      var canWorkbench = !!(workbench && this.health(serverId).capabilities && this.health(serverId).capabilities.nativeWindow && this.health(serverId).capabilities.nativeWindow.available);
+      var views = workbench ? workbench.list(serverId) : [];
+      var localViews = views.length ? '<div class="tree-section-head"><span>工作台</span></div><div class="tree">'
+        + views.map(function (view) {
+          var stale = workspace.complete === true && workspace.instanceId && view.instanceId && workspace.instanceId !== view.instanceId;
+          return '<button class="tree-item ' + (stale ? 'wb-view-stale ' : '') + (((route && route.params) || {}).viewId === view.id ? 'active' : '') + '"'
+            + (stale ? ' title="此工作台绑定旧会话，目标已保留，不会自动替换或结束原任务"' : '') + ' data-route="'
+            + esc(global.Router.serialize({ name: 'workbench', params: { serverId: serverId, viewId: view.id } })) + '">'
+            + ICONS.overview + '<span>' + esc(view.title || '工作台') + '</span>'
+            + (stale ? '<small class="wb-view-state">旧会话</small>' : '') + '</button>';
+        }).join('') + '</div>' : '';
+      var head = localViews + '<div class="tree-section-head"><span>会话</span>'
         + providerBadge(workspace)
         + (actions.createSession
           ? '<button class="tree-add-button" data-action="new-session" title="在当前服务器新建会话"'
@@ -344,6 +356,9 @@
           + '<span>' + esc(session.name) + '</span>'
           + '<span class="cmd">' + (session.windows || []).length + ' 个窗口</span>'
           + '</button>'
+          + (canWorkbench
+            ? '<button type="button" class="tree-add-button" data-action="new-workbench" data-session="' + esc(session.id)
+              + '" title="打开原生工作台" aria-label="在 ' + esc(session.name) + ' 中打开原生工作台">▦</button>' : '')
           + (actions.createWindow
             ? '<button type="button" class="tree-add-button tree-create-window" data-action="new-window"'
               + ' data-session="' + esc(session.id) + '" title="新建窗口" aria-label="在 ' + esc(session.name) + ' 中新建窗口">+</button>'
@@ -366,8 +381,11 @@
       if (windows.length === 0) return '';
       var workspace = this.workspace(serverId);
       var actions = (workspace && workspace.actions) || {};
+      var capability = this.health(serverId).capabilities;
+      var native = !!(global.Workbench && capability && capability.nativeWindow && capability.nativeWindow.available);
+      var focused = global.Workbench && global.Workbench.currentContext ? global.Workbench.currentContext() : null;
       return '<div class="tree-window-list">' + windows.map(function (win) {
-        var active = params.windowId === win.id;
+        var active = params.windowId === win.id || !!(focused && focused.serverId === serverId && focused.windowId === win.id);
         var pane = (win.panes || [])[0];
         var target = {
           name: 'terminal',
@@ -389,12 +407,12 @@
           + ' data-window-index="' + esc(String(win.index)) + '"'
           + ' data-entity-name="' + esc(win.name) + '">'
           + '<button class="tree-item ' + (active ? 'active' : '') + '"'
-          + ' data-route="' + esc(global.Router.serialize(target)) + '"'
+          + (native ? ' data-action="open-workbench" data-server-id="' + esc(serverId) + '" data-session="' + esc(session.id) + '" data-window="' + esc(win.id) + '"' : ' data-route="' + esc(global.Router.serialize(target)) + '"')
           + ' title="' + esc(win.name) + '"'
           + (active ? ' aria-current="page"' : '')
           + '><span class="tree-item-name">' + esc(win.name) + '</span>'
           + (command ? '<span class="cmd">' + esc(command) + '</span>' : '') + '</button>'
-          + ((actions.renameWindow || actions.closeWindow)
+          + ((native || actions.renameWindow || actions.closeWindow)
             ? '<button type="button" class="tree-add-button tree-menu-button" data-action="workspace-entity-menu"'
               + ' aria-label="' + esc(win.name) + ' 的窗口操作" aria-haspopup="menu" aria-expanded="false"'
               + ' aria-controls="ms-sidebar-context-menu">⋯</button>'
@@ -423,7 +441,7 @@
       if (!title || !subtitle || !trigger) return;
       var serverId = this.activeServerId();
       var server = this.server(serverId);
-      var isTerminal = route && route.name === 'terminal';
+      var isTerminal = route && (route.name === 'terminal' || route.name === 'workbench');
       trigger.hidden = false;
       trigger.disabled = false;
       trigger.setAttribute('aria-expanded', String(this.isMobileWorkspaceOpen()));
@@ -435,6 +453,11 @@
         var win = this._findWindow(session, params.windowId);
         title.textContent = win ? (win.index + ' ' + win.name) : '选择工作区';
         subtitle.textContent = session ? session.name : (server ? server.name : serverId);
+        if (route.name === 'workbench') {
+          var localView = global.Workbench && global.Workbench.get(params.viewId);
+          title.textContent = localView ? localView.title || '工作台' : '工作台';
+          subtitle.textContent = server ? server.name : serverId;
+        }
       } else {
         title.textContent = this._titleFor(route);
         subtitle.textContent = server ? server.name : serverId;
@@ -455,6 +478,10 @@
     },
 
     mobilePaneId: function (route) {
+      if (route && route.name === 'workbench') {
+        var context = global.Workbench && global.Workbench.currentContext();
+        return context && context.serverId === route.params.serverId && context.viewId === route.params.viewId ? context.paneId : null;
+      }
       var params = (route && route.params) || {};
       var session = this._findSession(this.workspace(params.serverId || 'local'), params.sessionId);
       var win = this._findWindow(session, params.windowId);
@@ -486,7 +513,7 @@
       if (!tree) return;
       var route = global.Store.getState().route || {};
       tree.innerHTML = this._renderTree(this.activeServerId(), route, true);
-      el('ms-mobile-workspace-sheet').classList.toggle('has-terminal', route.name === 'terminal');
+      el('ms-mobile-workspace-sheet').classList.toggle('has-terminal', route.name === 'terminal' || route.name === 'workbench');
     },
 
     _syncMobileWorkspaceSheet: function (route) {
@@ -621,7 +648,7 @@
       for (var i = 0; i < nodes.length; i += 1) {
         var target = nodes[i].dataset.route || '';
         var isActive = false;
-        if (name === 'terminal') isActive = target.indexOf('#/terminal/') === 0;
+        if (name === 'terminal' || name === 'workbench') isActive = target.indexOf('#/terminal/') === 0;
         else if (name === 'servers' || name === 'server') isActive = target === '#/servers';
         else isActive = target === '#/' + name;
         nodes[i].classList.toggle('active', isActive);

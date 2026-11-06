@@ -374,7 +374,7 @@ describe('NodeLink with a link that stalls', () => {
     const port = await deadForward();
     const link = linkTo(port);
     let release;
-    link.ensure = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+    link.ensureTerminalLane = vi.fn(() => new Promise((resolve) => { release = resolve; }));
     const browser = new EventEmitter();
     browser.destroyed = false;
     browser.end = vi.fn();
@@ -1458,7 +1458,8 @@ describe.skipIf(!OPENSSL)('NodeLink over HTTPS', () => {
       const before = ways.direct.connections;
       expect(await socketTo(ways.hub, '/ws/terminal/%251')).toBe('hello');
       expect(ways.direct.connections).toBe(before);
-      expect(ways.forward.connections).toBe(viaForward + 1);
+      expect(ways.forward.connections).toBe(viaForward + 2); // New terminal lane's listener probe, then its upgrade.
+      expect(ways.connection.openForward).toHaveBeenCalledTimes(2);
       // The token went every way it went, and only to the pinned node.
       expect(ways.target.seen.every((r) => r.headers.authorization === `Bearer ${TOKEN}`)).toBe(true);
     });
@@ -1471,6 +1472,7 @@ describe.skipIf(!OPENSSL)('NodeLink over HTTPS', () => {
       expect(await get(ways.hub)).toBe(200);
       expect(ways.direct.connections).toBe(2); // the check, then the terminal
       expect(ways.forward.connections).toBe(viaForward + 1); // the request
+      expect(ways.connection.openForward).toHaveBeenCalledTimes(1); // Direct terminals never open the second SSH lane.
     });
 
     it('refuses another certificate on the direct way: no token there, the forward carries on', async () => {
@@ -1537,7 +1539,8 @@ describe.skipIf(!OPENSSL)('NodeLink over HTTPS', () => {
       ways.direct.cut();
       const viaForward = ways.forward.connections;
       expect(await socketTo(ways.hub, '/ws/terminal/%251')).toBe('hello');
-      expect(ways.forward.connections).toBe(viaForward + 1);
+      expect(ways.forward.connections).toBe(viaForward + 2); // No terminal SSH lane until the direct way fails.
+      expect(ways.connection.openForward).toHaveBeenCalledTimes(2);
       expect(ways.link.paths().direct).toMatchObject({ status: 'down', reason: 'econnrefused' });
     });
 

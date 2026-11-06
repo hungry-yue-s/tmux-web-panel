@@ -1931,6 +1931,7 @@
     var asked = ++chipAsked;
     var isStale = function () { return ui.selectedContext().key !== selected.key; };
     ui.focusedContext().then(function (ctx) {
+      if (ctx.focusRequestKey === selected.key && ctx.viewId === selected.viewId && ui.selectedContext().key === ctx.key) selected = ctx;
       if (isStale()) return null;
       return ui.client(ctx.serverId).get('/api/git/status', { path: '.', paneId: ctx.paneId }).then(function (data) {
         // The user moved on while this was running: it describes another repository.
@@ -1990,6 +1991,7 @@
       return;
     }
     ui.focusedContext().then(function (ctx) {
+      if (ctx.focusRequestKey === selected.key && ctx.viewId === selected.viewId && ui.selectedContext().key === ctx.key) selected = ctx;
       if (moved()) { if (diagnostic) diagnostic({ code: 'GIT_STALE' }); return null; }
       phase = 'status';
       var asked = ++chipAsked;
@@ -2112,6 +2114,7 @@
     scheduleChip();
   });
   window.addEventListener('terminal-pane-selected', scheduleChip);
+  window.addEventListener('workbench-focus-changed', scheduleChip);
   document.addEventListener('visibilitychange', refreshChip);
   setInterval(refreshChip, 15000);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

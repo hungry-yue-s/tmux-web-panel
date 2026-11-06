@@ -134,6 +134,8 @@ npm test
 | `notifications` | `notifications`, `agentEvents` | launch, http | 通知存储与 Agent 事件 |
 | `status` | `status` | launch, http, notifications, agentEvents | `/ws/status`，轮询 tmux，转播 `status/*` 事件 |
 | `terminal` | `terminals` | launch, http, workspace | `/ws/terminal/:paneId`，TerminalManager 的全部 Windows 契约 |
+| `control-terminal` | `controlTerminals` | launch, http, tmux, workspace, node | 原生窗口客户端池与 `/ws/native-window/*`、原始 pane-stream、幂等窗口创建；卸载仅关闭自己的客户端 |
+| `workbench` | — | launch, client（可选 ui） | 原生窗口工作台页面与非秘密存储 scope，视图/工具状态按 viewId 保存 |
 | `pins` | `pins` | launch, http, tmux | 固定窗口 |
 | `share` | `shares` | launch, http, timer | 预览快照分享，公开的 `/s/:id` |
 | `files` | — | launch, http | 文件、上传、Git、SQLite、notebook、`twp open` |
@@ -156,7 +158,7 @@ npm test
 | `status/event (event)` | files（`twp open`） | status |
 | `mosh/refresh-components` | servers（本机装完 Mosh 组件后，`parallel` 等它完成） | mosh |
 
-可选组件的能力（`mosh`、`moshClient`）由提供方经 `ctx.node.setCapability(name, probe)` 报进 `/api/node/info`，包在 `ctx.effect` 里随插件撤销。
+可选组件的能力（`mosh`、`moshClient`、`nativeWindow`、`controlTerminal`）由提供方经 `ctx.node.setCapability(name, probe)` 报进 `/api/node/info`，包在 `ctx.effect` 里随插件撤销。
 
 ## 浏览器端
 

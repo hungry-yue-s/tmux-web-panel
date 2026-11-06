@@ -144,6 +144,11 @@ describe('arguments for MSYS2 programs', () => {
     expect(msysExecArgs(['a"b'], options, true)).toEqual([[`'a"b'`], { timeout: 5, windowsVerbatimArguments: true }]);
   });
 
+  it('quotes argv0 as well as arguments for managed executables in spaced Windows paths', () => {
+    const [, options] = msysExecArgs(['-V'], { argv0: "C:\\Users\\O'Brien\\tool folder\\tmux.exe" }, true);
+    expect(options.argv0).toBe(String.raw`'C:\Users\O'"'"'Brien\tool folder\tmux.exe'`);
+  });
+
   it('finds the home tmux reads ~/.tmux.conf from', () => {
     expect(tmuxUserHome({ windows: true, root: ROOT, user: 'me' })).toBe('C:\\msys64\\home\\me');
   });

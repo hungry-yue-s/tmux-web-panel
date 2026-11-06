@@ -2,6 +2,9 @@
 .fp-back-label { display:none; }
 
 @media (max-width:767px), (pointer:coarse) and (max-height:560px) and (max-width:1023px) {
+  /* A file opened from a tool stays above that tool's mobile sheet. */
+  body.blk-sheet-open > .fp-overlay:not(.fp-side):not(.fp-chooser) { z-index: 12600; }
+
   .fp-overlay:not(.fp-side):not(.fp-chooser) {
     inset:var(--mobile-viewport-top,0px) 0 auto; width:100%; height:var(--mobile-viewport-height,100dvh); padding:0;
     align-items:stretch; justify-content:stretch; background:var(--fp-panel);

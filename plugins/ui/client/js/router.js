@@ -74,6 +74,7 @@
     var rest = parts.slice(1);
     if (head === 'home') return defaultRoute();
     if (head === 'terminal') return parseTerminal(rest);
+    if (head === 'workbench' && rest.length === 2) return { name: 'workbench', params: { serverId: rest[0], viewId: rest[1] } };
     if (head === 'servers' || head === 'server') return parseServers(rest);
     if (head === 'settings' && rest.length === 0) return { name: 'settings', params: {} };
     return defaultRoute();
@@ -82,6 +83,7 @@
   function serialize(route) {
     var r = route && route.name ? route : defaultRoute();
     var p = r.params || {};
+    if (r.name === 'workbench' && p.viewId) return '#/workbench/' + enc(p.serverId || DEFAULT_SERVER_ID) + '/' + enc(p.viewId);
     if (r.name === 'terminal') {
       var out = '#/terminal/' + enc(p.serverId || DEFAULT_SERVER_ID);
       for (var i = 1; i < TERMINAL_KEYS.length; i++) {

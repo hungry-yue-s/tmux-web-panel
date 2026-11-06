@@ -1,10 +1,12 @@
 import { rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const PRIVATE_TMUX_IDENTITY_FORMAT = '#{pid}\t#{socket_path}';
+// tmux sanitizes literal control characters in formats on some platforms.
+// Our generated private paths contain no pipe, so use a printable separator.
+export const PRIVATE_TMUX_IDENTITY_FORMAT = '#{pid}|#{socket_path}';
 
 export function parsePrivateTmuxIdentity(output, socket) {
-  const [pid, socketPath, extra] = String(output).trim().split('\t');
+  const [pid, socketPath, extra] = String(output).trim().split('|');
   if (!/^[1-9]\d*$/.test(pid) || !Number.isSafeInteger(Number(pid)) || socketPath !== socket || extra !== undefined) {
     throw new Error('tmux did not identify the expected private socket');
   }

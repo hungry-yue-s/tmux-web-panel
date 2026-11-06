@@ -6,10 +6,11 @@ var FilePreview = (function () {
    * '' for the panel's own machine, '/n/:serverId' for another server: files
    * are always read on the machine whose pane printed the path.
    */
-  function _machine() {
+  function _machine(source) {
     var api = typeof window !== 'undefined' ? window.Api : null;
     if (!api || typeof api.nodeUrl !== 'function') return '';
-    return api.nodeUrl(api.activeServerId(), '');
+    var origin = source || _currentSource;
+    return api.nodeUrl(origin ? origin.serverId : api.activeServerId(), '');
   }
 
   var _overlay = null;
@@ -18,6 +19,7 @@ var FilePreview = (function () {
   var _maximized = false;
   var _currentFile = null;
   var _currentPaneId = null;
+  var _currentSource = null;
   var _dirContext = null; // parent dir abs path, set when a file is opened from the dir browser
   var _placement = 'modal';
   var _placementButton = null;
@@ -49,6 +51,7 @@ var FilePreview = (function () {
   var _dockContextGeneration = 0;
   var AUTO_REFRESH_MS = 1500;
   var DOCK_STATE_PREFIX = 'tmux_file_preview_dock_v4:';
+  var VIEW_DOCK_STATE_PREFIX = 'tmux_file_preview_view_dock_v1:';
   var LEGACY_DOCK_STATE_KEY = 'tmux_file_preview_dock_v1';
   var LEGACY_DOCK_WIDTH_KEY = 'tmux_file_preview_side_width';
   var DOCK_STATE_VERSION = 1;
@@ -85,7 +88,8 @@ var FilePreview = (function () {
   }
 
   function _dockStateStorageKey(contextKey) {
-    return contextKey && contextKey.split('\u0000')[1] ? DOCK_STATE_PREFIX + encodeURIComponent(contextKey) : null;
+    if (!contextKey || !contextKey.split('\u0000')[1]) return null;
+    return (contextKey.split('\u0000')[1] === 'local-view' ? VIEW_DOCK_STATE_PREFIX : DOCK_STATE_PREFIX) + encodeURIComponent(contextKey);
   }
 
   function _currentDockStateKey() {
@@ -120,6 +124,7 @@ var FilePreview = (function () {
         return {
           path: tab.path,
           paneId: typeof tab.paneId === 'string' && /^%\d+$/.test(tab.paneId) ? tab.paneId : null,
+          source: tab.source && typeof tab.source.serverId === 'string' ? tab.source : null,
         };
       });
       if (tabs.length === 0) {
@@ -160,7 +165,9 @@ var FilePreview = (function () {
     var state = {
       version: DOCK_STATE_VERSION,
       tabs: _fileTabs().slice(0, MAX_PERSISTED_DOCK_TABS).map(function (tab) {
-        return { path: tab.path, paneId: tab.paneId || null };
+        var saved = { path: tab.path, paneId: tab.paneId || null };
+        if (_dockContextKey.split('\u0000')[1] === 'local-view' && tab.source) saved.source = tab.source;
+        return saved;
       }).filter(function (tab) { return typeof tab.path === 'string' && tab.path.charAt(0) === '/'; }),
       activePath: active && !active.block ? active.path : null,
       hidden: _dockHidden,
@@ -191,7 +198,7 @@ var FilePreview = (function () {
     });
     if (_dockContextKey) {
       var current = _dockContextKey.split('\u0000');
-      if (current[0] === serverId && !live.has(_dockContextKey)) {
+      if (current[0] === serverId && current[1] !== 'local-view' && !live.has(_dockContextKey)) {
         // Invalidate pending restores before deleting; switching must not save
         // the removed window back into localStorage later.
         var replacement = _makeDockContextKey(serverId, current[2], workspace.instanceId);
@@ -217,7 +224,7 @@ var FilePreview = (function () {
         }
       }
     } catch (_) { /* storage may be unavailable */ }
-    if (_blockWindowsGoneListener) _blockWindowsGoneListener(serverId, function (context) { return live.has(context); });
+    if (_blockWindowsGoneListener) _blockWindowsGoneListener(serverId, function (context) { return context.split('\u0000')[1] === 'local-view' || live.has(context); });
   }
 
   /** A successful DELETE is enough evidence even if the next tree fetch fails. */
@@ -249,7 +256,7 @@ var FilePreview = (function () {
     return !_isMobileReader() && window.innerWidth >= 900
       && !!_dockContextKey
       && !!_dockLayout()
-      && !!document.querySelector('.terminal-view')
+      && !!document.querySelector('.terminal-view, .wb-stage, #ms-workbench-host')
       && bounds.max >= bounds.min;
   }
 
@@ -725,6 +732,7 @@ var FilePreview = (function () {
     if (!tab || tab.block) return;
     tab.currentFile = _currentFile;
     tab.paneId = _currentPaneId;
+    tab.source = _currentSource;
     tab.dirContext = _dirContext;
     tab.placementButton = _placementButton;
     tab.maximizeButton = _maximizeButton;
@@ -898,21 +906,26 @@ var FilePreview = (function () {
 
   function _hideDock(persistHidden) {
     if (!_dockOverlay) return;
-    if (_shareDialogClose) _shareDialogClose(false);
+    var modalOpen = _overlay && _overlay !== _dockOverlay && _placement !== 'side';
+    if (!modalOpen && _shareDialogClose) _shareDialogClose(false);
     _pauseVideos(_dockOverlay);
-    if (document.__fpActiveMermaidDialogClose) document.__fpActiveMermaidDialogClose();
-    _previewGeneration++;
-    _stopAutoRefresh();
-    _saveActiveDockTab();
+    if (!modalOpen) {
+      if (document.__fpActiveMermaidDialogClose) document.__fpActiveMermaidDialogClose();
+      _previewGeneration++;
+      _stopAutoRefresh();
+      _saveActiveDockTab();
+    }
     _dockHidden = true;
     _cleanupSideResize();
     _dockOverlay.remove();
     document.body.classList.remove('fp-side-open');
-    _placement = 'modal';
-    _overlay = null;
-    _currentFile = null;
-    _currentPaneId = null;
-    _dirContext = null;
+    if (!modalOpen) {
+      _placement = 'modal';
+      _overlay = null;
+      _currentFile = null;
+      _currentPaneId = null;
+      _dirContext = null;
+    }
     if (!_dockRestoreButton) {
       _dockRestoreButton = document.createElement('button');
       _dockRestoreButton.className = 'fp-dock-restore';
@@ -958,6 +971,7 @@ var FilePreview = (function () {
     _placement = 'side';
     _currentFile = tab.block ? null : tab.currentFile;
     _currentPaneId = tab.block ? null : tab.paneId;
+    _currentSource = tab.block ? null : tab.source || null;
     _dirContext = tab.block ? null : tab.dirContext;
     _placementButton = tab.block ? null : tab.placementButton;
     _maximizeButton = tab.block ? null : tab.maximizeButton;
@@ -1008,7 +1022,7 @@ var FilePreview = (function () {
     _dockTabs.splice(index, 1);
     if (_dockTabs.length === 0) {
       var opener = _dockReturnFocus;
-      _destroyDock();
+      _destroyDock(false, modalOpen);
       if (hadFocus && opener && opener.isConnected) opener.focus();
       return;
     }
@@ -1031,18 +1045,23 @@ var FilePreview = (function () {
     _persistDockState();
   }
 
-  function _destroyDock(preservePersisted) {
-    if (_shareDialogClose) _shareDialogClose(false);
-    _previewGeneration++;
-    _previewReady = false;
-    _closeActionMenu();
-    _stopAutoRefresh();
-    _cleanupSideResize();
+  function _destroyDock(preservePersisted, preserveModal) {
     var separateOverlay = _overlay && _overlay !== _dockOverlay ? _overlay : null;
-    _pauseVideos(separateOverlay);
+    var keepModal = preserveModal && separateOverlay;
+    if (!keepModal) {
+      if (_shareDialogClose) _shareDialogClose(false);
+      _previewGeneration++;
+      _previewReady = false;
+      _closeActionMenu();
+      _stopAutoRefresh();
+    }
+    _cleanupSideResize();
+    if (!keepModal) _pauseVideos(separateOverlay);
     _dockTabs.forEach(function (tab) { _pauseVideos(tab.modal); });
-    _disposePreview(separateOverlay);
-    if (separateOverlay) separateOverlay.remove();
+    if (!keepModal) {
+      _disposePreview(separateOverlay);
+      if (separateOverlay) separateOverlay.remove();
+    }
     _dockTabs.forEach(function (tab) { _disposePreview(tab.modal); });
     _disposePreview(_dockOverlay);
     if (_dockOverlay) _dockOverlay.remove();
@@ -1054,6 +1073,7 @@ var FilePreview = (function () {
     _dockHidden = false;
     if (!preservePersisted) _clearPersistedDock();
     document.body.classList.remove('fp-side-open');
+    if (keepModal) return;
     _overlay = null;
     _placement = 'modal';
     _currentFile = null;
@@ -1088,7 +1108,7 @@ var FilePreview = (function () {
     modalOverlay.remove();
     var tab = {
       id: _nextDockTabId++, path: path, modal: modal,
-      currentFile: _currentFile, paneId: _currentPaneId, dirContext: _dirContext,
+      currentFile: _currentFile, paneId: _currentPaneId, source: _currentSource, dirContext: _dirContext,
       placementButton: _placementButton, maximizeButton: _maximizeButton,
       refreshButton: _refreshButton,
       previewReady: _previewReady,
@@ -1250,6 +1270,10 @@ var FilePreview = (function () {
     return restoreDocked(_dockContextGeneration);
   }
 
+  function switchViewContext(serverId, viewId) {
+    return switchDockContext(serverId, viewId, 'local-view');
+  }
+
   function restoreDocked(expectedGeneration) {
     var contextKey = _dockContextKey;
     var generation = expectedGeneration == null ? _dockContextGeneration : expectedGeneration;
@@ -1278,7 +1302,7 @@ var FilePreview = (function () {
     saved.tabs.forEach(function (tab) {
       chain = chain.then(function () {
         if (!_isDockContextCurrent(contextKey, generation)) return false;
-        return openFile(tab.path, tab.paneId, { restoring: true });
+        return openFile(tab.path, tab.paneId, { restoring: true, source: tab.source });
       }).then(function (opened) {
         if (!_isDockContextCurrent(contextKey, generation)) return;
         if (opened === true) {
@@ -1418,7 +1442,7 @@ var FilePreview = (function () {
       if (_dirContext) {
         var parent = _dirContext;
         _dirContext = null;
-        openFile(parent, _currentPaneId);
+        openFile(parent, _currentPaneId, { source: _currentSource });
       }
     });
     btnBack.className += ' fp-btn-back';
@@ -3708,7 +3732,7 @@ var FilePreview = (function () {
           _notifyFailure('未找到标题：' + heading);
         }
       } else if (resolved.kind === 'file') {
-        openFile(resolved.path, paneId || _currentPaneId, { markdownFragment: resolved.headingRef });
+        openFile(resolved.path, paneId || _currentPaneId, { markdownFragment: resolved.headingRef, source: _currentSource });
       } else if (resolved.kind === 'web') {
         _openWeb(resolved.href);
       } else if (resolved.kind === 'blocked') {
@@ -4376,11 +4400,12 @@ var FilePreview = (function () {
   }
 
   function openFromBuffer(paneId) {
+    var source = { serverId: window.Api && window.Api.activeServerId ? window.Api.activeServerId() : 'local', paneId: paneId };
     var _authHeaders = typeof Auth !== 'undefined' ? Auth.headers() : {};
     // No usable path → open the pane's cwd. '.' is resolved server-side against
     // #{pane_current_path} (resolveInputPath).
-    var openCwd = function () { openFile('.', paneId); };
-    fetch(_machine() + '/api/files/tmux-buffer', { headers: _authHeaders })
+    var openCwd = function () { openFile('.', paneId, { source: source }); };
+    fetch(_machine(source) + '/api/files/tmux-buffer', { headers: _authHeaders })
       .then(function (r) { return r.json(); })
       .then(function (res) {
         var p = (res && res.success && res.data && res.data.path) ? res.data.path : '';
@@ -4391,10 +4416,10 @@ var FilePreview = (function () {
         var probe = (typeof LinkDetect !== 'undefined') ? LinkDetect.parseLineRef(p).path : p;
         var qs = '?path=' + encodeURIComponent(probe)
           + (paneId ? '&paneId=' + encodeURIComponent(paneId) : '');
-        fetch(_machine() + '/api/files/info' + qs, { headers: _authHeaders })
+        fetch(_machine(source) + '/api/files/info' + qs, { headers: _authHeaders })
           .then(function (r) { return r.json(); })
           .then(function (info) {
-            if (info && info.success) { openFile(p, paneId); } else { openCwd(); }
+            if (info && info.success) { openFile(p, paneId, { source: source }); } else { openCwd(); }
           })
           .catch(openCwd);
       })
@@ -4406,10 +4431,10 @@ var FilePreview = (function () {
   // Dispatch a matched link by kind. Web opens a browser tab; file opens the
   // preview; ambiguous (e.g. example.com) asks the user which one (project rule:
   // don't guess URL-vs-file — let the user choose).
-  function _activateLink(f, paneId) {
+  function _activateLink(f, paneId, source) {
     if (f.kind === 'web') { _openWeb(f.href); return; }
-    if (f.kind === 'ambiguous') { _showLinkChooser(f, paneId); return; }
-    openFile(f.text, paneId, { lineRef: f.lineRef });
+    if (f.kind === 'ambiguous') { _showLinkChooser(f, paneId, source); return; }
+    openFile(f.text, paneId, { lineRef: f.lineRef, source: source });
   }
 
   function _openWeb(href) {
@@ -4418,7 +4443,7 @@ var FilePreview = (function () {
     if (href && /^https?:\/\//i.test(href)) window.open(href, '_blank', 'noopener');
   }
 
-  function _showLinkChooser(f, paneId) {
+  function _showLinkChooser(f, paneId, source) {
     var ov = document.createElement('div');
     ov.className = 'fp-overlay fp-chooser';
     ov.addEventListener('click', function (e) { if (e.target === ov) ov.remove(); });
@@ -4442,7 +4467,7 @@ var FilePreview = (function () {
     var file = document.createElement('button');
     file.className = 'fp-btn fp-chooser-btn';
     file.textContent = '📄 文件';
-    file.addEventListener('click', function () { ov.remove(); openFile(f.text, paneId); });
+    file.addEventListener('click', function () { ov.remove(); openFile(f.text, paneId, { source: source }); });
     row.appendChild(web);
     row.appendChild(file);
     box.appendChild(q);
@@ -4468,8 +4493,10 @@ var FilePreview = (function () {
     );
   }
 
-  function registerLinkProvider(term, paneId, resolvePaneId) {
-    term.registerLinkProvider({
+  function registerLinkProvider(term, paneId, resolvePaneId, source) {
+    var origin = source ? { serverId: source.serverId, paneId: source.paneId || paneId } : null;
+    var isCurrent = source && typeof source.isCurrent === 'function' ? source.isCurrent : null;
+    return term.registerLinkProvider({
       provideLinks: function (lineNumber, callback) {
         var bufRow = lineNumber - 1;
         var buf = term.buffer.active;
@@ -4495,8 +4522,12 @@ var FilePreview = (function () {
               // Keep window.open inside the original user gesture so browsers
               // do not block ordinary web links as async popups.
               if (f.kind === 'web') { _activateLink(f, paneId); return; }
+              if (isCurrent && !isCurrent()) {
+                if (window._showToast) window._showToast('终端来源尚未确认，请连接后重试');
+                return;
+              }
               _resolvePaneForAction(paneId, resolvePaneId, function (livePaneId) {
-                _activateLink(f, livePaneId);
+                _activateLink(f, origin ? origin.paneId : livePaneId, origin);
               });
             },
           };
@@ -4774,6 +4805,9 @@ var FilePreview = (function () {
     var body = _createModal(filePath);
     // _createModal saves the previous dock tab before the new file owns these.
     _currentPaneId = paneId || _currentPaneId;
+    var source = opts && opts !== true && opts.source;
+    _currentSource = source ? { serverId: source.serverId, paneId: source.paneId || _currentPaneId }
+      : { serverId: window.Api && window.Api.activeServerId ? window.Api.activeServerId() : 'local', paneId: _currentPaneId };
     _currentOpenPath = filePath;
     if (!keepDir) _dirContext = null;
     var requestId = ++_previewGeneration;
@@ -4894,7 +4928,7 @@ var FilePreview = (function () {
   function _navDir(body, dirPath) {
     // A directory reached from a docked preview is a new modal preview too.
     // Never replace the retained tab's directory or reading state in place.
-    if (_placement === 'side') return openFile(dirPath, _currentPaneId);
+    if (_placement === 'side') return openFile(dirPath, _currentPaneId, { source: _currentSource });
     _stopAutoRefresh();
     var requestId = ++_previewGeneration;
     var previous = _currentFile;
@@ -5166,7 +5200,7 @@ var FilePreview = (function () {
             } else {
               // Remember the parent dir so the back button returns here
               _dirContext = data.absPath;
-              openFile(fullPath, _currentPaneId, true);
+              openFile(fullPath, _currentPaneId, { keepDirContext: true, source: _currentSource });
             }
           };
           row.addEventListener('click', activate);
@@ -5260,6 +5294,7 @@ var FilePreview = (function () {
     renderInto: renderInto, disposeRendered: _disposePreview,
     openFromBuffer: openFromBuffer, close: close, closeModal: closeModal, closeDocked: closeDocked,
     restoreDocked: restoreDocked, switchDockContext: switchDockContext, hitTest: hitTest,
+    switchViewContext: switchViewContext,
     reconcileWorkspace: reconcileWorkspace,
     forgetWindow: forgetWindow,
     activateHit: _activateLink,
