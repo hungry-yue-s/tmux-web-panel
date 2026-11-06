@@ -23,8 +23,8 @@
     _installStarts: {},
     _installReads: {},
     _resizing: false,
-    _perfPanelMounted: false,
-    _agentHubMounted: false,
+    /** The server page section (PanelSlots) the current route started, to stop on leaving. */
+    _mountedSection: null,
     /** Bumped per route: whatever an older route was waiting for no longer applies. */
     _routeGeneration: 0,
     /** serverId -> the workspace read under way, and when the last one arrived. */
@@ -200,10 +200,8 @@
         this._resolvingDefaultWindow = false;
         if (typeof global.cleanupTerminal === 'function') global.cleanupTerminal();
       }
-      // PerfPanel owns interval timers; leaving its route must stop them.
-      this._teardownPerfPanel();
-      this._teardownAgentHub();
-      this._teardownSessionProtection();
+      // A section may own timers (the performance page polls); leaving its route stops them.
+      this._unmountServerSection();
       const serverId = (route.params && route.params.serverId) || 'local';
 
       if (route.name === 'servers') {
@@ -220,9 +218,8 @@
       if (route.name === 'settings') {
         view.classList.remove('terminal-mode');
         view.innerHTML = global.ServersPage.renderSettings();
-        if (global.ServersPage.settingsSection === 'management' && global.ManagementPage) {
-          await global.ManagementPage.mount(view.querySelector('#managed-resources'));
-        }
+        const settings = global.AppShell.settingsSection(global.ServersPage.settingsSection);
+        if (settings && typeof settings.mount === 'function') await settings.mount(view);
         return;
       }
 
@@ -241,9 +238,7 @@
         if (global.TerminalTarget.serverId !== serverId) global.TerminalTarget.set({ serverId });
         view.classList.remove('terminal-mode');
         view.innerHTML = global.ServersPage.renderServer(route);
-        this._mountPerfPanel(route);
-        this._mountAgentHub(route);
-        this._mountSessionProtection(route);
+        this._mountServerSection(route);
         if (section === 'connection' || global.AppShell.health(serverId).node?.installed === false) {
           this._restoreInstallJob(serverId, route, generation);
         }
@@ -252,64 +247,28 @@
         await Promise.all(global.AppShell.servers().map((s) => this.refreshMetrics(s.id)));
         // The route may have moved on while those two were in flight.
         if (generation !== this._routeGeneration || !global.Router.isSame(global.Router.current(), route)) return;
-        this._teardownPerfPanel();
-        this._teardownAgentHub();
-        this._teardownSessionProtection();
+        this._unmountServerSection();
         view.innerHTML = global.ServersPage.renderServer(route);
-        this._mountPerfPanel(route);
-        this._mountAgentHub(route);
-        this._mountSessionProtection(route);
+        this._mountServerSection(route);
         return;
       }
 
       await this._renderTerminal(route, serverId, view, generation);
     },
 
-    /** Returns the PerfPanel mode owned by this status route. */
-    _localPerfMode(route) {
-      if (!route || route.name !== 'server') return null;
-      const section = (route.params || {}).section;
-      return section === 'performance' ? section : null;
+    /** Starts the section a server route shows (PanelSlots), once its HTML is in the page. */
+    _mountServerSection(route) {
+      if (!route || route.name !== 'server') return;
+      const entry = global.PanelSlots && global.PanelSlots.serverSections.get((route.params || {}).section);
+      if (!entry || typeof entry.mount !== 'function') return;
+      if (entry.mount(route)) this._mountedSection = entry;
     },
 
-    _mountPerfPanel(route) {
-      const mode = this._localPerfMode(route);
-      if (!mode) return;
-      if (!global.PerfPanel || typeof global.PerfPanel.start !== 'function') return;
-      if (!global.document.getElementById('perf-panel')) return;
-      global.PerfPanel.start(mode);
-      this._perfPanelMounted = true;
-    },
-
-    _teardownPerfPanel() {
-      if (!this._perfPanelMounted) return;
-      this._perfPanelMounted = false;
-      if (global.PerfPanel && typeof global.PerfPanel.stop === 'function') global.PerfPanel.stop();
-    },
-
-    _mountAgentHub(route) {
-      if (!route || route.name !== 'server' || (route.params || {}).section !== 'agents') return;
-      if (!global.AgentHub || typeof global.AgentHub.start !== 'function') return;
-      if (!global.document.getElementById('agent-hub')) return;
-      global.AgentHub.start();
-      this._agentHubMounted = true;
-    },
-
-    _teardownAgentHub() {
-      if (!this._agentHubMounted) return;
-      this._agentHubMounted = false;
-      if (global.AgentHub && typeof global.AgentHub.stop === 'function') global.AgentHub.stop();
-    },
-
-    _mountSessionProtection(route) {
-      if (!route || route.name !== 'server' || (route.params || {}).section !== 'sessions') return;
-      const host = global.document.getElementById('session-protection-host');
-      if (!host || !global.SessionProtectionPage) return;
-      global.SessionProtectionPage.mount(host, (route.params || {}).serverId || 'local');
-    },
-
-    _teardownSessionProtection() {
-      if (global.SessionProtectionPage) global.SessionProtectionPage.unmount();
+    /** Stops the section the last server route started. */
+    _unmountServerSection() {
+      const entry = this._mountedSection;
+      this._mountedSection = null;
+      if (entry && typeof entry.unmount === 'function') entry.unmount();
     },
 
     async _renderTerminal(route, serverId, view, generation) {

@@ -2,6 +2,7 @@ import { clientPath } from '../helpers/pages.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { loadSlots } from '../helpers/slots.js';
 
 const scripts = ['router', 'store', 'app-shell', 'theme', 'servers']
   .map((name) => readFileSync(clientPath('js/' + name + '.js'), 'utf8'));
@@ -12,6 +13,7 @@ function setup() {
   dom = new JSDOM('<header id="ms-topbar"><span id="ms-crumb"></span><h1 id="ms-page-title"></h1><div id="ms-top-actions"></div></header><main id="view"></main>', {
     url: 'https://servers-page.test/', runScripts: 'outside-only',
   });
+  loadSlots(dom.window);
   scripts.forEach((source) => dom.window.eval(source));
   const win = dom.window;
   win.PerfPanel = { renderSkeleton: () => '<section>本机性能</section>' };

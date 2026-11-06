@@ -2,6 +2,7 @@ import { indexSource as composedIndex } from '../helpers/pages.js';
 import { describe, it, expect, vi } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { loadSlots } from '../helpers/slots.js';
 
 const MS_APP = readFileSync('plugins/ui/client/js/ms-app.js', 'utf8');
 const INDEX = composedIndex();
@@ -543,6 +544,7 @@ const STATUS_DOM = `<!DOCTYPE html><html><body>
 function loadStatusShell({ perfPanel = null, agentHub = null, theme = null, auth = null } = {}) {
   const dom = new JSDOM(STATUS_DOM, { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window;
+  loadSlots(win);
   win.eval(ROUTER_SRC);
   win.eval(STORE_SRC);
   win.eval(SHELL_SRC);
@@ -1948,7 +1950,7 @@ describe('MsApp PerfPanel lifecycle', () => {
 
     await ctx.MsApp._onRoute({ name: 'settings', params: {} });
     expect(hub.calls.stopped).toBeGreaterThan(0);
-    expect(ctx.MsApp._agentHubMounted).toBe(false);
+    expect(ctx.MsApp._mountedSection).toBe(null);
   });
 
   it('stops PerfPanel polling when leaving the route', async () => {
@@ -1961,7 +1963,7 @@ describe('MsApp PerfPanel lifecycle', () => {
 
     expect(startedWhileMounted).toBeGreaterThan(0);
     expect(perf.calls.stopped).toBeGreaterThan(0);
-    expect(ctx.MsApp._perfPanelMounted).toBe(false);
+    expect(ctx.MsApp._mountedSection).toBe(null);
   });
 
   it('mounts the full performance panel for a remote server, pointed at that server', async () => {
@@ -1995,7 +1997,7 @@ describe('MsApp PerfPanel lifecycle', () => {
   it('does not claim to be mounted when PerfPanel is missing', async () => {
     const ctx = loadStatusShell();
     await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'local', section: 'performance' } });
-    expect(ctx.MsApp._perfPanelMounted).toBeFalsy();
+    expect(ctx.MsApp._mountedSection).toBeFalsy();
     expect(ctx.document.getElementById('ms-view').textContent).toContain('性能组件未加载');
   });
 });

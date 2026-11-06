@@ -6,6 +6,7 @@
     { "order": 53, "style": "/css/mobile.css?v=7" }
   ],
   "body": [
+    { "order": 5, "script": "/js/slots.js" },
     { "order": 30, "script": "/js/theme.js?v=7" },
     { "order": 70, "script": "/js/router.js?v=4" },
     { "order": 80, "script": "/js/store.js?v=4" },

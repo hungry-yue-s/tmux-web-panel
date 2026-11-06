@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { loadSlots } from '../helpers/slots.js';
 
 const ROUTER = readFileSync('plugins/ui/client/js/router.js', 'utf8');
 const STORE = readFileSync('plugins/ui/client/js/store.js', 'utf8');
 const SHELL = readFileSync('plugins/ui/client/js/app-shell.js', 'utf8');
+const SERVERS = readFileSync('plugins/ui/client/js/servers.js', 'utf8');
 const BLOCKS = readFileSync('plugins/files/client/js/blocks.js', 'utf8');
 const WORKSPACE_BLOCKS = readFileSync('plugins/files/client/js/blocks-workspace.js', 'utf8');
 
@@ -50,9 +52,10 @@ const TMUX_ACTIONS = {
 };
 
 
-function loadShell() {
+function loadShell({ sections = true } = {}) {
   const dom = new JSDOM(SHELL_DOM, { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window;
+  loadSlots(win, { sections });
   win.eval(ROUTER);
   win.eval(STORE);
   win.eval(SHELL);
@@ -1134,9 +1137,40 @@ describe('AppShell status server resolution', () => {
   });
 });
 
+describe('AppShell sections from the plugins on the page (PanelSlots)', () => {
+  it('shows no tab, settings section or default for a plugin whose scripts are not there', () => {
+    const ctx = loadShell({ sections: false });
+    ctx.win.eval(SERVERS);
+    seedTwoServers(ctx.Store);
+    // Only the shell's own: the connection tab and three settings sections.
+    expect(ctx.Shell.statusSections().map((s) => s.id)).toEqual(['connection']);
+    expect(ctx.Shell.localStatusSections()).toEqual([]);
+    expect(ctx.Shell.defaultStatusSection('local')).toBe('connection');
+    expect(ctx.Shell.resolveStatusSection('local', 'performance')).toBe('connection');
+    expect(ctx.Shell.settingsSections().map((s) => s.id)).toEqual(['appearance', 'security', 'about']);
+    expect(ctx.Shell.settingsSection('management').id).toBe('appearance');
+
+    // The metrics plugin's registration alone brings its tab back, first.
+    ctx.win.eval(readFileSync('plugins/metrics/client/js/perf-section.js', 'utf8'));
+    expect(ctx.Shell.statusSections().map((s) => s.id)).toEqual(['performance', 'connection']);
+    expect(ctx.Shell.defaultStatusSection('local')).toBe('performance');
+  });
+
+  it('orders every plugin section and resolves the former usage pages to the Agent console', () => {
+    const ctx = loadShell();
+    ctx.win.eval(SERVERS);
+    seedTwoServers(ctx.Store);
+    expect(ctx.Shell.statusSections().map((s) => s.id)).toEqual(['performance', 'agents', 'sessions', 'connection']);
+    expect(ctx.Shell.resolveStatusSection('local', 'codex')).toBe('agents');
+    ctx.Store.setUi({ showPerformance: false, showClaude: false, showCodex: true });
+    expect(ctx.Shell.statusSections().map((s) => s.id)).toEqual(['agents', 'sessions', 'connection']);
+  });
+});
+
 describe('AppShell settings navigation', () => {
   it('renders a settings nav instead of the server tree', () => {
     const ctx = loadShell();
+    ctx.win.eval(SERVERS);
     seedTwoServers(ctx.Store);
     ctx.Store.setRoute({ name: 'settings', params: {} });
     ctx.Shell.render();
@@ -1150,6 +1184,7 @@ describe('AppShell settings navigation', () => {
 
   it('marks the active settings section', () => {
     const ctx = loadShell();
+    ctx.win.eval(SERVERS);
     ctx.win.ServersPage = { settingsSection: 'about' };
     ctx.Store.setRoute({ name: 'settings', params: {} });
     ctx.Shell.render();

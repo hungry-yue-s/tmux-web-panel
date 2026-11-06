@@ -1,5 +1,4 @@
 (function (global) {
-  var LOCAL_MONITOR_SECTIONS = ['performance', 'agents'];
   var ICONS = {
     terminal: '<svg class="ms-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>',
     gauge: '<svg class="ms-icon" viewBox="0 0 24 24"><path d="M20 13a8 8 0 1 0-16 0"/><path d="m12 13 4-4"/><path d="M5 19h14"/></svg>',
@@ -122,25 +121,38 @@
       return 'local';
     },
 
+    /** What the plugins on this page put on a server's page (PanelSlots), hidden or not. */
+    _serverSections: function () {
+      return global.PanelSlots ? global.PanelSlots.serverSections.list() : [];
+    },
+
+    /** The status pages the page-visibility settings leave visible, in tab order. */
     localStatusSections: function () {
       var ui = global.Store.getState().ui;
-      var visibility = { performance: ui.showPerformance, agents: ui.showClaude || ui.showCodex };
-      return LOCAL_MONITOR_SECTIONS.filter(function (section) { return visibility[section]; });
+      return this._serverSections().filter(function (entry) {
+        return entry.monitor && (!entry.visible || entry.visible(ui));
+      }).map(function (entry) { return entry.id; });
+    },
+
+    /** Every section a server's page shows, in tab order: visible status pages and the rest. */
+    statusSections: function () {
+      var ui = global.Store.getState().ui;
+      return this._serverSections().filter(function (entry) {
+        return !entry.monitor || !entry.visible || entry.visible(ui);
+      });
     },
 
     defaultStatusSection: function () {
-      return this.localStatusSections()[0] || 'performance';
+      var shown = this.statusSections();
+      return this.localStatusSections()[0] || (shown[0] && shown[0].id) || 'connection';
     },
 
     resolveStatusSection: function (serverId, section) {
       if (section === 'connection') return 'connection';
-      if (!this.server(serverId)) return 'performance';
-      // Not a monitor page, so the page visibility settings do not hide it.
-      if (section === 'sessions') return 'sessions';
-      if ((section === 'claude' || section === 'codex') && this.localStatusSections().indexOf('agents') >= 0) {
-        return 'agents';
-      }
-      if (this.localStatusSections().indexOf(section) >= 0) return section;
+      if (!this.server(serverId)) return this.defaultStatusSection(serverId);
+      // An alias (the former claude and codex pages) resolves to its section.
+      var entry = global.PanelSlots ? global.PanelSlots.serverSections.get(section) : null;
+      if (entry && this.statusSections().indexOf(entry) >= 0) return entry.id;
       return this.defaultStatusSection(serverId);
     },
 
@@ -264,19 +276,24 @@
         + '%;background:' + color + '"></i></span></span>';
     },
 
-    SETTINGS_SECTIONS: [
-      ['appearance', '外观'],
-      ['management', '管理中心'],
-      ['security', '连接与安全'],
-      ['about', 'GitHub'],
-    ],
+    /** The settings page's sections, the shell's own and the plugins' (PanelSlots). */
+    settingsSections: function () {
+      return global.PanelSlots ? global.PanelSlots.settingsSections.list() : [];
+    },
+
+    /** The section with this id, or the first one when it is not there (its plugin is off). */
+    settingsSection: function (id) {
+      var sections = this.settingsSections();
+      for (var i = 0; i < sections.length; i++) if (sections[i].id === id) return sections[i];
+      return sections[0] || null;
+    },
 
     _renderSettingsNav: function () {
-      var active = global.ServersPage ? global.ServersPage.settingsSection : 'appearance';
+      var active = this.settingsSection(global.ServersPage ? global.ServersPage.settingsSection : null);
       return '<div class="tree-section-head"><span>设置</span></div>'
-        + '<div class="settings-nav">' + this.SETTINGS_SECTIONS.map(function (entry) {
-          return '<button class="settings-nav-item' + (entry[0] === active ? ' selected' : '') + '"'
-            + ' data-settings-section="' + entry[0] + '">' + esc(entry[1]) + '</button>';
+        + '<div class="settings-nav">' + this.settingsSections().map(function (entry) {
+          return '<button class="settings-nav-item' + (entry === active ? ' selected' : '') + '"'
+            + ' data-settings-section="' + esc(entry.id) + '">' + esc(entry.label) + '</button>';
         }).join('') + '</div>';
     },
 
@@ -609,7 +626,9 @@
       if (route.name === 'servers') return '状态';
       if (route.name === 'settings') return '设置';
       if (route.name === 'server') {
-        return ({ performance: '性能', agents: 'Agent 控制台', claude: 'Agent 控制台', codex: 'Agent 控制台', sessions: '会话', connection: '连接' })[route.params.section] || '性能';
+        var slots = global.PanelSlots && global.PanelSlots.serverSections;
+        var entry = slots && (slots.get(route.params.section) || slots.get(this.defaultStatusSection()));
+        return entry ? entry.label : '状态';
       }
       return '终端工作台';
     },

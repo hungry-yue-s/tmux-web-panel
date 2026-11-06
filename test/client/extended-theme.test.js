@@ -2,6 +2,7 @@ import { indexSource as composedIndex } from '../helpers/pages.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { loadSlots } from '../helpers/slots.js';
 
 const themeSource = readFileSync('plugins/ui/client/js/theme.js', 'utf8');
 const terminalSource = readFileSync('plugins/terminal/client/js/terminal.js', 'utf8');
@@ -31,6 +32,7 @@ function loadTheme(themeId, { native = false, transparency, legacyNative = false
 
 function renderSettings() {
   dom.window.Store = { getState: () => ({ ui: { showPerformance: true } }) };
+  loadSlots(dom.window);
   dom.window.eval(appShellSource);
   dom.window.AppShell.setHeader = vi.fn();
   dom.window.eval(serversSource);

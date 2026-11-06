@@ -151,7 +151,6 @@
     /** Server workspace: identity strip plus capability-driven tabs. */
     renderServer: function (route) {
       var serverId = route.params.serverId;
-      var section = route.params.section || 'performance';
       var server = shell().server(serverId);
       if (!server) {
         return '<div class="ms-card empty"><h3>服务器不存在</h3>'
@@ -164,55 +163,17 @@
         ? routeButton('打开工作区', { name: 'terminal', params: { serverId: serverId } }, true, 'terminal')
         : '';
 
-      shell().setHeader(
-        '服务器 / ' + server.name,
-        ({ performance: '性能', agents: 'Agent 控制台', claude: 'Agent 控制台', codex: 'Agent 控制台', sessions: '会话', connection: '连接' })[section] || '性能',
-        '',
-      );
+      var entry = global.PanelSlots.serverSections.get(route.params.section)
+        || global.PanelSlots.serverSections.get(shell().defaultStatusSection(serverId));
+      var section = entry ? entry.id : 'connection';
+      shell().setHeader('服务器 / ' + server.name, entry ? entry.label : '连接', '');
 
       var base = this._hero(server, health, openWorkspace, route) + this._tabs(server, section);
       if (section === 'connection') return base + this._connection(server, health, workspace);
       // Basic mode: terminals work, the machine-level pages need the panel there.
       if (isBasic(health)) return base + this._installCard(server, health);
-      // Every server runs the full panel, so its status pages are the same ones.
-      if (section === 'agents') return base + this._localAgents();
-      // Mounted by MsApp: session protection reads that machine's node.
-      if (section === 'sessions') return base + '<div class="section" id="session-protection-host"></div>';
-      return base + this._localPerformance();
-    },
-
-    /**
-     * The local machine has the full performance component. Each status route
-     * requests only the roots and pollers it owns; the legacy app keeps the
-     * no-argument all-in-one mode.
-     */
-    _localPerformance: function () {
-      if (!global.PerfPanel || typeof global.PerfPanel.renderSkeleton !== 'function') {
-        return '<div class="ms-card empty"><h3>性能组件未加载</h3>'
-          + '<p>PerfPanel 脚本缺失，无法显示本机性能。</p></div>';
-      }
-      return '<div class="section local-perf-host">' + global.PerfPanel.renderSkeleton('performance') + '</div>';
-    },
-
-    _localClaude: function () {
-      if (!global.PerfPanel || typeof global.PerfPanel.renderSkeleton !== 'function') {
-        return '<div class="ms-card empty"><h3>Claude 用量组件未加载</h3></div>';
-      }
-      return '<div class="section local-perf-host">' + global.PerfPanel.renderSkeleton('claude') + '</div>';
-    },
-
-    _localCodex: function () {
-      if (!global.PerfPanel || typeof global.PerfPanel.renderSkeleton !== 'function') {
-        return '<div class="ms-card empty"><h3>Codex 用量组件未加载</h3></div>';
-      }
-      return '<div class="section local-perf-host">' + global.PerfPanel.renderSkeleton('codex') + '</div>';
-    },
-
-    _localAgents: function () {
-      if (!global.AgentHub || typeof global.AgentHub.renderSkeleton !== 'function') {
-        return '<div class="ms-card empty"><h3>Agent 控制台组件未加载</h3></div>';
-      }
-      return '<div class="section local-agent-host">' + global.AgentHub.renderSkeleton() + '</div>';
+      // Every server runs the full panel, so its pages are the ones this page has.
+      return base + entry.render(route);
     },
 
     _hero: function (server, health, openWorkspace, route) {
@@ -235,10 +196,7 @@
     },
 
     _tabs: function (server, section) {
-      var labels = { performance: '性能', agents: 'Agent 控制台', claude: 'Claude 用量', codex: 'Codex 用量', sessions: '会话', connection: '连接' };
-      var entries = shell().localStatusSections().map(function (name) { return [name, labels[name]]; });
-      entries.push(['sessions', labels.sessions]);
-      entries.push(['connection', labels.connection]);
+      var entries = shell().statusSections().map(function (entry) { return [entry.id, entry.label]; });
       return '<div class="tabs">' + entries.map(function (entry) {
         var route = { name: 'server', params: { serverId: server.id, section: entry[0] } };
         return '<button class="tab ' + (section === entry[0] ? 'active' : '') + '"'
@@ -415,15 +373,13 @@
 
     renderSettings: function () {
       shell().setHeader('全局', '设置', '');
-      var section = this.settingsSection || 'appearance';
-      var navigation = '<nav class="mobile-settings-nav" aria-label="设置分类">' + shell().SETTINGS_SECTIONS.map(function (entry) {
-        return '<button type="button" data-settings-section="' + entry[0] + '"'
-          + (entry[0] === section ? ' aria-current="page"' : '') + '>' + esc(entry[1]) + '</button>';
+      var entry = shell().settingsSection(this.settingsSection);
+      var section = entry ? entry.id : null;
+      var navigation = '<nav class="mobile-settings-nav" aria-label="设置分类">' + shell().settingsSections().map(function (item) {
+        return '<button type="button" data-settings-section="' + esc(item.id) + '"'
+          + (item.id === section ? ' aria-current="page"' : '') + '>' + esc(item.label) + '</button>';
       }).join('') + '</nav>';
-      var content = section === 'management' ? '<div id="managed-resources"></div>'
-        : section === 'security' ? this._settingsSecurity()
-          : section === 'about' ? this._settingsAbout() : this._settingsAppearance();
-      return navigation + content;
+      return navigation + (entry ? entry.render() : '');
     },
 
     _settingsAppearance: function () {
@@ -548,4 +504,24 @@
   };
 
   global.ServersPage = ServersPage;
+
+  // This page's own sections (PanelSlots, slots.js); plugins add theirs.
+  if (global.PanelSlots) {
+    global.PanelSlots.serverSections.register({
+      id: 'connection',
+      label: '连接',
+      order: 90,
+      // Rendered by renderServer itself: it needs the server, its health and workspace.
+      render: function () { return ''; },
+    });
+    global.PanelSlots.settingsSections.register({
+      id: 'appearance', label: '外观', order: 10, render: function () { return ServersPage._settingsAppearance(); },
+    });
+    global.PanelSlots.settingsSections.register({
+      id: 'security', label: '连接与安全', order: 30, render: function () { return ServersPage._settingsSecurity(); },
+    });
+    global.PanelSlots.settingsSections.register({
+      id: 'about', label: 'GitHub', order: 40, render: function () { return ServersPage._settingsAbout(); },
+    });
+  }
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -1,6 +1,7 @@
 {
   "serve": ["."],
   "body": [
-    { "order": 370, "script": "/js/management.js?v=3" }
+    { "order": 370, "script": "/js/management.js?v=3" },
+    { "order": 375, "script": "/js/management-section.js" }
   ]
 }
