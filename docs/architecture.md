@@ -23,13 +23,13 @@
 
 Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`、`/api/files/*`、`/api/upload`、`/api/sessions/*`、`/api/session-protection`（会话保护）、`/ws/terminal/:paneId` 等。前端只有一个入口：`Api.nodeUrl(serverId, path)`；终端视图里的旧代码统一调用 `Api.activeUrl(path)`，它会跟随当前查看的服务器（`TerminalTarget.serverId`）。切换服务器时 `TerminalTarget` 会发出 `terminal-target-server` 事件，状态 WebSocket 收到后会重连到新服务器。
 
-实现：`server/hub/proxy.js`（`createNodeProxy` / `relayNodeUpgrade`），`public/js/api.js`。
+实现：`lib/hub/proxy.js`（`createNodeProxy` / `relayNodeUpgrade`），`plugins/ui/client/js/api.js`。
 
 ## 链路：SFTP 配对 + 一条 SSH 端口转发
 
-`server/hub/node-link.js` 中的 `NodeLink` 对应一台服务器，`server/hub/link-pool.js` 按 serverId 缓存这些链路。
+`lib/hub/node-link.js` 中的 `NodeLink` 对应一台服务器，`lib/hub/link-pool.js` 按 serverId 缓存这些链路。
 
-1. **配对。** Node 启动时写出仅本人可读的 `~/.config/tmux-web-panel/node.json`，内容为 `{ protocol, host, port, tls, tlsFingerprint, token }`（`server/node/identity.js`）。Hub 用 `sftp -b -` 读取这个文件。sftp 是 SSH 的子系统，不经过登录 shell，所以对端是 cmd.exe、PowerShell、fish 还是 bash 都没有影响。
+1. **配对。** Node 启动时写出仅本人可读的 `~/.config/tmux-web-panel/node.json`，内容为 `{ protocol, host, port, tls, tlsFingerprint, token }`（`lib/node/identity.js`）。Hub 用 `sftp -b -` 读取这个文件。sftp 是 SSH 的子系统，不经过登录 shell，所以对端是 cmd.exe、PowerShell、fish 还是 bash 都没有影响。
 2. **转发。** 起一个常驻的 `ssh -N -L 127.0.0.1:<本地随机端口>:<host>:<port>`，带 `ExitOnForwardFailure=yes`。SSH 只当加密管道用，**从不在远端执行命令**。
 3. **请求。** 所有 HTTP 请求和 WebSocket 都走这一个转发（使用 keep-alive agent）。Hub 会去掉浏览器带来的 Authorization、Cookie、Origin、Referer 以及 `?token=`，换成 `Authorization: Bearer <node token>`。
 4. **TLS。** 如果 Node 用 HTTPS，Hub 只接受与配对文件中指纹一致的证书。校验发生在 `secureConnect` 阶段，早于任何请求字节，所以证书不对时令牌不会被发出去。
@@ -55,10 +55,10 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 
 `transport.terminal = 'mosh'` 时，浏览器仍只连本机 Hub 的 WebSocket；Hub 在本机 PTY 里运行 `mosh-client`，经 UDP 连到 Node 上的 `mosh-server`，后者运行与普通终端相同的 tmux attach。预测回显发生在 Hub 这台机器的 mosh-client 里，所以只在 Hub 靠近浏览器时有意义（桌面客户端自带的面板）；手机连远端 Hub 时，预测发生在那台 Hub，不在手机上。Git、文件、监控照旧走 `transport.api`。
 
-- **只有 Hub 自己能开会话。** `POST/GET/DELETE /api/mosh/sessions[/:id]`（`server/api/mosh.js`）要求 node token 加上只有 Hub 自己的调用才带的 `x-twp-hub-call`；`/n/` 转发会剥掉这个头，`isRelayable` 也拒绝任何拼法的 `/api/mosh`。会话密钥只在 Hub 进程和 mosh-client 的环境里，不进浏览器、日志和诊断。
+- **只有 Hub 自己能开会话。** `POST/GET/DELETE /api/mosh/sessions[/:id]`（`lib/api/mosh.js`）要求 node token 加上只有 Hub 自己的调用才带的 `x-twp-hub-call`；`/n/` 转发会剥掉这个头，`isRelayable` 也拒绝任何拼法的 `/api/mosh`。会话密钥只在 Hub 进程和 mosh-client 的环境里，不进浏览器、日志和诊断。
 - **会话 id 由 Hub 生成。** 应答没到也能按 id 结束；结束过的 id 记住 10 分钟，迟到的创建请求被拒；创建请求在应答前断开，Node 立即取消。启动中的会话计入上限。
 - **Windows 的 attach 证明。** mosh-server 打印 CONNECT 后才 fork 命令子进程，子进程要等第一个客户端包才 exec tmux。Node 在 CONNECT 时就把端口和密钥交给 Hub，但**客户端启动队列一直持有到** `tmux list-clients` 里出现父进程是这个 mosh-server 的客户端，再等 `CLIENT_SETTLE_MS`；期间按 `holdStart` 计为“启动中”，面板自己的客户端不离开（ENV-3）。20 秒内没有就结束会话并释放队列。面板的新客户端在同一会话上启动前，经 `addClientOwner` 先结束该会话上的 Mosh 客户端，结果不明则 `TERMINAL_BUSY`。
-- **结束只针对确认的进程。** `server/mosh/processes.js` 记录 pid、启动时间、可执行文件和（MSYS2 的）Windows pid；命令子进程 exec 后可执行文件和 Windows pid 会变，只按 pid+启动时间认。先结束 tmux 客户端，让 mosh-server 通知客户端后自行退出，再结束 mosh-server，最后才 KILL；仍有残留时报告 `clean: false`。自然退出的会话由定期清扫回收。关机时 `stopAll` 和 Hub 的 `closeAll` 完成后进程才退出。
+- **结束只针对确认的进程。** `lib/mosh/processes.js` 记录 pid、启动时间、可执行文件和（MSYS2 的）Windows pid；命令子进程 exec 后可执行文件和 Windows pid 会变，只按 pid+启动时间认。先结束 tmux 客户端，让 mosh-server 通知客户端后自行退出，再结束 mosh-server，最后才 KILL；仍有残留时报告 `clean: false`。自然退出的会话由定期清扫回收。关机时 `stopAll` 和 Hub 的 `closeAll` 完成后进程才退出。
 - **回退规则。** 缺组件、经跳板机、地址解析失败或未看到远端画面时，Hub 先确认本机客户端退出，再请 Node 结束会话；**只有两端确认干净**才转发到 SSH，否则以 503 拒绝。未确认的资源保留完整归属，跨链路换代仍计入 busy 和关机清理，不用新连接覆盖它。已经交给某个传输的输入不会再发给另一个。
 - **并发与重检。** 首次未验证的路径按服务器、link 实例和 generation 合并试探，其它新请求等待同一结论并再次检查，避免堆积多个失败的 Windows 接入。失败冷却为 10 分钟；配置变化和显式重新检测可清除已确认干净的负结果，周期健康轮询不清冷却。重试不关闭健康终端，也不清除待确认资源。Hub 客户端查找和 Node 组件能力均会重检，避免安装或移除组件后永久沿用旧结果。
 - **状态与预算。** 未验证、验证中、已验证、失败分别报告；只有当前链路的成功证据才标记 Mosh。已有桥接仍健康但新连接需回退或拒绝时单独报告原因。准备阶段在 `MoshTerminals.open` 内共享 15 秒绝对预算（包括 DNS、POST 和最多 8 秒的 contact 等待），清理独立等待实际结果；外层首次 Node/SSH 识别不算入这 15 秒。浏览器显式选择远端 Mosh 时最多等 60 秒，普通 SSH/direct 和本机仍为 20 秒，预算不是人为延迟，也不依赖可能过期的健康快照。极慢的冷启动仍可能耗尽总等待，此时失败并收拢资源，不能假称已完成回退。
@@ -67,11 +67,11 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 
 通道选择始终按服务器配置，默认仍是 SSH；保存首选通道只影响新连接，地址或认证变化才按原有规则重建链路。设置页中的 Hub 是运行面板服务的机器，不是手机；浏览器、Swift 和移动客户端共用这些规则。无 Node 的基础模式保持 SSH，并明确说明不能采用所选的 direct/Mosh。支持常见 SSH 配置别名（解析实际连接选项，`ProxyJump none` 不误判为跳板）；独立 UDP 公网地址/端口映射、多地址或地址族逐个试连尚未实现，NAT/双栈环境不能据 mock 覆盖宣称真实可用。
 
-主机密钥仍然走首次信任流程：先 `scan` 再 `trust`，只接受用户确认过的那一个指纹。`StrictHostKeyChecking` 始终为 `yes`。用户名加密码的认证方式通过 askpass 完成，密码不会出现在 argv 和环境变量里（`server/transport/ssh-connection.js`）。
+主机密钥仍然走首次信任流程：先 `scan` 再 `trust`，只接受用户确认过的那一个指纹。`StrictHostKeyChecking` 始终为 `yes`。用户名加密码的认证方式通过 askpass 完成，密码不会出现在 argv 和环境变量里（`lib/transport/ssh-connection.js`）。
 
 ## 健康状态
 
-健康状态只来自一次 `GET /api/node/info`（`server/node/info.js`）：对本机是函数调用，对远程是经过链路的请求。返回的协议版本、面板版本、平台、tmux 版本和能力清单会被映射成 UI 已经认识的状态结构（`statusFromNodeInfo`）。原有的退避、合并探测、generation 防护、按"正在查看的服务器"调整轮询频率，都保留在 `HealthService` 里。
+健康状态只来自一次 `GET /api/node/info`（`lib/node/info.js`）：对本机是函数调用，对远程是经过链路的请求。返回的协议版本、面板版本、平台、tmux 版本和能力清单会被映射成 UI 已经认识的状态结构（`statusFromNodeInfo`）。原有的退避、合并探测、generation 防护、按"正在查看的服务器"调整轮询频率，都保留在 `HealthService` 里。
 
 链路层新增的错误码以及对应的修复提示：
 
@@ -89,7 +89,7 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 - `/n/:id/api/workspace*`：会话、窗口、窗格的读取和增删改；
 - `/n/:id/ws/terminal/:paneId`：终端。
 
-其它机器级接口一律返回 `NODE_NOT_INSTALLED`，界面据此显示“安装面板服务”。代码在 `server/hub/basic/`。
+其它机器级接口一律返回 `NODE_NOT_INSTALLED`，界面据此显示“安装面板服务”。代码在 `lib/hub/basic/`。
 
 先用一次检测脚本决定用哪种方式：
 
@@ -107,7 +107,7 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 
 ## 一键安装 Node
 
-在基础模式服务器的页面上点“安装面板服务”，由 Hub 发起安装（`server/hub/node-installer.js`，接口为 `POST/GET /api/servers/:id/node/install`）。安装与下述固定组件维护是 Hub 主动运行远端程序的唯一入口，必须由用户明确触发。
+在基础模式服务器的页面上点“安装面板服务”，由 Hub 发起安装（`lib/hub/node-installer.js`，接口为 `POST/GET /api/servers/:id/node/install`）。安装与下述固定组件维护是 Hub 主动运行远端程序的唯一入口，必须由用户明确触发。
 
 1. **打包。** 把 Hub 自己的面板代码打包（Linux/macOS 目标还会带上 `vendor/tmux` 源码），经 sftp 上传到 `.cache/tmux-web-panel/panel.tgz`。版本一定与 Hub 一致，远端也不需要能访问 GitHub。
 2. **Linux / macOS：** 把 `scripts/remote/install-node.sh` 经 stdin 交给 `sh -s` 执行。

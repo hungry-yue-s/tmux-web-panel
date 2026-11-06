@@ -9,13 +9,13 @@ the login page.
 **Recommended — environment variable** (the password never appears in `ps` or shell history):
 
 ```bash
-AUTH=user:password node server/index.js
+AUTH=user:password node bin/panel.js
 ```
 
 **Not recommended — CLI flag** (visible in the process list):
 
 ```bash
-node server/index.js --auth user:password
+node bin/panel.js --auth user:password
 ```
 
 Format is `username:password`, split on the *first* `:` — the password itself may contain `:`.

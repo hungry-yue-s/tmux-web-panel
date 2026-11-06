@@ -1,9 +1,15 @@
+import { fileURLToPath } from 'node:url';
 import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  resolve: {
+    // The browser gets this from the import map.
+    alias: { '@twp/client': fileURLToPath(new URL('./client/lib/index.js', import.meta.url)) },
+  },
   test: {
-    // next/ is a separate package with its own dependencies and test config
-    // (cd next && npm test); worktrees carry their own copies of every test.
-    exclude: [...configDefaults.exclude, 'next/**', '.claude/**'],
+    include: ['test/**/*.test.js'],
+    // Worktrees carry their own copy of every test.
+    exclude: [...configDefaults.exclude, '.claude/**'],
+    testTimeout: 15000,
   },
 });

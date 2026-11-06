@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="public/app-icon.png" width="76" alt="Tmux Web Panel 图标">
+<img src="plugins/ui/client/app-icon.png" width="76" alt="Tmux Web Panel 图标">
 
 [English](README.md) | 中文版
 
@@ -124,6 +124,8 @@ tmux 自己只有三层：**Session 管一件事**，**Window 像这件事里的
 
 手机、桌面浏览器、macOS App 都只是取景器。它们连的是 `tmux-web-panel`，由面板处理登录、网页、API 和终端连接，再去 attach tmux。所以关掉页面只是放下取景器，tmux 里的活不会停；换一台设备打开，还能回到同一个 Pane。
 
+面板内部是跑在 [Cordis](https://github.com/cordiverse/cordis) 内核（与 DeepSeek Harness 同一内核）上的一组插件：`profiles/panel.yml` 列出它们，每个功能是一个插件，服务端和前端放在一起，插件注册的东西随插件撤销。`node bin/panel.js --dump-config` 打印组装结果。详见 [docs/plugins.md](docs/plugins.md)。
+
 ```mermaid
 flowchart LR
     subgraph clients["你手上的入口"]
@@ -177,7 +179,7 @@ flowchart LR
 
 ```bash
 npm install
-node server/index.js
+node bin/panel.js
 ```
 
 打开 http://localhost:7681 就能用，没有构建步骤，没有数据库。

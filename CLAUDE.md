@@ -2,9 +2,9 @@
 
 通用 Agent 工作流程（含任务完成后自动提交与推送）见 [AGENTS.md](AGENTS.md)，执行本文件时同样遵守。
 
-## 重写：`next/`
+## 一切皆插件
 
-`next/` 是基于 Cordis 插件内核（与 DeepSeek Harness 同一内核）的从零重写，独立的 npm 包、独立的测试（`cd next && npm test`），按功能切片迁移。约定、Cordis 的使用陷阱和迁移路线见 [next/docs/architecture.md](next/docs/architecture.md)。生产服务仍跑根目录的 `server/`、`public/`。本文件的契约对 `next/` 同样有效：迁移一个功能时，把对应契约搬进插件并写成测试。
+面板跑在 Cordis 插件内核上（与 DeepSeek Harness 同一内核，vendor 在 `vendor/cordis` 等）。没有手写的组装入口：`profiles/panel.yml` 列出插件，`bin/panel.js` 按它组装并启动（`--dump-config` 打印组装结果）。每个功能是 `plugins/<id>/`：`index.js` 是服务端接线，`client/` 是它的前端（`page.json` 声明页面上的脚本和样式），业务模块在 `lib/`。插件注册的一切（路由、定时器、监听器、页面上的脚本）随插件撤销。约定、Cordis 的使用陷阱、HTTP 管线、tmux server 的选择和插件表见 [docs/plugins.md](docs/plugins.md)；新功能写成插件，不要往别处加组装代码。`server/index.js` 只是给旧服务单元留的兼容入口。
 
 ## 服务管理
 
@@ -15,17 +15,17 @@
 - 日志：`journalctl --user -u tmux-web-panel -f`
 
 禁止的操作：
-- `kill` / `pkill` 进程后手动 `node server/index.js`
-- `nohup node server/index.js &`
+- `kill` / `pkill` 进程后手动 `node bin/panel.js`（或旧的 `node server/index.js`）
+- `nohup node bin/panel.js &`
 - 任何绕过 systemd 的手动启动方式
 
 原因：systemd service 配置了 TLS 证书、认证凭据、HTTP 跳转端口等环境变量。手动启动会丢失这些配置，导致 HTTPS 不可用、认证失效。
 
-**静态文件改动不需要重启。** `server/static-assets.js` 挂载 `public/`：HTML 每次都校验（`no-cache` + ETag），并在渲染时把本地 JS/CSS/字体 URL 改写成带内容哈希的 `?h=...`，这些 URL 可缓存一年。所以改 `public/js/*` 或 `public/css/*` 后用户刷新浏览器即生效，不再需要手动改 `?v=`——只有改 `server/*` 才需要 `systemctl --user restart`。动态加载的本地资源不经过改写，只走 `no-cache` 校验。
+**静态文件改动不需要重启。** `ui` 插件挂载各插件的 `client/` 目录并组装主页面：HTML 每次都校验（`no-cache` + ETag），并在渲染时把本地 JS/CSS/字体 URL 改写成带内容哈希的 `?h=...`，这些 URL 可缓存一年。所以改 `plugins/*/client/` 下的文件后用户刷新浏览器即生效，不再需要手动改 `?v=`——只有改服务端代码（`plugins/*/index.js`、`lib/`、`kernel/`）或 `page.json`/`profiles/` 才需要 `systemctl --user restart`。动态加载的本地资源不经过改写，只走 `no-cache` 校验。
 
-**终端字体按 unicode-range 切片。** 完整字体每个字重约 6 MB，页面不得预载或引用 `TmuxPanelMono-*.woff2`（它们只是 `scripts/build-font-subsets.mjs` 的输入）。首屏只预载核心片。字体和渲染器都在打开终端 socket 之前定好，attach 带的就是最终网格（`_mountTerminal` 的 `rendererReady`），不要改回首个输出之后再换字体：那会改变网格，在 Windows 上等于再 attach 一次并清屏。终端最多等核心片 `CORE_FONT_WAIT_MS`，超时后这次挂载保持系统等宽字体，核心片晚到也不自动切换（`_applyLateCoreFont`），要等下一次真实尺寸变化或下一次挂载才用上。中文和 Nerd 图标片由 `public/js/terminal-fonts.js` 按需加载：xterm 画在 canvas 上不会触发 unicode-range 加载，必须经 `TerminalFonts.ensure()`，切片到达后调用 `term.clearTextureAtlas()`。切片和 `public/css/terminal-fonts.css`、`public/js/terminal-fonts-data.js` 都是生成文件，只有源字体变化时才重新生成并提交。
+**终端字体按 unicode-range 切片。** 完整字体每个字重约 6 MB，页面不得预载或引用 `TmuxPanelMono-*.woff2`（它们只是 `scripts/build-font-subsets.mjs` 的输入）。首屏只预载核心片。字体和渲染器都在打开终端 socket 之前定好，attach 带的就是最终网格（`_mountTerminal` 的 `rendererReady`），不要改回首个输出之后再换字体：那会改变网格，在 Windows 上等于再 attach 一次并清屏。终端最多等核心片 `CORE_FONT_WAIT_MS`，超时后这次挂载保持系统等宽字体，核心片晚到也不自动切换（`_applyLateCoreFont`），要等下一次真实尺寸变化或下一次挂载才用上。中文和 Nerd 图标片由 `plugins/terminal/client/js/terminal-fonts.js` 按需加载：xterm 画在 canvas 上不会触发 unicode-range 加载，必须经 `TerminalFonts.ensure()`，切片到达后调用 `term.clearTextureAtlas()`。切片和 `plugins/terminal/client/css/terminal-fonts.css`、`plugins/terminal/client/js/terminal-fonts-data.js` 都是生成文件，只有源字体变化时才重新生成并提交。
 
-**Windows** 上服务管理器是计划任务（`\tmux-web-panel\tmux-web-panel` 与 `\tmux-web-panel\tmux-server`），统一经 `scripts/install-service.ps1` 操作：`restart` / `status` / `logs`（加 `-Tmux` 针对 tmux server）。同样禁止手动 `node server/index.js` 或直接 `Stop-Process` 后自行启动——AUTH/TLS/端口配置在 `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`，只由 `scripts/windows/run-panel.ps1` 注入。`restart -Tmux` 会结束 tmux server 和所有会话；只更新包装脚本 `run-tmux-server.ps1` 时用 `reload`，它不碰 tmux。
+**Windows** 上服务管理器是计划任务（`\tmux-web-panel\tmux-web-panel` 与 `\tmux-web-panel\tmux-server`），统一经 `scripts/install-service.ps1` 操作：`restart` / `status` / `logs`（加 `-Tmux` 针对 tmux server）。同样禁止手动 `node bin/panel.js` 或直接 `Stop-Process` 后自行启动——AUTH/TLS/端口配置在 `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`，只由 `scripts/windows/run-panel.ps1` 注入。`restart -Tmux` 会结束 tmux server 和所有会话；只更新包装脚本 `run-tmux-server.ps1` 时用 `reload`，它不碰 tmux。
 
 ## 多服务器：Hub 与 Node
 
@@ -33,14 +33,14 @@
 
 不变量：
 
-- **Node 的 API 不带 serverId**（`/api/workspace`、`/api/metrics/*`、`/api/files/*`、`/ws/terminal/:paneId` 等）。要访问其它机器，一律走 Hub 的 `/n/:serverId`（`server/hub/proxy.js`）；前端统一用 `Api.nodeUrl` / `Api.activeUrl` 拼路径，不要再写死 `/api/servers/:id/...` 这种按服务器分的机器接口。
-- **对已装 Node 的机器，日常功能由 Node 本地执行**。SSH 用于 sftp 读取配对文件 `~/.config/tmux-web-panel/node.json`，以及维持一条 `ssh -N -L` 端口转发（`server/transport/ssh-connection.js`、`server/hub/node-link.js`）。唯一的安装维护例外是用户显式触发的 `NodeInstaller`：完整 Node 安装，或固定的 Mosh 组件准备脚本；组件补装不打包替换应用、不重启服务。不得把此例外用于 Git、文件、监控或任意远程命令入口。
-- **基础模式**（能 SSH 登录、没装面板，`server/hub/basic/`）只提供工作区和终端。发往远端的只能是 `sh -s`（脚本走 stdin），或单个单词的 pty 命令（经 sftp 上传的脚本路径）；不要拼接带参数的远程命令行，因为 Windows OpenSSH 在 pty 模式下会把它拆碎。文件、监控等功能不要在基础模式里另写远程实现，那些功能的入口是“安装 Node”（`server/hub/node-installer.js`、`scripts/remote/install-node.*`）。
+- **Node 的 API 不带 serverId**（`/api/workspace`、`/api/metrics/*`、`/api/files/*`、`/ws/terminal/:paneId` 等）。要访问其它机器，一律走 Hub 的 `/n/:serverId`（`lib/hub/proxy.js`）；前端统一用 `Api.nodeUrl` / `Api.activeUrl` 拼路径，不要再写死 `/api/servers/:id/...` 这种按服务器分的机器接口。
+- **对已装 Node 的机器，日常功能由 Node 本地执行**。SSH 用于 sftp 读取配对文件 `~/.config/tmux-web-panel/node.json`，以及维持一条 `ssh -N -L` 端口转发（`lib/transport/ssh-connection.js`、`lib/hub/node-link.js`）。唯一的安装维护例外是用户显式触发的 `NodeInstaller`：完整 Node 安装，或固定的 Mosh 组件准备脚本；组件补装不打包替换应用、不重启服务。不得把此例外用于 Git、文件、监控或任意远程命令入口。
+- **基础模式**（能 SSH 登录、没装面板，`lib/hub/basic/`）只提供工作区和终端。发往远端的只能是 `sh -s`（脚本走 stdin），或单个单词的 pty 命令（经 sftp 上传的脚本路径）；不要拼接带参数的远程命令行，因为 Windows OpenSSH 在 pty 模式下会把它拆碎。文件、监控等功能不要在基础模式里另写远程实现，那些功能的入口是“安装 Node”（`lib/hub/node-installer.js`、`scripts/remote/install-node.*`）。
 - **只在 Hub 上处理、不转发的接口**：`/api/auth`、`/api/servers`、`/api/plugins`、`/api/managed-resources`、`/api/share`（`isRelayable` / `Api.isHubPath` 两处须一致）。
 - **node token**（配对文件里的令牌）只能用来访问那台 Node 自己的 API。`/n/` 转发入口只接受登录令牌，防止一个 Hub 经另一个 Hub 链式转发。
 - HTTPS Node 按配对文件里的证书指纹固定，升级请求（WebSocket）也走同样的固定证书 agent（`pinnedAgent`）；不要退回 `rejectUnauthorized: false` 却不校验指纹。Node 在恢复的 TLS 会话上报告空证书：`pinnedAgent` 只缓存通过指纹的连接的会话，恢复成功即视为同一证书；不要换成 https.Agent 自带的会话缓存（它会缓存未校验的会话，恢复时又过不了指纹检查，进而重置整条链路）。
 - **直连是可选的**（`transport.api` / `transport.terminal` = `direct`，默认 `ssh`）：只在 TLS + 指纹固定下进行，令牌不离开 Hub，检查通过才用，失败回到转发；直连失败不得重置 SSH 链路。配对和健康检查始终走 SSH。
-- **Mosh 终端是可选实验**（`transport.terminal = 'mosh'`，见 docs/architecture.md）：`/api/mosh` 只认 node token 加 `x-twp-hub-call`，转发时剥掉该头且不转发该路径，密钥不进浏览器和日志。Windows 上必须看到 `list-clients` 里出现该 mosh-server 的子进程才释放客户端启动队列，不得改回“CONNECT 后等固定时间”。结束进程前核对记录的身份（`server/mosh/processes.js`），不凭历史 PID；Node 没确认清理干净时 Hub 不得回退到另一个 attach。由 Node 拉起的 tmux（mosh-server 的命令）必须删掉继承的 `TMUX`/`TMUX_PANE`。Windows 不作 Mosh 客户端（ENV-6）。
+- **Mosh 终端是可选实验**（`transport.terminal = 'mosh'`，见 docs/architecture.md）：`/api/mosh` 只认 node token 加 `x-twp-hub-call`，转发时剥掉该头且不转发该路径，密钥不进浏览器和日志。Windows 上必须看到 `list-clients` 里出现该 mosh-server 的子进程才释放客户端启动队列，不得改回“CONNECT 后等固定时间”。结束进程前核对记录的身份（`lib/mosh/processes.js`），不凭历史 PID；Node 没确认清理干净时 Hub 不得回退到另一个 attach。由 Node 拉起的 tmux（mosh-server 的命令）必须删掉继承的 `TMUX`/`TMUX_PANE`。Windows 不作 Mosh 客户端（ENV-6）。
 
 ## tmux server 守护与会话持久化
 
@@ -48,29 +48,29 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 
 工作链路：
 1. 开机 → tmux companion service 跑 `tmux start-server`（macOS 为前台模式 `tmux -D`，Windows 为 `setsid -w tmux -D`）→ 加载 `~/.tmux.conf`
-2. 面板服务启动，“会话保护”（`server/session-protection/`）每 20 秒看一次 tmux：第一次看到某个 server 实例时，如果它没有会话或刚启动（2 分钟内），就用 `last` 快照自动恢复它还缺的 sessions/windows/panes，并在该 server 上记下 `@twp-restored-at`（页面据此提示“已自动恢复”）
+2. 面板服务启动，“会话保护”（`lib/session-protection/`）每 20 秒看一次 tmux：第一次看到某个 server 实例时，如果它没有会话或刚启动（2 分钟内），就用 `last` 快照自动恢复它还缺的 sessions/windows/panes，并在该 server 上记下 `@twp-restored-at`（页面据此提示“已自动恢复”）
 3. 面板每 5 分钟调用项目自带的 tmux-resurrect（`vendor/tmux-plugins/tmux-resurrect`）的 `save.sh` 保存；快照仍是 resurrect 标准格式，在 `~/.local/share/tmux/resurrect/`
-4. 网页打开 → `server/tmux.js` 的 `listSessions()` 跑 `tmux list-sessions`，看到所有 restored 会话
+4. 网页打开 → `lib/tmux.js` 的 `listSessions()` 跑 `tmux list-sessions`，看到所有 restored 会话
 
 设置在每台服务器的“会话”页面（`/api/session-protection`，经 `/n/:serverId` 远程同样可用），存于 `~/.config/tmux-web-panel/session-protection.json`。不用 tmux-continuum，也不需要往 `~/.tmux.conf` 加插件配置。
 
 不变量：
 
 - **部署必须使用 `vendor/tmux` 子模块构建的 tmux**：`install-service.sh install` 会调用 `scripts/build-tmux.sh`，原子部署到 `~/.local/share/tmux-web-panel/bin/tmux`，不得退回系统 `PATH` 中的 tmux
-  - 唯一例外是 Windows：使用 MSYS2 打包的 tmux（`C:\msys64\usr\bin\tmux.exe`，带 MSYS 运行时补丁），由 `server/msys.js` 解析；tmux 进程必须带 `MSYS=noglob`，否则 MSYS 会把 `#{session_id}` 这类参数做花括号展开。pane 路径是 MSYS 路径（`/home/me`、`/c/...`），读写文件前经 `toNativePath` 转换
+  - 唯一例外是 Windows：使用 MSYS2 打包的 tmux（`C:\msys64\usr\bin\tmux.exe`，带 MSYS 运行时补丁），由 `lib/msys.js` 解析；tmux 进程必须带 `MSYS=noglob`，否则 MSYS 会把 `#{session_id}` 这类参数做花括号展开。pane 路径是 MSYS 路径（`/home/me`、`/c/...`），读写文件前经 `toNativePath` 转换
 - **`~/.tmux.conf` 必须保留 `set -g exit-empty off`**：否则开机启动的空 server 等不到面板来恢复就自己退出了
 - **不要在 `tmux-server.service` 里预创建会话**（如 `tmux new-session -d -s main`）：同名会话不会被恢复，启动超过 2 分钟后才看到的 server 也不再恢复
 - **Windows 上不得 resize 运行中的 tmux 客户端，也不得用 node-pty 的 `kill` 关闭它**：两者都可能带走整个 tmux server 和所有会话（`docs/known-issues.md` ENV-1）。尺寸变化走 `TerminalManager._setClientSize`（新客户端替换旧的），断开走 `_endClient`（只结束客户端进程），`conhost.exe` 由 `ConsoleReaper` 延后回收
 - **Windows 上面板的 tmux 客户端一次只变更一个**：server 逐字节读新客户端的终端应答，这期间有客户端离开（别的会话的也算）就可能丢字节，剩下的会当按键进窗格（`docs/known-issues.md` ENV-3）。所以新接入和替换都排队经 `TerminalManager.whenClientCanStart` / `_inClientTurn`：确认旧客户端的进程已消失才启动，启动窗口内不结束别的客户端（`_endClient` 排队）。不要改回先启动新的、靠 `-d` 踢旧的；换 ConPTY DLL 也不是修复，实测同样漏。排队期间已取消的请求不得产生任何副作用。结束后超时仍活着就让接入失败并可重试（`TERMINAL_BUSY`，关闭码 1011），不并排启动；不要对同一个 pid 再结束一次（可能已被复用），只等 `onExit` 或确认 pid 已不存在。`onExit` 之后任何路径都不得再结束它
 - **Windows 上被接管的连接立即失效，不等 `onExit`**：`onExit` 可能比进程消失晚约 1 秒，这段时间里旧 socket 的 resize 会反过来把会话抢回去。`_takeOver` / `_retire` 立刻把连接移出 `connections`、关闭 socket（接管用 1000，页面不再重连），`_leaving` 等待和 `onExit` 里的释放照常进行；消息入口先校验连接仍有效
 - **客户端变更期间的输入留给下一个客户端**：网关的 `early`（接入前）和连接的 `heldInput`（从接受一次改变尺寸的 resize 起，到新客户端建立或尺寸改回）都只投递一次，总量受 `MAX_HELD_INPUT_BYTES` 限制，超过就以 1009 关闭并清空。不要把输入写给马上要结束的客户端。已经写入的，`_killClient` 按字节数等 server 读完（`INPUT_READ_*`，有上限）：这是尽力保护，不保证长粘贴，也不是 DA 问题的修复，不要拿它替代排队；没写过输入的客户端不等
-- **Windows 上新窗格依赖 tmux 全局环境里的 `MSYS2_PATH_TYPE=inherit`**：没有它，MSYS2 登录 shell 会把 PATH 重置到最小集，窗格里找不到 claude、Node、Git（`docs/known-issues.md` ENV-2）。`run-tmux-server.ps1`、`server/msys.js` 和会话保护的 `_applyOptions` 三处保证，不要去掉
-- **Windows 上结束终端控制台要能证明没人在用**：`conhost.exe` 只能按 `pty.spawn` 的精确时间窗认领，不加余量（实测 30 个全部落在窗内）。进程里每个 `pty.spawn` 都必须经 `trackConsoleSpawn`（`server/terminal/console-reaper.js`），它把时间窗记到 pty 退出；一个控制台还可能属于活着的 pty、或一个窗里不止一个控制台，就不结束。宁可漏清，不扩大窗口，也不要批量清理来历不明的 `conhost.exe`
+- **Windows 上新窗格依赖 tmux 全局环境里的 `MSYS2_PATH_TYPE=inherit`**：没有它，MSYS2 登录 shell 会把 PATH 重置到最小集，窗格里找不到 claude、Node、Git（`docs/known-issues.md` ENV-2）。`run-tmux-server.ps1`、`lib/msys.js` 和会话保护的 `_applyOptions` 三处保证，不要去掉
+- **Windows 上结束终端控制台要能证明没人在用**：`conhost.exe` 只能按 `pty.spawn` 的精确时间窗认领，不加余量（实测 30 个全部落在窗内）。进程里每个 `pty.spawn` 都必须经 `trackConsoleSpawn`（`lib/terminal/console-reaper.js`），它把时间窗记到 pty 退出；一个控制台还可能属于活着的 pty、或一个窗里不止一个控制台，就不结束。宁可漏清，不扩大窗口，也不要批量清理来历不明的 `conhost.exe`
 - **环境问题要记录并由服务管理**：现象、证据和结论写进 `docs/known-issues.md`，检测和恢复做进服务，不靠人工救场。不要在默认 tmux server 上做接入、resize、断开实验。每条实验命令显式带 `tmux -S <私有 socket>` 或 `-L <唯一名称>`，并从实验及全部子进程环境移除 `TMUX` / `TMUX_PANE`；仅设置 `TMUX_TMPDIR` 不能隔离继承了 `TMUX` 的进程。清理前用同一组参数核对 `socket_path` 和 server PID 确实属于本次实验，无法确认归属就不结束。Windows 的绝对 tmux 路径会绕过 PATH 中的 shell 包装，不能把 POSIX 包装当作 Windows 隔离证明。
 - **没有会话时绝不保存**：那次空快照会成为 `last`，下次重启就什么也恢复不了。`save.sh` 只能由 `SessionProtection` 在有会话时调用
 - **用户自己在 `~/.tmux.conf` 里加载了 tmux-resurrect（常见于 TPM + continuum）时，面板不自动保存和恢复**（`mode: 'external'`），只提供立即保存和找回会话，避免两套机制互相覆盖或重复恢复
-- **从 Windows 的 Node 调 MSYS2 程序（tmux）必须用 `msysExecArgs`**（`server/msys.js`）：Node 默认把 `"` 转义成 `\"`，MSYS 不认，布局字符串、带引号的命令或名字会被拆碎
-- **`server/tmux.js` 的 `listSessions()` 是只读**：不会自动创建/启动 tmux server。如果 server 不存在，网页就是空——这是设计意图，恢复责任在 companion service + 会话保护
+- **从 Windows 的 Node 调 MSYS2 程序（tmux）必须用 `msysExecArgs`**（`lib/msys.js`）：Node 默认把 `"` 转义成 `\"`，MSYS 不认，布局字符串、带引号的命令或名字会被拆碎
+- **`lib/tmux.js` 的 `listSessions()` 是只读**：不会自动创建/启动 tmux server。如果 server 不存在，网页就是空——这是设计意图，恢复责任在 companion service + 会话保护
 
 排障：
 
@@ -89,11 +89,11 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 - **取消一路到底。** 浏览器走了就不能再 attach：`attach-session -d` 会抢走当前画面。前端 `_cleanupTerminalResources` 关闭 pending socket 和重试定时器；`TerminalGateway.handle`、`attachBasicTerminal`、`TerminalManager.create` 和 Hub 的 `relayNodeUpgrade`、`proxyUpgrade` 都要在继续前检查 socket 还活着。升级中的 socket 要 `watchUpgradeSocket` 才能发现对端离开。
 - **等待都有上限，但只限等待本身。** `Api.request` 默认读 45 秒、写 5 分钟，长传输不走它。`NodeLink` 的 `stallGuard` 分别限制排队、连接和等响应头；只有连接超时才判定转发已死并丢弃隧道，排队超时只取消那一个请求，开始传输后不限时。TLS 固定指纹和认证不因此放宽。终端 socket 收到任何帧后不得盲目重试。
 - **一次失败的请求不能判隧道死刑。** 隧道一断，上面所有终端和下载都跟着断。健康探针 `NodeLink.info()` 失败后在新连接上再确认一次，还不通才 `reset`；只有这个只读探针重试，写请求和转发请求都不重试，401 和证书变化不需要第二次确认。凡是 `await` 之后要 `reset` 的地方都用 `_resetIfCurrent(tunnel, …)`，旧隧道的迟到结果不得影响新隧道。每次隧道失效 `logLinkLost` 记一行（时间、`serverId`、原因、错误码、退出码或信号），不写 URL、请求头、令牌、SSH 参数或 stderr。
-- `public/js/terminal-trace.js` 记录每次打开的时间线（`TerminalTrace.enable()` 开启，`.last()` 读取），默认关闭，只存时间、网格和计数。`marks.stable` 是启发式，验收以真实界面截图和独立时序为准。
+- `plugins/terminal/client/js/terminal-trace.js` 记录每次打开的时间线（`TerminalTrace.enable()` 开启，`.last()` 读取），默认关闭，只存时间、网格和计数。`marks.stable` 是启发式，验收以真实界面截图和独立时序为准。
 
 ## 移动端工具盘交互契约
 
-移动输入工具台 + 底部工具盘（drawer）在 `public/js/terminal.js` 的 `_createFabPanel` 和 `public/js/fab-drawer.js` 中实现；`.fab-tool` 保留为工具触发器的兼容类。修改时必须尊重以下约定：
+移动输入工具台 + 底部工具盘（drawer）在 `plugins/terminal/client/js/terminal.js` 的 `_createFabPanel` 和 `plugins/terminal/client/js/fab-drawer.js` 中实现；`.fab-tool` 保留为工具触发器的兼容类。修改时必须尊重以下约定：
 
 - **软键盘与工具盘互斥**：xterm 的 `.xterm-helper-textarea` focus = 系统软键盘唤起的唯一信号。`document.addEventListener('focusin', ...)` 哨兵监听：drawer open 且 focus 命中 textarea 时自动 `toggleDrawer(false)`。不要引入绕过这个哨兵的 focus 调用。
 - **iOS 手势上下文**：`term.focus()` 必须在用户 tap 的 touchend/click 回调里**直接同步调用**——塞进 `setTimeout` 会让 iOS Safari 判定非用户手势而拒绝唤起软键盘。
@@ -106,7 +106,7 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 
 两条选择路径，改动时不要混淆：
 
-- **裸拖（plain drag）= tmux copy-mode / 或被 pane 内程序吃掉**：copy-mode 高亮是 tmux 服务端画的反显，松手 `MouseDragEnd1Pane send -X copy-selection-and-cancel` → OSC 52 → `server/terminal.js` 的 `extractOsc52` 拦截 → 浏览器剪贴板。不要再并行调用 `pbcopy`，否则异步 pasteboard 写入可能在浏览器成功后把剪贴板覆盖为空。copy-mode 是**按 pane 隔离**的（拖到 pane 边界就停，是正确行为）。pane 跑抢鼠标程序时裸拖根本进不了 copy-mode。
+- **裸拖（plain drag）= tmux copy-mode / 或被 pane 内程序吃掉**：copy-mode 高亮是 tmux 服务端画的反显，松手 `MouseDragEnd1Pane send -X copy-selection-and-cancel` → OSC 52 → `lib/terminal.js` 的 `extractOsc52` 拦截 → 浏览器剪贴板。不要再并行调用 `pbcopy`，否则异步 pasteboard 写入可能在浏览器成功后把剪贴板覆盖为空。copy-mode 是**按 pane 隔离**的（拖到 pane 边界就停，是正确行为）。pane 跑抢鼠标程序时裸拖根本进不了 copy-mode。
 - **修饰键拖动 = xterm 本地选区（绕开 tmux 和程序）**：靠 `macOptionClickForcesSelection`（`createTerminalInstance`）打开。**Mac 用 Option/Alt+拖动，Linux/Win 用 Shift+拖动**。这是原生终端里"按 Shift 绕过程序鼠标"的网页等价物，不受重绘/边缘/copy-mode 状态影响，但只覆盖可见视口（不含 tmux 滚动历史）。
 
 不变量：
@@ -119,7 +119,7 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 
 ## 文件预览分窗契约
 
-`public/js/file-preview.js` 的文件预览分成两个层次：新文件始终先进入 modal；用户点击“在右侧分栏打开”后，才把当前 `.fp-modal` 移入右侧 `.fp-dock` 并新增/激活 Tab。
+`plugins/files/client/js/file-preview.js` 的文件预览分成两个层次：新文件始终先进入 modal；用户点击“在右侧分栏打开”后，才把当前 `.fp-modal` 移入右侧 `.fp-dock` 并新增/激活 Tab。
 
 - 分窗 Tab 按绝对路径去重；同一路径再次加入时激活已有 Tab，不复制。
 - Tab 可以拖拽排序，也可以用 Alt+Shift+←/→ 移动。文件和 block 混排的顺序存在分窗状态的 `order` 里（文件按路径，block 按 `persistKey`），block 之间的顺序同时经 `blockDock.onReorder` 写回 BlockHost，没有文件 Tab 时也能还原。拖拽数据用面板自己的类型，不用 `text/plain`，免得拖到终端上被当成输入。
@@ -132,7 +132,7 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 
 Git、浏览器等工具 block 与文件共用这个分窗（同一个标签条、宽度和隐藏按钮），不要再做第二个右侧栏：
 
-- 分窗归 `file-preview.js` 所有；`public/js/block-host.js` 只通过 `FilePreview.blockDock.sync()` 声明哪些 frame 属于标签条，block 的生命周期仍归它管。
+- 分窗归 `file-preview.js` 所有；`plugins/files/client/js/block-host.js` 只通过 `FilePreview.blockDock.sync()` 声明哪些 frame 属于标签条，block 的生命周期仍归它管。
 - 切换文件 Tab 时文件 modal 离开 DOM，block 的 frame 只隐藏不移除，这样浏览器页面和未写完的提交说明都不会丢。
 - 文件 Tab 和 Git block 按窗口保存，浏览器 block 按服务器保存：切换窗口时文件和 Git 标签跟着换，浏览器标签保留。block 的归属由注册时的 `perWindow` 决定，`_persistDockState` 不写入 block，只记录它是否在最前（`activeBlock`）。
 - 切走窗口时 Git block 的 frame 只脱离 DOM、不销毁，这样没写完的提交说明不会丢；窗口的 block 要等访问到它才创建。在没有窗口的页面打开的 Git 先浮动，到第一个窗口时归属于它。

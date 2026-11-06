@@ -7,8 +7,8 @@ if [[ ! -d "$ANDROID_HOME" ]]; then
   echo "Android SDK not found; set ANDROID_HOME." >&2
   exit 1
 fi
-if [[ -z "${TMUX_PANEL_URL:-}" && -f "$PROJECT_DIR/public/js/relay-config.js" ]]; then
-  TMUX_PANEL_URL="$(node --input-type=module - "$PROJECT_DIR/public/js/relay-config.js" <<'JS'
+if [[ -z "${TMUX_PANEL_URL:-}" && -f "$PROJECT_DIR/plugins/ui/client/js/relay-config.js" ]]; then
+  TMUX_PANEL_URL="$(node --input-type=module - "$PROJECT_DIR/plugins/ui/client/js/relay-config.js" <<'JS'
 import { readFileSync } from 'node:fs';
 const match = readFileSync(process.argv[2], 'utf8').match(/PANEL_RELAY_PAGE\s*=\s*['"]([^'"]+)['"]/);
 if (match) process.stdout.write(match[1]);

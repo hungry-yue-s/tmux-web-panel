@@ -41,7 +41,7 @@ plutil -replace LSMinimumSystemVersion -string "$MINIMUM_MACOS" "$APP_PATH/Conte
 if [[ -n "${TMUX_PANEL_APP_VERSION:-}" ]]; then plutil -replace CFBundleShortVersionString -string "$TMUX_PANEL_APP_VERSION" "$APP_PATH/Contents/Info.plist"; fi
 if [[ -n "${TMUX_PANEL_BUILD_NUMBER:-}" ]]; then plutil -replace CFBundleVersion -string "$TMUX_PANEL_BUILD_NUMBER" "$APP_PATH/Contents/Info.plist"; fi
 ICON_FILE="$(plutil -extract CFBundleIconFile raw "$APP_PATH/Contents/Info.plist")"
-swift "$SCRIPT_DIR/generate-macos-icon.swift" "$WORK/AppIcon.iconset" "$PROJECT_DIR/public/app-icon.png"
+swift "$SCRIPT_DIR/generate-macos-icon.swift" "$WORK/AppIcon.iconset" "$PROJECT_DIR/plugins/ui/client/app-icon.png"
 iconutil --convert icns --output "$APP_PATH/Contents/Resources/$ICON_FILE" "$WORK/AppIcon.iconset"
 plutil -lint "$APP_PATH/Contents/Info.plist" >/dev/null
 

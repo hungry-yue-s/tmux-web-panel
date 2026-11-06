@@ -27,7 +27,7 @@ connects to the IP directly.
 | `scripts/setup-relay.sh` | Renders *your* relay page from the template and writes the panel-side relay config; `--publish` creates your Pages repo |
 | `scripts/setup-totp.sh` | Enrols TOTP two-factor (QR + otpauth URI) |
 | `relay/index.template.html` | Generic relay page; placeholders are substituted at render time |
-| `public/js/relay-config.js` | **Generated, gitignored.** Tells the login page where relayed logins bounce |
+| `plugins/ui/client/js/relay-config.js` | **Generated, gitignored.** Tells the login page where relayed logins bounce |
 
 ## What lives where
 
@@ -77,7 +77,7 @@ DUCKDNS_DOMAIN=mybox PAGES_URL=https://you.github.io/mybox-relay/ \
 
 From then on, an IP change costs nothing: the bookmark resolves the new IP over DoH
 and hands the stored token to the new origin via a URL fragment, which
-`public/js/auth.js` adopts and strips from the address bar.
+`plugins/auth/client/js/auth.js` adopts and strips from the address bar.
 
 ## How the hop works
 
@@ -92,7 +92,7 @@ and hands the stored token to the new origin via a URL fragment, which
 
 ## 引导页主题与动画
 
-引导页直接使用 `public/js/theme.js` 的完整配色；`setup-relay.sh` 会一起发布主题、连接脚本和预览页，新增主题无需另维护一套颜色。桌面为左右布局，手机为纵向布局；解析中显示不定进度与连接动效，找到地址立即跳转，失败可重试。系统开启“减少动态效果”时停用动画。
+引导页直接使用 `plugins/ui/client/js/theme.js` 的完整配色；`setup-relay.sh` 会一起发布主题、连接脚本和预览页，新增主题无需另维护一套颜色。桌面为左右布局，手机为纵向布局；解析中显示不定进度与连接动效，找到地址立即跳转，失败可重试。系统开启“减少动态效果”时停用动画。
 
 同一个引导地址支持 `?theme=<id>`。优先使用显式主题，其次是客户端注入/本地保存的 `tmux_theme`、中继保存的 `panel_relay_theme`；没有偏好时，手机默认 `oyster`，桌面默认 `tokyo-night`。原生 Android 已在页面脚本前注入保存的主题，进入引导页后可继续通过 `Theme.apply` 同步。Swift/Web 使用相同的主题文件；登录回跳及跨 IP 的 token 交接同时携带主题，使新地址下的登录页和工作台继续使用相同配色。
 
@@ -138,7 +138,7 @@ Inspect with `./scripts/install-lan-ip-sync.sh status` and
   header). The counter is in-memory: restarting the panel clears it.
 - **Relay page shows 解析失败** — both DoH endpoints failed (captive portal, blocked
   egress). Use the retry button, or connect to the IP directly as a fallback.
-- **Login works but the relay bounce does not** — `public/js/relay-config.js` missing or
+- **Login works but the relay bounce does not** — `plugins/ui/client/js/relay-config.js` missing or
   stale; re-run `setup-relay.sh`.
 
 ## Security notes

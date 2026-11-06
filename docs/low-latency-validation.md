@@ -87,15 +87,15 @@ Node v24.18.1，完整 Vitest 回归：137 个文件，136 通过、1 跳过；2
 
 | 边界 | 快照中的位置 | 必须满足的行为 |
 | --- | --- | --- |
-| 取消与代际 | `server/mosh/server.js` 的 `start`、`server/api/mosh.js`；Hub 的 `server/hub/mosh-terminal.js` | pending 和 active 都有归属；浏览器离开、link 重置/删除或服务关闭后不得再 attach、接管或向旧终端输入。 |
-| Windows 启动串行化 | `server/mosh/server.js` 的 CONNECT 后固定等待 | 不能把打印 CONNECT 加 300ms 当作 tmux 已接入。必须证明实际 attach 完成才释放客户端启动队列；无此证明时 Windows Mosh 保持不可选。 |
-| 进程退出与回收 | `server/mosh/server.js` 的会话表和 `stop`/`stopAll` | pending 计入限额；自然退出回收；只结束能证明属于本次启动的进程，不能只凭历史 PID；退出前等待清理完成。 |
-| 升级失败和回退 | `server/hub/mosh-terminal.js` 的 `handleUpgrade` 前后 | HTTP 升级拒绝、抛错、迟到 POST 都须收敛本地 PTY 和远端会话；清理结果不明时不能再 attach 第二个终端。 |
+| 取消与代际 | `lib/mosh/server.js` 的 `start`、`lib/api/mosh.js`；Hub 的 `lib/hub/mosh-terminal.js` | pending 和 active 都有归属；浏览器离开、link 重置/删除或服务关闭后不得再 attach、接管或向旧终端输入。 |
+| Windows 启动串行化 | `lib/mosh/server.js` 的 CONNECT 后固定等待 | 不能把打印 CONNECT 加 300ms 当作 tmux 已接入。必须证明实际 attach 完成才释放客户端启动队列；无此证明时 Windows Mosh 保持不可选。 |
+| 进程退出与回收 | `lib/mosh/server.js` 的会话表和 `stop`/`stopAll` | pending 计入限额；自然退出回收；只结束能证明属于本次启动的进程，不能只凭历史 PID；退出前等待清理完成。 |
+| 升级失败和回退 | `lib/hub/mosh-terminal.js` 的 `handleUpgrade` 前后 | HTTP 升级拒绝、抛错、迟到 POST 都须收敛本地 PTY 和远端会话；清理结果不明时不能再 attach 第二个终端。 |
 | 真实验收 | 私有 socket 的 Windows Node + Mac Hub | 验证取消、并发、resize、掉线、旧进程退出；验证 UDP 不通时的失败/回退，不重放已经交付的输入。mock 通过不能替代这些验收。 |
 
 ### 门槛现状（远端 Windows，2026-11-03）
 
-上表各项已在 `server/mosh/`、`server/api/mosh.js`、`server/hub/mosh-terminal.js` 中实现，单元测试覆盖（`test/mosh-server.test.js`、`test/mosh-terminal.test.js`、`test/terminal-client-owners.test.js`），并在 Windows 上用真实 mosh-server / mosh-client / tmux 做了私有生命周期验收。它仍是默认关闭的实验通道，**不代表 Mac Hub → Windows Node 已验收**。
+上表各项已在 `lib/mosh/`、`lib/api/mosh.js`、`lib/hub/mosh-terminal.js` 中实现，单元测试覆盖（`test/mosh-server.test.js`、`test/mosh-terminal.test.js`、`test/terminal-client-owners.test.js`），并在 Windows 上用真实 mosh-server / mosh-client / tmux 做了私有生命周期验收。它仍是默认关闭的实验通道，**不代表 Mac Hub → Windows Node 已验收**。
 
 | 边界 | 现在的做法 |
 | --- | --- |

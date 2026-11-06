@@ -8,11 +8,11 @@ docs/superpowers/
 /dist/
 /macos/TmuxPanel/.build/
 
-# Root-level temp screenshots (project screenshots live in public/screenshots/)
+# Root-level temp screenshots (project screenshots live in plugins/ui/client/screenshots/)
 /*.png
 
 # Per-deployment generated config (scripts/setup-relay.sh); see relay-config.example.js
-/public/js/relay-config.js
+/plugins/ui/client/js/relay-config.js
 
 # Android local configuration, signing material and build outputs
 /android/.gradle/

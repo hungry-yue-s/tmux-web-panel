@@ -30,10 +30,10 @@ project: tmux-web-panel
 
 本轮分析基于：
 
-- `public/index.html` 的应用外壳和脚本加载顺序。
-- `public/js/app.js` 的启动、导航、状态恢复、桌面首页和侧栏逻辑。
+- `plugins/ui/client/index.html` 的应用外壳和脚本加载顺序。
+- `plugins/ui/client/js/app.js` 的启动、导航、状态恢复、桌面首页和侧栏逻辑。
 - `sessions.js`、`windows.js`、`terminal.js`、`notifications.js`、`command-palette.js` 的二级入口。
-- `public/css/style.css` 的桌面/移动端分支。
+- `plugins/ui/client/css/style.css` 的桌面/移动端分支。
 - 正在运行的本地服务返回的实时 Session、Window 和性能数据。
 
 本地服务可访问，但真实 Chrome 对自签名 HTTPS 证书的处理导致样式资源未能可靠加载，因此本轮对运行界面的验证以 DOM、状态和源码为主；不把浏览器中的无样式页面作为视觉验收依据。
@@ -58,10 +58,10 @@ flowchart TD
 
 关键事实：
 
-- 默认状态是 `currentTab = windows`，但并不存在真正的 URL 路由（`public/js/app.js:270-367`）。
-- 导航恢复只存在当前浏览器标签页的 `sessionStorage` 中，刷新可以恢复，但复制链接、前进/后退、跨标签页都无法表达当前位置（`public/js/app.js:299-320`）。
-- 源码注释称其为“hash-based router”，实际没有读取或写入 hash，也没有 `popstate`/`hashchange` 处理（`public/js/app.js:323-367`）。
-- WebSocket 首次返回状态后，如果未选择 Session，会直接选择数组第一项（`public/js/app.js:1793-1796`）。这不是用户选择，也不是稳定的产品入口。
+- 默认状态是 `currentTab = windows`，但并不存在真正的 URL 路由（`plugins/ui/client/js/app.js:270-367`）。
+- 导航恢复只存在当前浏览器标签页的 `sessionStorage` 中，刷新可以恢复，但复制链接、前进/后退、跨标签页都无法表达当前位置（`plugins/ui/client/js/app.js:299-320`）。
+- 源码注释称其为“hash-based router”，实际没有读取或写入 hash，也没有 `popstate`/`hashchange` 处理（`plugins/ui/client/js/app.js:323-367`）。
+- WebSocket 首次返回状态后，如果未选择 Session，会直接选择数组第一项（`plugins/ui/client/js/app.js:1793-1796`）。这不是用户选择，也不是稳定的产品入口。
 
 ### 2.2 当前页面映射
 
@@ -74,7 +74,7 @@ flowchart TD
 | `perf` | 独立性能页 | 独立性能页 | 固定返回 `more` |
 | `notifications` | 实际通常使用浮层 | 移动端整页式内容 | 固定返回 `windows` |
 
-`sessions` 与 `windows` 在桌面端被合并，在移动端又不是同一种信息结构（`public/js/app.js:386-403`）。这意味着同一个状态值在不同设备上代表不同页面。
+`sessions` 与 `windows` 在桌面端被合并，在移动端又不是同一种信息结构（`plugins/ui/client/js/app.js:386-403`）。这意味着同一个状态值在不同设备上代表不同页面。
 
 ### 2.3 当前实际存在的入口
 
@@ -107,11 +107,11 @@ flowchart TD
 
 ### P1：桌面与移动重复实现同一操作
 
-通知、新建 Window、全屏、设置同时存在于 `index.html` 顶部栏和 `app.js` 动态生成的桌面侧栏头部；事件绑定也分成两套（`public/index.html:21-35`、`public/js/app.js:867-1044`、`public/js/app.js:1959-2004`）。
+通知、新建 Window、全屏、设置同时存在于 `index.html` 顶部栏和 `app.js` 动态生成的桌面侧栏头部；事件绑定也分成两套（`plugins/ui/client/index.html:21-35`、`plugins/ui/client/js/app.js:867-1044`、`plugins/ui/client/js/app.js:1959-2004`）。
 
 ### P1：“More” 成为杂物抽屉
 
-服务器连接状态、Session/Window 数量、机器 IP、性能入口、主题、关于和退出登录被放在同一页面。性能既出现在桌面首页，又作为 More 的二级入口，再通过专用返回按钮回到 More（`public/js/app.js:541-705`）。
+服务器连接状态、Session/Window 数量、机器 IP、性能入口、主题、关于和退出登录被放在同一页面。性能既出现在桌面首页，又作为 More 的二级入口，再通过专用返回按钮回到 More（`plugins/ui/client/js/app.js:541-705`）。
 
 ### P1：`+` 的作用域不清楚
 
@@ -397,7 +397,7 @@ data = {
 保持 Vanilla JS，不引入前端框架。先拆职责，再改视觉：
 
 ```text
-public/js/
+plugins/agent-hub/client/js/
 ├── router.js          # hash 解析、校验、前进后退
 ├── app-store.js       # route/ui/data，订阅与失效
 ├── app-shell.js       # 唯一的桌面/移动外壳

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="public/app-icon.png" width="76" alt="Tmux Web Panel logo">
+<img src="plugins/ui/client/app-icon.png" width="76" alt="Tmux Web Panel logo">
 
 English | [中文版](README.zh-CN.md)
 
@@ -140,6 +140,8 @@ tmux has three useful layers: a **session** is one project, a **window** is one 
 
 Clients never connect to tmux directly. They connect to `tmux-web-panel`; the panel authenticates them, serves the UI, and attaches to tmux. That is why closing a browser tab does not stop a build, and the same pane can be reopened from another device.
 
+Inside, the panel is a set of plugins on the [Cordis](https://github.com/cordiverse/cordis) kernel (the same kernel as DeepSeek Harness): `profiles/panel.yml` lists them, each feature is one plugin with its server side and its front end, and whatever a plugin registers goes away with it. `node bin/panel.js --dump-config` prints the assembly. See [docs/plugins.md](docs/plugins.md).
+
 ```mermaid
 flowchart LR
     subgraph clients["Clients"]
@@ -193,7 +195,7 @@ The same workspace tree—server → session → window → pane—is what the s
 
 ```bash
 npm install
-node server/index.js
+node bin/panel.js
 ```
 
 Open <http://localhost:7681>. That's the whole thing — no build step, no database.

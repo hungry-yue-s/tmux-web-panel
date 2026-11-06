@@ -145,12 +145,17 @@ cp "$PROJECT_DIR/vendor/tmux/COPYING" "$RUNTIME/licenses/tmux-COPYING.txt"
 echo 'Copying server resources and installing production dependencies...'
 [[ -f "$SCRIPT_DIR/desktop-runtime.mjs" ]] || { echo 'Missing desktop-runtime.mjs installation helper.' >&2; exit 1; }
 cp "$PROJECT_DIR/package.json" "$PROJECT_DIR/package-lock.json" "$RUNTIME/app/"
-for name in server public scripts relay; do
+for name in bin kernel plugins lib client profiles scripts relay; do
   mkdir -p "$RUNTIME/app/$name"
   rsync -a --delete --exclude='relay-config.js' --exclude='*.pem' --exclude='*.key' --exclude='*.crt' --exclude='.env' "$PROJECT_DIR/$name/" "$RUNTIME/app/$name/"
 done
-mkdir -p "$RUNTIME/app/plugins/tmux-agent" "$RUNTIME/app/skills"
-rsync -a --delete "$PROJECT_DIR/plugins/tmux-agent/" "$RUNTIME/app/plugins/tmux-agent/"
+# The kernel packages are file: dependencies; npm ci needs them in place.
+for name in cordis cosmokit plugin-timer; do
+  mkdir -p "$RUNTIME/app/vendor/$name"
+  rsync -a --delete "$PROJECT_DIR/vendor/$name/" "$RUNTIME/app/vendor/$name/"
+done
+mkdir -p "$RUNTIME/app/catalog/tmux-agent" "$RUNTIME/app/skills"
+rsync -a --delete "$PROJECT_DIR/catalog/tmux-agent/" "$RUNTIME/app/catalog/tmux-agent/"
 rsync -a --delete "$PROJECT_DIR/skills/" "$RUNTIME/app/skills/"
 # tmux-resurrect: session protection saves tmux with it.
 mkdir -p "$RUNTIME/app/vendor/tmux-plugins"
@@ -168,8 +173,8 @@ cat > "$RUNTIME/licenses/THIRD-PARTY-NOTICES.md" <<'NOTICES'
 - tmux-resurrect: ../app/vendor/tmux-plugins/tmux-resurrect/LICENSE.md (MIT).
 - libevent and utf8proc: their license files in this directory.
 - macOS ncurses and system frameworks: supplied by macOS, not copied into this runtime.
-- Maple Mono: ../app/public/fonts/OFL-MapleMono.txt.
-- Symbols Nerd Font Mono: ../app/public/fonts/LICENSE-SymbolsNerdFont.txt (upstream v3.4.0 and glyph-source notices).
+- Maple Mono: ../app/plugins/terminal/client/fonts/OFL-MapleMono.txt.
+- Symbols Nerd Font Mono: ../app/plugins/terminal/client/fonts/LICENSE-SymbolsNerdFont.txt (upstream v3.4.0 and glyph-source notices).
 - npm production packages: each package's original notices in ../app/node_modules/.
 - Tmux Panel: ../app/package.json declares ISC. This source checkout does not contain a root project license text; the declaration is retained as metadata and does not replace a license grant.
 NOTICES

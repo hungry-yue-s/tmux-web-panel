@@ -16,7 +16,7 @@
 
 ## tmux 配置
 
-tmux 相关的设置都在**每台服务器的“会话”页面**（`public/js/session-protection.js`，接口 `/api/session-protection`）。它是机器级接口，远程服务器经 `/n/:serverId` 访问，用法和本机一样。页面只展示使用者能感受到的结果，不提供 tmux 选项的原文编辑。
+tmux 相关的设置都在**每台服务器的“会话”页面**（`plugins/session-protection/client/js/session-protection.js`，接口 `/api/session-protection`）。它是机器级接口，远程服务器经 `/n/:serverId` 访问，用法和本机一样。页面只展示使用者能感受到的结果，不提供 tmux 选项的原文编辑。
 
 | 卡片 | 内容 |
 |---|---|
@@ -27,7 +27,7 @@ tmux 相关的设置都在**每台服务器的“会话”页面**（`public/js/
 
 如果用户自己的 `~/.tmux.conf` 已经加载了 tmux-resurrect（例如经 TPM 搭配 tmux-continuum），页面显示“由你的 tmux 配置负责”，不提供开关和程序选择，面板也不自动保存或恢复；“立即保存”和“找回会话”仍然可用。
 
-实现在 `server/session-protection/`：
+实现在 `lib/session-protection/`：
 - `catalog.js`：程序分类，以及与 resurrect `@resurrect-processes` 的对应关系；
 - `snapshot.js`：读取快照；
 - `restore.js`：面板自己的恢复，所有目标都用 tmux 返回的 id；
@@ -37,7 +37,7 @@ tmux 相关的设置都在**每台服务器的“会话”页面**（`public/js/
 
 首个插件为 `tmux-agent`，支持安装、启用、停用、更新和卸载。当前目录为仓库随附的受控插件目录，不接受任意 URL 或上传代码。
 
-安装将 `plugins/tmux-agent/` 复制到 `~/.config/tmux-web-panel/plugins/` 下的独立版本目录；完成入口校验后才激活。
+安装将 `catalog/tmux-agent/` 复制到 `~/.config/tmux-web-panel/plugins/` 下的独立版本目录；完成入口校验后才激活。
 安装状态持久化在该目录的 `state.json`。更新从当前仓库重新复制并保留启停状态。
 停用/卸载立即阻止新的 MCP 请求，不停止已经启动的 tmux 命令，不删除任务日志。
 
@@ -86,8 +86,8 @@ Agent 任务发送到已有窗格，通过唯一标记从最多 2000 行、64 Ki
 
 ## 开发和验证
 
-后端 `server/plugins.js` 负责插件生命周期，`server/managed-resources.js` 负责本机资源，均通过现有 `/api` 认证和同源写入保护。
-插件业务代码在 `plugins/tmux-agent/server.mjs`，复用现有 WorkspaceService 和 ExecutorPool，本地/SSH 不另建一套连接机制。
+后端 `lib/plugins.js` 负责插件生命周期，`lib/managed-resources.js` 负责本机资源，均通过现有 `/api` 认证和同源写入保护。
+插件业务代码在 `catalog/tmux-agent/server.mjs`，复用现有 WorkspaceService 和 ExecutorPool，本地/SSH 不另建一套连接机制。
 MCP 使用官方 `@modelcontextprotocol/sdk`，不自行实现协议。
 
 ```bash

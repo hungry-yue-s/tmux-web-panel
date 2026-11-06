@@ -4,7 +4,7 @@
 
 ## 从哪里量
 
-`public/js/terminal-trace.js` 记录每次打开的时间线，默认关闭，开启后也只保留最近 20 次，只存时间、网格和计数，不存令牌、地址、输入和终端内容。
+`plugins/terminal/client/js/terminal-trace.js` 记录每次打开的时间线，默认关闭，开启后也只保留最近 20 次，只存时间、网格和计数，不存令牌、地址、输入和终端内容。
 
 ```js
 TerminalTrace.enable();  // 记在这个浏览器里，刷新后仍然开着

@@ -28,7 +28,7 @@ import * as fontkit from 'fontkit';
 import subsetFont from 'subset-font';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const CLIENT_DIR = join(root, 'next', 'plugins', 'terminal', 'client');
+const CLIENT_DIR = join(root, 'plugins', 'terminal', 'client');
 const FONT_DIR = join(CLIENT_DIR, 'fonts');
 const OUT_DIR = join(FONT_DIR, 'tpm');
 const FAMILY = 'Tmux Panel Mono';

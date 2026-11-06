@@ -49,15 +49,15 @@ for (const name of binaryFiles) {
 }
 const tmuxImports = execFileSync('/usr/bin/nm', ['-u', path.join(root, 'bin/tmux')], { encoding: 'utf8' });
 assert(!/\b_tiparm(?:_s)?\b/.test(tmuxImports), 'tmux must use tparm for minimum macOS compatibility');
-for (const relative of ['bin/node', 'bin/tmux', 'app/server/index.js', 'app/vendor/tmux/tmux.c', 'app/vendor/tmux-plugins/tmux-resurrect/scripts/save.sh','app/scripts/remote/install-node.sh', 'app/public/index.html', 'app/public/fonts/LICENSE-SymbolsNerdFont.txt', 'licenses/THIRD-PARTY-NOTICES.md', 'app/scripts/desktop-runtime.mjs', 'app/scripts/desktop-certificates.mjs', 'app/relay/index.template.html', 'app/plugins/tmux-agent/panel-plugin.json', 'app/skills/tmux-panel/SKILL.md']) {
+for (const relative of ['bin/node', 'bin/tmux', 'app/bin/panel.js', 'app/profiles/panel.yml', 'app/vendor/cordis/lib/index.js', 'app/vendor/tmux/tmux.c', 'app/vendor/tmux-plugins/tmux-resurrect/scripts/save.sh','app/scripts/remote/install-node.sh', 'app/plugins/ui/client/index.html', 'app/plugins/terminal/client/fonts/LICENSE-SymbolsNerdFont.txt', 'licenses/THIRD-PARTY-NOTICES.md', 'app/scripts/desktop-runtime.mjs', 'app/scripts/desktop-certificates.mjs', 'app/relay/index.template.html', 'app/catalog/tmux-agent/panel-plugin.json', 'app/skills/tmux-panel/SKILL.md']) {
   assert(fs.existsSync(path.join(root, relative)), `Missing bundled component: ${relative}`);
 }
-assert(!fs.existsSync(path.join(root, 'app/public/js/relay-config.js')), 'Personal generated relay config must not be distributed');
+assert(!fs.existsSync(path.join(root, 'app/plugins/ui/client/js/relay-config.js')), 'Personal generated relay config must not be distributed');
 const nodeVersion = execFileSync(path.join(root, 'bin/node'), ['--version'], { encoding: 'utf8' }).trim();
 const actualArch = execFileSync(path.join(root, 'bin/node'), ['-p', 'process.arch'], { encoding: 'utf8' }).trim();
 assert.equal(actualArch, arch);
 const tmuxVersion = execFileSync(path.join(root, 'bin/tmux'), ['-V'], { encoding: 'utf8' }).trim();
-execFileSync(path.join(root, 'bin/node'), ['--check', path.join(root, 'app/server/index.js')]);
+execFileSync(path.join(root, 'bin/node'), ['--check', path.join(root, 'app/bin/panel.js')]);
 const require = createRequire(path.join(root, 'app/package.json'));
 const pty = require('node-pty');
 await new Promise((resolve, reject) => {

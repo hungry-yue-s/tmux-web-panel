@@ -11,7 +11,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ACCOUNT="${TOTP_ACCOUNT:-${USER:-panel}}"
 
 out="$(node --input-type=module -e "
-import { enrollTotp, otpauthUri, totpCode } from '${PROJECT_DIR}/server/totp.js';
+import { enrollTotp, otpauthUri, totpCode } from '${PROJECT_DIR}/lib/totp.js';
 const secret = enrollTotp();
 console.log(secret);
 console.log(otpauthUri(secret, '${ACCOUNT}'));

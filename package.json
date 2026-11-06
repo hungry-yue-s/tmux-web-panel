@@ -2,10 +2,13 @@
   "name": "tmux-web-panel",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "bin": {
+    "tmux-panel": "bin/panel.js"
+  },
   "scripts": {
+    "start": "node bin/panel.js",
+    "dev": "node bin/panel.js",
     "test": "vitest run",
-    "dev": "node server/index.js",
     "test:macos": "bash scripts/test-macos-shell.sh",
     "build:macos": "bash scripts/build-macos-app.sh",
     "build:android": "bash scripts/build-android-app.sh"
@@ -14,9 +17,15 @@
   "author": "",
   "license": "ISC",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
+    "@cordisjs/plugin-timer": "file:vendor/plugin-timer",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "compression": "^1.8.1",
+    "cordis": "file:vendor/cordis",
+    "cosmokit": "file:vendor/cosmokit",
     "express": "^5.2.1",
     "multer": "^2.1.1",
     "node-pty": "1.2.0-beta.14",
@@ -31,5 +40,8 @@
     "subset-font": "^2.4.0",
     "supertest": "^7.2.2",
     "vitest": "^4.1.0"
+  },
+  "allowScripts": {
+    "node-pty@1.2.0-beta.14": true
   }
 }

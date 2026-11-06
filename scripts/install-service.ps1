@@ -7,7 +7,7 @@
   Two tasks under \tmux-web-panel\ in Task Scheduler:
     tmux-server     MSYS2 tmux in the foreground (tmux -D); restored sessions
                     are available as soon as the machine starts
-    tmux-web-panel  node server/index.js, restarted 3 s after any exit
+    tmux-web-panel  node bin/panel.js, restarted 3 s after any exit
 
   Requirements: Node.js for Windows (node-pty uses ConPTY) and MSYS2. The
   MSYS2 tmux package is installed with pacman when it is missing.

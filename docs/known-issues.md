@@ -4,15 +4,15 @@ README 重做过程中实际踩到、观察到或验证过的问题。每条都�
 
 | # | 严重度 | 问题 | 证据 / 位置 | 建议 |
 |---|--------|------|-------------|------|
-| 1 | 高 | ⌘K 命令面板在多服务器 shell 下选中后不跳转。面板能打开、能模糊过滤，但点选或回车后界面停在原窗口。根因是 `_selectItem()` 走 app.js 的 legacy `navigate()`，而 legacy `render()` 在 `.ms-app` 存在时直接 return，全程不碰 `location.hash` 和 Router | `public/js/command-palette.js:93-105`，`public/js/app.js:335-368`、`app.js:376-380` | palette 改调 `Router`，序列化成 `#/terminal/:serverId/:sessionId/:windowId/:paneId`，补一条 ms-shell 下的跳转测试 |
+| 1 | 高 | ⌘K 命令面板在多服务器 shell 下选中后不跳转。面板能打开、能模糊过滤，但点选或回车后界面停在原窗口。根因是 `_selectItem()` 走 app.js 的 legacy `navigate()`，而 legacy `render()` 在 `.ms-app` 存在时直接 return，全程不碰 `location.hash` 和 Router | `plugins/ui/client/js/command-palette.js:93-105`，`plugins/ui/client/js/app.js:335-368`、`app.js:376-380` | palette 改调 `Router`，序列化成 `#/terminal/:serverId/:sessionId/:windowId/:paneId`，补一条 ms-shell 下的跳转测试 |
 | 2 | 中 | 测试红灯。`npm test` 当前 4 个失败，`test/api/claude-usage.test.js` 3 例（full data、not_configured、OAuth 失败降级），`test/api/disk-io.test.js` 1 例（sector delta 速率）。claude 三例断言 `modelUsage['claude-opus-4-6']`、`dailyActivity` 长度等，疑似定价表或日期窗口漂移，disk-io 例对采样间隔敏感 | `npm test` 输出，97 files / 1411 tests / 4 failed | 修 fixture 或断言，disk-io 例改为注入固定时间戳 |
-| 3 | 中 | 终端模式按「用户 + server」持久化，不区分设备。桌面切到分屏后手机打开同一 server 会继承分屏，窄屏上两个 pane 挤到不可读，本次捕获中实际复现 | `public/js/store.js:2-15` 的 `terminalModeByServer` | 小视口回落 tab，或按设备维度持久化 |
-| 4 | 中 | `public/screenshots/` 全量过期且含真实会话名。4 月截图仍是 legacy shell，侧栏带真实中文会话名，README 若继续引用即泄露工作信息 | `public/screenshots/*.png` | 删除该目录，README 统一引用 `docs/assets/readme/` |
-| 5 | 低 | CLAUDE.md 与代码漂移。契约写分窗宽度 320–820px，代码已改为 `min(可用宽度 * 0.7)` | `CLAUDE.md`「文件预览分窗契约」，`public/js/file-preview.js:188`，commit `c897f9e` | 更新 CLAUDE.md 契约描述 |
+| 3 | 中 | 终端模式按「用户 + server」持久化，不区分设备。桌面切到分屏后手机打开同一 server 会继承分屏，窄屏上两个 pane 挤到不可读，本次捕获中实际复现 | `plugins/ui/client/js/store.js:2-15` 的 `terminalModeByServer` | 小视口回落 tab，或按设备维度持久化 |
+| 4 | 中 | `plugins/ui/client/screenshots/` 全量过期且含真实会话名。4 月截图仍是 legacy shell，侧栏带真实中文会话名，README 若继续引用即泄露工作信息 | `plugins/ui/client/screenshots/*.png` | 删除该目录，README 统一引用 `docs/assets/readme/` |
+| 5 | 低 | CLAUDE.md 与代码漂移。契约写分窗宽度 320–820px，代码已改为 `min(可用宽度 * 0.7)` | `CLAUDE.md`「文件预览分窗契约」，`plugins/files/client/js/file-preview.js:188`，commit `c897f9e` | 更新 CLAUDE.md 契约描述 |
 | 6 | 低 | 仓库根目录散落一次性截图与证书文件。`claude-auto-detect.png`、`drawer-*.png`、`nexus-*.png`、`terminal-*.png`、`tmux-render-abnormal.png`、`layout-test-open.png`、`cert.pem`、`key.pem` 都只靠 `.gitignore` 兜底，工作树里长期存在 | `git status` 与根目录列表 | 从工作树移除，证书类文件不应留在仓库目录 |
-| 7 | 低 | 性能页对任何已登录客户端暴露进程名与会话名，Top 压力来源和 Windows 与系统进程两块都是。单机自用没问题，多人共用一个面板时是信息泄露面 | `public/js/perf-panel.js`，`server/api/` 下 window-stats 相关 | 共享部署时加配置项或脱敏，README 截图需 sanitize（本次已做） |
-| 8 | 待验证 | 移动端 drawer 按键在合成 touch 序列后抽屉关闭，和「按键不退出」契约不符。可能是 touch 坐标命中抽屉拖拽热区，或 focus 哨兵把合成事件判成软键盘信号 | `CLAUDE.md`「移动端工具盘交互契约」，`public/js/fab-drawer.js` | 真机复现，若属实给 kbd 按钮加 `touch-action` 或阻止拖拽判定 |
-| 9 | 待验证 | 场景自动识别延迟。pane 内进程改名为 `claude`（`exec -a`）后约 5s，drawer 场景芯片仍显示「终端」 | `public/js/fab-scene.js:13-264`，`server/monitor.js` 的 pane-cmd 事件 | 核对 pane-cmd 推送周期与 ps 名称读取，必要时缩短探测间隔 |
+| 7 | 低 | 性能页对任何已登录客户端暴露进程名与会话名，Top 压力来源和 Windows 与系统进程两块都是。单机自用没问题，多人共用一个面板时是信息泄露面 | `plugins/metrics/client/js/perf-panel.js`，`lib/api/` 下 window-stats 相关 | 共享部署时加配置项或脱敏，README 截图需 sanitize（本次已做） |
+| 8 | 待验证 | 移动端 drawer 按键在合成 touch 序列后抽屉关闭，和「按键不退出」契约不符。可能是 touch 坐标命中抽屉拖拽热区，或 focus 哨兵把合成事件判成软键盘信号 | `CLAUDE.md`「移动端工具盘交互契约」，`plugins/terminal/client/js/fab-drawer.js` | 真机复现，若属实给 kbd 按钮加 `touch-action` 或阻止拖拽判定 |
+| 9 | 待验证 | 场景自动识别延迟。pane 内进程改名为 `claude`（`exec -a`）后约 5s，drawer 场景芯片仍显示「终端」 | `plugins/terminal/client/js/fab-scene.js:13-264`，`lib/monitor.js` 的 pane-cmd 事件 | 核对 pane-cmd 推送周期与 ps 名称读取，必要时缩短探测间隔 |
 | 10 | 待验证 | `/css/style.css` 偶发加载不完整。捕获过程中多次出现整页无样式或半样式渲染，`link.sheet` 存在但布局规则缺失，重试即恢复，疑似共享 Chrome 上该请求被截断或复位 | 捕获脚本 `ensureStyled` 与 `assertReady` 的重试日志 | 给静态资源加 `onerror` 重试或内联关键 CSS，若确认与本仓库服务端无关则忽略 |
 | 11 | 低 | README 旧文案严重落后于实现，没提多服务器工作台、性能与 Claude/Codex 页、场景抽屉、Mermaid 导出、归档预览这些 | 旧 `README.md` | 本次已重写，后续大功能同步更新 README |
 
@@ -48,11 +48,11 @@ README 重做过程中实际踩到、观察到或验证过的问题。每条都�
 
 **服务现在怎么处理。**
 
-- `server/terminal.js`：Windows 上不 resize 运行中的客户端，按新尺寸启动新客户端并替换旧的；断开时只结束客户端进程，不调用 node-pty 的 `kill` 去关控制台。
-- `server/terminal/console-reaper.js`：客户端结束 5 秒后再回收它的 `conhost.exe`，此时 tmux 早已放开这个控制台。
+- `lib/terminal.js`：Windows 上不 resize 运行中的客户端，按新尺寸启动新客户端并替换旧的；断开时只结束客户端进程，不调用 node-pty 的 `kill` 去关控制台。
+- `lib/terminal/console-reaper.js`：客户端结束 5 秒后再回收它的 `conhost.exe`，此时 tmux 早已放开这个控制台。
 - `scripts/windows/run-tmux-server.ps1`：server 必须持续以同一 pid 应答，连续 3 次没有应答就结束它并重启，并写入 `tmux-server.log`。
-- `server/session-protection/`：Windows 上快照目录不随 `HOME` 变化；刚启动的 server 即使已有别的会话，也会补回 `last` 里缺失的会话。
-- `public/js/terminal.js`：连接时带上实际尺寸，重连后的 resize 发到当前连接。
+- `lib/session-protection/`：Windows 上快照目录不随 `HOME` 变化；刚启动的 server 即使已有别的会话，也会补回 `last` 里缺失的会话。
+- `plugins/terminal/client/js/terminal.js`：连接时带上实际尺寸，重连后的 resize 发到当前连接。
 
 验证：真实 `TerminalManager` 在私有 tmux 上，所有间隔下最终尺寸全部正确，连续尺寸变化和各时点断开时 server 全部存活。
 
@@ -84,8 +84,8 @@ README 重做过程中实际踩到、观察到或验证过的问题。每条都�
 
 **服务现在怎么处理。**
 
-- `server/session-protection/service.js`：Windows 上面板每看到一个 server 实例，就在恢复会话之前执行 `set-environment -g MSYS2_PATH_TYPE inherit`，手动启动的 server 最多 20 秒内补上。
-- `server/msys.js`：面板自身启动的 tmux 进程都带这个变量，面板新建会话时拉起的 server 第一个窗格就是对的。
+- `lib/session-protection/service.js`：Windows 上面板每看到一个 server 实例，就在恢复会话之前执行 `set-environment -g MSYS2_PATH_TYPE inherit`，手动启动的 server 最多 20 秒内补上。
+- `lib/msys.js`：面板自身启动的 tmux 进程都带这个变量，面板新建会话时拉起的 server 第一个窗格就是对的。
 
 验证：真实 `SessionProtection` 在私有 tmux 上，补变量之前开的窗格找不到 claude，之后新开的窗口能找到，已打开的 shell 不变，`fish_add_path` 能修复已打开的 shell。
 
@@ -131,7 +131,7 @@ node-pty 报告退出比进程消失晚约 1 秒（中位 1.0 到 1.4 秒），�
 
 **服务现在怎么处理。**
 
-- `TerminalManager.whenClientCanStart`（`server/terminal.js`）：面板的新接入和替换排队进行。先结束同一会话上面板自己的其它客户端，确认进程消失，再启动；有客户端正在启动时，其它客户端的结束往后排。排队期间已经取消的请求不产生任何副作用。
+- `TerminalManager.whenClientCanStart`（`lib/terminal.js`）：面板的新接入和替换排队进行。先结束同一会话上面板自己的其它客户端，确认进程消失，再启动；有客户端正在启动时，其它客户端的结束往后排。排队期间已经取消的请求不产生任何副作用。
 - 结束后 1.5 秒还活着，就不启动，这次接入以 `TERMINAL_BUSY`（关闭码 1011）失败，页面重连时再试。不再结束第二次：PID 还存在不能证明还是原来的客户端，等 `onExit` 或确认 PID 已不存在。`onExit` 之后任何路径都不会再结束它。
 - 被接管的连接立刻失效并以 1000 关闭，不等 `onExit`；客户端的等待和释放照常进行。
 - 接入前的输入暂存在网关上，从接受一次改变尺寸的 resize 起的输入暂存在连接上，都只投递一次给有效的客户端。总量上限 1 MiB，超过以 1009 关闭并清空。
@@ -216,7 +216,7 @@ node-pty 报告退出比进程消失晚约 1 秒（中位 1.0 到 1.4 秒），�
 
 **结论。** 已证实：丢失发生在客户端一侧，mosh-server 的 pty 和 tmux 只是没收到新尺寸；服务端 pty 到 tmux 的尺寸跟随在所有轮次中都正确。原因（ConPTY 的窗口事件、MSYS2 运行时的 SIGWINCH）未查。macOS 的 mosh-client 跑在真实 pty 上，是否有同样问题未测。
 
-**服务现在怎么处理。** Windows 不作为 Mosh 客户端：Hub 在 Windows 上报告 `client_platform`，不提供 Mosh 终端（`server/hub/mosh-terminal.js` 的 `findMoshClient`）。Windows 作为 Node 运行 mosh-server 不受影响。Hub 桥接期间定期向 Node 询问会话是否还在，客户端漏收结束消息时页面也会关闭，不会一直停在冻结画面。
+**服务现在怎么处理。** Windows 不作为 Mosh 客户端：Hub 在 Windows 上报告 `client_platform`，不提供 Mosh 终端（`lib/hub/mosh-terminal.js` 的 `findMoshClient`）。Windows 作为 Node 运行 mosh-server 不受影响。Hub 桥接期间定期向 Node 询问会话是否还在，客户端漏收结束消息时页面也会关闭，不会一直停在冻结画面。
 
 ### ENV-7：Swift 设置自测编译产物收到 SIGKILL（2026-11-04）
 

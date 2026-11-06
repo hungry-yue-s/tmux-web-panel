@@ -197,7 +197,7 @@ ensure_tmux_exit_empty() {
 
 # Install tmux-server.service: bootstraps the user's tmux server on login so the
 # web panel always has sessions to list. The panel's session protection restores
-# the last save into it after a reboot (server/session-protection/).
+# the last save into it after a reboot (lib/session-protection/).
 install_tmux_server_systemd() {
   if [[ -z "$TMUX_BIN" ]]; then
     echo "⚠ tmux not found in PATH — skipping tmux-server.service"
@@ -260,7 +260,7 @@ install_systemd() {
     env_lines+="\nEnvironment=NODE_ONLY=1"
   fi
   # TLS is optional but must be a matched cert+key pair. When set, also wire up the
-  # HTTP->HTTPS redirect port (server/index.js only starts the redirect when TLS is on).
+  # HTTP->HTTPS redirect port (the http plugin only starts the redirect when TLS is on).
   if [[ -n "${TLS_CERT:-}" || -n "${TLS_KEY:-}" ]]; then
     if [[ -z "${TLS_CERT:-}" || -z "${TLS_KEY:-}" ]]; then
       echo "⚠ TLS_CERT and TLS_KEY must BOTH be set — skipping TLS (serving plain HTTP)" >&2
@@ -280,7 +280,7 @@ Wants=${TMUX_SERVER_SERVICE}.service
 [Service]
 Type=simple
 WorkingDirectory=${PROJECT_DIR}
-ExecStart=${NODE_BIN} server/index.js
+ExecStart=${NODE_BIN} bin/panel.js
 KillMode=process
 Restart=always
 RestartSec=3
@@ -438,7 +438,7 @@ install_launchd() {
     <key>ProgramArguments</key>
     <array>
         <string>${NODE_BIN}</string>
-        <string>server/index.js</string>
+        <string>bin/panel.js</string>
     </array>
     <key>WorkingDirectory</key>
     <string>${PROJECT_DIR}</string>

@@ -31,11 +31,11 @@ while ($true) {
   if ((Test-Path -LiteralPath $log) -and (Get-Item -LiteralPath $log).Length -gt 10MB) {
     Move-Item -Force -LiteralPath $log -Destination "$log.1"
   }
-  Add-Content -LiteralPath $log -Encoding UTF8 -Value "[$(Get-Date -Format s)] starting node server/index.js"
+  Add-Content -LiteralPath $log -Encoding UTF8 -Value "[$(Get-Date -Format s)] starting node bin/panel.js"
   # cmd keeps node's UTF-8 output byte-for-byte; PowerShell 5.1 redirection would re-encode it.
   # Its own hidden console keeps a console Ctrl+C in node's tree from ending this loop.
   # WaitForExit, not -Wait: -Wait would also wait for every descendant.
-  $proc = Start-Process -FilePath cmd.exe -ArgumentList "/d /s /c `"`"$($cfg.nodeBin)`" server\index.js >> `"$log`" 2>&1`"" `
+  $proc = Start-Process -FilePath cmd.exe -ArgumentList "/d /s /c `"`"$($cfg.nodeBin)`" bin\panel.js >> `"$log`" 2>&1`"" `
     -WindowStyle Hidden -PassThru
   $proc.WaitForExit()
   Add-Content -LiteralPath $log -Encoding UTF8 -Value "[$(Get-Date -Format s)] node exited with code $($proc.ExitCode); restarting in 3s"

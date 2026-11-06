@@ -12,7 +12,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createServer } from 'node:net';
 import https from 'node:https';
-import { hashPassword } from '../server/auth.js';
+import { hashPassword } from '../lib/auth.js';
 import { ensureDesktopCertificates, inspectDesktopCertificates } from './desktop-certificates.mjs';
 
 const exec = promisify(execFile);
@@ -153,7 +153,7 @@ export class DesktopRuntime {
     if (!m || !/^[a-zA-Z0-9_.-]{1,128}$/.test(m.buildId || '')) throw new SetupError('RUNTIME_MISSING', '客户端内置组件不完整。', '请重新下载与你电脑芯片对应的完整客户端；开发薄壳不包含后台组件。');
     const arch = m.arch === 'x86_64' ? 'x64' : m.arch;
     if (arch && arch !== process.arch) throw new SetupError('ARCH_MISMATCH', '安装包与此电脑运行架构不符。', 'Apple Silicon 下载 arm64，Intel 下载 x64 版本。');
-    for (const part of ['bin/node', 'bin/tmux', 'app/server/index.js']) await access(join(path, part), part.startsWith('bin/') ? constants.X_OK : constants.R_OK).catch(() => { throw new SetupError('RUNTIME_MISSING', '客户端缺少可执行的必要组件。'); });
+    for (const part of ['bin/node', 'bin/tmux', 'app/bin/panel.js']) await access(join(path, part), part.startsWith('bin/') ? constants.X_OK : constants.R_OK).catch(() => { throw new SetupError('RUNTIME_MISSING', '客户端缺少可执行的必要组件。'); });
     if (m.minimumMacOS && process.platform === 'darwin') {
       const { stdout } = await this.run('/usr/bin/sw_vers', ['-productVersion'], { timeout: 5000 });
       const actual = stdout.trim().split('.').map(Number), needed = m.minimumMacOS.split('.').map(Number);
@@ -261,7 +261,7 @@ export class DesktopRuntime {
       TERMINFO_DIRS: join(runtime, 'share/terminfo') + ':/usr/share/terminfo', LANG: 'en_US.UTF-8', LC_CTYPE: 'en_US.UTF-8' };
     const files = {};
     for (const [name, label, args] of [
-      ['panel', this.label, [join(runtime, 'bin/node'), join(runtime, 'app/server/index.js'), '--config', this.paths.configuration]],
+      ['panel', this.label, [join(runtime, 'bin/node'), join(runtime, 'app/bin/panel.js'), '--config', this.paths.configuration]],
       ['tmux', this.tmuxLabel, [join(runtime, 'bin/tmux'), '-f', join(this.root, 'tmux.conf'), '-D']],
     ]) {
       const path = join(directory, label + '.plist');
@@ -441,7 +441,7 @@ export class DesktopRuntime {
           .replace('<script src="relay.js"></script>', '<script>document.getElementById("theme-name").textContent=Theme.getName(document.documentElement.dataset.theme);</script>')
           .replaceAll('正在定位工作台…', '外观预览，不会发起连接');
         await writeFile(join(site, 'preview.html'), preview);
-        for (const [from, to] of [['relay/relay.js', 'relay.js'], ['relay/themes.html', 'themes.html'], ['relay/robots.txt', 'robots.txt'], ['public/js/theme.js', 'theme.js']]) await copyFile(join(source, from), join(site, to));
+        for (const [from, to] of [['relay/relay.js', 'relay.js'], ['relay/themes.html', 'themes.html'], ['relay/robots.txt', 'robots.txt'], ['plugins/ui/client/js/theme.js', 'theme.js']]) await copyFile(join(source, from), join(site, to));
         await copyFile(config.tls.ca, join(site, 'ca.crt'));
         return { ...await this.inspect(), message: '引导站点已导出。请把目录中的文件上传至你自己的 GitHub Pages 仓库根目录；不要上传 settings.json 或私钥。' };
       }

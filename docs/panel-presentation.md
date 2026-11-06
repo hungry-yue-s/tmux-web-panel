@@ -19,7 +19,7 @@ flowchart LR
 网页在 head 声明 `<meta name="tmux-panel-presentation" content="1">` 即表示愿意接收主题。
 未声明的 HTML 按原样预览，不尝试猜测或替换其颜色。
 
-引擎 `public/js/panel-presentation.js` 将现有 `--workspace-*` 和状态颜色映射为稳定的 `--pp-*` 语义变量；映射详见源码和 [skill](../skills/panel-presentation/SKILL.md)。这复用主题模块已有的对比度处理，不维护第二份调色板。引擎只设置变量、`color-scheme`、`data-panel-theme` 和 `data-panel-material`，不注入布局、组件、字体、reset CSS 或动画。
+引擎 `plugins/ui/client/js/panel-presentation.js` 将现有 `--workspace-*` 和状态颜色映射为稳定的 `--pp-*` 语义变量；映射详见源码和 [skill](../skills/panel-presentation/SKILL.md)。这复用主题模块已有的对比度处理，不维护第二份调色板。引擎只设置变量、`color-scheme`、`data-panel-theme` 和 `data-panel-material`，不注入布局、组件、字体、reset CSS 或动画。
 
 文件预览载入时，将当前主题及一个接收桥放入 srcdoc 的首个脚本，在网页自身脚本运行前建立 `window.PanelPresentation.getTheme()`。CSS 声明和 SVG 直接引用变量；Canvas、WebGL 或第三方图表通过 `document` 上的 `panel-theme-change` 获取变化通知，事件 detail 为 `{version: 1, themeId, colorScheme, tokens, appearance}`。初次绘制应读取当前值；后续只更新需要重绘的颜色。
 
