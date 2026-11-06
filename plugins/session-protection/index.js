@@ -1,59 +1,34 @@
-// Project-managed resources (the tmux build, skills, the base tmux config)
-// and session protection: periodic tmux-resurrect saves and automatic
-// restore of a new tmux server (root CLAUDE.md, "tmux server 守护与会话持久化").
+// Session protection (/api/session-protection, lib/session-protection/):
+// periodic tmux-resurrect saves and the automatic restore of a new tmux
+// server (root CLAUDE.md, "tmux server 守护与会话持久化"), with the base
+// tmux configuration from managed-resources.
 //
-// Session protection runs tmux-resurrect's scripts, which call plain `tmux`
-// on the user's server. With a private server selected (tests, smoke runs)
-// it does not start at all: it must never save or restore the user's
-// sessions on behalf of a panel that is looking at another server.
+// It runs tmux-resurrect's scripts, which call plain `tmux` on the user's
+// server. With a private server selected (tests, smoke runs) it does not
+// start at all: it must never save or restore the user's sessions on behalf
+// of a panel that is looking at another server.
 
 import { join } from 'node:path';
-import { ManagedResources } from '../../lib/managed-resources.js';
 import { SessionProtection } from '../../lib/session-protection/service.js';
-import { createManagedResourcesRouter } from '../../lib/api/managed-resources.js';
 import { createSessionProtectionRouter } from '../../lib/api/session-protection.js';
-import { IS_WINDOWS, TMUX_BIN, tmuxUserHome } from '../../lib/msys.js';
+import { tmuxUserHome } from '../../lib/msys.js';
 import { isPrivateServer } from '../../lib/tmux-server.js';
 import { REPO_ROOT } from '../../lib/paths.js';
 
 export const name = 'session-protection';
 
-export const inject = ['launch', 'http', 'tmux'];
+export const inject = ['launch', 'http', 'tmux', 'managedResources'];
 
 export async function apply(ctx) {
-  const launch = ctx.launch;
-  const userConfigPath = join(tmuxUserHome(), '.tmux.conf');
-
-  const resources = new ManagedResources({
-    projectDir: REPO_ROOT,
-    configDir: launch.configDir,
-    packaged: launch.managedRuntime,
-    runtimePath: launch.runtimePath,
-    userConfigPath,
-    serverTmuxBin: IS_WINDOWS ? TMUX_BIN : null,
-  });
-  await resources.load();
-  ctx.http.mount('/api/managed-resources', createManagedResourcesRouter(resources));
-  ctx.provide('managedResources', resources);
-
   if (isPrivateServer()) {
     ctx.logger.warn('session protection is off: a private tmux server is selected');
     return;
   }
-
-  // Skill links installed before the tmux-agent skill moved to catalog/ point
-  // at nothing; repoint them. Only links into this checkout count as ours.
-  try {
-    for (const path of await resources.relinkMovedSkills()) ctx.logger.info('relinked moved skill %s', path);
-  } catch (error) {
-    ctx.logger.warn('could not relink moved skills: %s', error.message);
-  }
-
   const protection = new SessionProtection({
-    configDir: launch.configDir,
+    configDir: ctx.launch.configDir,
     projectDir: REPO_ROOT,
-    baseConfig: resources,
-    userConfigPath,
+    baseConfig: ctx.managedResources,
+    userConfigPath: join(tmuxUserHome(), '.tmux.conf'),
   });
   await protection.load();
   ctx.effect(() => {

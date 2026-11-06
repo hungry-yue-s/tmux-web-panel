@@ -11,10 +11,18 @@ import { StatusMonitor } from '../../lib/monitor.js';
 
 export const name = 'status';
 
-export const inject = ['launch', 'http', 'notifications', 'agentEvents'];
+export const inject = ['launch', 'http'];
 
 export function apply(ctx) {
-  const monitor = new StatusMonitor({ notificationStore: ctx.notifications, agentEvents: ctx.agentEvents });
+  // Notices and agent hook state are optional: the socket carries workspace
+  // changes and server health with or without them.
+  const monitor = new StatusMonitor();
+  ctx.inject(['notifications'], (ctx) => {
+    ctx.effect(() => monitor.useNotificationStore(ctx.notifications), 'status.notifications');
+  });
+  ctx.inject(['agentEvents'], (ctx) => {
+    ctx.effect(() => monitor.useAgentEvents(ctx.agentEvents), 'status.agent-events');
+  });
 
   ctx.on('status/workspace-changed', (revision) => monitor.broadcastWorkspaceChanged(revision));
   ctx.on('status/server-status', (status) => monitor.broadcastServerStatus(status));

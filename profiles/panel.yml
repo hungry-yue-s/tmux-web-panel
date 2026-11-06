@@ -3,9 +3,11 @@
 # Settings come from the environment and --config exactly as before (see
 # plugins/launch). Change the composition with a patch (<home>/patch.yml or
 # --patch), not by editing this file; `panel --dump-config` prints the result.
-# See docs/architecture.md.
+# A Node-only installation (NODE_ONLY=1) runs profiles/node.yml instead.
+# See docs/plugins.md.
 name: panel
 plugins:
+  # The kernel's own services
   - id: logger
     use: logger-console
   - id: timer
@@ -16,40 +18,83 @@ plugins:
     use: http
   - id: diagnostics
     use: diagnostics
+  # This machine: tmux, its identity as a Node, who may use it
   - id: tmux
     use: tmux
   - id: node
     use: node
   - id: auth
     use: auth
+  # Sessions, windows, panes and the terminals attached to them
   - id: workspace
     use: workspace
   - id: tmux-api
     use: tmux-api
-  - id: notifications
-    use: notifications
   - id: status
     use: status
   - id: terminal
     use: terminal
+  - id: keypad
+    use: keypad
   - id: pins
     use: pins
-  - id: share
-    use: share
+  - id: notifications
+    use: notifications
+  - id: agent-events
+    use: agent-events
+  # Files and what acts on them
   - id: files
     use: files
+  - id: upload
+    use: upload
+  - id: git
+    use: git
+  - id: sqlite
+    use: sqlite
+  - id: notebook
+    use: notebook
+  - id: open
+    use: open
+  - id: share
+    use: share
+  # What the machine is doing
   - id: metrics
     use: metrics
+  # Agents
+  - id: agent-usage
+    use: agent-usage
   - id: agent-hub
     use: agent-hub
-  - id: servers
-    use: servers
-  - id: mosh
-    use: mosh
+  - id: enterprise-ai
+    use: enterprise-ai
   - id: panel-plugins
     use: panel-plugins
+  # tmux itself: the managed build and configuration, saving and restoring sessions
+  - id: managed-resources
+    use: managed-resources
   - id: session-protection
     use: session-protection
+  # Mosh sessions this Node runs for a hub
+  - id: mosh
+    use: mosh
+  # The hub: the servers it manages and the way to each of them
+  - id: server-registry
+    use: server-registry
+  - id: hub-links
+    use: hub-links
+  - id: server-health
+    use: server-health
+  - id: hub-relay
+    use: hub-relay
+  - id: servers
+    use: servers
+  - id: node-installer
+    use: node-installer
+  - id: basic-mode
+    use: basic-mode
+  - id: mosh-hub
+    use: mosh-hub
+  # The pages
   - id: client
     use: client
   - id: ui

@@ -15,11 +15,19 @@ export function defaultHome(env = process.env) {
 }
 
 /**
+ * The profile when none is named: a Node-only installation (NODE_ONLY=1, set
+ * by the service installers) runs `node`, everything else `panel`.
+ */
+export function defaultProfile(env = process.env) {
+  return env.NODE_ONLY === '1' ? 'node' : 'panel';
+}
+
+/**
  * Assembles and starts an application.
  * Resolves once every entry has loaded, failed, or is waiting for a service no
  * entry provides; `loader.status()` tells which.
  */
-export async function createApp({ profile = 'panel', patches = [], home = defaultHome(), importer } = {}) {
+export async function createApp({ profile = defaultProfile(), patches = [], home = defaultHome(), importer } = {}) {
   const assembled = await resolveEntries({ profile, patches, home });
   const ctx = new Context();
   const fiber = ctx.plugin(Loader, { entries: assembled.entries, importer });

@@ -35,7 +35,7 @@ node bin/panel.js --patch my.yml     # 叠加一层补丁
 npm test
 ```
 
-正式运行由服务管理器启动（见 `CLAUDE.md`）。`bin/panel.js` 接受原服务端的全部命令行选项（`--config`、`--port`、`--host`、`--auth`、`--tls-cert`、`--tls-key`、`--http-port`、`--poll-interval`、`--max-connections`），由 `launch` 插件读取；服务管理器注入的环境变量（`PORT`、`HOST`、`AUTH`、`NODE_ONLY`、`TLS_*`、`HTTP_PORT`、`TMUX_PANEL_CONFIG_DIR`）也照旧。`install-service.sh` / `.ps1` 生成的单元启动 `bin/panel.js`；还指向 `server/index.js` 的旧单元经兼容入口照常启动，重新运行安装脚本即改过来。从旧结构更新的安装还有两处遗留，由面板启动时自动处理：面板以前装的 tmux-agent 技能链接指向已不存在的 `plugins/tmux-agent/`，`session-protection` 把它改指 `catalog/`（只认指向本仓库的链接，私有 tmux server 下不做）；`setup-relay.sh` 以前写在 `public/js/relay-config.js` 的中继配置，`ui` 把它挪到 `plugins/ui/client/js/`。
+正式运行由服务管理器启动（见 `CLAUDE.md`）。`bin/panel.js` 接受原服务端的全部命令行选项（`--config`、`--port`、`--host`、`--auth`、`--tls-cert`、`--tls-key`、`--http-port`、`--poll-interval`、`--max-connections`），由 `launch` 插件读取；服务管理器注入的环境变量（`PORT`、`HOST`、`AUTH`、`NODE_ONLY`、`TLS_*`、`HTTP_PORT`、`TMUX_PANEL_CONFIG_DIR`）也照旧。`install-service.sh` / `.ps1` 生成的单元启动 `bin/panel.js`；还指向 `server/index.js` 的旧单元经兼容入口照常启动，重新运行安装脚本即改过来。从旧结构更新的安装还有两处遗留，由面板启动时自动处理：面板以前装的 tmux-agent 技能链接指向已不存在的 `plugins/tmux-agent/`，`managed-resources` 把它改指 `catalog/`（只认指向本仓库的链接，私有 tmux server 下不做）；`setup-relay.sh` 以前写在 `public/js/relay-config.js` 的中继配置，`ui` 把它挪到 `plugins/ui/client/js/`。
 
 **不要用 `bin/panel.js` 直接跑在生产状态上做实验。** 默认配置目录就是正式面板的 `~/.config/tmux-web-panel`（令牌、通知、服务器列表、会话保护设置），`node` 插件还会改写 `~/.config/tmux-web-panel/node.json`（Hub 读的配对文件）。实验和冒烟一律用补丁把这些指走，并选私有 tmux server，见“测试”。
 
@@ -100,7 +100,7 @@ npm test
 
 | 阶段 | 内容 |
 |---|---|
-| 中间件 `order < 0` | 诊断计数（-100）、`/n/` 转发（-50）：原始流，压缩和解析请求体之前 |
+| 中间件 `order < 0` | 诊断计数（-100）、去掉 `/n/local/` 前缀（-60，`node`）、`/n/:serverId` 转发（-50，`hub-relay`）：原始流，压缩和解析请求体之前 |
 | 压缩 | 页面、脚本、JSON；`/api/files/raw` 和 `/api/upload` 除外 |
 | 中间件 `order >= 0` | `/api` 登录守卫 |
 | 路由与挂载 | 按 `order`，同 order 内精确路径先于通配，再按注册顺序；静态站点挂在 `/`，`order: 1000` |
@@ -108,16 +108,18 @@ npm test
 
 - `ctx.http.mount(prefix, router, { json, order })` 挂 Express 路由，`prefix` 可带 `:参数`；默认先解析 100 KB 的 JSON（`json: false` 关闭，`json: { limit }` 调整）。
 - `ctx.http.get/post/...(path, handler)` 是原生路由：`handler({ req, res, url, params, body })` 返回值即 JSON。
-- 升级请求先过 `useUpgrade` 钩子（同样按 order：诊断 -100、转发 -50、鉴权 0），再到 `upgrade` / `websocket` 路由。`websocket(path, handler)` 共用一个 WebSocketServer（1 MB 帧上限、终端输出压缩），关机时以 1001 关闭所有连接。
-- `/n/local/…` 转发会就地改写 `req.url` 再交给本地处理，所以路由匹配读 `req.url`，不读 `originalUrl`。
+- 升级请求先过 `useUpgrade` 钩子（同样按 order：诊断 -100、`/n/local/` -60、转发 -50、鉴权 0），再到 `upgrade` / `websocket` 路由。`websocket(path, handler)` 共用一个 WebSocketServer（1 MB 帧上限、终端输出压缩），关机时以 1001 关闭所有连接。
+- `/n/local/…` 是本机自己的地址：`node` 插件就地改写 `req.url` 再交给本地处理（不依赖 `hub-relay`，转发关掉时浏览器照常用本机），所以路由匹配读 `req.url`，不读 `originalUrl`。
 
 ## tmux：选哪个 server
 
 `lib/tmux-server.js` 是唯一决定面板对哪个 tmux server 说话的地方。默认不带任何全局参数，用用户的 server，和旧代码完全一样。`tmux` 插件的 `socket`（`-L`）或 `socketPath`（`-S`）选择私有 server 后，面板起的每个 tmux——命令执行器、终端接入的 PTY（Unix 的 `sh -c` 命令行和 Windows 的 argv）、文件辅助命令——都带上这个参数，子进程环境删掉 `TMUX` / `TMUX_PANE`，继承来的 `$TMUX` 无法把命令送到用户的 server。
 
-会话保护要调用 tmux-resurrect 的脚本，脚本直接用默认 socket，无法跟随选择，所以选了私有 server 时 `session-protection` 插件不启动会话保护（托管资源照常）。新增任何启动 tmux 的代码都必须经 `tmuxServerArgs()` / `tmuxEnv()`，做不到的就检查 `isPrivateServer()` 并拒绝运行。
+会话保护要调用 tmux-resurrect 的脚本，脚本直接用默认 socket，无法跟随选择，所以选了私有 server 时 `session-protection` 插件不启动（`managed-resources` 照常）。新增任何启动 tmux 的代码都必须经 `tmuxServerArgs()` / `tmuxEnv()`，做不到的就检查 `isPrivateServer()` 并拒绝运行。
 
 ## 插件与接缝
+
+拆分的标准：能单独关掉而且有意义、依赖不同、或出错时应互不连累的，就是两个插件。`profiles/panel.yml` 是完整的产品；`profiles/node.yml` 是只当 Node 的机器（`NODE_ONLY=1` 时默认用它），去掉了 Hub、分享和页面，其余条目的 id 和顺序与 panel 相同，同一份补丁两边都能用。
 
 | 条目 | 提供的服务 | 依赖 | 内容 |
 |---|---|---|---|
@@ -127,34 +129,58 @@ npm test
 | `http` | `http` | launch | 见“HTTP 管线”；TLS 时另起 HTTP→HTTPS 跳转 |
 | `diagnostics` | `diagnostics` | launch, http | 有界诊断记录，`/api/diagnostics` |
 | `tmux` | `tmux` | — | 本机 tmux API（`lib/tmux.js`）与 server 选择 |
-| `node` | `node` | launch, http, tmux | 配对文件、node token、`/api/node/info` |
+| `node` | `node` | launch, http, tmux | 配对文件、node token、`/api/node/info`、能力声明；去掉 `/n/local/` 前缀（-60） |
 | `auth` | `auth` | launch, http, node | 登录与 TOTP、令牌持久化与限流、`/api` 守卫、WebSocket 鉴权 |
 | `workspace` | `workspace` | http, tmux | 会话/窗口/窗格树与修改，`/api/workspace`；修改发 `status/workspace-changed` |
 | `tmux-api` | — | http, tmux | 旧的按名字/序号的 `/api/sessions…`、`/api/panes`、`/api/status` |
-| `notifications` | `notifications`, `agentEvents` | launch, http | 通知存储与 Agent 事件 |
-| `status` | `status` | launch, http, notifications, agentEvents | `/ws/status`，轮询 tmux，转播 `status/*` 事件 |
+| `status` | `status` | launch, http | `/ws/status`，轮询 tmux，转播 `status/*`；有 notifications / agentEvents 时接上 |
 | `terminal` | `terminals` | launch, http, workspace | `/ws/terminal/:paneId`，TerminalManager 的全部 Windows 契约 |
+| `keypad` | — | http | 移动端工具盘的场景发现 `/api/scene/discover` |
 | `pins` | `pins` | launch, http, tmux | 固定窗口 |
-| `share` | `shares` | launch, http, timer | 预览快照分享，公开的 `/s/:id` |
-| `files` | — | launch, http | 文件、上传、Git、SQLite、notebook、`twp open` |
-| `metrics` | `metrics` | http | 系统与进程监控、历史、窗口资源、场景发现 |
-| `agent-hub` | `agentHub` | launch, http | Agent 控制台、用量、预热、集团模型中继 |
-| `servers` | `servers` | launch, http, auth, node, terminals, timer | 服务器列表、健康、SSH 链路与直连、`/n/` 转发、基础模式、Hub 侧 Mosh 终端、安装 Node 与 Mosh 组件；关机时 Mosh 终端先经链路结束会话，再关链路 |
-| `mosh` | `mosh` | http, node, workspace, terminals, servers | Node 侧 Mosh 会话（`/api/mosh` 只认 node token 加 hub 标记），按 tmux 插件选的 server 接入；卸载时结束其进程 |
-| `panel-plugins` | `panelPlugins` | launch, http, tmux, workspace, servers | tmux-agent 等面板插件与 MCP |
-| `session-protection` | `managedResources`, `sessionProtection` | launch, http, tmux | 托管资源；会话保护（私有 server 时关闭） |
+| `notifications` | `notifications` | launch, http | 通知存储，`/api/notifications` |
+| `agent-events` | `agentEvents` | http | Agent 钩子事件 `/api/agent-events`；有 notifications 时变成通知 |
+| `files` | `fileAccess` | http | 文件浏览与预览 `/api/files`；文件根与路径守卫 |
+| `upload` | — | launch, http | 上传 `/api/upload` |
+| `git` | — | http, fileAccess | Git block 的 `/api/git` |
+| `sqlite` | — | http, fileAccess | SQLite 预览 `/api/sqlite` |
+| `notebook` | — | http, fileAccess | `/api/notebook` |
+| `open` | — | http, fileAccess | `twp open` 的 `/api/open`，经 `status/event` 通知页面 |
+| `share` | `shares` | launch, http, timer | 预览快照分享，公开的 `/s/:id`（只在 Hub） |
+| `metrics` | `metrics` | http | 系统与进程监控、历史、窗口资源 |
+| `agent-usage` | — | launch, http | Claude / Codex 用量 `/api/claude-usage`、`/api/codex-usage` |
+| `agent-hub` | `agentHub` | launch, http | Agent 控制台：Codex 账号、CC Switch 供应商、切换、预热、Qoder；集团部分按调用查 `enterpriseAi` |
+| `enterprise-ai` | `enterpriseAi` | launch | 集团模型池、内嵌中继及其启停 |
+| `panel-plugins` | `panelPlugins` | launch, http, tmux, workspace | tmux-agent 等面板插件与 MCP；跨服务器调用按调用查 `hubLinks` |
+| `managed-resources` | `managedResources` | launch, http, tmux | 自建 tmux、技能链接、基础 tmux 配置 |
+| `session-protection` | `sessionProtection` | launch, http, tmux, managedResources | 自动保存与恢复（私有 server 时不启动） |
+| `mosh` | `mosh` | http, node, workspace, terminals | Node 侧 Mosh 会话（`/api/mosh` 只认 node token 加 hub 标记）；卸载时结束其进程 |
+| `server-registry` | `serverRegistry` | launch | Hub：服务器列表 `servers.json` |
+| `hub-links` | `hubLinks` | launch, serverRegistry | Hub：每台一条 SSH 链路；基础模式的主机按调用找 `basicMode` |
+| `server-health` | `serverHealth` | node, serverRegistry, hubLinks | Hub：探测与传输选择，发 `status/server-status` |
+| `hub-relay` | — | http, auth, serverRegistry, hubLinks | Hub：`/n/:serverId` 转发（-50）；基础模式、Mosh 终端按请求查 |
+| `servers` | `servers` | http, serverRegistry, hubLinks, serverHealth | Hub：`/api/servers` |
+| `node-installer` | `nodeInstaller` | http, serverRegistry, hubLinks, serverHealth | Hub：安装 Node 与 Mosh 组件 |
+| `basic-mode` | `basicMode` | http, hubLinks, terminals, timer | Hub：没装面板的机器的工作区与终端；卸载时结束这些 shell |
+| `mosh-hub` | `moshHub` | http, node, serverRegistry, hubLinks | Hub：Mosh 终端；卸载时先经链路结束 Node 会话 |
 | `client` | `client` | http | 浏览器端 Cordis 内核、import map、客户端条目清单（`/client/manifest.json`） |
 | `ui` | `ui` | launch, http | 主页面的组装、各插件前端的静态目录（内容哈希）、桌面版的中继配置 |
+
+**可选的依赖。** 依赖写进 `inject` 就是硬依赖：缺了插件不启动，对方卸载时先卸自己。可有可无的依赖不写进去，两种写法：
+
+- 按调用查：`ctx.get('moshHub')?.retry(id)`。拿不到（没加载或已卸载）就是 `undefined`，代码要有没有它时的行为。它不建立依赖关系，不影响关机顺序。
+- 有就接上：`ctx.inject(['notifications'], (ctx) => ctx.effect(() => monitor.useNotificationStore(ctx.notifications)))`。对方加载时接上，卸载时这个子作用域连同 effect 一起撤销。
+
+**关机顺序靠依赖，不靠手写。** Cordis 卸载一个服务前，先等依赖它的插件都卸载完（`_unload` 里的 `dependents`），各自的 effect 都等完。所以 `mosh-hub` 依赖 `hubLinks`，它经链路结束 Node 会话之后，链路才会关。
 
 插件之间的广播走事件，不互相持有引用：
 
 | 事件 | 发出方 | 接收方 |
 |---|---|---|
 | `status/workspace-changed (revision)` | workspace | status |
-| `status/server-status (status)` | servers | status |
-| `status/notifications (notifications)` | notifications（Agent 事件） | status |
-| `status/event (event)` | files（`twp open`） | status |
-| `mosh/refresh-components` | servers（本机装完 Mosh 组件后，`parallel` 等它完成） | mosh |
+| `status/server-status (status)` | server-health | status |
+| `status/notifications (notifications)` | agent-events | status |
+| `status/event (event)` | open（`twp open`） | status |
+| `mosh/refresh-components` | node-installer（本机装完 Mosh 组件后，`parallel` 等它完成） | mosh |
 
 可选组件的能力（`mosh`、`moshClient`）由提供方经 `ctx.node.setCapability(name, probe)` 报进 `/api/node/info`，包在 `ctx.effect` 里随插件撤销。
 
@@ -184,7 +210,7 @@ npm test
 
 - `npm test`。`test/*.test.js` 是内核与插件的测试；`test/lib/` 对应 `lib/` 的模块；`test/client/` 对应各插件的前端，读主页面的用 `test/helpers/pages.js` 的组装结果，按文件名找脚本的用 `clientPath()`；`test/repo/` 对应安装脚本、桌面运行时和原生客户端。全部一次跑可能内存不够，可以按目录分开跑（`npx vitest run test/lib` 等）。
 - `test/panel.test.js` 用真实输入启动整个 `panel` profile：`AUTH`、临时配置目录与家目录、私有 tmux server，覆盖登录、`/api` 守卫、工作区、WebSocket 鉴权、终端接入和运行时关闭插件。
-- **隔离规则**（来自“不在用户 tmux 上做实验”）：每个用到 tmux 的测试和冒烟都经 `tmux` 插件选私有 server（`-L`），`kill-server` 之前先 `display -p '#{socket_path}'` 断言是私有路径；配置目录（`launch` 的 `env.TMUX_PANEL_CONFIG_DIR`）和配对文件所在的家目录（`node` 的 `home`）指向临时目录；会读 `~/.claude`、`~/.codex` 或起模型中继的 `agent-hub` 关掉。
+- **隔离规则**（来自“不在用户 tmux 上做实验”）：每个用到 tmux 的测试和冒烟都经 `tmux` 插件选私有 server（`-L`），`kill-server` 之前先 `display -p '#{socket_path}'` 断言是私有路径；配置目录（`launch` 的 `env.TMUX_PANEL_CONFIG_DIR`）和配对文件所在的家目录（`node` 的 `home`）指向临时目录；会读 `~/.claude`、`~/.codex`、CC Switch 数据库或起模型中继的 `agent-usage`、`agent-hub`、`enterprise-ai` 关掉。
 - 冒烟时像服务脚本一样带上 `LANG=C.UTF-8 LC_CTYPE=C.UTF-8`（`run-panel.ps1`、systemd 单元都设置了）。没有 UTF-8 locale 时 tmux 命令客户端把中文会话名输出成 `____`，再拿它去查就找不到。
 - **MSYS2 的 tmux 退出后不删除 socket 文件**，测试要自己删。在 Git Bash 里直接运行 MSYS2 的 tmux 去启动 server 会挂住（server 继承了 shell 的输出管道），准备会话请用 Node 的 `execFile`。
 - 测试在 Windows 上也要全过，任何失败都是回归。写测试时注意：

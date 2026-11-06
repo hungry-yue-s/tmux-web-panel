@@ -60,8 +60,10 @@ describe.skipIf(!haveTmux)('the panel profile', () => {
       { id: 'node', config: { home: join(dir, 'home') } },
       { id: 'tmux', config: { socket: SOCKET } },
       { id: 'logger', config: { level: 'warn' } },
-      // Reads ~/.claude and ~/.codex and may start a model relay.
+      // They read ~/.claude, ~/.codex and the CC Switch database, and may start a model relay.
+      { id: 'agent-usage', disabled: true },
       { id: 'agent-hub', disabled: true },
+      { id: 'enterprise-ai', disabled: true },
     ]));
     app = await createApp({ patches: [patch], home: join(dir, 'twp-home') });
     base = `http://127.0.0.1:${app.ctx.get('http').port}`;
@@ -83,7 +85,16 @@ describe.skipIf(!haveTmux)('the panel profile', () => {
 
   it('loads every entry', () => {
     const states = Object.fromEntries(app.loader.status().map((entry) => [entry.id, entry.state]));
-    expect(states).toMatchObject({ http: 'active', auth: 'active', terminal: 'active', servers: 'active', ui: 'active', 'agent-hub': 'off' });
+    expect(states).toMatchObject({
+      http: 'active', auth: 'active', terminal: 'active', ui: 'active', 'agent-hub': 'off', 'enterprise-ai': 'off',
+      // The hub, plugin by plugin.
+      'server-registry': 'active', 'hub-links': 'active', 'server-health': 'active', 'hub-relay': 'active',
+      servers: 'active', 'node-installer': 'active', 'basic-mode': 'active', 'mosh-hub': 'active', mosh: 'active',
+      // Files and what acts on them.
+      files: 'active', upload: 'active', git: 'active', sqlite: 'active', notebook: 'active', open: 'active',
+      notifications: 'active', 'agent-events': 'active', status: 'active', keypad: 'active',
+      'managed-resources': 'active', 'session-protection': 'active',
+    });
     expect(Object.entries(states).filter(([, state]) => !['active', 'off'].includes(state))).toEqual([]);
   });
 
@@ -145,5 +156,39 @@ describe.skipIf(!haveTmux)('the panel profile', () => {
     expect((await json('/api/share', { token: login.data.data.token })).status).toBe(404);
     await app.loader.setDisabled('share', false);
     expect((await json('/api/share', { token: login.data.data.token })).status).not.toBe(404);
+  });
+
+  it('answers /n/local/ without the hub relay, which only reaches other servers', async () => {
+    const login = await json('/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'correct horse' } });
+    const token = login.data.data.token;
+    await app.loader.setDisabled('hub-relay', true);
+    try {
+      expect((await json('/n/local/api/node/info', { token })).status).toBe(200);
+      expect(await socketStatus(`/n/local/ws/status?token=${token}`)).toBe('open');
+      expect((await json('/n/some-server/api/node/info', { token })).status).toBe(404);
+    } finally {
+      await app.loader.setDisabled('hub-relay', false);
+    }
+    expect((await json('/n/some-server/api/node/info', { token })).status).not.toBe(200);
+  });
+
+  it('keeps the status socket and the servers API when optional plugins are off', async () => {
+    const login = await json('/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'correct horse' } });
+    const token = login.data.data.token;
+    await app.loader.setDisabled('notifications', true);
+    await app.loader.setDisabled('basic-mode', true);
+    await app.loader.setDisabled('mosh-hub', true);
+    try {
+      const states = Object.fromEntries(app.loader.status().map((entry) => [entry.id, entry.state]));
+      expect(states).toMatchObject({ status: 'active', 'agent-events': 'active', servers: 'active', 'hub-relay': 'active' });
+      expect(await socketStatus(`/ws/status?token=${token}`)).toBe('open');
+      expect((await json('/api/servers', { token })).status).toBe(200);
+      expect((await json('/api/notifications', { token })).status).toBe(404);
+    } finally {
+      await app.loader.setDisabled('mosh-hub', false);
+      await app.loader.setDisabled('basic-mode', false);
+      await app.loader.setDisabled('notifications', false);
+    }
+    expect((await json('/api/notifications', { token })).status).toBe(200);
   });
 });

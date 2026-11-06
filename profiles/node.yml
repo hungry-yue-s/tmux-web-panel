@@ -1,0 +1,74 @@
+# A Node only: this machine, managed and reached by a hub (NODE_ONLY=1 picks
+# this profile). The same plugins as the panel without the hub (servers and
+# the way to them), the shared previews and the pages: browsers use the hub.
+# Patches use the same ids as for the panel. See docs/plugins.md.
+name: node
+plugins:
+  # The kernel's own services
+  - id: logger
+    use: logger-console
+  - id: timer
+    use: '@cordisjs/plugin-timer'
+  - id: launch
+    use: launch
+  - id: http
+    use: http
+  - id: diagnostics
+    use: diagnostics
+  # This machine: tmux, its identity as a Node, who may use it
+  - id: tmux
+    use: tmux
+  - id: node
+    use: node
+  - id: auth
+    use: auth
+  # Sessions, windows, panes and the terminals attached to them
+  - id: workspace
+    use: workspace
+  - id: tmux-api
+    use: tmux-api
+  - id: status
+    use: status
+  - id: terminal
+    use: terminal
+  - id: keypad
+    use: keypad
+  - id: pins
+    use: pins
+  - id: notifications
+    use: notifications
+  - id: agent-events
+    use: agent-events
+  # Files and what acts on them
+  - id: files
+    use: files
+  - id: upload
+    use: upload
+  - id: git
+    use: git
+  - id: sqlite
+    use: sqlite
+  - id: notebook
+    use: notebook
+  - id: open
+    use: open
+  # What the machine is doing
+  - id: metrics
+    use: metrics
+  # Agents
+  - id: agent-usage
+    use: agent-usage
+  - id: agent-hub
+    use: agent-hub
+  - id: enterprise-ai
+    use: enterprise-ai
+  - id: panel-plugins
+    use: panel-plugins
+  # tmux itself: the managed build and configuration, saving and restoring sessions
+  - id: managed-resources
+    use: managed-resources
+  - id: session-protection
+    use: session-protection
+  # Mosh sessions this Node runs for a hub
+  - id: mosh
+    use: mosh

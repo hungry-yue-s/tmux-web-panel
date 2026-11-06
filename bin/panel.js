@@ -4,8 +4,9 @@
 //   panel [profile] [--profile <name|path>] [--patch <file>]... [--home <dir>] [--dump-config]
 //   panel --check-dependencies    exits 1, saying what to run, when a dependency is missing
 //
-// The profile names the plugins; patches (the home patch, then each --patch)
-// change them. --dump-config prints the result and exits without starting.
+// The profile names the plugins: panel, or node when NODE_ONLY=1. Patches (the
+// home patch, then each --patch) change them. --dump-config prints the result
+// and exits without starting.
 //
 // The old server's options (--config for the desktop app, --port, --host,
 // --auth, --tls-cert, --tls-key, --http-port, --poll-interval,
@@ -31,7 +32,7 @@ async function main() {
     console.error(`[panel] ${missingDependenciesMessage(missing)}`);
     return 1;
   }
-  const { createApp, defaultHome } = await import('../kernel/app.js');
+  const { createApp, defaultHome, defaultProfile } = await import('../kernel/app.js');
   const { dumpEntries, resolveEntries } = await import('../kernel/profile.js');
 
   let parsed;
@@ -64,7 +65,7 @@ async function main() {
     return 2;
   }
   const options = {
-    profile: values.profile ?? positionals[0] ?? 'panel',
+    profile: values.profile ?? positionals[0] ?? defaultProfile(),
     patches: values.patch,
     home: values.home ?? defaultHome(),
   };
