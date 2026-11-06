@@ -71,6 +71,15 @@ is_true() {
   esac
 }
 
+# The panel imports package.json's dependencies. A checkout updated without
+# `npm install` lacks any newly added one, and the panel would not start.
+check_dependencies() {
+  if ! (cd "$PROJECT_DIR" && "$NODE_BIN" bin/panel.js --check-dependencies); then
+    echo "Error: dependencies are missing. Run 'npm install' in $PROJECT_DIR first." >&2
+    exit 1
+  fi
+}
+
 build_project_tmux() {
   echo "Building the project-managed tmux submodule..."
   TMUX_INSTALL_PREFIX="$TMUX_INSTALL_PREFIX" "$SCRIPT_DIR/build-tmux.sh"
@@ -504,6 +513,7 @@ fi
 
 case "$action" in
   install)
+    check_dependencies
     build_project_tmux
     prepare_tls
     if [[ "$platform" == "linux" ]]; then install_systemd; else install_launchd; fi

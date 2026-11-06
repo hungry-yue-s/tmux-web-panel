@@ -98,6 +98,13 @@ function Resolve-Node {
   throw 'node.exe not found. Install Node.js for Windows (e.g. winget install OpenJS.NodeJS.LTS) or pass -NodeBin.'
 }
 
+# The panel imports package.json's dependencies. A checkout updated without
+# `npm install` lacks any newly added one, and the panel would not start.
+function Assert-Dependencies([string]$Node) {
+  & $Node (Join-Path $ProjectDir 'bin\panel.js') --check-dependencies
+  if ($LASTEXITCODE -ne 0) { throw "Dependencies are missing. Run 'npm install' in $ProjectDir first." }
+}
+
 function Resolve-Tmux {
   $usrBin = Join-Path $Msys2Root 'usr\bin'
   $tmux = Join-Path $usrBin 'tmux.exe'
@@ -250,9 +257,7 @@ function Start-Task([string]$Name) {
 function Install-Service {
   $node = Resolve-Node
   $tmux = Resolve-Tmux
-  if (-not (Test-Path -LiteralPath (Join-Path $ProjectDir 'node_modules\node-pty'))) {
-    throw "Dependencies are missing. Run 'npm ci' in $ProjectDir first."
-  }
+  Assert-Dependencies $node
 
   if ($TlsAuto) {
     if ($TlsCert -or $TlsKey) { throw 'Use -TlsAuto or -TlsCert/-TlsKey, not both.' }
@@ -369,9 +374,16 @@ $selected = if ($Tmux) { $TmuxTask } else { $PanelTask }
 switch ($Action) {
   'install' { Install-Service }
   'uninstall' { Uninstall-Service }
-  'start' { Start-Task $selected; Write-Ok "Started $selected" }
+  'start' {
+    if (-not $Tmux) { Assert-Dependencies (Resolve-Node) }
+    Start-Task $selected; Write-Ok "Started $selected"
+  }
   'stop' { Stop-TaskTree $selected; Write-Ok "Stopped $selected" }
-  'restart' { Stop-TaskTree $selected; Start-Task $selected; Write-Ok "Restarted $selected" }
+  'restart' {
+    # Checked before stopping: a panel that cannot start must keep running.
+    if (-not $Tmux) { Assert-Dependencies (Resolve-Node) }
+    Stop-TaskTree $selected; Start-Task $selected; Write-Ok "Restarted $selected"
+  }
   # A new run-tmux-server.ps1 without touching tmux: restart -Tmux would end the
   # server and every session. The new wrapper finds the server running and waits.
   'reload' {
