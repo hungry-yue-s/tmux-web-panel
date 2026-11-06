@@ -63,7 +63,8 @@ const pty = require('node-pty');
 await new Promise((resolve, reject) => {
   const terminal = pty.spawn('/usr/bin/printf', ['tmux-panel-pty-ok'], { name: 'xterm-256color', cols: 80, rows: 24, cwd: root, env: { PATH: '/usr/bin:/bin' } });
   let output = '';
-  const timer = setTimeout(() => { terminal.kill(); reject(new Error('Bundled PTY smoke test timed out')); }, 5000);
+  // macOS may validate a newly signed spawn helper on its first execution.
+  const timer = setTimeout(() => { terminal.kill(); reject(new Error('Bundled PTY smoke test timed out')); }, 30000);
   terminal.onData(value => { output += value; });
   terminal.onExit(({ exitCode }) => {
     clearTimeout(timer);

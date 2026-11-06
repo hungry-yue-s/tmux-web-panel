@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PACKAGE_DIR="$PROJECT_DIR/macos/TmuxPanel"
+IDENTITY="${TMUX_PANEL_CODESIGN_IDENTITY:--}"
 TEST_DIRECTORY="$(mktemp -d /tmp/tmux-panel-self-test.XXXXXX)"
 TEST_BINARY="$TEST_DIRECTORY/self-test"
 
@@ -19,7 +20,7 @@ swiftc \
   "$PACKAGE_DIR/Tests/main.swift" \
   -o "$TEST_BINARY"
 
-codesign --force --sign - "$TEST_BINARY" >/dev/null
+codesign --force --sign "$IDENTITY" "$TEST_BINARY" >/dev/null
 "$TEST_BINARY"
 
 SETUP_TEST_BINARY="$TEST_DIRECTORY/setup-self-test"
@@ -29,7 +30,7 @@ swiftc -parse-as-library \
   "$PACKAGE_DIR/Sources/TmuxPanel/DesktopSetupManager.swift" \
   "$PACKAGE_DIR/Tests/DesktopSetupTests.swift" \
   -o "$SETUP_TEST_BINARY"
-codesign --force --sign - "$SETUP_TEST_BINARY" >/dev/null
+codesign --force --sign "$IDENTITY" "$SETUP_TEST_BINARY" >/dev/null
 if "$SETUP_TEST_BINARY"; then
   :
 else

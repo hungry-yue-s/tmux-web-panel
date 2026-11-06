@@ -136,6 +136,8 @@ Linux、macOS 与 Windows 的新安装在核心服务就绪后默认尝试准备
 
 2026-11-04 验证：全量 2491 通过、29 跳过、0 失败；Windows 安装策略另在原生 PowerShell 的隔离函数中覆盖 28 个场景，无真实包操作。Linux 各包管理器路径使用 shim 验证，不等于所有发行版实机认证。Windows 短命令入口已实测传输超过 12KB 的脚本和中文，最终传输相关回归 114/114。Swift 主程序编译通过，独立设置自测的编译执行边界见 [ENV-7](known-issues.md#env-7-swift-设置自测编译产物收到-sigkill2026-11-04)。
 
+2026-11-05 Manjaro 实机验证：组件安装器先正确返回 `maintenance_required / system_upgrade_pending`，没有隐式升级系统。用户另行授权完整系统维护后安装了 Mosh 1.4.0，组件 API 返回 `succeeded / ready`，Node 同时报告客户端和服务端可用。系统 Node 升到 26.10，现有 N-API 终端扩展经独立 printf PTY 实测兼容，仅重启面板服务；原 tmux 实例及全部 7 个窗格保留。普通 UDP 对照成功，但 Mac 原生 Mosh 仍报 `EHOSTUNREACH`，不能将组件 ready 当作通道验证成功；分层证据见 [Mac 验收记录](low-latency-validation.md#2026-11-05manjaro-组件与有线-udp-分层后验)。此记录不代表所有 Linux 发行版或跨网络 Mosh 通道均已验证。
+
 ## 插件（tmux-agent）
 
 每个 Node 上的插件只操作本机。Hub 上的 MCP 工具收到其它 `serverId` 的调用时，会通过链路 `POST /api/plugins/tmux-agent/tools/:tool` 转给那台机器上的插件。插件在那台机器上校验参数、执行，并检查插件是否启用。`list_servers` 由 Hub 直接回答。

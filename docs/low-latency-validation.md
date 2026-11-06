@@ -225,3 +225,18 @@ UTC 12:43 的实时预检重新核对 Windows 临时组件大小、SHA256、版�
 Mosh 的启动时序可直接核对 [Mosh 1.4.0 官方源码](https://github.com/mobile-shell/mosh/blob/mosh-1.4.0/src/frontend/mosh-server.cc#L414)：CONNECT 在 fork 前输出，命令子进程先等待父进程释放，收到客户端状态后才继续执行。由此判断，固定等待不足以证明 Windows tmux 的 attach 已完成。
 
 所有涉及 tmux 的真实实验必须遵守 [CLAUDE.md](../CLAUDE.md) 的私有 socket 和进程归属要求；操作事故及其影响边界见 [ENV-5](known-issues.md#env-5-实验进程继承-tmux-时tmux_tmpdir-不足以隔离2026-11-03)。
+
+### 2026-11-05：Manjaro 组件与有线 UDP 分层后验
+
+Manjaro 经用户授权完成完整系统维护后，Mosh client/server 1.4.0 实际可执行，组件 API 返回 `succeeded / ready`。Node 26.10 经 systemd 激活，现有 N-API 终端扩展和独立 printf PTY 验证通过；原 tmux 实例与 7 个窗格保留。以下网络测试只启动限时自有 UDP socket 或执行 Python nonce 回显的临时 mosh-server，不接入任何 tmux。
+
+| 同一有线目标 UDP60000 的对照 | 结果 |
+| --- | --- |
+| Node 显式绑定本机有线地址 | 3 个包均发送成功，回显 3/3 |
+| 同一 Node 程序绑定 wildcard / 有线地址 | 两组均回显 3/3，远端确认相同来源地址 |
+| 系统 Python 不 bind/connect，`MSG_DONTWAIT`，TOS=0 / 2 | 两组均发送成功、回显 3/3；与 Mosh 的相关发送参数一致 |
+| 原生 Mac mosh-client 与临时 mosh-server | 未接通；服务端测试命令未启动，未收到挑战输入或 ACK |
+
+Mosh 准备耗时 239ms，客户端首输出 140ms；将保留的脱敏 ANSI 增量帧离线交给终端解析器重放，确认报错为 `mosh: sendto: No route to host`（Darwin `EHOSTUNREACH`）。独立 `--version` 和 PTY 版本检查分别 117ms、111ms 自然退出成功，不能把本次失败归于客户端始终无法启动。原始探针仅用裸字符串搜索 READY、又在等待超时后主动结束客户端，其退出码不能单独作为协议失败原因；增强探针使用远端私有阶段标记区分已解密执行、收到输入和确认，不靠裸输出触发输入。
+
+所有自有客户端、远端 daemon、socket 和临时阶段文件均确认回收，没有修改生产通道、路由、防火墙或安全策略。上述结果分别证明组件已安装、普通 UDP 对照可通信，以及原生 Mosh 的发送路径仍失败；不能据此泛称 UDP 不通，也不能指认某个过滤器、权限规则或 Manjaro 防火墙。这个有线目标的 `EHOSTUNREACH` 与前述 Cc-windows 目标的 `EPIPE` 必须分别保留证据，当前仍使用既有 SSH 路径。

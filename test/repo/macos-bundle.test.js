@@ -68,6 +68,34 @@ sign_runtime_binary "$1" --entitlements "$2"
     } finally { rmSync(temp, { recursive: true, force: true }); }
   });
 
+  it.skipIf(process.platform === 'win32')('keeps Hardened Runtime for distribution and notarization while supporting local certificate development builds', () => {
+    const source = readFileSync('scripts/build-macos-app.sh', 'utf8');
+    const setup = source.match(/^SIGN_FLAGS=\([\s\S]*?(?=^cat >)/m);
+    expect(setup, 'The builder must define signing flags before entitlement setup').not.toBeNull();
+    const cases = [
+      { identity: '-', profile: '', distribution: '0', hardened: false },
+      { identity: 'Local Development Certificate', profile: '', distribution: '0', hardened: false },
+      { identity: 'Developer ID Application: Example', profile: '', distribution: '0', hardened: true },
+      { identity: 'Signing Identity', profile: 'notary-profile', distribution: '0', hardened: true },
+      { identity: 'Signing Identity', profile: '', distribution: '1', hardened: true },
+    ];
+    for (const { identity, profile, distribution, hardened } of cases) {
+      const result = spawnSync('bash', ['-c', `set -euo pipefail
+IDENTITY="$1"
+NOTARY_PROFILE="$2"
+DISTRIBUTION="$3"
+${setup[0]}
+printf '%s\\n' "\${SIGN_FLAGS[@]}"
+`, 'signing-mode-test', identity, profile, distribution], { encoding: 'utf8', timeout: 5000 });
+      expect(result.status, result.stderr).toBe(0);
+      const flags = result.stdout.trimEnd().split('\n');
+      expect(flags.slice(0, 3)).toEqual(['--force', '--sign', identity]);
+      expect(flags.includes('--timestamp')).toBe(identity !== '-');
+      expect(flags.includes('--options')).toBe(hardened);
+      expect(flags.includes('runtime')).toBe(hardened);
+    }
+  });
+
   it.skipIf(process.platform !== 'darwin')('refuses an unsigned public-distribution artifact before building', () => {
     const temp = mkdtempSync(join(tmpdir(), 'tmux-public-build-guard-'));
     try {
