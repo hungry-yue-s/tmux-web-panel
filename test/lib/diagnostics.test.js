@@ -229,8 +229,10 @@ describe('HTTP and client boundaries', () => {
     expect(first.interfaces[0].id).toBe(second.interfaces[1].id);
     expect(first.processes).toEqual([{ name: 'node', pid: 10, rssBytes: 100 }]);
     expect(JSON.stringify(first)).not.toContain('SECRET');
-    expect(normalizeDiagnosticPath('/n/cc-windows/api/sessions/SECRET/windows/8')).toBe('/api/sessions/:session/windows');
-    expect(normalizeDiagnosticPath('/n/cc-windows/api/sessions/SECRET/windows/8/panes')).toBe('/api/sessions/:session/windows/:window/panes');
+    expect(normalizeDiagnosticPath('/n/cc-windows/api/workspace/sessions/SECRET/windows')).toBe('/api/workspace/sessions/:session/windows');
+    expect(normalizeDiagnosticPath('/n/cc-windows/api/workspace/sessions/SECRET')).toBe('/api/workspace/sessions');
+    expect(normalizeDiagnosticPath('/n/cc-windows/api/workspace/windows/@8/layout')).toBe('/api/workspace/windows/:window/layout');
+    expect(normalizeDiagnosticPath('/n/cc-windows/api/workspace/panes/%253/capture')).toBe('/api/workspace/panes/:pane/:operation');
     expect(normalizeDiagnosticPath('/n/cc-windows/api/node/info')).toBe('/api/node/info');
   });
 });

@@ -130,9 +130,8 @@ npm test
 | `diagnostics` | `diagnostics` | launch, http | 有界诊断记录，`/api/diagnostics` |
 | `tmux` | `tmux` | — | 本机 tmux API（`lib/tmux.js`）与 server 选择 |
 | `node` | `node` | launch, http, tmux | 配对文件、node token、`/api/node/info`、能力声明；去掉 `/n/local/` 前缀（-60） |
-| `auth` | `auth` | launch, http, node | 登录与 TOTP、令牌持久化与限流、`/api` 守卫、WebSocket 鉴权 |
-| `workspace` | `workspace` | http, tmux | 会话/窗口/窗格树与修改，`/api/workspace`；修改发 `status/workspace-changed` |
-| `tmux-api` | — | http, tmux | 旧的按名字/序号的 `/api/sessions…`、`/api/panes`、`/api/status` |
+| `auth` | `auth` | launch, http, node | 登录与 TOTP、令牌持久化与限流、`/api` 守卫、WebSocket 鉴权、登录是否仍有效 `/api/auth/check` |
+| `workspace` | `workspace` | http, tmux | 会话/窗口/窗格树与修改，`/api/workspace`，全部按稳定 ID；还有布局选择器用的窗口布局、窗格内容、调整大小和交换；修改发 `status/workspace-changed`。原来按名字/序号的 `/api/sessions`、`/api/panes`、`/api/status` 已删除 |
 | `status` | `status` | launch, http | `/ws/status`，轮询 tmux，转播 `status/*`；有 notifications / agentEvents 时接上 |
 | `terminal` | `terminals` | launch, http, workspace | `/ws/terminal/:paneId`，TerminalManager 的全部 Windows 契约 |
 | `keypad` | — | http | 移动端工具盘的场景发现 `/api/scene/discover` |

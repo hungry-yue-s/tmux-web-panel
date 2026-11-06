@@ -117,7 +117,7 @@
       var existing = null;
       try { existing = localStorage.getItem(TOKEN_KEY); } catch (e) {}
       if (existing) {
-        fetch('/api/status', {
+        fetch('/api/auth/check', {
           headers: { 'Authorization': 'Bearer ' + existing },
         })
           .then(function (res) {

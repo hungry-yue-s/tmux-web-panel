@@ -115,7 +115,26 @@ describe.skipIf(!haveTmux)('the panel profile', () => {
     const names = JSON.stringify(workspace.data).match(/"name":"alpha"/g);
     expect(names).not.toBeNull();
     expect((await json('/api/node/info', { token })).status).toBe(200);
-    expect((await json('/api/status', { token })).data.data.sessions).toBe(1);
+    expect((await json('/api/auth/check', { token })).status).toBe(200);
+    expect((await json('/api/auth/check')).status).toBe(401);
+    // The legacy name-based tmux API is gone; the workspace API is the one.
+    expect((await json('/api/status', { token })).status).toBe(404);
+    expect((await json('/api/sessions', { token })).status).toBe(404);
+  });
+
+  it('reads a window layout and a pane through the workspace API, by id', async () => {
+    const login = await json('/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'correct horse' } });
+    const token = login.data.data.token;
+    const windowId = (await localTmux.run(['display-message', '-p', '-t', 'alpha', '#{window_id}'])).trim();
+    const paneId = (await localTmux.run(['display-message', '-p', '-t', 'alpha', '#{pane_id}'])).trim();
+    const layout = await json(`/api/workspace/windows/${encodeURIComponent(windowId)}/layout`, { token });
+    expect(layout.status).toBe(200);
+    expect(layout.data.data).toEqual({ width: 100, height: 30 });
+    const capture = await json(`/api/workspace/panes/${encodeURIComponent(paneId)}/capture`, { token });
+    expect(capture.status).toBe(200);
+    expect(typeof capture.data.data.content).toBe('string');
+    const bad = await json(`/api/workspace/windows/${encodeURIComponent(windowId)}/layout`, { method: 'POST', token, body: { layout: 'nope' } });
+    expect(bad.status).toBe(400);
   });
 
   it('refuses sockets without a token and attaches a terminal with one', async () => {

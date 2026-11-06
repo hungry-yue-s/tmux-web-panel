@@ -206,10 +206,6 @@ var LayoutPicker = (function () {
     window.removeEventListener('resize', onWindowResize);
     previewWindow.innerHTML = '';
 
-    if (dirty && typeof _fetchPaneThumbnails === 'function') {
-      // If we have a global refresh for pane thumbnails, call it
-      try { _fetchPaneThumbnails(); } catch (_e) { /* ignore */ }
-    }
     // Trigger a window list refresh if anything changed
     if (dirty && typeof state !== 'undefined') {
       // The windows panel has a render function triggered by session data refresh.
@@ -226,32 +222,39 @@ var LayoutPicker = (function () {
   }
 
   // ─── API helpers ───
-  function sessionPath() {
-    return '/api/sessions/' + encodeURIComponent(state.currentSession) +
-           '/windows/' + encodeURIComponent(state.currentWindow);
+  // The workspace API of the machine in view (TerminalTarget), by stable ids.
+  function workspacePath(path) {
+    return Api.workspaceUrl(TerminalTarget.serverId, path);
+  }
+
+  function windowPath(path) {
+    if (!TerminalTarget.windowId) throw new Error('这个窗口还没打开好，稍后再试');
+    return workspacePath('/windows/' + encodeURIComponent(TerminalTarget.windowId) + path);
+  }
+
+  function panePath(paneId, path) {
+    return workspacePath('/panes/' + encodeURIComponent(paneId) + path);
   }
 
   function fetchData() {
-    return Promise.all([
-      api.get(sessionPath() + '/panes'),
-      api.get(sessionPath() + '/layout'),
-    ]).then(function (results) {
-      if (!results[0].success) throw new Error(results[0].error || 'Failed to load panes');
-      if (!results[1].success) throw new Error(results[1].error || 'Failed to load layout');
-      panes = results[0].data || [];
-      var layoutData = results[1].data || {};
-      winWidth = layoutData.width || 80;
-      winHeight = layoutData.height || 24;
+    return Promise.resolve().then(function () {
+      return Promise.all([Api.get(windowPath('/panes')), Api.get(windowPath('/layout'))]);
+    }).then(function (results) {
+      panes = ((results[0] && results[0].panes) || []).map(function (p) {
+        var g = p.geometry || {};
+        return { id: p.id, command: p.command, active: p.active, x: g.x, y: g.y, width: g.width, height: g.height };
+      });
+      var size = results[1] || {};
+      winWidth = size.width || 80;
+      winHeight = size.height || 24;
     });
   }
 
   function fetchAllCaptures() {
     var requests = panes.map(function (p) {
-      return api.get('/api/panes/' + encodeURIComponent(p.id) + '/capture?escape=1')
+      return Api.get(panePath(p.id, '/capture?escape=1'))
         .then(function (r) {
-          if (r.success && r.data) {
-            paneContents[p.id] = r.data.content || '';
-          }
+          if (r) paneContents[p.id] = r.content || '';
         })
         .catch(function () { /* ignore capture failure */ });
     });
@@ -359,9 +362,8 @@ var LayoutPicker = (function () {
 
   function selectLayout(name) {
     if (typeof _showToast === 'function') _showToast('Switching layout...', 1000);
-    api.post(sessionPath() + '/layout', { layout: name })
-      .then(function (r) {
-        if (!r.success) throw new Error(r.error || 'Failed to switch layout');
+    Promise.resolve().then(function () { return Api.post(windowPath('/layout'), { layout: name }); })
+      .then(function () {
         dirty = true;
         currentLayout = name;
         selectedPane = null;
@@ -715,7 +717,7 @@ var LayoutPicker = (function () {
       if (dCols !== 0 && !didResizeH) {
         didResizeH = true;
         resizeOps.push(
-          api.post('/api/panes/' + encodeURIComponent(p.id) + '/resize', {
+          Api.post(panePath(p.id, '/resize'), {
             direction: dCols > 0 ? 'R' : 'L',
             amount: Math.abs(dCols)
           })
@@ -724,7 +726,7 @@ var LayoutPicker = (function () {
       if (dRows !== 0 && !didResizeV) {
         didResizeV = true;
         resizeOps.push(
-          api.post('/api/panes/' + encodeURIComponent(p.id) + '/resize', {
+          Api.post(panePath(p.id, '/resize'), {
             direction: dRows > 0 ? 'D' : 'U',
             amount: Math.abs(dRows)
           })
@@ -827,9 +829,8 @@ var LayoutPicker = (function () {
     selectedPane = null;
     if (typeof _showToast === 'function') _showToast('Swapping...', 1000);
 
-    api.post('/api/panes/' + encodeURIComponent(srcPane.id) + '/swap', { target: dstPane.id })
-      .then(function (r) {
-        if (!r.success) throw new Error(r.error || 'Swap failed');
+    Api.post(panePath(srcPane.id, '/swap'), { target: dstPane.id })
+      .then(function () {
         dirty = true;
         if (typeof _showToast === 'function') {
           _showToast('Swapped: ' + (srcPane.command || 'zsh') + ' \u2194 ' + (dstPane.command || 'zsh'), 1200);

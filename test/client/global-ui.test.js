@@ -17,11 +17,6 @@ describe('global UI system', () => {
   });
 
   it('uses reusable SVG icons for sidebar actions and collapse states', () => {
-    expect(appSource).toContain('function _appIcon(name)');
-    expect(appSource).toContain('class="app-icon"');
-    expect(appSource).toContain("_appIcon('notifications')");
-    expect(appSource).toContain("_appIcon('fullscreen')");
-    expect(appSource).toContain("_sidebarCollapseContent(collapsed)");
     expect(indexSource.match(/class="app-icon"/g)).toHaveLength(4);
     expect(indexSource).toContain('id="btn-app-fullscreen"');
   });

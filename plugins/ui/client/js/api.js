@@ -82,12 +82,12 @@
     var rejected = (requestHeaders && requestHeaders.Authorization) || '';
     // A late answer for a previous login must never remove the current one.
     if ((authHeaders().Authorization || '') !== rejected) return Promise.resolve(false);
-    if (path !== '/api/status') {
+    if (path !== '/api/auth/check') {
       // Node and provider 401s do not prove that the hub login has expired.
       // Confirm against this hub, sharing the check across concurrent failures.
       if (authCheck && authCheck.authorization === rejected) return authCheck.promise;
       var check = { authorization: rejected };
-      check.promise = get('/api/status', { timeout: 5000 }).then(function () {
+      check.promise = get('/api/auth/check', { timeout: 5000 }).then(function () {
         return false;
       }, function () {
         return false;

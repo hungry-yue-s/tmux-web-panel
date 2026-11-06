@@ -31,20 +31,20 @@ function extractFunction(source, signature) {
 }
 
 describe('legacy shell does not render behind the multi-server shell', () => {
-  it('render() bails out when .ms-app is present', () => {
-    const fn = extractFunction(APP, 'function render()');
-    const guardAt = fn.indexOf(".querySelector('.ms-app')");
-    expect(guardAt).toBeGreaterThan(-1);
-    // The guard has to precede every branch that writes into #content.
-    expect(guardAt).toBeLessThan(fn.indexOf('switch (state.currentTab)'));
-    expect(guardAt).toBeLessThan(fn.indexOf('renderDesktopHome'));
-  });
-
-  it('updateSidebar() bails out when .ms-app is present', () => {
-    const fn = extractFunction(APP, 'function updateSidebar()');
-    const guardAt = fn.indexOf(".querySelector('.ms-app')");
-    expect(guardAt).toBeGreaterThan(-1);
-    expect(guardAt).toBeLessThan(fn.indexOf('state.sessions.length'));
+  it('has no legacy views left: render() and updateSidebar() never write into the page', () => {
+    const dom = new JSDOM(`<!DOCTYPE html><html><body>
+      <div id="app"><div id="main-layout"><aside id="sidebar"></aside><div id="content"></div></div></div>
+    </body></html>`, { url: 'http://localhost/', runScripts: 'outside-only' });
+    const win = dom.window;
+    win.eval('var state = { currentTab: "sessions", sessions: [{ name: "a", windows: 1 }], pinsById: {} };');
+    win.eval(extractFunction(APP, 'function render()'));
+    win.eval(extractFunction(APP, 'function updateSidebar()'));
+    win.eval('render(); updateSidebar();');
+    expect(win.document.getElementById('content').innerHTML).toBe('');
+    expect(win.document.getElementById('sidebar').innerHTML).toBe('');
+    for (const name of ['renderDesktopHome', '_rebuildSidebar', '_loadSidebarWindows', 'toggleSessionDropdown']) {
+      expect(APP).not.toContain('function ' + name + '(');
+    }
   });
 
   it('leaves #content empty so only one perf-panel id set exists', () => {
@@ -90,17 +90,4 @@ describe('legacy shell does not render behind the multi-server shell', () => {
     expect(win.document.querySelectorAll('#codex-view-root')).toHaveLength(1);
   });
 
-  it('still renders the legacy shell when it is the only shell', () => {
-    // The guard must key off the new shell, not disable the legacy page outright.
-    const dom = new JSDOM(`<!DOCTYPE html><html><body>
-      <div id="app"><div id="main-layout"><aside id="sidebar"></aside><div id="content"></div></div></div>
-    </body></html>`, { url: 'http://localhost/', runScripts: 'outside-only' });
-    const win = dom.window;
-    win.eval('var state = { currentTab: "unknown-tab", sessions: [], pinsById: {} };');
-    win.eval(extractFunction(APP, 'function render()'));
-    const content = win.document.getElementById('content');
-    win.eval('render();');
-    // No .ms-app, so the guard does not fire and render() proceeds.
-    expect(content.classList.contains('view-transition')).toBe(true);
-  });
 });

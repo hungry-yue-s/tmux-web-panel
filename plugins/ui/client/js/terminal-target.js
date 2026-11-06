@@ -41,57 +41,40 @@
       return global.Api.nodeUrl(this.serverId, path);
     },
 
-    _legacyPanes: function (sessionName, windowIndex) {
-      return '/api/sessions/' + encodeURIComponent(sessionName)
-        + '/windows/' + encodeURIComponent(windowIndex) + '/panes';
+    /** The pane list of the window in view (workspace API, by its stable id). */
+    panesPath: function () {
+      return global.Api.workspaceUrl(this.serverId, '/windows/' + encodeURIComponent(this.windowId || '') + '/panes');
     },
 
-    /** Pane list for the current window: stable window id when known. */
-    panesPath: function (sessionName, windowIndex) {
-      if (!this.windowId) return this.url(this._legacyPanes(sessionName, windowIndex));
-      return global.Api.workspaceUrl(this.serverId, '/windows/' + encodeURIComponent(this.windowId) + '/panes');
+    /** Resolves once a window is in view; before that there is nothing to act on. */
+    _inWindow: function () {
+      return this.windowId ? Promise.resolve() : Promise.reject(new Error('这个窗口还没打开好，稍后再试'));
     },
 
-    listPanes: function (sessionName, windowIndex) {
-      if (!this.windowId) {
-        return global.api.get(this.panesPath(sessionName, windowIndex)).then(function (result) {
-          return (result && result.data) || [];
-        });
-      }
-      return global.Api.get(this.panesPath(sessionName, windowIndex)).then(function (result) {
-        return (result && result.panes) || [];
-      });
+    // The session name and window index arguments are those of the callers'
+    // older signature; the window in view is this target's windowId.
+    listPanes: function () {
+      var self = this;
+      return this._inWindow()
+        .then(function () { return global.Api.get(self.panesPath()); })
+        .then(function (result) { return (result && result.panes) || []; });
     },
 
-    splitPane: function (sessionName, windowIndex, paneId, direction) {
-      if (!this.windowId) {
-        return global.api.post(this.panesPath(sessionName, windowIndex), {
-          paneId: paneId,
-          direction: direction,
-        });
-      }
+    splitPane: function (_sessionName, _windowIndex, paneId, direction) {
+      var self = this;
       // paneId matters for tmux: it splits the pane in view, not just the active one.
-      return global.Api.post(this.panesPath(sessionName, windowIndex), {
-        direction: direction,
-        paneId: paneId || undefined,
+      return this._inWindow().then(function () {
+        return global.Api.post(self.panesPath(), { direction: direction, paneId: paneId || undefined });
       });
     },
 
     setPaneLabel: function (paneId, label) {
-      if (!this.windowId) {
-        return global.api.put(this.url('/api/panes/' + encodeURIComponent(paneId) + '/label'), { label: label });
-      }
       return global.Api.patch(global.Api.workspaceUrl(this.serverId, '/panes/' + encodeURIComponent(paneId)), { label: label });
     },
 
-    closePane: function (sessionName, windowIndex, paneId) {
+    closePane: function (_sessionName, _windowIndex, paneId) {
       // Callers distinguish "cancelled" from "closed" by the resolved value, and
       // the workspace delete answers 204 with an empty body.
-      if (!this.windowId) {
-        return global.api
-          .delete(this.panesPath(sessionName, windowIndex) + '/' + encodeURIComponent(paneId))
-          .then(function () { return { ok: true }; });
-      }
       return global.Api.del(global.Api.workspaceUrl(this.serverId, '/panes/' + encodeURIComponent(paneId)))
         .then(function () { return { ok: true }; });
     },

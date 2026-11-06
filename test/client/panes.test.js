@@ -246,9 +246,9 @@ describe('pane context menu (label)', () => {
     expect(actions).not.toContain('close');
   });
 
-  it('clicking 设置标签 PUTs the trimmed label and updates the pane in memory', async () => {
+  it('clicking 设置标签 saves the trimmed label through the workspace API and updates the pane in memory', async () => {
     let putArgs = null;
-    dom.window.api = { put: (url, body) => { putArgs = { url, body }; return Promise.resolve({ success: true }); } };
+    dom.window.Api.patch = (url, body) => { putArgs = { url, body }; return Promise.resolve({ id: '%10' }); };
     dom.window.showPrompt = () => Promise.resolve('  构建  ');
     dom.window.showAlert = () => {};
     const panes = [{ id: 10, command: 'zsh', label: '' }];
@@ -258,8 +258,7 @@ describe('pane context menu (label)', () => {
       .querySelector('.pane-context-menu .context-menu-item[data-action="label"]')
       .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await new Promise((r) => setTimeout(r, 0));
-    expect(putArgs.url).toContain('/api/panes/');
-    expect(putArgs.url).toContain('/label');
+    expect(putArgs.url).toBe('/api/workspace/panes/10');
     expect(putArgs.body).toEqual({ label: '构建' });
     expect(panes[0].label).toBe('构建'); // in-memory sync so re-open prefills new value
     expect(container.querySelector('.pane-pill').getAttribute('aria-label')).toBe('窗格 0 · 构建');
@@ -278,10 +277,9 @@ describe('_promptSetActivePaneLabel (header button targets the active pane)', ()
       { id: '%2', active: true, label: '当前' },
       { id: '%3', active: false, label: 'c' },
     ];
-    dom.window.api = {
-      get: () => Promise.resolve({ success: true, data: panes }),
-      put: (url) => { putUrl = url; return Promise.resolve({}); },
-    };
+    dom.window.TerminalTarget.set({ serverId: 'local', windowId: '@3' });
+    dom.window.Api.get = () => Promise.resolve({ panes });
+    dom.window.Api.patch = (url) => { putUrl = url; return Promise.resolve({}); };
     dom.window.showPrompt = (opts) => { promptVal = opts.value; return Promise.resolve('新'); };
     dom.window.showAlert = () => {};
     dom.window._promptSetActivePaneLabel('main', 2);
@@ -293,10 +291,9 @@ describe('_promptSetActivePaneLabel (header button targets the active pane)', ()
 
   it('falls back to the first pane when none is flagged active', async () => {
     let putUrl = null;
-    dom.window.api = {
-      get: () => Promise.resolve({ success: true, data: [{ id: '%7', active: false, label: '' }] }),
-      put: (url) => { putUrl = url; return Promise.resolve({}); },
-    };
+    dom.window.TerminalTarget.set({ serverId: 'local', windowId: '@3' });
+    dom.window.Api.get = () => Promise.resolve({ panes: [{ id: '%7', active: false, label: '' }] });
+    dom.window.Api.patch = (url) => { putUrl = url; return Promise.resolve({}); };
     dom.window.showPrompt = () => Promise.resolve('x');
     dom.window.showAlert = () => {};
     dom.window._promptSetActivePaneLabel('main', 1);
@@ -307,7 +304,7 @@ describe('_promptSetActivePaneLabel (header button targets the active pane)', ()
 
   it('does nothing without a session/window', () => {
     let called = false;
-    dom.window.api = { get: () => { called = true; return Promise.resolve({}); } };
+    dom.window.Api.get = () => { called = true; return Promise.resolve({}); };
     dom.window._promptSetActivePaneLabel(null, null);
     expect(called).toBe(false);
   });
