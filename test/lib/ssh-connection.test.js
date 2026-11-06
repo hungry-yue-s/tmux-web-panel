@@ -24,6 +24,7 @@ import {
   targetIdentity,
 } from '../../lib/transport/ssh-connection.js';
 import { ErrorCode } from '../../lib/servers/errors.js';
+import { POSIX_MODES } from '../helpers/permissions.js';
 
 const REMOTE = {
   id: 'api-linux',
@@ -494,7 +495,10 @@ describe('SshConnection', () => {
     expect(calls[0].options.env.SSH_ASKPASS_REQUIRE).toBe('force');
     expect(JSON.stringify(executor.sshEnv())).not.toContain(password);
     const env = { ...process.env, ...executor.sshEnv() };
-    const invoke = () => promisify(execFileCallback)(env.SSH_ASKPASS, [], { env });
+    // As OpenSSH starts it: Node itself only runs a .cmd through cmd.exe.
+    const invoke = () => (process.platform === 'win32'
+      ? promisify(execFileCallback)('cmd.exe', ['/d', '/c', env.SSH_ASKPASS], { env })
+      : promisify(execFileCallback)(env.SSH_ASKPASS, [], { env }));
     expect((await invoke()).stdout).toBe(password + '\n');
     await registry.update(server.id, { ssh: { password: 'replacement' } });
     // An in-flight old connection cannot obtain credentials from a later edit.
@@ -663,8 +667,8 @@ describe('SshConnection', () => {
       expect(result).toMatchObject({ entryName: '10.0.0.21', algorithm: 'ssh-ed25519', fingerprint });
       const content = await fs.readFile(path.join(dir, 'known_hosts'), 'utf8');
       expect(content.trim()).toBe(`10.0.0.21 ssh-ed25519 ${blob}`);
-      expect((await fs.stat(path.join(dir, 'known_hosts'))).mode & 0o777).toBe(0o600);
-      expect((await fs.stat(dir)).mode & 0o777).toBe(0o700);
+      if (POSIX_MODES) expect((await fs.stat(path.join(dir, 'known_hosts'))).mode & 0o777).toBe(0o600);
+      if (POSIX_MODES) expect((await fs.stat(dir)).mode & 0o777).toBe(0o700);
     });
 
     it('tightens permissions on a pre-existing loose known_hosts', async () => {
@@ -675,7 +679,7 @@ describe('SshConnection', () => {
       const { executor } = await scanned();
       await executor.trustHostKey(fingerprint);
 
-      expect((await fs.stat(knownHosts)).mode & 0o777).toBe(0o600);
+      if (POSIX_MODES) expect((await fs.stat(knownHosts)).mode & 0o777).toBe(0o600);
     });
 
     it('refuses an arbitrary known_hosts line', async () => {

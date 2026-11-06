@@ -8,6 +8,8 @@ bin/* text eol=lf
 *.mjs text eol=lf
 scripts/*.js text eol=lf
 android/gradlew text eol=lf
+# cmd.exe misreads labels and long lines in LF batch files.
+*.cmd text eol=crlf
 # Vendored tmux plugins are bash scripts with other extensions too (*.tmux).
 vendor/tmux-plugins/** text eol=lf
 # Unified patches contain blank context lines and space-prefixed C tabs.
