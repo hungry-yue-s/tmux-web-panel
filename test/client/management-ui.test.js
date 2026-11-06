@@ -1,6 +1,6 @@
 import { it, expect, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
+import { loadSlots } from '../helpers/slots.js';
 
 it('offers individual and all-agent presentation skill installation and refreshes actual state after errors', async () => {
   const dom = new JSDOM('<div id="root"></div>', { runScripts: 'outside-only', url: 'http://localhost' });
@@ -15,7 +15,7 @@ it('offers individual and all-agent presentation skill installation and refreshe
     }),
     post: vi.fn(async () => { installed = true; }),
   };
-  win.eval(readFileSync('plugins/panel-plugins/client/js/management.js', 'utf8'));
+  loadSlots(win);
   const root = win.document.getElementById('root');
   await win.ManagementPage.mount(root);
   expect(root.querySelectorAll('[data-name="panel-presentation"][data-managed="skill-install"]')).toHaveLength(3);
@@ -38,7 +38,7 @@ it('shows packaged runtime capabilities without local builds, and sends tmux set
     runtime: { path: '/desktop/runtime/bin/tmux', version: 'tmux bundled', available: true, packaged: true, buildSupported: false, rollbackSupported: false },
     tmuxConfig: { path: '/desktop/tmux.conf', extraLines: 0, linkSupported: false, backupDirectory: '/desktop/backups' }, skills: [],
   }) };
-  win.eval(readFileSync('plugins/panel-plugins/client/js/management.js', 'utf8'));
+  loadSlots(win);
   await win.ManagementPage.mount(win.document.getElementById('root'));
   expect(win.document.querySelector('[data-managed="build"]')).toBeNull();
   expect(win.document.querySelector('[data-managed="rollback"]')).toBeNull();
@@ -61,7 +61,7 @@ it('installs a plugin from the management page and protects conflicting skills',
     }),
     post: vi.fn(async () => { installed = true; return { installed: true }; }),
   };
-  win.eval(readFileSync('plugins/panel-plugins/client/js/management.js', 'utf8'));
+  loadSlots(win);
   const root = win.document.getElementById('root');
   await win.ManagementPage.mount(root);
   expect(root.querySelector('[data-managed="skill-install"]').disabled).toBe(true);

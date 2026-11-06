@@ -31,6 +31,8 @@ export async function apply(ctx) {
   await resources.load();
   ctx.http.mount('/api/managed-resources', createManagedResourcesRouter(resources));
   ctx.provide('managedResources', resources);
+  // Its panels in the management centre, where there are pages at all.
+  ctx.inject(['ui'], (ctx) => ctx.ui.contribute(new URL('./client/page.json', import.meta.url)));
 
   if (isPrivateServer()) return;
   try {

@@ -13,7 +13,10 @@ export const SECTION_SRCS = [
   'plugins/metrics/client/js/perf-section.js',
   'plugins/agent-hub/client/js/agent-section.js',
   'plugins/session-protection/client/js/session-section.js',
-  'plugins/panel-plugins/client/js/management-section.js',
+  // The management centre (ui) and the panels plugins put in it.
+  'plugins/ui/client/js/management-page.js',
+  'plugins/managed-resources/client/js/managed-resources.js',
+  'plugins/panel-plugins/client/js/panel-plugins.js',
 ].map(read);
 
 /** Evaluates the slots, then (unless `sections` is false) every plugin's registration, in `win`. */

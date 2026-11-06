@@ -83,10 +83,34 @@ describe('PanelSlots on the composed page', () => {
       ['/js/perf-panel.js', '/js/perf-section.js'],
       ['/js/agent-hub.js', '/js/agent-section.js'],
       ['/js/session-protection.js', '/js/session-section.js'],
-      ['/js/management.js', '/js/management-section.js'],
     ]) {
       expect(at(component)).toBeGreaterThan(-1);
       expect(at(section)).toBeGreaterThan(at(component));
     }
+    for (const src of ['/js/management-page.js', '/js/managed-resources.js', '/js/panel-plugins.js']) {
+      expect(at(src)).toBeGreaterThan(at('/js/slots.js'));
+    }
+  });
+
+  it('shows the management centre only while some plugin puts a panel in it', () => {
+    const dom = new JSDOM('<!DOCTYPE html><body><div id="root"></div></body>', { url: 'http://localhost/', runScripts: 'outside-only' });
+    const win = dom.window;
+    win.eval(readFileSync('plugins/ui/client/js/slots.js', 'utf8'));
+    win.eval(readFileSync('plugins/ui/client/js/management-page.js', 'utf8'));
+    const management = win.PanelSlots.settingsSections.get('management');
+    expect(management.available()).toBe(false);
+
+    win.AppShell = { escape: String, toast: vi.fn() };
+    win.Api = { get: vi.fn(async () => ({ plugins: [{ id: 'tmux-agent', name: 'Tmux Agent', version: '1', description: '', installed: false }] })) };
+    win.eval(readFileSync('plugins/panel-plugins/client/js/panel-plugins.js', 'utf8'));
+    expect(management.available()).toBe(true);
+    return win.ManagementPage.mount(win.document.getElementById('root')).then(() => {
+      // Only the panel-plugins panel: no tmux runtime or skills without managed-resources.
+      expect(win.document.querySelectorAll('[data-management-panel]')).toHaveLength(1);
+      expect(win.document.querySelector('[data-managed="plugin-install"]')).not.toBeNull();
+      expect(win.Api.get).toHaveBeenCalledWith('/api/plugins');
+      expect(win.Api.get).not.toHaveBeenCalledWith('/api/managed-resources');
+      dom.window.close();
+    });
   });
 });

@@ -49,9 +49,14 @@
     serverSections: slot(),
     /**
      * Sections of the settings page, in order:
-     *   { id, label, order, render() → html, mount?(host) }
+     *   { id, label, order, available?() → bool, render() → html, mount?(host) }
      */
     settingsSections: slot(),
+    /**
+     * Panels of the settings page's management centre (management-page.js), in order:
+     *   { id, order, mount(host, page) }   page.feedback(text) reports on the page's status line
+     */
+    managementPanels: slot(),
     /**
      * Commands for the palette, the Alt+Shift shortcuts and the shortcut sheet:
      *   { id, order, group: 'block' | 'nav' | 'window', title, icon, keys, code, keywords, run() }

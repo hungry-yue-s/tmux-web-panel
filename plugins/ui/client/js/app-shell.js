@@ -278,7 +278,10 @@
 
     /** The settings page's sections, the shell's own and the plugins' (PanelSlots). */
     settingsSections: function () {
-      return global.PanelSlots ? global.PanelSlots.settingsSections.list() : [];
+      if (!global.PanelSlots) return [];
+      return global.PanelSlots.settingsSections.list().filter(function (entry) {
+        return !entry.available || entry.available();
+      });
     },
 
     /** The section with this id, or the first one when it is not there (its plugin is off). */
