@@ -4,6 +4,8 @@ tmux-web-panel 跑在 [Cordis](https://github.com/cordiverse/cordis) 插件内�
 
 根目录 `CLAUDE.md` 的契约（Windows 上的 tmux 客户端、会话保护、终端首屏、Hub/Node……）都落在这些插件和 `lib/` 里。
 
+图解版见 [plugins-overview.html](plugins-overview.html)：插件依赖图、启动和请求流程、页面组装、补丁用法。克隆后用浏览器直接打开即可，不需要启动面板。
+
 ## 结构
 
 ```

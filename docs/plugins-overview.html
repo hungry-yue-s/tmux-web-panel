@@ -1,0 +1,727 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>面板插件化重写</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700;900&display=swap">
+<style>
+/* Layout: a single reading column under a sticky tmux-style status line that doubles as the section index. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --ink: #18212b;
+  --muted: #5b6774;
+  --line: #d9dfe6;
+  --accent: #0e7468;
+  --accent-ink: #ffffff;
+  --accent-soft: #dcefeb;
+  --warm: #a85a0c;
+  --warm-soft: #f6e8d6;
+  --code-bg: #eceff3;
+  --bar: #1f2a35;
+  --bar-ink: #d6dee6;
+  --bar-hi: #5fc4b5;
+  --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", "Cascadia Mono", Consolas, "Noto Sans SC", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10151b; --surface: #161d25; --ink: #e2e8ee; --muted: #94a1ae; --line: #2a3541;
+    --accent: #52bfb0; --accent-ink: #0c1a18; --accent-soft: #15302c; --warm: #e9a352; --warm-soft: #33261a;
+    --code-bg: #1b242e; --bar: #0b1015; --bar-ink: #c4ced8; --bar-hi: #5fc4b5; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10151b; --surface: #161d25; --ink: #e2e8ee; --muted: #94a1ae; --line: #2a3541;
+  --accent: #52bfb0; --accent-ink: #0c1a18; --accent-soft: #15302c; --warm: #e9a352; --warm-soft: #33261a;
+  --code-bg: #1b242e; --bar: #0b1015; --bar-ink: #c4ced8; --bar-hi: #5fc4b5; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  margin: 0;
+  background: var(--bg); color: var(--ink); font-family: var(--sans);
+  font-size: 15.5px; line-height: 1.75;
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px);
+  z-index: 10; background: var(--bar);
+}
+code, pre, .mono { font-family: var(--mono); }
+:not(pre) > code {
+  font-size: .88em; background: var(--code-bg); padding: .1em .38em; border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* status line */
+.statusline {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--bar); color: var(--bar-ink); font-family: var(--mono); font-size: 13px;
+}
+.statusline-inner {
+  max-width: 980px; margin: 0 auto; display: flex; align-items: center; gap: 4px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0; overflow-x: auto; white-space: nowrap; scrollbar-width: none;
+}
+.statusline-inner::-webkit-scrollbar { display: none; }
+.statusline .sess { color: var(--bar-hi); font-weight: 600; padding-right: 10px; }
+.statusline a {
+  color: var(--bar-ink); text-decoration: none; padding: 7px 8px; display: inline-block;
+}
+.statusline a:hover { color: #fff; }
+.statusline a.on { background: var(--bar-hi); color: #0b1015; }
+.statusline a .idx { opacity: .7; }
+
+/* page */
+.wrap {
+  max-width: 980px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 72px;
+}
+header.hero { padding-block: 48px 8px; }
+.eyebrow { font-family: var(--mono); font-size: 12.5px; letter-spacing: .06em; color: var(--muted); }
+h1 {
+  font-size: clamp(30px, 5.2vw, 46px); line-height: 1.2; font-weight: 900; margin: 10px 0 14px;
+  text-wrap: balance; letter-spacing: -.01em;
+}
+h1 .hl { color: var(--accent); }
+.lede { font-size: 17px; max-width: 40em; color: var(--ink); margin: 0; }
+.facts {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin-top: 28px;
+  background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+}
+.fact { background: var(--surface); padding: 14px 16px; min-width: 0; }
+.fact b { display: block; font-family: var(--mono); font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.fact span { font-size: 13px; color: var(--muted); line-height: 1.5; display: block; }
+@media (max-width: 680px) { .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+section { padding-top: 56px; scroll-margin-top: 48px; }
+h2 {
+  font-size: 24px; font-weight: 700; margin: 0 0 6px; text-wrap: balance;
+  display: flex; align-items: baseline; gap: 12px;
+}
+h2 .win { font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--accent); }
+.sub { color: var(--muted); margin: 0 0 20px; max-width: 44em; }
+h3 { font-size: 16.5px; margin: 0 0 6px; }
+p { margin: 0 0 12px; max-width: 44em; }
+
+/* before / after */
+.compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 760px) { .compare { grid-template-columns: minmax(0, 1fr); } }
+.pane {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; min-width: 0;
+  display: flex; flex-direction: column;
+}
+.pane-head {
+  display: flex; justify-content: space-between; gap: 8px; align-items: baseline; flex-wrap: wrap;
+  padding: 10px 14px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+}
+.pane-head strong { color: var(--ink); font-weight: 600; }
+.tag { font-family: var(--mono); font-size: 11.5px; padding: 1px 7px; border-radius: 99px; }
+.tag.old { background: var(--warm-soft); color: var(--warm); }
+.tag.new { background: var(--accent-soft); color: var(--accent); }
+.pane ul { margin: 0; padding: 12px 14px 14px 32px; }
+.pane li { margin: 4px 0; }
+pre {
+  margin: 0; padding: 12px 14px; font-size: 12.8px; line-height: 1.6; overflow-x: auto;
+  background: var(--code-bg); color: var(--ink);
+}
+.pane pre { border-radius: 0; flex: 1; }
+.pane pre:last-child { border-radius: 0 0 8px 8px; }
+pre .c { color: var(--muted); }
+pre .k { color: var(--accent); }
+pre .s { color: var(--warm); }
+pre .ln { color: var(--muted); opacity: .6; user-select: none; }
+
+/* ideas */
+.ideas { display: grid; gap: 14px; }
+.idea {
+  display: grid; grid-template-columns: minmax(0, 15em) minmax(0, 1fr); gap: 20px;
+  padding: 18px 0; border-top: 1px solid var(--line);
+}
+.idea:last-child { border-bottom: 1px solid var(--line); }
+.idea h3 { font-size: 17px; }
+.idea .from { font-size: 13px; color: var(--muted); margin: 0; }
+.idea p { margin: 0 0 8px; }
+@media (max-width: 680px) { .idea { grid-template-columns: minmax(0, 1fr); gap: 6px; } }
+
+/* directory map */
+.tree { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.tree-row {
+  display: grid; grid-template-columns: 9.5em minmax(0, 1fr) auto; gap: 14px; align-items: baseline;
+  padding: 10px 16px; border-top: 1px solid var(--line);
+}
+.tree-row:first-child { border-top: 0; }
+.tree-row .dir { font-family: var(--mono); font-weight: 600; font-size: 14px; }
+.tree-row .what { min-width: 0; }
+.tree-row .what small { display: block; color: var(--muted); font-size: 13px; line-height: 1.55; }
+@media (max-width: 600px) {
+  .tree-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .tree-row .what { grid-column: 1 / -1; grid-row: 2; }
+}
+
+/* plugin graph */
+.graph { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 0; }
+.layer { display: grid; grid-template-columns: 11em minmax(0, 1fr); gap: 14px; padding: 10px 16px; align-items: start; }
+.layer + .layer { border-top: 1px dashed var(--line); }
+.layer-label { font-size: 12.5px; color: var(--muted); line-height: 1.5; padding-top: 5px; }
+.layer-label b { font-family: var(--mono); color: var(--ink); font-weight: 600; display: block; font-size: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.chip {
+  font-family: var(--mono); font-size: 13px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink); transition: background .15s, border-color .15s, opacity .15s;
+}
+.chip:hover { border-color: var(--accent); }
+.graph.has-sel .chip { opacity: .38; }
+.graph.has-sel .chip.sel, .graph.has-sel .chip.dep, .graph.has-sel .chip.user { opacity: 1; }
+.chip.sel { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.chip.dep { background: var(--accent-soft); border-color: var(--accent); }
+.chip.user { background: var(--warm-soft); border-color: var(--warm); }
+@media (max-width: 600px) { .layer { grid-template-columns: minmax(0, 1fr); gap: 6px; } }
+.info {
+  margin: 8px 16px 8px; padding: 14px 16px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line);
+  min-height: 7.5em;
+}
+.info h3 { font-family: var(--mono); font-size: 15px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.info h3 small { font-family: var(--sans); font-weight: 400; font-size: 12.5px; color: var(--muted); }
+.info p { margin: 4px 0 8px; }
+.rel { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+.rel span b { font-family: var(--mono); font-weight: 500; color: var(--ink); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--muted); padding: 4px 16px 8px; }
+.legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; border: 1px solid; }
+.legend .l-dep { background: var(--accent-soft); border-color: var(--accent); }
+.legend .l-user { background: var(--warm-soft); border-color: var(--warm); }
+
+/* anatomy */
+.anatomy { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 760px) { .anatomy { grid-template-columns: minmax(0, 1fr); } }
+.notes { margin: 0; padding: 12px 14px 14px 30px; font-size: 14px; }
+.notes li { margin: 5px 0; }
+
+/* steps & pipeline */
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: s; display: grid; gap: 0; }
+.steps li {
+  counter-increment: s; display: grid; grid-template-columns: 2.4em minmax(0, 1fr); gap: 10px;
+  padding: 12px 0; border-top: 1px solid var(--line);
+}
+.steps li:last-child { border-bottom: 1px solid var(--line); }
+.steps li::before {
+  content: counter(s); font-family: var(--mono); font-weight: 600; color: var(--accent);
+  width: 1.9em; height: 1.9em; border-radius: 50%; border: 1.5px solid var(--accent);
+  display: grid; place-items: center; font-size: 13px;
+}
+.steps li > div { min-width: 0; }
+.steps b { font-weight: 700; }
+.steps small { display: block; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+
+.pipe { overflow-x: auto; padding-bottom: 4px; }
+.pipe-row { display: flex; align-items: stretch; gap: 0; min-width: 760px; }
+.stage {
+  flex: 1 1 0; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 11px; font-size: 13px; line-height: 1.5;
+}
+.stage .ord { font-family: var(--mono); font-size: 11.5px; color: var(--muted); display: block; }
+.stage b { display: block; font-size: 13.5px; margin: 2px 0 4px; }
+.stage .who { font-family: var(--mono); font-size: 11.5px; color: var(--accent); }
+.stage.end { background: var(--bg); border-style: dashed; }
+.arrow { flex: 0 0 18px; display: grid; place-items: center; color: var(--muted); font-size: 14px; }
+.ws {
+  margin-top: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+  font-size: 14px;
+}
+.ws b { font-weight: 700; }
+
+/* page compose */
+.compose { display: grid; grid-template-columns: minmax(0, 1fr) 40px minmax(0, 1fr) 40px minmax(0, 1fr); gap: 0; align-items: center; }
+.compose .col { min-width: 0; display: grid; gap: 6px; }
+.compose .box {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; font-size: 13px;
+}
+.compose .box .mono { font-size: 12.5px; font-weight: 600; display: block; }
+.compose .box small { color: var(--muted); display: block; line-height: 1.5; }
+.compose .box.off { opacity: .5; border-style: dashed; }
+.compose .box.main { border-color: var(--accent); }
+.compose .to { text-align: center; color: var(--muted); font-size: 18px; }
+@media (max-width: 760px) {
+  .compose { grid-template-columns: minmax(0, 1fr); }
+  .compose .to { transform: rotate(90deg); height: 28px; }
+}
+.toggle-row { display: flex; align-items: center; gap: 10px; margin: 14px 0 0; font-size: 14px; flex-wrap: wrap; }
+.switch {
+  font-family: var(--mono); font-size: 13px; border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  border-radius: 6px; padding: 5px 12px; cursor: pointer;
+}
+.switch[aria-pressed="true"] { background: var(--warm-soft); border-color: var(--warm); color: var(--warm); }
+
+/* patch */
+.patch { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 760px) { .patch { grid-template-columns: minmax(0, 1fr); } }
+.patch pre { border-radius: 8px; }
+.ops { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.op { display: grid; grid-template-columns: minmax(0, 12.5em) minmax(0, 1fr); gap: 12px; padding: 9px 14px; border-top: 1px solid var(--line); font-size: 13.5px; }
+.op:first-child { border-top: 0; }
+.op code { font-size: 12px; }
+@media (max-width: 480px) { .op { grid-template-columns: minmax(0, 1fr); gap: 2px; } }
+
+/* unchanged */
+.same { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 24px; }
+.same div { padding: 12px 0; border-top: 1px solid var(--line); min-width: 0; }
+.same h3 { font-size: 15px; margin-bottom: 2px; }
+.same p { font-size: 14px; color: var(--muted); margin: 0; }
+@media (max-width: 640px) { .same { grid-template-columns: minmax(0, 1fr); } }
+
+/* status */
+.state { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 760px) { .state { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; min-width: 0; }
+.kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; font-size: 14px; margin: 0; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; min-width: 0; }
+.pill { font-size: 12px; padding: 1px 8px; border-radius: 99px; font-weight: 500; white-space: nowrap; }
+.pill.ok { background: var(--accent-soft); color: var(--accent); }
+.pill.wait { background: var(--warm-soft); color: var(--warm); }
+.card ol { margin: 6px 0 0; padding-left: 20px; font-size: 14px; }
+.card ol li { margin: 4px 0; }
+.todo { margin-top: 16px; }
+footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<nav class="statusline" aria-label="章节">
+  <div class="statusline-inner" id="bar">
+    <span class="sess">[panel]</span>
+    <a href="#what"><span class="idx">0:</span>改了什么</a>
+    <a href="#ideas"><span class="idx">1:</span>思想</a>
+    <a href="#layout"><span class="idx">2:</span>目录</a>
+    <a href="#plugins"><span class="idx">3:</span>插件</a>
+    <a href="#anatomy"><span class="idx">4:</span>写法</a>
+    <a href="#boot"><span class="idx">5:</span>启动</a>
+    <a href="#request"><span class="idx">6:</span>请求</a>
+    <a href="#page"><span class="idx">7:</span>页面</a>
+    <a href="#patch"><span class="idx">8:</span>补丁</a>
+    <a href="#unchanged"><span class="idx">9:</span>没变的</a>
+    <a href="#status"><span class="idx">10:</span>验证</a>
+  </div>
+</nav>
+
+<div class="wrap">
+  <header class="hero">
+    <div class="eyebrow">tmux-web-panel · 插件架构</div>
+    <h1>整个面板现在由<span class="hl">插件</span>组装</h1>
+    <p class="lede">参照 DeepSeek Harness 的做法，面板改跑在 Cordis 插件内核上。原来一个入口文件里的手工接线，拆成了 24 个各自声明依赖的插件；原来手写的主页面，改由各插件声明的脚本组装。业务代码原样保留。</p>
+    <div class="facts">
+      <div class="fact"><b>24</b><span>插件，列在 profiles/panel.yml</span></div>
+      <div class="fact"><b>691 → 5</b><span>行：server/index.js 只剩兼容入口</span></div>
+      <div class="fact"><b>~350</b><span>行内核：kernel/ 三个文件，只做组装</span></div>
+      <div class="fact"><b>~2500</b><span>个测试，无新增失败</span></div>
+    </div>
+  </header>
+
+  <section id="what">
+    <h2><span class="win">0:</span>改了什么</h2>
+    <p class="sub">同一件事，前后对比：把“置顶窗口”功能接到服务器上。</p>
+    <div class="compare">
+      <div class="pane">
+        <div class="pane-head"><strong>以前 · server/index.js</strong><span class="tag old">691 行手工接线</span></div>
+        <pre><code><span class="ln">296</span> const pinStore = new PinStore(
+<span class="ln">297</span>   join(configDir, 'pins.json'));
+<span class="ln">   </span> <span class="c">…</span>
+<span class="ln">352</span> app.use('/api/sessions', sessionsRouter);
+<span class="ln">353</span> app.use('/api/sessions/:name/windows', …);
+<span class="ln">   </span> <span class="c">… 三十多行 app.use …</span>
+<span class="ln">365</span> app.use('/api/pins', createPinsRouter(pinStore));
+<span class="ln">366</span> app.use('/api/share', createShareRouter(shareStore));
+<span class="ln">   </span> <span class="c">… 关机时手工逐个 stop …</span></code></pre>
+        <ul>
+          <li>所有模块在一个文件里 new 出来，顺序靠人排</li>
+          <li>想关掉一个功能，要改这个文件</li>
+          <li>前端在 <code>public/index.html</code> 手写全部 script 标签</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <div class="pane-head"><strong>现在 · plugins/pins/index.js</strong><span class="tag new">一个插件</span></div>
+        <pre><code><span class="k">export const</span> name = <span class="s">'pins'</span>;
+<span class="k">export const</span> inject = [<span class="s">'launch'</span>, <span class="s">'http'</span>, <span class="s">'tmux'</span>];
+
+<span class="k">export async function</span> apply(ctx) {
+  <span class="k">const</span> store = <span class="k">new</span> PinStore(
+    join(ctx.launch.configDir, <span class="s">'pins.json'</span>));
+  <span class="k">await</span> store.load();
+  ctx.http.mount(<span class="s">'/api/pins'</span>, createPinsRouter(store));
+  ctx.provide(<span class="s">'pins'</span>, store);
+}</code></pre>
+        <ul>
+          <li>自己声明依赖（<code>inject</code>），依赖就绪才启动</li>
+          <li>注册的路由挂在自己的 <code>ctx</code> 上，插件停了就撤掉</li>
+          <li>在 <code>panel.yml</code> 里列一行；关掉它只需一个补丁</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="ideas">
+    <h2><span class="win">1:</span>从 dsh 借来的三个思想</h2>
+    <p class="sub">DeepSeek Harness 能把很多功能做得互不牵扯，靠的是这三点。下面是每一点在本项目里落到了哪里。</p>
+    <div class="ideas">
+      <div class="idea">
+        <div><h3>没有特权内核</h3><p class="from">产品的每一部分都是插件</p></div>
+        <div>
+          <p><code>kernel/</code> 只有三个文件（profile、loader、app），约 350 行，只负责读配置、挂插件。HTTP 服务器、登录鉴权、tmux 本身也都是插件，和“置顶窗口”地位一样。</p>
+          <p>所以换掉任何一块都不用动内核：比如测试时把 <code>tmux</code> 插件配置成私有 server，整个面板就都跑在私有 tmux 上。</p>
+        </div>
+      </div>
+      <div class="idea">
+        <div><h3>副作用可撤销</h3><p class="from">注册了什么，就能收回什么</p></div>
+        <div>
+          <p>插件经 <code>ctx</code> 注册的东西：路由、中间件、WebSocket 升级、定时器、事件监听、页面上的脚本，都记在这个插件名下。插件停掉，这些自动撤掉，不需要另写清理代码。</p>
+          <p>以前的关机流程是手工逐个 stop；现在是按依赖关系反向撤销。<code>test/panel.test.js</code> 验证了运行中关掉一个插件，它的接口立刻 404，再打开又恢复。</p>
+        </div>
+      </div>
+      <div class="idea">
+        <div><h3>配置即组装</h3><p class="from">一份可打印、可覆盖的清单</p></div>
+        <div>
+          <p>整个产品就是 <code>profiles/panel.yml</code> 里那 24 行。不在清单里的插件不会被加载，代码里没有别的组装入口。</p>
+          <p>想改组装，不改清单，而是叠一层补丁（关掉、换实现、改配置、插入新插件）。<code>node bin/panel.js --dump-config</code> 打印叠完补丁后的最终结果。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="layout">
+    <h2><span class="win">2:</span>目录地图</h2>
+    <p class="sub">插件决定“什么时候、依赖谁、往哪里注册”，<code>lib/</code> 决定“具体怎么做”。</p>
+    <div class="tree">
+      <div class="tree-row"><span class="dir">profiles/</span><span class="what">panel.yml：整个产品的插件清单<small>改组装用补丁，不直接改它</small></span><span class="tag new">新</span></div>
+      <div class="tree-row"><span class="dir">bin/panel.js</span><span class="what">启动入口<small>接受原来的全部命令行参数，加上 --profile、--patch、--dump-config</small></span><span class="tag new">新</span></div>
+      <div class="tree-row"><span class="dir">kernel/</span><span class="what">读 profile 和补丁、挂载插件、运行时开关<small>profile.js、loader.js、app.js</small></span><span class="tag new">新</span></div>
+      <div class="tree-row"><span class="dir">plugins/&lt;id&gt;/</span><span class="what">每个功能一个目录：<code>index.js</code> 是服务端接线，<code>client/</code> 是它的前端<small>client/page.json 声明这个插件往主页面里放哪些脚本和样式</small></span><span class="tag new">新</span></div>
+      <div class="tree-row"><span class="dir">lib/</span><span class="what">业务模块：路由、TerminalManager、会话保护、Hub 链路……<small>来自原 server/，逻辑没改，只是由插件接线</small></span><span class="tag old">搬家</span></div>
+      <div class="tree-row"><span class="dir">client/</span><span class="what">浏览器端的 Cordis 内核<small>boot.js、核心服务 api、共享的 DOM 工具</small></span><span class="tag new">新</span></div>
+      <div class="tree-row"><span class="dir">catalog/</span><span class="what">经过审核的面板插件（tmux-agent）<small>原来在 plugins/tmux-agent，为了不和功能插件混在一起而改名</small></span><span class="tag old">搬家</span></div>
+      <div class="tree-row"><span class="dir">vendor/</span><span class="what">Cordis、cosmokit、plugin-timer 的发布版，和 dsh 一样放进仓库<small>还有原来的 tmux 子模块、tmux-resurrect</small></span><span class="tag new">新</span></div>
+      <div class="tree-row"><span class="dir">server/index.js</span><span class="what">只剩一行 import<small>给还指向旧路径的 systemd / launchd 服务单元用，启动的就是 bin/panel.js</small></span><span class="tag old">兼容</span></div>
+    </div>
+  </section>
+
+  <section id="plugins">
+    <h2><span class="win">3:</span>24 个插件和它们的依赖</h2>
+    <p class="sub">按依赖分层：每一层只依赖它上面的层。点一个插件，看它做什么、依赖谁、谁依赖它。</p>
+    <div class="graph" id="graph">
+      <div id="layers"></div>
+      <div class="legend"><span><i class="l-dep"></i>它依赖的</span><span><i class="l-user"></i>依赖它的</span></div>
+      <div class="info" id="info" aria-live="polite"></div>
+    </div>
+    <p style="margin-top:14px">依赖靠插件里的 <code>inject</code> 声明。Cordis 等声明的服务都就绪了才启动这个插件；某个依赖被关掉，依赖它的插件跟着停，依赖恢复后再自动启动。清单里的顺序保持了原来 <code>server/index.js</code> 的顺序，但正确性不靠顺序。</p>
+  </section>
+
+  <section id="anatomy">
+    <h2><span class="win">4:</span>一个插件的写法</h2>
+    <p class="sub">以“系统监控”为例：服务端和前端放在同一个目录里。</p>
+    <div class="anatomy">
+      <div class="pane">
+        <div class="pane-head"><strong>plugins/metrics/</strong></div>
+        <pre><code>plugins/metrics/
+├── index.js              <span class="c">服务端：挂 /api/system-stats 等路由</span>
+└── client/
+    ├── page.json         <span class="c">往主页面放哪些脚本</span>
+    └── js/
+        ├── system-stats.js
+        ├── perf-utils.js
+        └── perf-panel.js</code></pre>
+        <pre><code><span class="c">// client/page.json</span>
+{
+  <span class="s">"serve"</span>: [<span class="s">"."</span>],
+  <span class="s">"body"</span>: [
+    { <span class="s">"order"</span>: 230, <span class="s">"script"</span>: <span class="s">"/js/system-stats.js"</span> },
+    { <span class="s">"order"</span>: 240, <span class="s">"script"</span>: <span class="s">"/js/perf-utils.js"</span> },
+    { <span class="s">"order"</span>: 250, <span class="s">"script"</span>: <span class="s">"/js/perf-panel.js"</span> }
+  ]
+}</code></pre>
+      </div>
+      <div class="pane">
+        <div class="pane-head"><strong>要点</strong></div>
+        <ul class="notes">
+          <li><code>serve: ["."]</code> 把 <code>client/</code> 挂到网站根下，所以 <code>/js/perf-panel.js</code> 就是这个目录里的文件。</li>
+          <li><code>order</code> 是全局顺序。各插件的脚本按它排进同一个页面，排出来的结果和原来手写的 <code>index.html</code> 一致。</li>
+          <li>插件在 <code>apply</code> 里调用 <code>ctx.ui.contribute(page.json)</code>。这次登记也是可撤销的：插件关掉，脚本从页面上消失。</li>
+          <li>服务端的业务逻辑在 <code>lib/metrics/</code>，插件只负责把它接到 HTTP 上。</li>
+          <li>新功能照这个样子写成一个插件，再在 <code>panel.yml</code> 里加一行。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="boot">
+    <h2><span class="win">5:</span>启动和关机</h2>
+    <p class="sub">从服务管理器拉起进程，到第一个浏览器请求能被处理。</p>
+    <ol class="steps">
+      <li><div><b>服务管理器启动 <code>bin/panel.js</code></b><small>systemd、launchd 或 Windows 计划任务，环境变量（PORT、AUTH、TLS_*…）和以前一样注入。旧服务单元还写着 server/index.js 的，经那一行兼容入口转进来。</small></div></li>
+      <li><div><b>读清单 <code>profiles/panel.yml</code></b><small>得到 24 个条目，每条是 id、use（用哪个实现）、config、disabled。</small></div></li>
+      <li><div><b>叠补丁</b><small>先叠配置目录里的 <code>patch.yml</code>（默认 ~/.config/tmux-web-panel/patch.yml），再叠命令行上的每个 <code>--patch</code>。没有补丁就是原样。</small></div></li>
+      <li><div><b>Loader 挂载每个条目</b><small>按清单顺序交给 Cordis；Cordis 按 inject 等依赖就绪再调用各插件的 apply。某个插件启动失败只影响它和依赖它的插件，进程最后以失败码退出，让服务管理器看得到。</small></div></li>
+      <li><div><b>http 开始监听，ui 组装主页面</b><small>此时所有路由、WebSocket 升级、页面脚本都已登记。</small></div></li>
+      <li><div><b>关机：反向撤销</b><small>收到停止信号后按依赖反向撤销所有插件，比如先结束 Mosh 会话，再结束 Hub 的 Mosh 终端，最后断开到各 Node 的链路。最多等 15 秒。</small></div></li>
+    </ol>
+  </section>
+
+  <section id="request">
+    <h2><span class="win">6:</span>一个 HTTP 请求怎么走</h2>
+    <p class="sub">各插件注册的中间件和路由，由 <code>http</code> 插件按固定规则排成一条管线，不再取决于谁先 <code>app.use</code>。</p>
+    <div class="pipe" role="region" aria-label="HTTP 管线" tabindex="0">
+      <div class="pipe-row">
+        <div class="stage"><span class="ord">order −100</span><b>诊断计时</b><span class="who">diagnostics</span></div>
+        <div class="arrow">→</div>
+        <div class="stage"><span class="ord">order −50</span><b>/n/:serverId 转发</b><span class="who">servers</span><br>发往别的机器的请求在这里转给对应 Node</div>
+        <div class="arrow">→</div>
+        <div class="stage"><span class="ord">固定</span><b>压缩</b><span class="who">http</span></div>
+        <div class="arrow">→</div>
+        <div class="stage"><span class="ord">order ≥ 0</span><b>/api 守卫</b><span class="who">auth</span><br>没登录就 401</div>
+        <div class="arrow">→</div>
+        <div class="stage"><span class="ord">路由</span><b>接口</b><span class="who">各功能插件</span><br>精确路径优先，其次按登记顺序</div>
+        <div class="arrow">→</div>
+        <div class="stage"><span class="ord">order 1000</span><b>静态文件</b><span class="who">ui</span><br>各插件的 client/</div>
+        <div class="arrow">→</div>
+        <div class="stage end"><span class="ord">最后</span><b>404 / 错误</b><span class="who">http</span></div>
+      </div>
+    </div>
+    <div class="ws"><b>WebSocket 走另一条路：</b>升级请求先经 <code>/n/</code> 转发和 <code>auth</code> 的令牌校验，再交给登记了该路径的插件（<code>terminal</code> 的 /ws/terminal/:paneId、<code>status</code> 的 /ws/status）。所有插件共用一个 WebSocketServer。</div>
+  </section>
+
+  <section id="page">
+    <h2><span class="win">7:</span>主页面怎么组装</h2>
+    <p class="sub">以前 <code>public/index.html</code> 手写所有标签。现在 <code>ui</code> 插件收集各插件的 page.json，把脚本和样式按 order 填进模板。</p>
+    <div class="compose" id="compose">
+      <div class="col">
+        <div class="box"><span class="mono">terminal/client/page.json</span><small>xterm、字体切片、终端脚本</small></div>
+        <div class="box"><span class="mono">files/client/page.json</span><small>文件预览、分窗、Git block</small></div>
+        <div class="box" id="metrics-box"><span class="mono">metrics/client/page.json</span><small>system-stats.js 等 3 个脚本</small></div>
+        <div class="box"><span class="mono">… 另外 7 个插件</span><small>auth、notifications、agent-hub…</small></div>
+      </div>
+      <div class="to">→</div>
+      <div class="col">
+        <div class="box main"><span class="mono">ui 插件</span><small>按 order 排序，填进模板的 &lt;!--ui:head--&gt; 和 &lt;!--ui:body--&gt;</small></div>
+      </div>
+      <div class="to">→</div>
+      <div class="col">
+        <div class="box"><span class="mono">GET /</span><small>本地 JS/CSS/字体的地址带上内容哈希 <code>?h=…</code>，可缓存一年；HTML 本身每次校验。改前端文件刷新即生效，不用重启。</small></div>
+      </div>
+    </div>
+    <div class="toggle-row">
+      <button class="switch" id="toggle-metrics" type="button" aria-pressed="false">关掉 metrics</button>
+      <span id="toggle-note">关掉一个插件时，页面和接口会发生什么？</span>
+    </div>
+    <p style="margin-top:16px">浏览器这边也装了同一个 Cordis 内核（<code>/client/boot.js</code>，核心服务 <code>api</code>）。不过现有的前端脚本内部仍然是原来经全局对象互相调用的写法，还没逐个改成 ES 模块，这是后续可以慢慢做的事。</p>
+  </section>
+
+  <section id="patch">
+    <h2><span class="win">8:</span>用补丁改组装</h2>
+    <p class="sub">补丁是一个操作列表，按顺序作用在清单上。不需要改仓库里的任何文件。</p>
+    <div class="patch">
+      <pre><code><span class="c"># ~/.config/tmux-web-panel/patch.yml</span>
+
+<span class="c"># 这台机器不需要 Agent 控制台</span>
+- id: <span class="s">agent-hub</span>
+  disabled: <span class="k">true</span>
+
+<span class="c"># 测试：整个面板用私有 tmux server</span>
+- id: <span class="s">tmux</span>
+  config:
+    socket: <span class="s">twp-test</span>
+
+<span class="c"># 加一个自己写的插件，放在 files 后面</span>
+- insert:
+    id: <span class="s">my-tool</span>
+    use: <span class="s">./my-tool/index.js</span>
+  after: <span class="s">files</span></code></pre>
+      <div class="ops">
+        <div class="op"><code>{ id, disabled }</code><span>关掉或重新打开一个插件</span></div>
+        <div class="op"><code>{ id, config }</code><span>替换它的整份配置</span></div>
+        <div class="op"><code>{ id, use }</code><span>保留 id，换一个实现</span></div>
+        <div class="op"><code>{ insert, after | before }</code><span>插入一个新条目，默认放在最后</span></div>
+        <div class="op"><code>--dump-config</code><span>打印叠完补丁的最终清单，不启动</span></div>
+        <div class="op"><code>--patch my.yml</code><span>临时再叠一层，适合冒烟测试</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="unchanged">
+    <h2><span class="win">9:</span>没有变的</h2>
+    <p class="sub">这次是换组装方式，不是重写业务。</p>
+    <div class="same">
+      <div><h3>业务逻辑</h3><p>原 server/ 的模块整体搬进 lib/，逻辑不变。Windows 上 tmux 客户端那批契约（一次只换一个客户端、输入暂存、控制台回收）都还在 TerminalManager 里。</p></div>
+      <div><h3>页面外观和行为</h3><p>组装出来的主页面与原来手写的 index.html 一致，前端脚本没有改写。</p></div>
+      <div><h3>启动参数</h3><p>环境变量（PORT、HOST、AUTH、NODE_ONLY、TLS_*、HTTP_PORT、TMUX_PANEL_CONFIG_DIR）和命令行参数照旧。</p></div>
+      <div><h3>数据和配置</h3><p>配置目录还是 ~/.config/tmux-web-panel，令牌、通知、服务器列表、会话保护设置原地读取。</p></div>
+      <div><h3>服务管理</h3><p>仍然只经 systemd、launchd 或 install-service.ps1 启停。安装脚本已改成直接启动 bin/panel.js。</p></div>
+      <div><h3>Hub 与 Node</h3><p>/n/:serverId 转发、node token、证书指纹固定、直连和 Mosh 的规则都没变，只是分别落在 servers、node、mosh 插件里。</p></div>
+    </div>
+  </section>
+
+  <section id="status">
+    <h2><span class="win">10:</span>验证和部署</h2>
+    <p class="sub">改造完成时（2026-11-06）的验证结果，以及把一台机器切换到新结构的步骤。</p>
+    <div class="state">
+      <div class="card">
+        <h3>验证</h3>
+        <dl class="kv">
+          <dt>全部测试</dt><dd>约 2500 个，分目录跑。失败的只有改造前在这台 Windows 上就失败的那批（缺 openssl、权限位、CRLF），清单在 docs/plugins.md <span class="pill ok">无新增失败</span></dd>
+          <dt>前端测试</dt><dd><span class="pill ok">全部通过</span></dd>
+          <dt>整机集成</dt><dd>真实启动整个清单：登录、/api 守卫、WebSocket 鉴权、终端接入、运行时开关插件 <span class="pill ok">通过</span></dd>
+          <dt>真实浏览器</dt><dd>私有 tmux server + 临时配置目录：登录、会话列表、终端可用，无报错 <span class="pill ok">通过</span></dd>
+        </dl>
+      </div>
+      <div class="card">
+        <h3>切换一台机器</h3>
+        <ol>
+          <li>拉取代码后运行 <code>npm install</code>（新增了 vendor/ 下的本地依赖）</li>
+          <li>Linux、macOS 重新运行 <code>scripts/install-service.sh install</code>，服务单元改为直接启动 bin/panel.js。不重装也能启动：旧单元经 server/index.js 兼容入口进来。Windows 的计划任务经 run-panel.ps1 启动，脚本已经改好，不用重装</li>
+          <li>经服务管理器重启面板：<code>systemctl --user restart tmux-web-panel</code>，Windows 用 <code>scripts/install-service.ps1 restart</code>。浏览器里的终端会断开重连，tmux 会话不受影响</li>
+        </ol>
+      </div>
+    </div>
+    <div class="card todo">
+      <h3>还可以继续做的</h3>
+      <ol>
+        <li>把前端的全局脚本逐个改成浏览器端的 ES 模块插件，全局对象换成服务</li>
+        <li>把 lib/ 里的大模块（terminal.js、api/files.js、api/agent-hub.js）按接缝拆成更小的插件</li>
+      </ol>
+      <p style="margin:10px 0 0;font-size:14px;color:var(--muted)">都不影响现在的功能，可以随功能迭代逐步做。约定和陷阱写在 <a href="plugins.md">docs/plugins.md</a>。</p>
+    </div>
+  </section>
+
+  <footer>tmux-web-panel 插件化重写图解 · 详细约定见 <a href="plugins.md">docs/plugins.md</a></footer>
+</div>
+
+<script>
+(function () {
+  var P = {
+    logger: { use: 'logger-console', d: '把 Cordis 的日志打印到进程控制台，也就是 journald 或 Windows 计划任务的日志。', deps: [] },
+    timer: { use: '@cordisjs/plugin-timer', d: 'Cordis 自带的定时器服务。插件经它注册的定时器，随插件停掉一起清除。', deps: [] },
+    launch: { d: '读环境变量、命令行和配置文件，提供端口、配置目录、TLS 等启动参数。没叫 runtime 是因为那是 Cordis 的保留名。', deps: [] },
+    tmux: { d: '本机的 tmux 操作，并决定用哪个 tmux server：正式运行用默认的，测试和冒烟用私有的（-L / -S）。', deps: [] },
+    http: { d: 'HTTP(S) 服务器、中间件和路由的排序、WebSocket 升级，以及 HTTP 到 HTTPS 的跳转。', deps: ['launch'] },
+    diagnostics: { d: '远程性能诊断：在压缩和转发之前统计每个响应的字节数和耗时。', deps: ['launch', 'http'] },
+    node: { d: '把本机作为 Node：配对文件 node.json、node token、/api/node/info，以及本机能力声明。', deps: ['launch', 'http', 'tmux'] },
+    workspace: { d: '会话、窗口、窗格这棵树。工作区接口、终端网关和面板插件都只和它打交道。', deps: ['http', 'tmux'] },
+    'tmux-api': { d: '页面还在用的旧接口：按名字和序号操作会话、窗口、窗格，以及 /api/status。', deps: ['http', 'tmux'] },
+    notifications: { d: '完成通知（存在磁盘上），以及把 agent 钩子事件变成通知的 agentEvents 服务。', deps: ['launch', 'http'] },
+    pins: { d: '置顶的窗口，重启后保留。启动时清掉已经不存在的窗口。', deps: ['launch', 'http', 'tmux'] },
+    share: { d: '把渲染好的预览存成 /s/:id 快照。这个地址不需要登录，只读快照，不读文件系统。', deps: ['launch', 'http', 'timer'] },
+    files: { d: '本机文件：浏览、预览、上传，以及作用在文件上的 block：Git、SQLite、notebook 和 twp open。', deps: ['launch', 'http'] },
+    metrics: { d: 'CPU、内存、IO 及其历史，占用资源的进程，每个窗口的占用，以及移动端按键盘用的场景识别。', deps: ['http'] },
+    'agent-hub': { d: 'Agent 控制台：Claude 和 Codex 的用量窗口、切换提供方、Codex 预热和内置的企业模型中继。', deps: ['launch', 'http'] },
+    'session-protection': { d: '会话保护：定期用 tmux-resurrect 保存，新 tmux server 起来时自动恢复。用私有 tmux server 时自动关闭，不碰你的快照。', deps: ['launch', 'http', 'tmux'] },
+    client: { d: '浏览器端的 Cordis 内核：/client/boot.js、import map 和清单，决定页面运行哪些前端插件。', deps: ['http'] },
+    ui: { d: '挂载各插件的 client/ 目录，按 page.json 组装主页面，并给本地资源加上内容哈希。', deps: ['launch', 'http'] },
+    auth: { d: '谁能用这个面板：密码和 TOTP 登录、令牌、/api 守卫、WebSocket 鉴权。', deps: ['launch', 'http', 'node'] },
+    terminal: { d: '浏览器终端接入 tmux 窗格。CLAUDE.md 里 Windows 的全部契约原样保留在 TerminalManager 里。', deps: ['launch', 'http', 'workspace'] },
+    status: { d: '每个页面保持的 /ws/status 连接：轮询 tmux 的完成和活动，并把其他插件发出的事件推给页面。', deps: ['launch', 'http', 'notifications'] },
+    servers: { d: '多服务器的 Hub 一侧：服务器列表和健康检查、每台一条 SSH 链路、/n/:serverId 转发、安装 Node、Hub 端的 Mosh 终端。', deps: ['launch', 'http', 'auth', 'node', 'terminal', 'timer'] },
+    mosh: { d: 'Node 端为 Hub 运行的 Mosh 会话（可选实验）。/api/mosh 只认 node token 加 Hub 调用标记。', deps: ['http', 'node', 'workspace', 'terminal', 'servers'] },
+    'panel-plugins': { d: '面板插件：从仓库 catalog/ 安装经过审核的插件（tmux-agent），工具经 MCP 提供。', deps: ['launch', 'http', 'tmux', 'workspace', 'servers'] }
+  };
+  var LAYERS = [
+    { t: '不依赖别人', ids: ['logger', 'timer', 'launch', 'tmux'] },
+    { t: '依赖 launch', ids: ['http'] },
+    { t: '依赖 http 等基础插件', ids: ['diagnostics', 'node', 'workspace', 'tmux-api', 'notifications', 'pins', 'share', 'files', 'metrics', 'agent-hub', 'session-protection', 'client', 'ui'] },
+    { t: '依赖上一层的功能', ids: ['auth', 'terminal', 'status'] },
+    { t: '依赖 auth、node、terminal', ids: ['servers'] },
+    { t: '依赖 servers', ids: ['mosh', 'panel-plugins'] }
+  ];
+  var users = {};
+  Object.keys(P).forEach(function (id) { users[id] = []; });
+  Object.keys(P).forEach(function (id) { P[id].deps.forEach(function (d) { users[d].push(id); }); });
+
+  var graph = document.getElementById('graph');
+  var layersEl = document.getElementById('layers');
+  var info = document.getElementById('info');
+  var chips = {};
+  LAYERS.forEach(function (layer, i) {
+    var row = document.createElement('div');
+    row.className = 'layer';
+    var label = document.createElement('div');
+    label.className = 'layer-label';
+    label.innerHTML = '<b>第 ' + i + ' 层</b>' + layer.t;
+    var box = document.createElement('div');
+    box.className = 'chips';
+    layer.ids.forEach(function (id) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip';
+      b.textContent = id;
+      b.setAttribute('aria-pressed', 'false');
+      b.addEventListener('click', function () { select(id); });
+      chips[id] = b;
+      box.appendChild(b);
+    });
+    row.appendChild(label);
+    row.appendChild(box);
+    layersEl.appendChild(row);
+  });
+
+  function list(ids) {
+    if (!ids.length) return '无';
+    return ids.map(function (x) { return '<b>' + x + '</b>'; }).join('、');
+  }
+  function select(id) {
+    var p = P[id];
+    graph.classList.add('has-sel');
+    Object.keys(chips).forEach(function (k) {
+      var c = chips[k];
+      c.classList.toggle('sel', k === id);
+      c.classList.toggle('dep', p.deps.indexOf(k) >= 0);
+      c.classList.toggle('user', users[id].indexOf(k) >= 0);
+      c.setAttribute('aria-pressed', k === id ? 'true' : 'false');
+    });
+    info.innerHTML =
+      '<h3>' + id + '<small>plugins/' + (p.use && p.use.indexOf('@') !== 0 ? p.use : id) + '/' + (p.use && p.use.indexOf('@') === 0 ? '（来自 ' + p.use + '）' : '') + '</small></h3>' +
+      '<p>' + p.d + '</p>' +
+      '<div class="rel"><span>依赖：' + list(p.deps) + '</span><span>被依赖：' + list(users[id]) + '</span></div>';
+  }
+  select('terminal');
+
+  // page composition toggle
+  var btn = document.getElementById('toggle-metrics');
+  var note = document.getElementById('toggle-note');
+  var mbox = document.getElementById('metrics-box');
+  btn.addEventListener('click', function () {
+    var off = btn.getAttribute('aria-pressed') !== 'true';
+    btn.setAttribute('aria-pressed', off ? 'true' : 'false');
+    btn.textContent = off ? '重新打开 metrics' : '关掉 metrics';
+    mbox.classList.toggle('off', off);
+    note.textContent = off
+      ? '页面上不再有 system-stats.js 等 3 个脚本，/api/system-stats 返回 404。其他功能照常。'
+      : '关掉一个插件时，页面和接口会发生什么？';
+  });
+
+  // status line: highlight the section in view
+  var links = Array.prototype.slice.call(document.querySelectorAll('.statusline a'));
+  var bar = document.getElementById('bar');
+  function mark(id) {
+    links.forEach(function (a) {
+      var on = a.getAttribute('href') === '#' + id;
+      if (on && !a.classList.contains('on')) {
+        a.classList.add('on');
+        var l = a.offsetLeft - 60;
+        bar.scrollTo ? bar.scrollTo({ left: Math.max(0, l) }) : (bar.scrollLeft = l);
+      } else if (!on) a.classList.remove('on');
+    });
+  }
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { if (e.isIntersecting) mark(e.target.id); });
+    }, { rootMargin: '-45% 0px -50% 0px' });
+    document.querySelectorAll('section[id]').forEach(function (s) { io.observe(s); });
+  }
+})();
+</script>
+</body>
+</html>
