@@ -33,11 +33,12 @@
 
 不变量：
 
+- **本机免登录仅信任直接回环请求**：同时核对 TCP peer、回环 Host/真实端口及同源 Origin/Referer，拒绝转发头和跨站 Fetch Metadata；HTTP、WebSocket 与 `/n/` 共用规则。Node-only 始终要 token；`auth.trustLocal: false` 可关闭本机免登录。不要只凭 Host 或 X-Forwarded-For 认定本机。
 - **Node 的 API 不带 serverId**（`/api/workspace`、`/api/metrics/*`、`/api/files/*`、`/ws/terminal/:paneId` 等）。要访问其它机器，一律走 Hub 的 `/n/:serverId`（`lib/hub/proxy.js`）；前端统一用 `Api.nodeUrl` / `Api.activeUrl` 拼路径，不要再写死 `/api/servers/:id/...` 这种按服务器分的机器接口。
 - **对已装 Node 的机器，日常功能由 Node 本地执行**。SSH 用于 sftp 读取配对文件 `~/.config/tmux-web-panel/node.json`，以及分别为 API 和终端维持独立的 `ssh -N -L` 端口转发（`lib/transport/ssh-connection.js`、`lib/hub/node-link.js`）。唯一的安装维护例外是用户显式触发的 `NodeInstaller`：完整 Node 安装，或固定的 Mosh 组件准备脚本；组件补装不打包替换应用、不重启服务。不得把此例外用于 Git、文件、监控或任意远程命令入口。
 - **基础模式**（能 SSH 登录、没装面板，`lib/hub/basic/`）只提供工作区和终端。发往远端的只能是 `sh -s`（脚本走 stdin），或单个单词的 pty 命令（经 sftp 上传的脚本路径）；不要拼接带参数的远程命令行，因为 Windows OpenSSH 在 pty 模式下会把它拆碎。文件、监控等功能不要在基础模式里另写远程实现，那些功能的入口是“安装 Node”（`lib/hub/node-installer.js`、`scripts/remote/install-node.*`）。
 - **只在 Hub 上处理、不转发的接口**：`/api/auth`、`/api/servers`、`/api/plugins`、`/api/managed-resources`、`/api/share`（`isRelayable` / `Api.isHubPath` 两处须一致）。
-- **node token**（配对文件里的令牌）只能用来访问那台 Node 自己的 API。`/n/` 转发入口只接受登录令牌，防止一个 Hub 经另一个 Hub 链式转发。
+- **node token**（配对文件里的令牌）只能用来访问那台 Node 自己的 API。`/n/` 转发入口只接受可信本机直连或登录令牌，node token 即使来自回环连接也不能获得本机免登录权限，防止链式转发。
 - HTTPS Node 按配对文件里的证书指纹固定，升级请求（WebSocket）也走同样的固定证书 agent（`pinnedAgent`）；不要退回 `rejectUnauthorized: false` 却不校验指纹。Node 在恢复的 TLS 会话上报告空证书：`pinnedAgent` 只缓存通过指纹的连接的会话，恢复成功即视为同一证书；不要换成 https.Agent 自带的会话缓存（它会缓存未校验的会话，恢复时又过不了指纹检查，进而重置整条链路）。
 - **直连是可选的**（`transport.api` / `transport.terminal` = `direct`，默认 `ssh`）：只在 TLS + 指纹固定下进行，令牌不离开 Hub，检查通过才用，失败回到转发；直连失败不得重置 SSH 链路。配对和健康检查始终走 SSH。
 - **Mosh 终端是可选实验**（`transport.terminal = 'mosh'`，见 docs/architecture.md）：`/api/mosh` 只认 node token 加 `x-twp-hub-call`，转发时剥掉该头且不转发该路径，密钥不进浏览器和日志。Windows 上必须看到 `list-clients` 里出现该 mosh-server 的子进程才释放客户端启动队列，不得改回“CONNECT 后等固定时间”。结束进程前核对记录的身份（`lib/mosh/processes.js`），不凭历史 PID；Node 没确认清理干净时 Hub 不得回退到另一个 attach。由 Node 拉起的 tmux（mosh-server 的命令）必须删掉继承的 `TMUX`/`TMUX_PANE`。Windows 不作 Mosh 客户端（ENV-6）。

@@ -111,6 +111,20 @@ npm test
 - 升级请求先过 `useUpgrade` 钩子（同样按 order：诊断 -100、转发 -50、鉴权 0），再到 `upgrade` / `websocket` 路由。`websocket(path, handler)` 共用一个 WebSocketServer（1 MB 帧上限、终端输出压缩），关机时以 1001 关闭所有连接。
 - `/n/local/…` 转发会就地改写 `req.url` 再交给本地处理，所以路由匹配读 `req.url`，不读 `originalUrl`。
 
+## 本机访问与鉴权
+
+Hub 默认允许本机直连免登录，Swift 与浏览器均适用：TCP peer 必须是回环地址，Host 必须是 `127.0.0.1`、`localhost` 或 `[::1]`，端口必须与真实监听端口一致。Origin/Referer 必须同源；跨站 Fetch Metadata、代理转发头及 Node 配对令牌不能获得本机权限。HTTP API、WebSocket 和 `/n/` 使用同一规则，本机打开 `/login.html` 会直接回到工作台，不生成或持久化免登录 token。
+
+局域网/公网地址访问仍需登录；Node-only 安装始终需要 Node token。免登录信任本机进程；共享主机或不附带转发头的本机反向代理，应通过配置目录的 `patch.yml` 关闭：
+
+```yaml
+- id: auth
+  config:
+    trustLocal: false
+```
+
+配置变化需要按所属平台的服务管理器重启面板，tmux server 无需重启。
+
 ## tmux：选哪个 server
 
 `lib/tmux-server.js` 是唯一决定面板对哪个 tmux server 说话的地方。默认不带任何全局参数，用用户的 server，和旧代码完全一样。`tmux` 插件的 `socket`（`-L`）或 `socketPath`（`-S`）选择私有 server 后，面板起的每个 tmux——命令执行器、终端接入的 PTY（Unix 的 `sh -c` 命令行和 Windows 的 argv）、文件辅助命令——都带上这个参数，子进程环境删掉 `TMUX` / `TMUX_PANE`，继承来的 `$TMUX` 无法把命令送到用户的 server。

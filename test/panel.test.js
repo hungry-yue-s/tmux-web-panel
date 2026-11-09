@@ -59,6 +59,7 @@ describe.skipIf(!haveTmux)('the panel profile', () => {
       { id: 'launch', config: { argv: [], env: { AUTH: 'admin:correct horse', PORT: '0', HOST: '127.0.0.1', TMUX_PANEL_CONFIG_DIR: join(dir, 'config') } } },
       { id: 'node', config: { home: join(dir, 'home') } },
       { id: 'tmux', config: { socket: SOCKET } },
+      { id: 'auth', config: { trustLocal: false } },
       { id: 'logger', config: { level: 'warn' } },
       // Reads ~/.claude and ~/.codex and may start a model relay.
       { id: 'agent-hub', disabled: true },

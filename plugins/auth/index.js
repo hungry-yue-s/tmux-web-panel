@@ -5,10 +5,11 @@
 //   persisted owner-only across restarts, per-IP lockout before any scrypt.
 // - A node-only install (NODE_ONLY=1) has no login: only the managing hub's
 //   node token opens the API.
-// - Either way every /api route and every WebSocket needs a token. The /n/
-//   relay accepts login tokens only, so a node token cannot chain hubs.
+// - Direct loopback Hub access may skip login; Node-only always requires a token.
+//   All remote /api routes and WebSockets need a token. The /n/
+//   relay accepts local access or login tokens, never a Node token.
 //
-// The logic is lib/auth.js and lib/totp.js, unchanged.
+// Shared checks live in lib/auth.js and lib/totp.js.
 
 import { join } from 'node:path';
 import express from 'express';
@@ -18,6 +19,7 @@ import {
   deleteToken,
   flushTokenPersistence,
   initTokenPersistence,
+  isTrustedLocalRequest,
   startTokenReaper,
   tokenAuth,
   verifyPassword,
@@ -67,12 +69,14 @@ function loginRouter({ tokens, credentials, configDir }) {
   return router;
 }
 
-export function apply(ctx) {
+export function apply(ctx, config = {}) {
   const launch = ctx.launch;
   const node = ctx.node;
   const tokens = new Map();
   const enabled = Boolean(launch.auth);
   const guarded = Boolean(launch.auth || launch.nodeOnly);
+  const allowLocal = req => config.trustLocal !== false && !launch.nodeOnly
+    && isTrustedLocalRequest(req, { isServiceToken: node.isNodeToken });
 
   if (enabled) {
     // Restore persisted tokens (survives restarts); flushed again on unload.
@@ -87,20 +91,21 @@ export function apply(ctx) {
     ctx.http.mount('/api/auth', loginRouter({ tokens, credentials: launch.authCredentials, configDir: launch.configDir }));
   }
 
-  const apiGuard = tokenAuth(tokens, { isServiceToken: node.isNodeToken });
-  const loginOnly = tokenAuth(tokens);
+  const apiGuard = tokenAuth(tokens, { isServiceToken: node.isNodeToken, allowLocal });
+  const loginOnly = tokenAuth(tokens, { allowLocal });
 
   if (guarded) {
     // Everything under /api needs a token, except the login routes themselves.
     ctx.http.use((req, res, next) => {
       const path = req.path;
+      if (req.method === 'GET' && path === '/login.html' && allowLocal(req)) return res.redirect('/');
       if (!(path === '/api' || path.startsWith('/api/'))) return next();
       if (enabled && path.startsWith('/api/auth/')) return next();
       return apiGuard(req, res, next);
     });
     // Sockets that reach this panel itself (relayed ones were taken earlier).
     ctx.http.useUpgrade(({ req }) => {
-      if (!wsTokenAuth(tokens, req, { isServiceToken: node.isNodeToken })) {
+      if (!wsTokenAuth(tokens, req, { isServiceToken: node.isNodeToken, allowLocal })) {
         throw new HttpError(401, 'AUTH_REQUIRED', 'Unauthorized');
       }
       return false;
@@ -114,9 +119,9 @@ export function apply(ctx) {
     enabled,
     guarded,
     tokens,
-    /** Express middleware for routes that accept login tokens only (the /n/ relay). */
+    /** Hub users: trusted local requests or login tokens, never Node tokens. */
     loginOnly: guarded ? loginOnly : (_req, _res, next) => next(),
-    /** A relayed WebSocket: login tokens only. */
-    authorizeRelayUpgrade: (req) => !guarded || wsTokenAuth(tokens, req),
+    /** Same Hub-user policy for relayed WebSockets. */
+    authorizeRelayUpgrade: (req) => !guarded || wsTokenAuth(tokens, req, { allowLocal }),
   }));
 }

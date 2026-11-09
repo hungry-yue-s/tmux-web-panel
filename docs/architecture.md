@@ -151,7 +151,7 @@ Linux、macOS 与 Windows 的新安装在核心服务就绪后默认尝试准备
 - Node 的 API 不接受 serverId。需要指定别的机器时，一律通过 Hub 的 `/n/:serverId`。
 - 已装 Node 的机器，日常功能由 Node 本地执行；仅显式的 Node 安装和固定 Mosh 组件维护可通过 `NodeInstaller` 执行受控安装脚本。基础模式只覆盖工作区和终端，不要往里加文件、监控之类的远程脚本，那些功能的入口是“安装 Node”。
 - 基础模式下发往远端的只有两种形式：`sh -s`（脚本走 stdin），或单个单词的 pty 命令（经 sftp 上传的脚本路径）。不要拼接带参数的远程命令行。
-- 转发入口只认登录令牌。node token 只能用来访问那台 Node 自己的 API，不能用它让一个 Hub 再链式转发到下一台机器。
+- 转发入口只认可信本机直连或登录令牌。node token 只能用来访问那台 Node 自己的 API，不能用它让一个 Hub 再链式转发到下一台机器。
 - 配对文件和 node token 只对本人可读。在 Windows 上用 `icacls` 去掉继承的访问权限。
 - 没装面板的机器以基础模式接入。远端 tmux 的会话持久；由 Hub 托管的 shell 只活在 Hub 进程里。
 
