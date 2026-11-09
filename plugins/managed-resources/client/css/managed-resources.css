@@ -1,0 +1,5 @@
+/* managed-resources's styles, moved out of the shell's style.css (plugins/ui/client/css).
+ * They load right after it (page.json order 50.4), each rule in its old
+ * order and @media, so the cascade is what it was. */
+
+.managed-skill { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border-color, #555); }

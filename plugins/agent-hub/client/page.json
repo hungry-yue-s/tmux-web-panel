@@ -1,5 +1,8 @@
 {
   "serve": ["."],
+  "head": [
+    { "order": 50.1, "style": "/css/agent-hub.css" }
+  ],
   "body": [
     { "order": 260, "script": "/js/agent-hub.js?v=11" },
     { "order": 265, "script": "/js/agent-section.js" }

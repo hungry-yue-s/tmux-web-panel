@@ -24,6 +24,18 @@ export function clientPath(relative) {
   throw new Error(`no plugin serves ${relative}`);
 }
 
+/**
+ * Every local stylesheet of the composed page, concatenated in page order:
+ * the cascade the browser applies, whichever plugin a rule lives in.
+ */
+export function pageStyles() {
+  return [...indexSource().matchAll(/<link[^>]*rel="stylesheet"[^>]*href="(\/[^"?]+)/g)]
+    .map((m) => m[1])
+    .filter((href) => !href.startsWith('/vendor/'))
+    .map((href) => readFileSync(join(ROOT, clientPath(href.slice(1))), 'utf8'))
+    .join('\n');
+}
+
 /** The composed main page (index.html). */
 export function indexSource() {
   if (cached === null) {

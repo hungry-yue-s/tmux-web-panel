@@ -1,5 +1,8 @@
 {
   "serve": ["."],
+  "head": [
+    { "order": 50.4, "style": "/css/managed-resources.css" }
+  ],
   "body": [
     { "order": 371, "script": "/js/managed-resources.js" }
   ]

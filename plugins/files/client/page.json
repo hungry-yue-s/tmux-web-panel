@@ -1,6 +1,7 @@
 {
   "serve": ["."],
   "head": [
+    { "order": 50.2, "style": "/css/files.css" },
     { "order": 52, "style": "/css/file-preview-workspace.css?v=6" },
     { "order": 55, "style": "/css/mobile-files.css?v=1" }
   ],

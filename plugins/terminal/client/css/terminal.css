@@ -1,0 +1,451 @@
+/* terminal's styles, moved out of the shell's style.css (plugins/ui/client/css).
+ * They load right after it (page.json order 50.8), each rule in its old
+ * order and @media, so the cascade is what it was. */
+
+.pane-box-index, .pane-nav-indicator {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+.pane-layout {
+  position: relative;
+  background: var(--bg-deep);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  min-height: 80px;
+  max-height: 200px;
+}
+
+.pane-box {
+  position: absolute;
+  background: var(--bg-card);
+  border: 2px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.2s, background 0.2s;
+  overflow: hidden;
+  gap: 2px;
+}
+
+.pane-box.active {
+  border-color: var(--accent-blue);
+}
+
+.pane-box:hover {
+  background: var(--bg-hover);
+}
+
+.pane-box-index {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.pane-box-cmd {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-pills {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 0;
+}
+
+.pane-nav-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.pane-nav-pills {
+  flex: 1;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.pane-nav-indicator {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  padding: 2px 0;
+}
+
+.terminal-tool-btn:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
+}
+
+.terminal-tool-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+
+.terminal-font-glyph {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.terminal-pane-switcher {
+  display: none;
+}
+
+.terminal-container {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+}
+
+/* FitAddon can leave less than one row of unused height after rounding the
+   terminal to whole cells. Match that viewport remainder to the active theme
+   instead of exposing xterm.css's default black background. */
+
+.terminal-container .xterm-viewport {
+  background-color: var(--bg-primary);
+}
+
+.terminal-touch-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Copy button shown after long-press text selection */
+
+.term-copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 20;
+  padding: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--accent-blue);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Selection preview floating panel (editable textarea) */
+
+.term-sel-preview {
+  position: absolute;
+  top: 40px;
+  left: 8px;
+  right: 8px;
+  z-index: 20;
+  max-height: 50%;
+  min-height: 8em;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-all;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  resize: none;
+  outline: none;
+  width: calc(100% - 16px);
+  box-sizing: border-box;
+}
+
+@media (min-width: 768px) {
+  .terminal-touch-overlay {
+    display: none;
+  }
+}
+
+/* Terminal reconnect overlay */
+
+.terminal-reconnect-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+
+.terminal-reconnect-box {
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.terminal-reconnect-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent-blue);
+  border-radius: 50%;
+  margin: 0 auto 12px;
+  animation: spin 0.8s linear infinite;
+}
+
+.terminal-reconnect-text {
+  font-size: 0.9rem;
+}
+
+.terminal-exit-fullscreen-btn:hover {
+  opacity: 1;
+}
+
+.terminal-mode-opt.active {
+  color: var(--accent-blue);
+  background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent-blue) 34%, var(--border-subtle));
+}
+
+/* Split popup */
+
+.split-popup {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+}
+
+body.terminal-fullscreen .terminal-pane-switcher {
+  display: none;
+}
+
+body.terminal-fullscreen .terminal-container {
+  border: none;
+  border-radius: 0;
+}
+
+body.terminal-fullscreen .terminal-exit-fullscreen-btn {
+  display: block !important;
+}
+
+@media (min-width: 768px) {
+
+  .terminal-container {
+    border-color: var(--border-subtle);
+  }
+}
+
+@media (max-width: 767px) {
+
+  /* Hide topbar when terminal is active — full immersion */
+  body.terminal-active {
+    overflow: hidden;
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  .terminal-header-actions .terminal-tool-btn {
+    padding: 0;
+  }
+
+  .terminal-font-btn {
+    display: none !important;
+  }
+
+  /* Hide the separate pane switcher row — pills are in the header now */
+  .terminal-pane-switcher {
+    display: none;
+  }
+
+}
+
+.fab-tool {
+  position: fixed;
+  bottom: 80px;
+  right: 16px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent-blue) 25%, transparent);
+  color: var(--text-primary);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 30%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 100;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s, box-shadow 0.2s;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.fab-tool:active {
+  transform: scale(0.92);
+}
+
+.fab-tool.hidden-by-drawer {
+  display: none;
+}
+
+.fab-tool.open {
+  background: color-mix(in srgb, var(--bg-hover) 60%, transparent);
+}
+
+.fab-tool.dragging {
+  transition: none;
+}
+
+.fab-tool.uploading {
+  opacity: 0.4;
+  pointer-events: none;
+  animation: fab-spin 1s linear infinite;
+}
+
+/* Soft-keyboard mode: when drawer is open, shrink terminal-view so
+   terminal-container re-fits above the drawer instead of being covered.
+   Use dvh so padding matches the drawer's actual height on mobile (URL
+   bar shown/hidden shrinks vh unexpectedly; dvh adapts). */
+
+.terminal-view.drawer-pushed {
+  padding-bottom: 40vh;
+  padding-bottom: 40dvh;
+  transition: padding-bottom 0.25s ease;
+}
+
+.upload-toast {
+  position: fixed;
+  bottom: 84px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  z-index: 200;
+  opacity: 0;
+  transition: opacity 0.3s, transform 0.3s;
+  max-width: 90vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+@media (max-width: 767px) {
+
+  .terminal-header-actions .terminal-tool-btn {
+    width: 36px !important;
+    height: 36px !important;
+    min-height: 36px !important;
+    min-width: 36px;
+    padding: 0 !important;
+  }
+}
+
+.fab-drawer-mount {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  height: 40vh;
+  z-index: 201;
+  transform: translateY(100%);
+  transition: transform 0.25s ease;
+  pointer-events: none;
+}
+
+.fab-drawer-mount.open {
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+html[data-native-transparency] .terminal-container, html[data-native-transparency] .terminal-container .xterm-viewport {
+  background: transparent !important;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.pane-box {
+  transition: background .16s ease, border-color .16s ease, box-shadow .16s ease,
+    transform .16s ease;
+}
+
+.upload-toast {
+  border-color: var(--ui-border);
+  border-radius: 999px;
+  background: var(--ui-surface-raised);
+  box-shadow: var(--ui-shadow-md);
+}
+
+@media (max-width: 767px) {
+
+  .ms-content.terminal-mode .terminal-container {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .mobile-pane-strip .pane-pills {
+    width: 100%;
+    gap: 4px;
+    padding: 0;
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+    overflow-anchor: none;
+  }
+  .mobile-pane-strip .pane-pills::-webkit-scrollbar { display: none; }
+}
+
+html.tmux-native-titlebar .ms-topbar .terminal-tool-btn {
+  flex: 0 0 28px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+}

@@ -1,13 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
+import { pageStyles } from '../helpers/pages.js';
 
 const INSTANCE = '1873:1700000000';
 
 const source = fs.readFileSync('plugins/files/client/js/file-preview.js', 'utf8');
 const appSource = fs.readFileSync('plugins/ui/client/js/app.js', 'utf8');
 const msAppSource = fs.readFileSync('plugins/ui/client/js/ms-app.js', 'utf8');
-const styles = fs.readFileSync('plugins/ui/client/css/style.css', 'utf8');
+const styles = pageStyles();
 const paletteSource = fs.readFileSync('plugins/ui/client/js/command-palette.js', 'utf8');
 const workspaceStyles = fs.readFileSync('plugins/ui/client/css/workspace.css', 'utf8');
 

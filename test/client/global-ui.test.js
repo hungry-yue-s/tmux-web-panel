@@ -1,8 +1,8 @@
-import { indexSource as composedIndex } from '../helpers/pages.js';
+import { indexSource as composedIndex, pageStyles } from '../helpers/pages.js';
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
-const styles = readFileSync('plugins/ui/client/css/style.css', 'utf8');
+const styles = pageStyles();
 const appSource = readFileSync('plugins/ui/client/js/app.js', 'utf8');
 const indexSource = composedIndex();
 
@@ -38,7 +38,9 @@ describe('global UI system', () => {
     expect(styles).toMatch(/@media \(max-width:\s*767px\)[\s\S]*?\.ms-app\.mode-status \.ms-main,[\s\S]*?height:\s*calc\(100dvh - env\(safe-area-inset-bottom, 0px\)\);[\s\S]*?overflow-y:\s*auto/);
     expect(styles).toMatch(/@media \(max-width:\s*767px\)[\s\S]*?\.ms-app\.mode-terminal \.ms-main\s*\{[\s\S]*?height:\s*calc\(100dvh - env\(safe-area-inset-bottom, 0px\)\);[\s\S]*?display:\s*flex;[\s\S]*?flex-direction:\s*column;[\s\S]*?overflow:\s*hidden/);
     expect(styles).toMatch(/\.ms-content\.terminal-mode\s*\{[\s\S]*?width:\s*100%;[\s\S]*?max-width:\s*100%;[\s\S]*?min-width:\s*0;[\s\S]*?flex:\s*1 1 auto/);
-    expect(styles).toMatch(/\.ms-content\.terminal-mode \.terminal-stage,[\s\S]*?\.ms-content\.terminal-mode \.terminal-view,[\s\S]*?\.ms-content\.terminal-mode \.terminal-container\s*\{[\s\S]*?width:\s*100%;[\s\S]*?min-width:\s*0;/);
+    // The shell sizes the stage and view, the terminal plugin its container.
+    expect(styles).toMatch(/\.ms-content\.terminal-mode \.terminal-stage,\s*\.ms-content\.terminal-mode \.terminal-view\s*\{[\s\S]*?width:\s*100%;[\s\S]*?min-width:\s*0;/);
+    expect(styles).toMatch(/\.ms-content\.terminal-mode \.terminal-container\s*\{\s*width:\s*100%;[\s\S]*?min-width:\s*0;/);
   });
 
   it('keeps the new-shell terminal inside the exact remaining content height', () => {

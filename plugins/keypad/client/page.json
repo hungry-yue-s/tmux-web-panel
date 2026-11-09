@@ -1,5 +1,8 @@
 {
   "serve": ["."],
+  "head": [
+    { "order": 50.3, "style": "/css/keypad.css" }
+  ],
   "body": [
     { "order": 270, "script": "/js/fab-scene.js?v=4" },
     { "order": 280, "script": "/js/fab-heat.js?v=1" },

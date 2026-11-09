@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { pageStyles } from '../helpers/pages.js';
 
 const terminalSource = readFileSync('plugins/terminal/client/js/terminal.js', 'utf8');
-const styles = readFileSync('plugins/ui/client/css/style.css', 'utf8');
+const styles = pageStyles();
 const routerSource = readFileSync('plugins/ui/client/js/router.js', 'utf8');
 const actualRouter = new Function('window', routerSource + '\nreturn window.Router;')({});
 

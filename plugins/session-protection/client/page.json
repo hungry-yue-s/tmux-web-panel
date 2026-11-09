@@ -1,5 +1,8 @@
 {
   "serve": ["."],
+  "head": [
+    { "order": 50.7, "style": "/css/session-protection.css" }
+  ],
   "body": [
     { "order": 380, "script": "/js/session-protection.js?v=1" },
     { "order": 385, "script": "/js/session-section.js" }
