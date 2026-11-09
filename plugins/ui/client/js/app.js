@@ -827,8 +827,8 @@ function init() {
 function _startApp() {
   initTopbar();
   updateTopbarSession();
-  // Fetch pinned window ids once on startup (non-fatal).
-  api.get('/api/pins').then(function (res) {
+  // Fetch pinned window ids once on startup (non-fatal), where the pins plugin runs.
+  if ((typeof PanelSlots === 'undefined' || PanelSlots.hasPlugin('pins'))) api.get('/api/pins').then(function (res) {
     state.pinsById = {};
     var pins = res && res.data && res.data.pins ? res.data.pins : [];
     pins.forEach(function (id) { state.pinsById[id] = true; });

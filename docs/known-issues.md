@@ -63,9 +63,10 @@ README 重做过程中实际踩到、观察到或验证过的问题。每条都�
 - 面板服务被强制重启时，操作系统会关闭它名下的控制台，如果此时有客户端附着，server 仍有小概率退出。这时依靠上面的卡死检测和自动恢复。
 - 连接建立后约 30ms 内就断开的极端情况，个别 `conhost.exe` 和读取线程要到面板重启才释放。
 - 历次退出留下的孤儿窗格进程没有清理，判断不了里面是否还有用户的程序，需要人工确认。
+- 2026-11-06 的真实浏览器冒烟（私有 `-L` server，Chrome 1400×900 打开终端页、切到服务器页和设置页）：server 由面板进程里的 `new-session -d` 起的三次（其中一次是 master 的代码）都在离开终端页后不再应答（`no server running`）；按计划任务的方式 `setsid -w tmux -D` 起的两次，一次在终端页时 tmux 命令卡住 8 秒没有应答，一次全程正常。不应答的 server 并没有退出：三天后（11-09）它们的 tmux 进程都还在，socket 照样回答 `no server running`，几分钟后才陆续自行消失，没有人结束它们。所以表现是卡住、不是崩溃，“socket 不应答”不能当作“进程已经没了”。没有 resize 和多次接入、只接入一次再断开的对照实验里 server 一直存活（含控制台回收之后）。这说明终端客户端在 Windows 上的变更仍可能卡住 server，和改造无关；具体是哪一步没有查清。正式 server 由包装脚本的卡死检测和会话保护兜底。
 - 包装脚本的探测偶尔会失败。20:45 之后 `tmux-server.log` 有两次在 server 运行时又记录 `starting`，接着是 `open terminal failed: not a terminal` 和退出码 1：这是新起的 `tmux -D` 连上现有 server 后失败，不是 server 退出（pid 从 19:04 起没变）。两次都发生在全量测试运行期间（20:55:25 到 20:56:13、22:10:43 到 22:11:33），同一段时间面板日志有 5 次 tmux 命令失败。负载导致超时只是推测，未证实。手动起的 server 上这没有影响；计划任务的 server 上，连续 3 次没有应答（约 1 分钟）会被结束，再靠自动恢复回来，届时窗格里的程序要重新打开。
 
-**实验规则。** 不要在默认 tmux server 上做接入、resize、断开实验，只碰临时会话也不行，会话隔离不等于 server 隔离。每条命令显式用 `tmux -S <私有 socket>` 或 `-L <唯一名称>`，带超时，并从实验及全部子进程环境移除 `TMUX` / `TMUX_PANE`。`TMUX_TMPDIR` 不能覆盖继承的 `TMUX` socket，不能单独作为隔离。清理前以相同 socket 参数核对 `socket_path` 和 server PID 归属；无法核对就不结束。不要在普通 shell 里手动起默认 socket 的 tmux。Windows 使用绝对 tmux 可执行路径时，PATH 中的 POSIX 包装不会提供隔离。
+**实验规则。** 不要在默认 tmux server 上做接入、resize、断开实验，只碰临时会话也不行，会话隔离不等于 server 隔离。每条命令显式用 `tmux -S <私有 socket>` 或 `-L <唯一名称>`，带超时，并从实验及全部子进程环境移除 `TMUX` / `TMUX_PANE`。`TMUX_TMPDIR` 不能覆盖继承的 `TMUX` socket，不能单独作为隔离。清理前以相同 socket 参数核对 `socket_path` 和 server PID 归属；无法核对就不结束。不要在普通 shell 里手动起默认 socket 的 tmux。在同一个进程里启动面板做实验时，`tmux` 插件卸载（`app.stop()`）会撤销私有 server 的选择，之后这个进程里的 tmux 命令回到默认 server：核对和清理必须在 stop 之前做，读 `socket_path` 要显式带 `-t <会话>`（没有客户端附着时不带目标会失败）。Windows 使用绝对 tmux 可执行路径时，PATH 中的 POSIX 包装不会提供隔离。
 
 ### ENV-2 Windows：手动启动的 tmux server，窗格里找不到 claude（2026-10-30）
 

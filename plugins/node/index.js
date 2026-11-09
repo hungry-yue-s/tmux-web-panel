@@ -36,10 +36,18 @@ export async function apply(ctx, config) {
   });
   /** capability name → probe returning { available, version, reason } */
   const capabilities = new Map();
-  const info = () => collectNodeInfo({
-    tmuxVersion: () => ctx.tmux.version(),
-    mosh: capabilities.get('mosh') ?? null,
-    moshClient: capabilities.get('moshClient') ?? null,
+  // The plugins this installation runs, so a hub's pages only call what is there.
+  const plugins = () => {
+    const loader = ctx.get('loader');
+    return loader ? loader.status().filter((entry) => entry.state === 'active').map((entry) => entry.id) : null;
+  };
+  const info = async () => ({
+    ...await collectNodeInfo({
+      tmuxVersion: () => ctx.tmux.version(),
+      mosh: capabilities.get('mosh') ?? null,
+      moshClient: capabilities.get('moshClient') ?? null,
+    }),
+    plugins: plugins(),
   });
   const setCapability = (capability, probe) => {
     capabilities.set(capability, probe);

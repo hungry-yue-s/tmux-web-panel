@@ -150,6 +150,8 @@
 
     /** One read per server at a time: a poll never stacks up behind a slow link. */
     refreshMetrics(serverId) {
+      // A server without the metrics plugin has nothing to show in the rail.
+      if (global.PanelSlots && !global.PanelSlots.hasPlugin('metrics', serverId)) return Promise.resolve();
       if (this._metricsRequests[serverId]) return this._metricsRequests[serverId];
       const request = this._readMetrics(serverId).finally(() => {
         delete this._metricsRequests[serverId];
@@ -1128,6 +1130,8 @@
     /** Recover the server's job after reloading this page without starting an installation. */
     async _restoreInstallJob(serverId, route, generation) {
       if (this._installJobs[serverId] || this._installReads[serverId]) return;
+      // Installing is this hub's node-installer plugin.
+      if (global.PanelSlots && !global.PanelSlots.hasPlugin('node-installer')) return;
       this._installReads[serverId] = true;
       try {
         const status = await global.Api.get(this._installPath(serverId, 'node'));

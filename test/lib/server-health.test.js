@@ -77,6 +77,12 @@ describe('statusFromNodeInfo', () => {
     expect(statusFromNodeInfo('old', nodeInfo(), { transport: 'ssh', latencyMs: 1, now: 0 }).capabilities)
       .not.toHaveProperty('mosh');
   });
+
+  it('passes on which plugins the node runs, and null from a node too old to say', () => {
+    const info = { ...nodeInfo(), plugins: ['files', 'git'] };
+    expect(statusFromNodeInfo('box', info, { transport: 'ssh', latencyMs: 1, now: 0 }).node.plugins).toEqual(['files', 'git']);
+    expect(statusFromNodeInfo('old', nodeInfo(), { transport: 'ssh', latencyMs: 1, now: 0 }).node.plugins).toBeNull();
+  });
 });
 
 describe('HealthService', () => {

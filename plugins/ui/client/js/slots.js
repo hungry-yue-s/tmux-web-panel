@@ -68,5 +68,21 @@
      *   { id: 'open-file' | 'open-url', run(event) }
      */
     openers: slot(),
+
+    /**
+     * Whether a plugin runs on a server, so the page only calls APIs that are
+     * there: this panel's own list comes with the page (window.PANEL_PLUGINS),
+     * another server's with its health (node.plugins). Not known yet, or a Node
+     * too old to say: assume it is there, as before.
+     */
+    hasPlugin: function (id, serverId) {
+      var list = null;
+      if (!serverId || serverId === 'local') list = global.PANEL_PLUGINS;
+      else if (global.AppShell && typeof global.AppShell.health === 'function') {
+        var health = global.AppShell.health(serverId);
+        list = health && health.node && health.node.plugins;
+      }
+      return Array.isArray(list) ? list.indexOf(id) >= 0 : true;
+    },
   };
 })(typeof window !== 'undefined' ? window : globalThis);

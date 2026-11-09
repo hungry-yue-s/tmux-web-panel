@@ -102,6 +102,10 @@ describe.skipIf(!haveTmux)('the panel profile', () => {
     const page = await fetch(`${base}/`);
     expect(page.status).toBe(200);
     expect(await page.text()).toMatch(/src="\/js\/ms-app\.js\?h=[0-9a-f]{12}"/);
+    // No relay set up here: the login page still gets a config, an empty one.
+    const relay = await fetch(`${base}/js/relay-config.js`);
+    expect(relay.status).toBe(200);
+    expect(await relay.text()).toContain('window.PANEL_RELAY_PAGE');
     expect((await json('/api/workspace')).status).toBe(401);
     expect((await json('/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'wrong' } })).status).toBe(401);
   });
@@ -175,6 +179,24 @@ describe.skipIf(!haveTmux)('the panel profile', () => {
     expect((await json('/api/share', { token: login.data.data.token })).status).toBe(404);
     await app.loader.setDisabled('share', false);
     expect((await json('/api/share', { token: login.data.data.token })).status).not.toBe(404);
+  });
+
+  it('tells the page and a hub which plugins run, so neither calls an API that is not there', async () => {
+    const login = await json('/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'correct horse' } });
+    const token = login.data.data.token;
+    const pagePlugins = async () => {
+      const html = await (await fetch(`${base}/`)).text();
+      return JSON.parse(html.match(/window\.PANEL_PLUGINS = (\[[^\]]*\]);/)[1]);
+    };
+    expect(await pagePlugins()).toEqual(expect.arrayContaining(['ui', 'files', 'share']));
+    expect((await json('/api/node/info', { token })).data.data.plugins).toEqual(expect.arrayContaining(['files', 'share']));
+    await app.loader.setDisabled('share', true);
+    try {
+      expect(await pagePlugins()).not.toContain('share');
+      expect((await json('/api/node/info', { token })).data.data.plugins).not.toContain('share');
+    } finally {
+      await app.loader.setDisabled('share', false);
+    }
   });
 
   it('answers /n/local/ without the hub relay, which only reaches other servers', async () => {

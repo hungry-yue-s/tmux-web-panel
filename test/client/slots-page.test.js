@@ -38,6 +38,24 @@ describe('PanelSlots on the composed page', () => {
     expect(scripts[first]).toBe('/js/slots.js');
   });
 
+  it('knows which plugins run here from the page, and on another server from its health', () => {
+    const dom = new JSDOM('<!DOCTYPE html><body></body>', { url: 'http://localhost/', runScripts: 'outside-only' });
+    const win = dom.window;
+    win.eval(readFileSync('plugins/ui/client/js/slots.js', 'utf8'));
+    // Nothing known yet: assume the plugin is there, as before the lists existed.
+    expect(win.PanelSlots.hasPlugin('metrics')).toBe(true);
+    win.PANEL_PLUGINS = ['ui', 'files'];
+    expect(win.PanelSlots.hasPlugin('files')).toBe(true);
+    expect(win.PanelSlots.hasPlugin('metrics', 'local')).toBe(false);
+    const health = { box: { node: { installed: true, plugins: ['metrics'] } }, old: { node: { installed: true, plugins: null } } };
+    win.AppShell = { health: (id) => health[id] || null };
+    expect(win.PanelSlots.hasPlugin('metrics', 'box')).toBe(true);
+    expect(win.PanelSlots.hasPlugin('files', 'box')).toBe(false);
+    expect(win.PanelSlots.hasPlugin('files', 'old')).toBe(true);
+    expect(win.PanelSlots.hasPlugin('files', 'unknown')).toBe(true);
+    dom.window.close();
+  });
+
   it('lists every plugin command in the palette order the workspace always had', () => {
     expect(commandsWith()).toEqual([
       'shell', 'git', 'files', 'quick-open', 'board', 'browser', 'tasks',
