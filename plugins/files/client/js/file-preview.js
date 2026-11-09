@@ -3543,7 +3543,8 @@ var FilePreview = (function () {
 
     Promise.all([_loadScript(CDN.hljs), _loadCSS(CDN.hljsCss)])
       .then(function () {
-        if (window.hljs && language) {
+        // highlight.js logs an error for a language it lacks before throwing: ask first.
+        if (window.hljs && language && window.hljs.getLanguage(language)) {
           try {
             var result = window.hljs.highlight(content, { language: language, ignoreIllegals: true });
             code.innerHTML = result.value;
@@ -4093,7 +4094,8 @@ var FilePreview = (function () {
           html: false,
           linkify: true,
           highlight: function (str, lang) {
-            if (window.hljs && lang) {
+            // Fences in a language highlight.js lacks (mermaid, powershell...) stay plain.
+            if (window.hljs && lang && window.hljs.getLanguage(lang)) {
               try {
                 return window.hljs.highlight(str, { language: lang, ignoreIllegals: true }).value;
               } catch (_) { /* fallback */ }

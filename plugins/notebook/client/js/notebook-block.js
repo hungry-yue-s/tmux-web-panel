@@ -60,7 +60,7 @@
           var prompt = el('div', 'blk-cell-prompt', cell.execution_count == null ? '[ ]' : '[' + cell.execution_count + ']');
           var pre = el('pre', 'blk-cell-src');
           var code = el('code', 'hljs', source);
-          if (window.hljs) {
+          if (window.hljs && window.hljs.getLanguage(lang)) {
             try { code.innerHTML = window.hljs.highlight(source, { language: lang, ignoreIllegals: true }).value; } catch (_) { /* plain */ }
           }
           pre.appendChild(code);
