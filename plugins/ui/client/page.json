@@ -16,7 +16,6 @@
     { "order": 175, "script": "/js/blocks-kit.js" },
     { "order": 180, "script": "/js/block-host.js?v=1" },
     { "order": 200, "script": "/js/mobile-ui.js?v=2" },
-    { "order": 310, "script": "/js/app-fullscreen.js?v=2" },
     { "order": 320, "script": "/js/app.js?v=18" },
     { "order": 330, "script": "/js/command-palette.js?v=5" },
     { "order": 350, "script": "/js/app-shell.js?v=20" },

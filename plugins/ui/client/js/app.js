@@ -281,22 +281,6 @@ var state = {
   pinsById: {},                  // { '@5': true } — fetched once on init
 };
 
-var _recentWindows = (function () {
-  var MAX = 8;
-  var KEY = 'tmux_recent_windows';
-  function _load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch (_e) { return []; } }
-  function _save(list) { try { localStorage.setItem(KEY, JSON.stringify(list)); } catch (_e) { /* ignore */ } }
-  return {
-    add: function (session, windowIndex, windowName) {
-      var list = _load().filter(function (r) { return !(r.session === session && String(r.windowIndex) === String(windowIndex)); });
-      list.unshift({ session: session, windowIndex: windowIndex, windowName: windowName, timestamp: Date.now() });
-      if (list.length > MAX) list = list.slice(0, MAX);
-      _save(list);
-    },
-    get: function () { return _load(); },
-  };
-})();
-
 // Restore navigation state from sessionStorage
 (function restoreState() {
   try {
@@ -321,20 +305,7 @@ function saveNavState() {
   } catch (_e) { /* ignore */ }
 }
 
-// === Router (hash-based) ===
-
-function _syncFilePreviewDockContext() {
-  if (document.querySelector('.ms-app')) return;
-  if (typeof FilePreview === 'undefined' || !FilePreview.switchDockContext) return;
-  if (state.currentTab === 'terminal' && state.currentSession && _isValidWindowIndex(state.currentWindow)) {
-    FilePreview.switchDockContext(
-      'legacy-local',
-      state.currentSession + '\u0000' + state.currentWindow,
-    );
-  } else {
-    FilePreview.switchDockContext(null, null);
-  }
-}
+// === Navigation state ===
 
 function navigate(tab, params) {
   var newParams = params || {};
@@ -356,214 +327,22 @@ function navigate(tab, params) {
     }
   }
 
-  // Auto-clear notification when navigating to a window
-  if (tab === 'terminal' && newParams.currentSession && newParams.currentWindow != null) {
-    _clearWindowNotification(newParams.currentSession, newParams.currentWindow);
-  } else if (tab === 'terminal' && state.currentSession && newParams.currentWindow != null) {
-    _clearWindowNotification(state.currentSession, newParams.currentWindow);
+  // Opening a window marks its notifications read.
+  var session = newParams.currentSession || state.currentSession;
+  if (tab === 'terminal' && session && newParams.currentWindow != null) {
+    _clearWindowNotification(session, newParams.currentWindow);
   }
 
   state.currentTab = tab;
   Object.assign(state, newParams);
   saveNavState();
-  render();
-  updateSidebar();
-  _syncFilePreviewDockContext();
 }
 
-// === Render ===
-
-// The multi-server shell (ms-app.js) owns the page and renders every route;
-// the legacy views behind this name are gone. Callers from before it still
-// call render() and updateSidebar() after changing state: both do nothing.
-function render() {}
-
-// === Desktop Home (no window cards — use sidebar) ===
-
-// === Placeholder Views ===
-
-
-// renderTerminal is defined in terminal.js
-
-// === Sidebar ===
-
-// Track sidebar state to avoid unnecessary rebuilds
-var _sidebarSessionKey = '';
-var _sidebarWindowsLoaded = {};
-var _windowNotifications = {};
-
-// Pane-level completion tracking
-var _paneCompletions = {}; // key: 'session:windowIndex:paneId' → true
-
-function _handleCompletedPanes(completedPanes) {
-  if (!Array.isArray(completedPanes) || completedPanes.length === 0) return;
-  completedPanes.forEach(function (cp) {
-    var key = cp.session + ':' + cp.windowIndex + ':' + cp.paneId;
-    _paneCompletions[key] = true;
-  });
-}
-
-function _clearPaneCompletions(session, windowIndex) {
-  var prefix = session + ':' + windowIndex + ':';
-  Object.keys(_paneCompletions).forEach(function (key) {
-    if (key.indexOf(prefix) === 0) delete _paneCompletions[key];
-  });
-}
-
-function _getPaneCompletionInfo(session, windowIndex) {
-  var sessionData = state.sessions.find(function (s) { return s.name === session; });
-  var wd = sessionData && sessionData.windowDetails
-    ? sessionData.windowDetails.find(function (w) { return w.index === windowIndex; })
-    : null;
-  var total = wd && wd.panes ? wd.panes.length : 0;
-  var completed = 0;
-  if (wd && wd.panes) {
-    wd.panes.forEach(function (p) {
-      if (_paneCompletions[session + ':' + windowIndex + ':' + p.id]) completed++;
-    });
-  }
-  return { total: total, completed: completed };
-}
-
-var _notifCoalescer = {
-  pending: [],
-  timerId: null,
-  delay: 500,
-  add: function (completedWindows) {
-    this.pending = this.pending.concat(completedWindows);
-    if (this.timerId) clearTimeout(this.timerId);
-    var self = this;
-    this.timerId = setTimeout(function () {
-      var batch = self.pending;
-      self.pending = [];
-      self.timerId = null;
-      _applyCompletedWindows(batch);
-    }, this.delay);
-  }
-};
-
-function _handleCompletedWindows(completedWindows) {
-  if (!Array.isArray(completedWindows) || completedWindows.length === 0) return;
-  _notifCoalescer.add(completedWindows);
-}
-
-function _applyCompletedWindows(completedWindows) {
-  if (!Array.isArray(completedWindows) || completedWindows.length === 0) return;
-
-  var changed = false;
-  completedWindows.forEach(function (cw) {
-    // Skip current terminal window
-    if (
-      state.currentTab === 'terminal' &&
-      state.currentSession === cw.session &&
-      String(state.currentWindow) === String(cw.windowIndex)
-    ) {
-      return;
-    }
-
-    var key = cw.session + ':' + cw.windowIndex;
-    var existing = _windowNotifications[key];
-
-    // If already blinking, don't reset
-    if (existing && existing.phase === 'blink') return;
-
-    // Clear old timer if exists
-    if (existing && existing.timerId) {
-      clearTimeout(existing.timerId);
-    }
-
-    var timerId = setTimeout(function () {
-      var n = _windowNotifications[key];
-      if (n && n.phase === 'blink') {
-        n.phase = 'badge';
-        _updateSidebarNotifications();
-      }
-    }, 5000);
-
-    _windowNotifications[key] = { phase: 'blink', timestamp: Date.now(), timerId: timerId };
-    changed = true;
-  });
-
-  completedWindows.forEach(function (cw) {
-    // Don't add to notification panel if it's the current terminal window
-    if (
-      state.currentTab === 'terminal' &&
-      state.currentSession === cw.session &&
-      String(state.currentWindow) === String(cw.windowIndex)
-    ) {
-      return;
-    }
-    if (typeof NotificationPanel !== 'undefined') NotificationPanel.add(cw);
-  });
-
-  if (changed) {
-    _updateSidebarNotifications();
-  }
-}
-
+// Marks the notification panel's items for this window as read.
 function _clearWindowNotification(session, windowIndex) {
-  var key = session + ':' + windowIndex;
-  var existing = _windowNotifications[key];
-  if (existing) {
-    if (existing.timerId) clearTimeout(existing.timerId);
-    delete _windowNotifications[key];
-    _updateSidebarNotifications();
-  }
-  _clearPaneCompletions(session, windowIndex);
-
-  // Also mark notification panel items as read for this window
   if (typeof NotificationPanel !== 'undefined' && NotificationPanel._markReadByWindow) {
     NotificationPanel._markReadByWindow(session, windowIndex);
   }
-}
-
-function updateSidebar() {}
-
-function _updateSidebarNotifications() {
-  var sidebar = document.getElementById('sidebar');
-  if (!sidebar) return;
-
-  sidebar.querySelectorAll('.sidebar-window-item').forEach(function (el) {
-    var sess = el.getAttribute('data-session');
-    var winIdx = el.getAttribute('data-window-index');
-    var key = sess + ':' + winIdx;
-    var notif = _windowNotifications[key];
-
-    // Update classes
-    el.classList.remove('notification-blink', 'notification-badge');
-    if (notif) {
-      el.classList.add(notif.phase === 'blink' ? 'notification-blink' : 'notification-badge');
-    }
-
-    // Update dot element
-    var dot = el.querySelector('.notification-dot');
-    if (notif && !dot) {
-      dot = document.createElement('span');
-      dot.className = 'notification-dot';
-      var nameEl = el.querySelector('.sidebar-window-name');
-      if (nameEl && nameEl.nextSibling) {
-        el.insertBefore(dot, nameEl.nextSibling);
-      } else {
-        el.appendChild(dot);
-      }
-    } else if (!notif && dot) {
-      dot.remove();
-    }
-
-    // Update pane completion ratio
-    var ratioEl = el.querySelector('.sidebar-pane-ratio');
-    var info = _getPaneCompletionInfo(sess, winIdx);
-    if (info.total > 0 && info.completed > 0) {
-      if (!ratioEl) {
-        ratioEl = document.createElement('span');
-        ratioEl.className = 'sidebar-pane-ratio';
-        el.appendChild(ratioEl);
-      }
-      ratioEl.textContent = info.completed + '/' + info.total;
-    } else if (ratioEl) {
-      ratioEl.remove();
-    }
-  });
 }
 
 function escapeHtml(str) {
@@ -581,8 +360,6 @@ class StatusSocket {
     this._maxReconnectDelay = 30000;
     this._currentDelay = this._reconnectDelay;
     this.connected = false;
-    this.onStatusChange = null;
-    this._lastStatus = null;
   }
 
   connect() {
@@ -599,13 +376,9 @@ class StatusSocket {
     this._ws.onopen = function () {
       self._currentDelay = self._reconnectDelay;
       self.connected = true;
-      updateTopbarDot(true);
       // Fetch server-side notifications on connect/reconnect
       if (typeof NotificationPanel !== 'undefined' && NotificationPanel.refresh) {
         NotificationPanel.refresh();
-      }
-      if (typeof self.onStatusChange === 'function') {
-        self.onStatusChange();
       }
     };
 
@@ -648,20 +421,6 @@ class StatusSocket {
 
     this._ws.onclose = function () {
       self.connected = false;
-      updateTopbarDot(false);
-      var statusEl = document.getElementById('status-info');
-      if (statusEl) {
-        statusEl.textContent = 'Reconnecting...';
-        statusEl.style.color = 'var(--accent-yellow)';
-      }
-      var sidebarInfo = document.getElementById('sidebar-status-info');
-      if (sidebarInfo) {
-        sidebarInfo.textContent = 'Reconnecting...';
-        sidebarInfo.style.color = 'var(--accent-yellow)';
-      }
-      if (typeof self.onStatusChange === 'function') {
-        self.onStatusChange();
-      }
       self._scheduleReconnect();
     };
 
@@ -673,13 +432,10 @@ class StatusSocket {
   }
 
   _handleStatusUpdate(raw) {
-    var statusEl = document.getElementById('status-info');
     // Server sends { type, data: { sessions, ... } } — unwrap if needed
     var data = (raw && raw.data && raw.data.sessions !== undefined) ? raw.data : raw;
 
     if (data && data.sessions !== undefined) {
-      state.sessions = data.sessions;
-
       // Build pane scene map from status data (pane-cmd only fires on change,
       // but status arrives every poll with current commands for all panes)
       if (typeof FabScene !== 'undefined') {
@@ -696,52 +452,9 @@ class StatusSocket {
         });
       }
 
-      var sessionCount = Array.isArray(data.sessions) ? data.sessions.length : 0;
-      var windowCount = Array.isArray(data.sessions)
-        ? data.sessions.reduce(function (sum, s) { return sum + (s.windows || 0); }, 0)
-        : 0;
-
-      this._lastStatus = {
-        sessionCount: sessionCount,
-        windowCount: windowCount,
-      };
       // Blocks read pane commands and listening ports from the latest snapshot.
       window.__twpStatus = data;
-
-      var statusText = sessionCount + 's · ' + windowCount + 'w';
-      if (statusEl) {
-        statusEl.textContent = statusText;
-        statusEl.style.color = '';
-      }
-      var sidebarInfo = document.getElementById('sidebar-status-info');
-      if (sidebarInfo) {
-        sidebarInfo.textContent = statusText;
-        sidebarInfo.style.color = '';
-      }
-
-      // Auto-select session if none selected
-      if (!state.currentSession && sessionCount > 0) {
-        state.currentSession = data.sessions[0].name;
-      }
-      updateTopbarSession();
-      updateSidebar();
-
-      // Handle completion notifications
-      if (data.completedWindows) {
-        _handleCompletedWindows(data.completedWindows);
-      }
-      if (data.completedPanes) {
-        _handleCompletedPanes(data.completedPanes);
-      }
-
-      if (typeof this.onStatusChange === 'function') {
-        this.onStatusChange();
-      }
     }
-  }
-
-  getLastStatus() {
-    return this._lastStatus;
   }
 
   _scheduleReconnect() {
@@ -777,32 +490,6 @@ class StatusSocket {
   }
 }
 
-// === Topbar Session Dropdown ===
-
-var _dropdownOpen = false;
-
-function updateTopbarSession() {
-  var nameEl = document.getElementById('session-name');
-  if (!nameEl) return;
-  nameEl.textContent = state.currentSession || '—';
-}
-
-function updateTopbarDot(connected) {
-  var cls = 'topbar-dot ' + (connected ? 'connected' : 'disconnected');
-  var dot = document.getElementById('status-dot');
-  if (dot) dot.className = cls;
-  var sidebarDot = document.getElementById('sidebar-dot');
-  if (sidebarDot) sidebarDot.className = cls;
-}
-
-// The legacy top bar (session switcher, new window, more) sits in the hidden
-// legacy tree; the multi-server shell has its own. Only fullscreen is shared.
-function initTopbar() {
-  if (typeof AppFullscreen !== 'undefined') {
-    AppFullscreen.init();
-  }
-}
-
 // === Init ===
 
 var statusSocket = new StatusSocket();
@@ -825,8 +512,6 @@ function init() {
 }
 
 function _startApp() {
-  initTopbar();
-  updateTopbarSession();
   // Fetch pinned window ids once on startup (non-fatal), where the pins plugin runs.
   if ((typeof PanelSlots === 'undefined' || PanelSlots.hasPlugin('pins'))) api.get('/api/pins').then(function (res) {
     state.pinsById = {};
@@ -834,9 +519,6 @@ function _startApp() {
     pins.forEach(function (id) { state.pinsById[id] = true; });
   }).catch(function () { /* non-fatal */ });
   statusSocket.connect();
-  render();
-  updateSidebar();
-  _syncFilePreviewDockContext();
 }
 
 document.addEventListener('keydown', function (e) {

@@ -16,18 +16,11 @@ describe('global UI system', () => {
     expect(styles).toContain('@media (prefers-reduced-motion: reduce)');
   });
 
-  it('uses reusable SVG icons for sidebar actions and collapse states', () => {
-    expect(indexSource.match(/class="app-icon"/g)).toHaveLength(4);
-    expect(indexSource).toContain('id="btn-app-fullscreen"');
-  });
-
   it('keeps desktop and mobile navigation layouts explicitly covered', () => {
-    expect(styles).toMatch(/#sidebar\.collapsed[\s\S]*?width:\s*52px/);
     expect(styles).toContain('@media (max-width: 767px)');
-    expect(styles).toMatch(/#topbar[\s\S]*?min-height:\s*52px/);
-    expect(indexSource).toMatch(/href="\/css\/style\.css\?v=\d+"/);
-    expect(indexSource).toContain('/js/app-fullscreen.js?v=2');
-    expect(indexSource).toMatch(/src="\/js\/app\.js\?v=\d+"/);
+    expect(indexSource).toContain('class="mobile-dock"');
+    expect(indexSource).toMatch(/href="\/css\/style\.css(\?v=\d+)?"/);
+    expect(indexSource).toMatch(/src="\/js\/app\.js(\?v=\d+)?"/);
   });
 
   it('keeps the mobile terminal header compact while exposing a workspace sheet', () => {

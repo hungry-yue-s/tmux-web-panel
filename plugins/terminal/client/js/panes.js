@@ -303,9 +303,7 @@ function _confirmClosePane(paneId) {
         delete _fontOffsets[paneId];
         _saveFontOffsets();
       }
-      var content = typeof _terminalContainer === 'function'
-        ? _terminalContainer()
-        : document.getElementById('content');
+      var content = _terminalContainer();
       if (content && typeof renderTerminal === 'function') {
         state.currentPane = null;
         renderTerminal(content);

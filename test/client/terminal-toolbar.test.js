@@ -11,7 +11,7 @@ describe('terminal toolbar controls', () => {
     expect(terminalSource).toContain('function _terminalToolIcon(paths)');
     expect(terminalSource).toContain('class="terminal-tool-icon"');
 
-    ['返回窗口列表', '刷新终端', '标签页模式', '分屏模式', '减小字号',
+    ['刷新终端', '标签页模式', '分屏模式', '减小字号',
       '增大字号', '新增分屏', '设置当前窗格标签', '从 tmux 缓冲区打开文件',
       '在新窗口打开', '全屏'].forEach((label) => {
       expect(terminalSource).toContain(`aria-label="${label}"`);

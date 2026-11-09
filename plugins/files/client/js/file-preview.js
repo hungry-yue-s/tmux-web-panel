@@ -234,8 +234,7 @@ var FilePreview = (function () {
   }
 
   function _dockLayout() {
-    return document.querySelector('.ms-app.mode-terminal .ms-main')
-      || document.getElementById('main-layout');
+    return document.querySelector('.ms-app.mode-terminal .ms-main');
   }
 
   function _isMobileReader() {
@@ -258,13 +257,8 @@ var FilePreview = (function () {
     var layoutWidth = layout ? layout.getBoundingClientRect().width : 0;
     if (!layoutWidth) layoutWidth = window.innerWidth || 0;
 
-    var sidebar = layout ? layout.querySelector('#sidebar') : null;
-    var sidebarWidth = 0;
-    if (sidebar && window.getComputedStyle(sidebar).display !== 'none') {
-      sidebarWidth = sidebar.getBoundingClientRect().width || sidebar.offsetWidth || 0;
-    }
-
-    var available = Math.max(0, layoutWidth - sidebarWidth);
+    // .ms-main is the column beside the shell's sidebar: all of it is shared.
+    var available = Math.max(0, layoutWidth);
     var min = 320;
     // Dragging left may use 70% of the shared workstage, including restored
     // widths. Keep the file in a modal when the 320px minimum cannot fit.

@@ -7,7 +7,7 @@ const INSTANCE = '1873:1700000000';
 const source = readFileSync('plugins/files/client/js/file-preview.js', 'utf8');
 
 function setup(width = 1440, native = false) {
-  const dom = new JSDOM('<div id="main-layout"><div class="terminal-view"></div></div>', { url: 'https://panel.test/', runScripts: 'outside-only' });
+  const dom = new JSDOM('<div class="ms-app mode-terminal"><main class="ms-main"><div class="terminal-view"></div></main></div>', { url: 'https://panel.test/', runScripts: 'outside-only' });
   const { window } = dom;
   Object.defineProperty(window, 'innerWidth', { value: width });
   window.URL.createObjectURL = vi.fn().mockImplementation(() => 'blob:https://panel.test/' + window.URL.createObjectURL.mock.calls.length);

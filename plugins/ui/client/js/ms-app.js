@@ -517,9 +517,7 @@
       // this panel that addresses its own panes) is limited to the local server.
       const remote = global.AppShell.activeServerId() !== 'local';
 
-      // The shell's sidebar and Window Bar replace both of these.
-      const back = header.querySelector('.terminal-back-btn');
-      if (back) back.remove();
+      // The shell's sidebar and Window Bar replace the title.
       const title = header.querySelector('.terminal-header-title');
       if (title) title.remove();
 

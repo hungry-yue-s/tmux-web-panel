@@ -468,9 +468,10 @@ describe('index.html script order', () => {
     }
   });
 
-  it('keeps the legacy shell present but hidden', () => {
-    expect(INDEX).toContain('<div id="legacy-shell" hidden>');
-    expect(INDEX).toContain('id="content"');
+  it('is the multi-server shell alone, with no hidden legacy shell', () => {
+    expect(INDEX).not.toContain('legacy-shell');
+    expect(INDEX).not.toContain('id="content"');
+    expect(INDEX).not.toContain('id="main-layout"');
     expect(INDEX).toContain('class="ms-app sidebar-collapsed"');
   });
 

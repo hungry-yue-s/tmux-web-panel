@@ -303,8 +303,7 @@ var terminalState = {
   resizeObserver: null,
   isFullscreen: false,
   ownsBrowserFullscreen: false,
-  // The element renderTerminal was given. In the multi-server shell this is not
-  // #content, which is hidden, so re-renders must go through _terminalContainer.
+  // The element renderTerminal was given; re-renders go through _terminalContainer.
   mountContainer: null,
 };
 
@@ -314,15 +313,12 @@ function _updateTerminalTheme() {
 document.addEventListener('tmux-theme-change', _updateTerminalTheme);
 document.addEventListener('tmux-transparency-change', _updateTerminalTheme);
 
-/**
- * The element the terminal is mounted in. Falls back to the legacy #content so
- * the old shell keeps working.
- */
+/** The element the terminal is mounted in, while it is still in the page. */
 function _terminalContainer() {
   if (terminalState.mountContainer && terminalState.mountContainer.isConnected) {
     return terminalState.mountContainer;
   }
-  return document.getElementById('content');
+  return null;
 }
 
 // === Cleanup ===
@@ -1026,8 +1022,6 @@ function renderTerminal(container, known) {
   container.innerHTML =
     '<div class="terminal-view">' +
     '<div class="terminal-header">' +
-    '<button type="button" class="btn terminal-tool-btn terminal-back-btn" title="返回窗口列表" aria-label="返回窗口列表">' +
-    _terminalToolIcon('<path d="m15 18-6-6 6-6"/><path d="M9 12h10"/>') + '</button>' +
     '<div class="terminal-header-pills"></div>' +
     '<span class="terminal-header-title"></span>' +
     '<div class="terminal-header-actions" role="toolbar" aria-label="终端控制">' +
@@ -1077,11 +1071,6 @@ function renderTerminal(container, known) {
   // Set title
   titleEl.textContent = escapeHtml(state.currentSession) + ' : ' + state.currentWindow;
 
-  // Back button
-  view.querySelector('.terminal-back-btn').addEventListener('click', function () {
-    _backToWindows();
-  });
-
   // Font size buttons
   view.querySelectorAll('.terminal-font-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
@@ -1103,15 +1092,10 @@ function renderTerminal(container, known) {
   }
 
   view.querySelector('.terminal-refresh-btn').addEventListener('click', function () {
-    // In the multi-server shell, refetch this server's workspace and re-render
-    // in place. render()/updateSidebar() would jump back to the hidden old UI.
+    // Refetch this server's workspace and re-render in place.
     if (window.MsApp && typeof window.MsApp.refreshCurrentTerminal === 'function') {
       window.MsApp.refreshCurrentTerminal();
-      return;
     }
-    _sidebarSessionKey = '';
-    render();
-    updateSidebar();
   });
 
 
@@ -2125,46 +2109,4 @@ function _showReconnectOverlay(term, paneId, nozoom) {
   }
 
   terminalState.reconnectTimer = setTimeout(tryReconnect, baseDelay);
-}
-
-// === Navigate back to windows and scroll to current window ===
-
-function _backToWindows() {
-  var windowIndex = state.currentWindow;
-  cleanupTerminal();
-  navigate('windows', { currentSession: state.currentSession });
-
-  // After render, scroll to the window card that was just open
-  if (windowIndex != null) {
-    _scrollToWindowCard(windowIndex);
-  }
-}
-
-function _scrollToWindowCard(windowIndex) {
-  // The render is async (fetches sessions then windows), so poll briefly
-  var attempts = 0;
-  var timer = setInterval(function () {
-    var card = document.querySelector('.swipe-container[data-window-index="' + windowIndex + '"]');
-    if (card) {
-      clearInterval(timer);
-      // Scroll only #content container, not the entire page
-      // (scrollIntoView scrolls all ancestors including body, pushing topbar out of view)
-      var contentEl = document.getElementById('content');
-      if (contentEl) {
-        var cardRect = card.getBoundingClientRect();
-        var contentRect = contentEl.getBoundingClientRect();
-        var targetTop = contentEl.scrollTop + (cardRect.top - contentRect.top) - (contentEl.clientHeight - card.offsetHeight) / 2;
-        contentEl.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
-      }
-      // Brief highlight
-      card.style.outline = '2px solid var(--accent-blue)';
-      card.style.outlineOffset = '2px';
-      card.style.borderRadius = '10px';
-      setTimeout(function () {
-        card.style.outline = '';
-        card.style.outlineOffset = '';
-      }, 1500);
-    }
-    if (++attempts > 20) clearInterval(timer);
-  }, 100);
 }
