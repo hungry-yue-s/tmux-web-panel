@@ -670,18 +670,12 @@
 
   function runDiscoveryIfNeeded() {
     if (localStorage.getItem(DISCOVER_MARK_KEY)) return;
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', Api.activeUrl('/api/scene/discover'), true);
-    xhr.onload = function () {
-      if (xhr.status !== 200) return;
-      try {
-        var data = JSON.parse(xhr.responseText);
-        applyDiscovery(data);
-        localStorage.setItem(DISCOVER_MARK_KEY, JSON.stringify({ at: Date.now() }));
-      } catch (_e) { /* silent */ }
-    };
-    xhr.onerror = function () { /* silent */ };
-    xhr.send();
+    // Api.get carries the login token; a bare request was always refused (401)
+    // where a login is set up, so discovery never ran there.
+    Api.get(Api.activeUrl('/api/scene/discover')).then(function (data) {
+      applyDiscovery(data);
+      localStorage.setItem(DISCOVER_MARK_KEY, JSON.stringify({ at: Date.now() }));
+    }).catch(function () { /* silent: the drawer works without seeds */ });
   }
 
   function applyDiscovery(data) {

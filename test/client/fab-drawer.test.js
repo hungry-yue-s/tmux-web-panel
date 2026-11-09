@@ -32,6 +32,21 @@ function button(win, label, selector = '.fab-drawer-btn') {
 
 afterEach(() => dom?.window.close());
 
+describe('scene discovery', () => {
+  it('asks the server in view once, through the authenticated client, and seeds from the answer', async () => {
+    const win = boot();
+    win.localStorage.removeItem('fab-discover-v1');
+    const get = vi.fn(() => Promise.resolve({ terminal: { topFullCommands: [{ command: 'npm test' }] } }));
+    win.Api = { activeUrl: (path) => '/n/box' + path, get };
+    win.FabDrawer.mount(win.document.getElementById('host'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(get).toHaveBeenCalledWith('/n/box/api/scene/discover');
+    expect(win.localStorage.getItem('fab-discover-v1')).toContain('"at"');
+    win.FabDrawer.mount(win.document.getElementById('host'));
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('Codex mobile drawer', () => {
   it('selects the active pane in the multi-server shell and sends real input frames', () => {
     const win = boot();
