@@ -4211,7 +4211,7 @@ var FilePreview = (function () {
 
   // Runs on a single LOGICAL line (wrapped rows already merged); returns
   // matches { text, kind, href, lineRef, startCol, endCol }. All regex logic
-  // lives in public/js/link-detect.js (window.LinkDetect) so it is unit-tested.
+  // lives in the terminal plugin's link-detect.js (window.LinkDetect) so it is unit-tested.
   //   kind 'web'       -> open href in a new browser tab
   //   kind 'file'      -> open in the file preview (lineRef jumps to a line)
   //   kind 'ambiguous' -> let the user choose web vs file (e.g. example.com)

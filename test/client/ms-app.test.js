@@ -444,36 +444,9 @@ describe('single Window Bar', () => {
   });
 });
 
-describe('index.html cache busting', () => {
-  const versionOf = (path) => {
-    const match = new RegExp(`${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\?v=(\\d+)`).exec(INDEX);
-    return match ? Number(match[1]) : null;
-  };
-
-  it('carries a version on every file changed in this work', () => {
-    // A stale bundle in the user's browser silently reintroduces old behavior.
-    for (const path of [
-      '/css/style.css',
-      '/js/terminal.js',
-      '/js/panes.js',
-      '/js/terminal-target.js',
-      '/js/app-shell.js',
-      '/js/servers.js',
-      '/js/ms-app.js',
-      '/js/router.js',
-      '/js/store.js',
-      '/js/api.js',
-    ]) {
-      expect(versionOf(path), path).toBeGreaterThanOrEqual(2);
-    }
-  });
-
-  it('bumped the two long-lived files past their previous versions', () => {
-    expect(versionOf('/css/style.css')).toBeGreaterThan(17);
-    expect(versionOf('/js/terminal.js')).toBeGreaterThan(11);
-    expect(versionOf('/js/panes.js')).toBeGreaterThan(2);
-  });
-
+// Cache busting is the ui plugin's: it rewrites every local URL to a content
+// hash when it serves the page (test/panel.test.js), so no ?v= to keep up.
+describe('index.html script order', () => {
   it('loads the terminal adapter before the modules that use it', () => {
     const order = ['/js/terminal-target.js', '/js/panes.js', '/js/terminal.js'];
     const positions = order.map((path) => INDEX.indexOf(path));

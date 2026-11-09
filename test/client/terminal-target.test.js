@@ -152,7 +152,7 @@ describe('remote server', () => {
 
 describe('terminal renderer wiring', () => {
   const terminalSrc = readFileSync('plugins/terminal/client/js/terminal.js', 'utf8');
-  const panesSrc = readFileSync('plugins/ui/client/js/panes.js', 'utf8');
+  const panesSrc = readFileSync('plugins/terminal/client/js/panes.js', 'utf8');
 
   it('has no hardcoded session paths left in the terminal renderer', () => {
     expect(terminalSrc).not.toMatch(/'\/api\/sessions\//);

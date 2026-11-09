@@ -1304,7 +1304,7 @@ function _mountTerminal(termContainer, nozoom) {
 
   term.loadAddon(fitAddon);
   // URL + file-path links are both handled by FilePreview's unified provider
-  // (public/js/link-detect.js), which merges soft-wrapped rows — something the
+  // (link-detect.js, terminal plugin), which merges soft-wrapped rows — something the
   // old WebLinksAddon (per display row) could not do. No web-links addon.
   if (typeof FilePreview !== 'undefined' && TerminalTarget.hasNode()) {
     // Paths resolve on the pane's own machine: FilePreview calls go through the

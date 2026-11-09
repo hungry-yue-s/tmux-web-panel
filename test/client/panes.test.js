@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import { resolve } from 'path';
 
 const panesScript = readFileSync(
-  resolve(import.meta.dirname, '../../plugins/ui/client/js/panes.js'),
+  resolve(import.meta.dirname, '../../plugins/terminal/client/js/panes.js'),
   'utf-8'
 );
 

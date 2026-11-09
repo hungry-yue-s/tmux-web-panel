@@ -14,6 +14,8 @@
     { "order": 40, "script": "/js/terminal-fonts-data.js" },
     { "order": 50, "script": "/js/terminal-fonts.js" },
     { "order": 60, "script": "/js/terminal-trace.js" },
+    { "order": 110, "script": "/js/panes.js" },
+    { "order": 150, "script": "/js/link-detect.js" },
     { "order": 210, "script": "/js/terminal.js?v=25" }
   ]
 }

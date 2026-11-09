@@ -34,6 +34,8 @@ plugins:
     use: terminal
   - id: keypad
     use: keypad
+  - id: layouts
+    use: layouts
   - id: pins
     use: pins
   - id: notifications
