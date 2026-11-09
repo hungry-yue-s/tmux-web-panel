@@ -46,8 +46,8 @@ describe('readProfile', () => {
     const node = (await readProfile('node')).entries.map((entry) => entry.id);
     expect(node.every((id) => panel.includes(id))).toBe(true);
     expect(panel.filter((id) => !node.includes(id)).sort()).toEqual([
-      'basic-mode', 'browser', 'client', 'hub-links', 'hub-relay', 'mosh-hub', 'node-installer', 'server-health',
-      'server-registry', 'servers', 'share', 'ui',
+      'basic-mode', 'browser', 'client', 'hub-links', 'hub-relay', 'layouts', 'mosh-hub', 'node-installer',
+      'server-health', 'server-registry', 'servers', 'share', 'ui',
     ]);
     // Same ids, same order: a user's patch applies to either.
     expect(panel.filter((id) => node.includes(id))).toEqual(node);

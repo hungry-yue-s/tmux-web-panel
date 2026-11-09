@@ -134,7 +134,8 @@ npm test
 | `workspace` | `workspace` | http, tmux | 会话/窗口/窗格树与修改，`/api/workspace`，全部按稳定 ID；还有布局选择器用的窗口布局、窗格内容、调整大小和交换；修改发 `status/workspace-changed`。原来按名字/序号的 `/api/sessions`、`/api/panes`、`/api/status` 已删除 |
 | `status` | `status` | launch, http | `/ws/status`，轮询 tmux，转播 `status/*`；有 notifications / agentEvents 时接上 |
 | `terminal` | `terminals` | launch, http, workspace | `/ws/terminal/:paneId`，TerminalManager 的全部 Windows 契约 |
-| `keypad` | — | http | 移动端工具盘的场景发现 `/api/scene/discover` |
+| `keypad` | — | http | 移动端工具盘（前端）与它的场景发现 `/api/scene/discover` |
+| `layouts` | — | — | 窗口布局选择器，只有前端，经 workspace 的布局/窗格接口 |
 | `pins` | `pins` | launch, http, tmux | 固定窗口 |
 | `notifications` | `notifications` | launch, http | 通知存储，`/api/notifications` |
 | `agent-events` | `agentEvents` | http | Agent 钩子事件 `/api/agent-events`；有 notifications 时变成通知 |
@@ -144,6 +145,7 @@ npm test
 | `sqlite` | — | http, fileAccess | SQLite 预览 `/api/sqlite` |
 | `notebook` | — | http, fileAccess | `/api/notebook` |
 | `open` | — | http, fileAccess | `twp open` 的 `/api/open`，经 `status/event` 通知页面 |
+| `browser` | — | — | 浏览器 block 与 `twp open <url>`，只有前端（只在 Hub） |
 | `share` | `shares` | launch, http, timer | 预览快照分享，公开的 `/s/:id`（只在 Hub） |
 | `metrics` | `metrics` | http | 系统与进程监控、历史、窗口资源 |
 | `agent-usage` | — | launch, http | Claude / Codex 用量 `/api/claude-usage`、`/api/codex-usage` |
@@ -185,21 +187,27 @@ npm test
 
 ## 浏览器端
 
-**前端也归插件所有。** 前端按功能放在各插件的 `client/` 目录：外壳、路由、侧栏、设置页在 `ui`，终端、xterm、字体切片、移动端工具盘在 `terminal`，文件预览与 block 在 `files`，登录页在 `auth`，监控在 `metrics`，Agent 控制台在 `agent-hub`，通知、诊断、管理页、会话保护各在自己的插件。URL 一个没变（`/js/terminal.js` 还是 `/js/terminal.js`）：每个插件把自己的 `client/` 挂在 `/`，按注册顺序查找。
+**前端也归插件所有。** 前端按功能放在各插件的 `client/` 目录：外壳、路由、侧栏、设置页、命令面板、block 框架（`blocks-kit.js`、`block-host.js`）在 `ui`；终端、xterm、字体切片、窗格条（`panes.js`）、终端里的链接识别（`link-detect.js`）在 `terminal`；移动端工具盘在 `keypad`；文件预览和分窗在 `files`；Git、浏览器、SQLite、notebook 的 block 或渲染器各在自己的插件；布局选择器在 `layouts`；登录页在 `auth`；监控在 `metrics`；Agent 控制台在 `agent-hub`；通知、诊断、托管资源、面板插件、会话保护各在自己的插件。URL 一个没变（`/js/terminal.js` 还是 `/js/terminal.js`）：每个插件把自己的 `client/` 挂在 `/`，按注册顺序查找，所以文件名在所有插件里不能重复。
+
+**插件往外壳里加东西靠插槽，不靠外壳认识它。** `ui/client/js/slots.js` 最先加载，提供 `PanelSlots`：服务器页的分区（`serverSections`）、设置页的分区（`settingsSections`，`available()` 决定显示与否）、管理中心的面板（`managementPanels`）、命令面板的命令（`commands`）、`twp open` 的处理者（`openers`）。block 工具包另有 `Blocks.registerRenderer`（文件预览的渲染器）和 `Blocks.registerPreviewActions`（预览菜单里的动作）。插件关掉，它的脚本不加载，注册的东西也就不在。
+
+**页面只调用在运行的插件的接口。** 页面带着本机在运行的插件清单（`window.PANEL_PLUGINS`，由 `ui` 渲染页面时写入）；别的服务器的清单在它的健康信息里（`node.plugins`，来自它的 `/api/node/info`）。外壳调用可选插件的接口前用 `PanelSlots.hasPlugin(id, serverId)` 判断；还不知道、或 Node 太旧报不出清单时当作有。
 
 **主页面是组装出来的。** `ui` 的 `client/index.html` 只是模板，`<!--ui:head-->` / `<!--ui:body-->` 处放进各插件 `client/page.json` 声明的样式、脚本和字体预载：
 
 ```json
 {
   "serve": ["."],
-  "head": [{ "order": 10, "style": "/vendor/xterm/xterm.css?v=6.0.0" }, { "order": 20, "preload": "/fonts/tpm/…woff2" }],
-  "body": [{ "order": 210, "script": "/js/terminal.js?v=25" }, { "order": 130, "module": "/js/sort-windows.js?v=1" }]
+  "head": [{ "order": 10, "style": "/vendor/xterm/xterm.css?v=6.0.0" }, { "order": 20, "preload": "/fonts/tpm/…woff2" },
+           { "order": 50.8, "style": "/css/terminal.css" }],
+  "body": [{ "order": 110, "script": "/js/panes.js" }, { "order": 210, "script": "/js/terminal.js?v=25" }]
 }
 ```
 
 - 插件在 `apply` 里 `ctx.inject(['ui'], (ctx) => ctx.ui.contribute(new URL('./client/page.json', import.meta.url)))`：有页面时才贡献，插件卸载时它的脚本和目录一起从页面消失。
 - `order` 是全局顺序，跨插件排序，保证脚本按依赖先后加载（旧脚本之间通过全局对象互相调用）。新增脚本时按它依赖谁、谁依赖它选一个空位。
-- 可选功能（通知、监控、Agent 控制台、管理页、会话保护、诊断）关掉后页面照常工作：外壳对它们的全局对象都先判断存在。外壳、终端、文件三者互相依赖，作为一组使用。
+- 可选功能（通知、监控、Agent 控制台、管理页、会话保护、诊断、工具盘、Git、浏览器、布局选择器……）关掉后页面照常工作：外壳对它们的全局对象都先判断存在，调用接口前看 `hasPlugin`。外壳、终端、文件三者互相依赖，作为一组使用；分窗归文件预览，所以没有 `files` 时 block 只能浮动。
+- **样式也归插件。** 只有某个插件的脚本会产生的元素，它的样式放在该插件的 `client/css/<id>.css`；外壳的 `style.css` 只留外壳自己的和多个插件共用的。插件样式表紧跟在 `style.css` 之后加载（`order` 50.1–50.8，按插件名排），这样从 `style.css` 拆出来时层叠顺序不变。给插件元素加样式就写进它自己的表；如果要覆盖外壳里 `.btn`、`.input` 这类通用类，注意插件表在它之后，同等特异性时插件赢。测试里要断言样式时用 `test/helpers/pages.js` 的 `pageStyles()`（按页面顺序拼起来的全部样式），不要只读某一个文件。
 - `?v=` 只是标记，渲染时替换成内容哈希 `?h=`；页面每次校验，资源缓存一年，改了文件刷新即生效，不用重启。
 - 字体切片由 `scripts/build-font-subsets.mjs` 生成，写进 `terminal` 的 `client/`，核心片的预载就是它 `page.json` 里的 `preload` 项。
 
@@ -211,6 +219,7 @@ npm test
 - `test/panel.test.js` 用真实输入启动整个 `panel` profile：`AUTH`、临时配置目录与家目录、私有 tmux server，覆盖登录、`/api` 守卫、工作区、WebSocket 鉴权、终端接入和运行时关闭插件。
 - **隔离规则**（来自“不在用户 tmux 上做实验”）：每个用到 tmux 的测试和冒烟都经 `tmux` 插件选私有 server（`-L`），`kill-server` 之前先 `display -p '#{socket_path}'` 断言是私有路径；配置目录（`launch` 的 `env.TMUX_PANEL_CONFIG_DIR`）和配对文件所在的家目录（`node` 的 `home`）指向临时目录；会读 `~/.claude`、`~/.codex`、CC Switch 数据库或起模型中继的 `agent-usage`、`agent-hub`、`enterprise-ai` 关掉。
 - 冒烟时像服务脚本一样带上 `LANG=C.UTF-8 LC_CTYPE=C.UTF-8`（`run-panel.ps1`、systemd 单元都设置了）。没有 UTF-8 locale 时 tmux 命令客户端把中文会话名输出成 `____`，再拿它去查就找不到。
+- 在同一个进程里启动面板做实验时，`app.stop()` 卸载 `tmux` 插件会撤销私有 server 的选择，之后这个进程里的 tmux 命令回到默认 server：核对 `socket_path` 和清理都要在 stop 之前做，而且显式带 `-t <会话>`（没有客户端附着时不带目标会失败）。私有 server 在 Windows 上可能卡住不应答（`docs/known-issues.md` ENV-1），这时只能按命令行里的私有 socket 名核对进程归属再结束。
 - **MSYS2 的 tmux 退出后不删除 socket 文件**，测试要自己删。在 Git Bash 里直接运行 MSYS2 的 tmux 去启动 server 会挂住（server 继承了 shell 的输出管道），准备会话请用 Node 的 `execFile`。
 - 测试在 Windows 上也要全过，任何失败都是回归。写测试时注意：
   - 权限位断言放在 `POSIX_MODES`（`test/helpers/permissions.js`）之后：Windows 的 `fs.stat` 只报 0o666 / 0o444。
@@ -227,4 +236,6 @@ npm test
 4. 合并改造期间 master 的改动（Mosh 传输、直连、修复），`server/` 的补丁改写到 `lib/` 后三方应用，接线改动翻译成 `servers` / `mosh` 插件。
 5. 切换：代码移到仓库根，服务安装、Windows 计划任务、桌面运行时、macOS 打包、远程安装 Node 的打包清单、中继与 Android 构建脚本都改用新位置；`server/` 只留兼容入口。
 
-还可以继续做的：把前端的全局脚本逐个改写成 ES 模块的客户端插件（`ctx.client.entry()`），全局对象换成浏览器端的服务；把 `lib/` 里体量大的模块（`terminal.js`、`api/files.js`、`api/agent-hub.js`）按接缝拆成更小的插件。都可以随功能迭代逐步做。
+6. 再拆细：面板现在是 42 个条目（Hub 的链路、转发、健康、安装、基础模式、Mosh 各自独立，文件之上的 Git、SQLite、notebook、上传、`twp open` 各自独立）；前端按插槽把功能脚本和样式归到各自的插件，删掉按名字/序号的旧 tmux 接口、隐藏的旧外壳和它们带着的死代码与死样式。
+
+还可以继续做的：把前端的全局脚本逐个改写成 ES 模块的客户端插件（`ctx.client.entry()`），全局对象换成浏览器端的服务；把分窗从 `file-preview.js` 移进 `ui`，让 block 不依赖 `files` 也能停靠；把 `lib/` 里体量大的模块（`terminal.js`、`api/files.js`、`api/agent-hub.js`）按接缝拆成更小的插件。都可以随功能迭代逐步做。
