@@ -210,15 +210,11 @@ html.tmux-native-titlebar body { --workspace-chrome-height:44px; }
 .ms-app .server-hero { padding:0 0 24px; margin-bottom:24px; border:0; border-bottom:1px solid var(--workspace-line); border-radius:0; background:none; box-shadow:none; }
 .ms-app .server-hero h2 { font-size:25px; font-weight:550; letter-spacing:-.025em; }
 .ms-app .server-icon { border:1px solid var(--workspace-line); border-radius:10px; background:none; color:var(--workspace-accent); }
-.ms-app .server-rail-card { border:0; border-bottom:1px solid var(--workspace-line); border-radius:0; background:none; box-shadow:none; }
-.ms-app .server-rail-card.active { background:var(--workspace-hover); border-radius:8px; border-bottom-color:transparent; }
-.ms-app .rail-server-name { font-weight:550; }
 .ms-app .grid.kpi-grid { gap:0; border-bottom:1px solid var(--workspace-line); padding-bottom:24px; }
 .ms-app .ms-card.kpi { border:0; border-left:1px solid var(--workspace-line); border-radius:0; background:none; padding:12px 24px; }
 .ms-app .ms-card.kpi:first-child { border-left:0; padding-left:0; }
 .ms-app .kpi-value { font-size:34px; font-weight:450; letter-spacing:-.04em; color:var(--workspace-text); }
 .ms-app .kpi-top,.ms-app .kpi-note { font-size:12px; color:var(--workspace-muted); }
-.ms-app .chart-card { padding:22px 0; border:0; border-top:1px solid var(--workspace-line); border-radius:0; background:none; }
 .ms-app .detail-list { border:0; border-top:1px solid var(--workspace-line); border-radius:0; background:none; }
 .ms-app .detail-row { min-height:44px; border-color:var(--workspace-line); font-size:13px; }
 .ms-app .tabs { gap:20px; padding:0; border:0; border-bottom:1px solid var(--workspace-line); border-radius:0; background:none; }
@@ -243,7 +239,6 @@ html.tmux-native-titlebar body { --workspace-chrome-height:44px; }
 .ms-app .native-transparency-settings input[type=range] { accent-color:var(--workspace-accent); }
 .ms-app .pp-kpi { border:1px solid var(--workspace-line); border-radius:10px; background:var(--workspace-panel); box-shadow:none; }
 .ms-app .pp-kpi::before { display:none; }
-.ms-app .pp-trends,.ms-app .pp-processes { border-color:var(--workspace-line); border-radius:10px; box-shadow:none; }
 .ms-modal-backdrop .ms-modal,.ms-popover,.ms-sidebar-context-menu { background:var(--workspace-panel); color:var(--workspace-text); border-color:var(--workspace-line-strong); border-radius:10px; box-shadow:0 12px 40px rgba(0,0,0,.22); }
 .ms-toast { border-color:var(--workspace-line-strong); background:var(--workspace-panel); color:var(--workspace-text); border-radius:8px; font-size:13px; }
 .cmd-palette-overlay{position:fixed;inset:0;z-index:13000;background:rgba(0,0,0,.4);padding:clamp(48px,14vh,140px) 20px 24px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
