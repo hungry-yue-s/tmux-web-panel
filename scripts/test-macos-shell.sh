@@ -3,9 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PACKAGE_DIR="$PROJECT_DIR/macos/TmuxPanel"
-IDENTITY="${TMUX_PANEL_CODESIGN_IDENTITY:--}"
-TEST_DIRECTORY="$(mktemp -d /tmp/tmux-panel-self-test.XXXXXX)"
+PACKAGE_DIR="$PROJECT_DIR/macos/Anymux"
+IDENTITY="${ANYMUX_CODESIGN_IDENTITY:--}"
+TEST_DIRECTORY="$(mktemp -d /tmp/anymux-self-test.XXXXXX)"
 TEST_BINARY="$TEST_DIRECTORY/self-test"
 
 cleanup() {
@@ -14,9 +14,9 @@ cleanup() {
 trap cleanup EXIT
 
 swiftc \
-  "$PACKAGE_DIR/Sources/TmuxPanel/PanelEndpoint.swift" \
-  "$PACKAGE_DIR/Sources/TmuxPanel/ServiceInspector.swift" \
-  "$PACKAGE_DIR/Sources/TmuxPanel/PanelTitlebarDragView.swift" \
+  "$PACKAGE_DIR/Sources/Anymux/PanelEndpoint.swift" \
+  "$PACKAGE_DIR/Sources/Anymux/ServiceInspector.swift" \
+  "$PACKAGE_DIR/Sources/Anymux/PanelTitlebarDragView.swift" \
   "$PACKAGE_DIR/Tests/main.swift" \
   -o "$TEST_BINARY"
 
@@ -25,9 +25,9 @@ codesign --force --sign "$IDENTITY" "$TEST_BINARY" >/dev/null
 
 SETUP_TEST_BINARY="$TEST_DIRECTORY/setup-self-test"
 swiftc -parse-as-library \
-  "$PACKAGE_DIR/Sources/TmuxPanel/PanelEndpoint.swift" \
-  "$PACKAGE_DIR/Sources/TmuxPanel/ServiceInspector.swift" \
-  "$PACKAGE_DIR/Sources/TmuxPanel/DesktopSetupManager.swift" \
+  "$PACKAGE_DIR/Sources/Anymux/PanelEndpoint.swift" \
+  "$PACKAGE_DIR/Sources/Anymux/ServiceInspector.swift" \
+  "$PACKAGE_DIR/Sources/Anymux/DesktopSetupManager.swift" \
   "$PACKAGE_DIR/Tests/DesktopSetupTests.swift" \
   -o "$SETUP_TEST_BINARY"
 codesign --force --sign "$IDENTITY" "$SETUP_TEST_BINARY" >/dev/null
@@ -40,9 +40,9 @@ else
     echo "Running the Swift source interpreter for supplemental logic checks; its result will not hide the execution failure." >&2
     SETUP_TEST_SOURCE="$TEST_DIRECTORY/setup-interpreted.swift"
     cat \
-      "$PACKAGE_DIR/Sources/TmuxPanel/PanelEndpoint.swift" \
-      "$PACKAGE_DIR/Sources/TmuxPanel/ServiceInspector.swift" \
-      "$PACKAGE_DIR/Sources/TmuxPanel/DesktopSetupManager.swift" > "$SETUP_TEST_SOURCE"
+      "$PACKAGE_DIR/Sources/Anymux/PanelEndpoint.swift" \
+      "$PACKAGE_DIR/Sources/Anymux/ServiceInspector.swift" \
+      "$PACKAGE_DIR/Sources/Anymux/DesktopSetupManager.swift" > "$SETUP_TEST_SOURCE"
     sed '/^@main$/d' "$PACKAGE_DIR/Tests/DesktopSetupTests.swift" >> "$SETUP_TEST_SOURCE"
     printf '\nTask { @MainActor in await DesktopSetupSelfTests.main(); exit(0) }\ndispatchMain()\n' >> "$SETUP_TEST_SOURCE"
     if ! swift "$SETUP_TEST_SOURCE"; then

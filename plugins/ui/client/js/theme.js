@@ -20,10 +20,15 @@ var Theme = (function () {
   var GLASS_KEY = 'tmux_native_glass_intensity';
   var glassIntensity = readGlassIntensity();
 
-  function supportsGlassIntensity() {
+  // The macOS app names its handler tmuxPanelAppearance in versions before the rename.
+  function appearanceHandler() {
     var handlers = window.webkit && window.webkit.messageHandlers;
-    return supportsTransparency() && !!(handlers && handlers.tmuxPanelAppearance
-      && typeof handlers.tmuxPanelAppearance.postMessage === 'function');
+    return handlers && (handlers.anymuxAppearance || handlers.tmuxPanelAppearance) || null;
+  }
+
+  function supportsGlassIntensity() {
+    var handler = appearanceHandler();
+    return supportsTransparency() && !!(handler && typeof handler.postMessage === 'function');
   }
 
   function clampGlassIntensity(value) {
@@ -42,7 +47,7 @@ var Theme = (function () {
 
   function applyGlassIntensity() {
     if (!supportsGlassIntensity()) return;
-    try { window.webkit.messageHandlers.tmuxPanelAppearance.postMessage({ glassIntensity: glassIntensity }); }
+    try { appearanceHandler().postMessage({ glassIntensity: glassIntensity }); }
     catch (_e) {}
   }
 
@@ -55,7 +60,7 @@ var Theme = (function () {
   }
 
   function supportsTransparency() {
-    return window.__tmuxPanelTransparency === true;
+    return window.__anymuxTransparency === true || window.__tmuxPanelTransparency === true;
   }
 
   function clampTransparency(value) {

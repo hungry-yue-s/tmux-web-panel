@@ -13,8 +13,9 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CA_DIR="${CA_DIR:-$HOME/.config/tmux-web-panel/ca}"
-TLS_DIR="${TLS_DIR:-$HOME/.config/tmux-web-panel/tls}"
+. "$SCRIPT_DIR/legacy-env.sh"
+CA_DIR="${CA_DIR:-$(anymux_dir .config)/ca}"
+TLS_DIR="${TLS_DIR:-$(anymux_dir .config)/tls}"
 CA_DAYS="${CA_DAYS:-3650}"
 LEAF_DAYS="${LEAF_DAYS:-825}"
 RENEW_MARGIN="${RENEW_MARGIN:-2592000}" # re-issue 30 days before expiry
@@ -41,7 +42,7 @@ ensure_ca() {
   fi
   if ! openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days "$CA_DAYS" \
       -keyout "$CA_KEY" -out "$CA_CRT" \
-      -subj "/CN=tmux-web-panel local CA" \
+      -subj "/CN=anymux local CA" \
       -addext "basicConstraints=critical,CA:TRUE" \
       -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null; then
     echo "local-ca: failed to generate CA" >&2

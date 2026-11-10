@@ -1,6 +1,6 @@
 import { validateTarget, validateWindowTarget, newId } from './model.js';
 
-const FONT_FAMILY = "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
+const FONT_FAMILY = "'Anymux Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
 
 // xterm's public onData omits the input source. Track that bit so native tty
 // answers still flow while keyboard/IME input is disabled during hydration.

@@ -27,7 +27,7 @@ describe('static assets for slow links', () => {
   let base;
   let http;
   beforeAll(async () => {
-    dir = mkdtempSync(join(tmpdir(), 'twp-static-'));
+    dir = mkdtempSync(join(tmpdir(), 'anymux-static-'));
     mkdirSync(join(dir, 'js'));
     mkdirSync(join(dir, 'fonts'));
     writeFileSync(join(dir, 'js', 'fixture-app.js'), 'console.log(1)');
@@ -151,6 +151,6 @@ describe('terminal font slices at runtime', () => {
     expect(loads).toHaveLength(afterFirst);
     expect(loads.every((l) => l.endsWith('@400'))).toBe(true);
     await fonts.ensure('中', 700);
-    expect(loads.at(-1)).toMatch(/tpm-700-han-a/);
+    expect(loads.at(-1)).toMatch(/amm-700-han-a/);
   });
 });

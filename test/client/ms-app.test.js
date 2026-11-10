@@ -2,6 +2,7 @@ import { indexSource as composedIndex } from '../helpers/pages.js';
 import { describe, it, expect, vi } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { loadSlots } from '../helpers/slots.js';
 
 const MS_APP = readFileSync('plugins/ui/client/js/ms-app.js', 'utf8');
 const INDEX = composedIndex();
@@ -443,36 +444,9 @@ describe('single Window Bar', () => {
   });
 });
 
-describe('index.html cache busting', () => {
-  const versionOf = (path) => {
-    const match = new RegExp(`${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\?v=(\\d+)`).exec(INDEX);
-    return match ? Number(match[1]) : null;
-  };
-
-  it('carries a version on every file changed in this work', () => {
-    // A stale bundle in the user's browser silently reintroduces old behavior.
-    for (const path of [
-      '/css/style.css',
-      '/js/terminal.js',
-      '/js/panes.js',
-      '/js/terminal-target.js',
-      '/js/app-shell.js',
-      '/js/servers.js',
-      '/js/ms-app.js',
-      '/js/router.js',
-      '/js/store.js',
-      '/js/api.js',
-    ]) {
-      expect(versionOf(path), path).toBeGreaterThanOrEqual(2);
-    }
-  });
-
-  it('bumped the two long-lived files past their previous versions', () => {
-    expect(versionOf('/css/style.css')).toBeGreaterThan(17);
-    expect(versionOf('/js/terminal.js')).toBeGreaterThan(11);
-    expect(versionOf('/js/panes.js')).toBeGreaterThan(2);
-  });
-
+// Cache busting is the ui plugin's: it rewrites every local URL to a content
+// hash when it serves the page (test/panel.test.js), so no ?v= to keep up.
+describe('index.html script order', () => {
   it('loads the terminal adapter before the modules that use it', () => {
     const order = ['/js/terminal-target.js', '/js/panes.js', '/js/terminal.js'];
     const positions = order.map((path) => INDEX.indexOf(path));
@@ -494,9 +468,10 @@ describe('index.html cache busting', () => {
     }
   });
 
-  it('keeps the legacy shell present but hidden', () => {
-    expect(INDEX).toContain('<div id="legacy-shell" hidden>');
-    expect(INDEX).toContain('id="content"');
+  it('is the multi-server shell alone, with no hidden legacy shell', () => {
+    expect(INDEX).not.toContain('legacy-shell');
+    expect(INDEX).not.toContain('id="content"');
+    expect(INDEX).not.toContain('id="main-layout"');
     expect(INDEX).toContain('class="ms-app sidebar-collapsed"');
   });
 
@@ -543,6 +518,7 @@ const STATUS_DOM = `<!DOCTYPE html><html><body>
 function loadStatusShell({ perfPanel = null, agentHub = null, theme = null, auth = null } = {}) {
   const dom = new JSDOM(STATUS_DOM, { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window;
+  loadSlots(win);
   win.eval(ROUTER_SRC);
   win.eval(STORE_SRC);
   win.eval(SHELL_SRC);
@@ -757,12 +733,12 @@ describe('MsApp mobile workspace action', () => {
     ctx.win.FilePreview = { openFile: vi.fn() };
     const button = ctx.document.createElement('button');
     await ctx.MsApp._handleAction('mobile-files', button);
-    expect(ctx.win.FilePreview.openFile).toHaveBeenCalledWith('.', '%1');
+    expect(ctx.win.FilePreview.openFile).toHaveBeenCalledWith('.', '%1', { source: { serverId: 'local', paneId: '%1' } });
     // A remote server's files are read on that machine, so the action works there too.
     route.params.serverId = 'api-linux';
     ctx.Store.setWorkspace('api-linux', { sessions: [{ id: '$1', windows: [{ id: '@0', panes: [{ id: '%4' }] }] }] });
     await ctx.MsApp._handleAction('mobile-files', button);
-    expect(ctx.win.FilePreview.openFile).toHaveBeenLastCalledWith('.', '%4');
+    expect(ctx.win.FilePreview.openFile).toHaveBeenLastCalledWith('.', '%4', { source: { serverId: 'api-linux', paneId: '%4' } });
     ctx.win.close();
   });
 
@@ -1948,7 +1924,7 @@ describe('MsApp PerfPanel lifecycle', () => {
 
     await ctx.MsApp._onRoute({ name: 'settings', params: {} });
     expect(hub.calls.stopped).toBeGreaterThan(0);
-    expect(ctx.MsApp._agentHubMounted).toBe(false);
+    expect(ctx.MsApp._mountedSection).toBe(null);
   });
 
   it('stops PerfPanel polling when leaving the route', async () => {
@@ -1961,7 +1937,7 @@ describe('MsApp PerfPanel lifecycle', () => {
 
     expect(startedWhileMounted).toBeGreaterThan(0);
     expect(perf.calls.stopped).toBeGreaterThan(0);
-    expect(ctx.MsApp._perfPanelMounted).toBe(false);
+    expect(ctx.MsApp._mountedSection).toBe(null);
   });
 
   it('mounts the full performance panel for a remote server, pointed at that server', async () => {
@@ -1995,7 +1971,7 @@ describe('MsApp PerfPanel lifecycle', () => {
   it('does not claim to be mounted when PerfPanel is missing', async () => {
     const ctx = loadStatusShell();
     await ctx.MsApp._onRoute({ name: 'server', params: { serverId: 'local', section: 'performance' } });
-    expect(ctx.MsApp._perfPanelMounted).toBeFalsy();
+    expect(ctx.MsApp._mountedSection).toBeFalsy();
     expect(ctx.document.getElementById('ms-view').textContent).toContain('性能组件未加载');
   });
 });
@@ -2072,8 +2048,8 @@ describe('MsApp settings interactions', () => {
     await ctx.MsApp._onRoute({ name: 'settings', params: {} });
 
     const text = ctx.document.getElementById('ms-view').textContent;
-    const repository = ctx.document.querySelector('a[href="https://github.com/hungry-yue-s/tmux-web-panel"]');
-    expect(text).toContain('Tmux Web Panel');
+    const repository = ctx.document.querySelector('a[href="https://github.com/hungry-yue-s/anymux"]');
+    expect(text).toContain('Anymux');
     expect(text).toContain('v1.0.0');
     expect(repository).toBeTruthy();
     expect(repository.textContent).toContain('GitHub');

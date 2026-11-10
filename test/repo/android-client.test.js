@@ -42,8 +42,8 @@ describe('Android workspace integration', () => {
 
   it('adapts existing text and PNG clipboard actions to the native channel', () => {
     const messages = setup();
-    win.webkit.messageHandlers.tmuxPanelClipboard.postMessage({ text: 'echo hello' });
-    win.webkit.messageHandlers.tmuxPanelClipboard.postMessage({ pngBase64: 'YWJj' });
+    win.webkit.messageHandlers.anymuxClipboard.postMessage({ text: 'echo hello' });
+    win.webkit.messageHandlers.anymuxClipboard.postMessage({ pngBase64: 'YWJj' });
     expect(messages.slice(-2)).toEqual([
       { type: 'clipboard', text: 'echo hello' }, { type: 'clipboard', pngBase64: 'YWJj' },
     ]);

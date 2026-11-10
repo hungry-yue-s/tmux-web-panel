@@ -1,17 +1,24 @@
 // One running panel: a root context, and the loader that mounts the profile.
 
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { Context } from 'cordis';
 import { Loader } from './loader.js';
 import { resolveEntries } from './profile.js';
+import { appDir } from '../lib/legacy-names.js';
 
 /**
  * Where the user's own layer lives: <home>/patch.yml, next to the panel's
- * other settings (TMUX_PANEL_CONFIG_DIR moves both; TWP_HOME only the patch).
+ * other settings (ANYMUX_CONFIG_DIR moves both; ANYMUX_HOME only the patch).
  */
 export function defaultHome(env = process.env) {
-  return env.TWP_HOME || env.TMUX_PANEL_CONFIG_DIR || join(homedir(), '.config', 'tmux-web-panel');
+  return env.ANYMUX_HOME || env.ANYMUX_CONFIG_DIR || appDir('config');
+}
+
+/**
+ * The profile when none is named: a Node-only installation (NODE_ONLY=1, set
+ * by the service installers) runs `node`, everything else `panel`.
+ */
+export function defaultProfile(env = process.env) {
+  return env.NODE_ONLY === '1' ? 'node' : 'panel';
 }
 
 /**
@@ -19,7 +26,7 @@ export function defaultHome(env = process.env) {
  * Resolves once every entry has loaded, failed, or is waiting for a service no
  * entry provides; `loader.status()` tells which.
  */
-export async function createApp({ profile = 'panel', patches = [], home = defaultHome(), importer } = {}) {
+export async function createApp({ profile = defaultProfile(), patches = [], home = defaultHome(), importer } = {}) {
   const assembled = await resolveEntries({ profile, patches, home });
   const ctx = new Context();
   const fiber = ctx.plugin(Loader, { entries: assembled.entries, importer });

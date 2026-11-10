@@ -5,7 +5,8 @@
 function _postNativeClipboard(text) {
   try {
     var handlers = window.webkit && window.webkit.messageHandlers;
-    var handler = handlers && handlers.tmuxPanelClipboard;
+    // tmuxPanelClipboard: a native app from before the rename.
+    var handler = handlers && (handlers.anymuxClipboard || handlers.tmuxPanelClipboard);
     if (!handler || typeof handler.postMessage !== 'function') return false;
     handler.postMessage({ text: String(text) });
     return true;
@@ -303,8 +304,7 @@ var terminalState = {
   resizeObserver: null,
   isFullscreen: false,
   ownsBrowserFullscreen: false,
-  // The element renderTerminal was given. In the multi-server shell this is not
-  // #content, which is hidden, so re-renders must go through _terminalContainer.
+  // The element renderTerminal was given; re-renders go through _terminalContainer.
   mountContainer: null,
 };
 
@@ -314,15 +314,12 @@ function _updateTerminalTheme() {
 document.addEventListener('tmux-theme-change', _updateTerminalTheme);
 document.addEventListener('tmux-transparency-change', _updateTerminalTheme);
 
-/**
- * The element the terminal is mounted in. Falls back to the legacy #content so
- * the old shell keeps working.
- */
+/** The element the terminal is mounted in, while it is still in the page. */
 function _terminalContainer() {
   if (terminalState.mountContainer && terminalState.mountContainer.isConnected) {
     return terminalState.mountContainer;
   }
-  return document.getElementById('content');
+  return null;
 }
 
 // === Cleanup ===
@@ -651,7 +648,7 @@ var _terminalMode = (function () {
 var MOBILE_BASE_FONT_SIZE = 13;
 var MOBILE_MIN_FONT_SIZE = 11;
 var DESKTOP_BASE_FONT_SIZE = 14;
-var TERMINAL_FONT_FAMILY = "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
+var TERMINAL_FONT_FAMILY = "'Anymux Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
 /** How long a new terminal waits for the core font slice before drawing with the fallback. */
 var CORE_FONT_WAIT_MS = 1500;
 /** How long a socket may take to bring up its attach client before it counts as dropped. */
@@ -664,8 +661,8 @@ function _coreFontWait() {
   if (typeof TerminalFonts !== 'undefined') return TerminalFonts.coreReady(CORE_FONT_WAIT_MS);
   if (!document.fonts || !document.fonts.load) return Promise.resolve(false);
   var load = Promise.all([
-    document.fonts.load("400 14px 'Tmux Panel Mono'"),
-    document.fonts.load("700 14px 'Tmux Panel Mono'"),
+    document.fonts.load("400 14px 'Anymux Mono'"),
+    document.fonts.load("700 14px 'Anymux Mono'"),
   ]).then(function () { return true; }, function () { return false; });
   return Promise.race([load, new Promise(function (resolve) {
     setTimeout(function () { resolve(false); }, CORE_FONT_WAIT_MS);
@@ -1026,8 +1023,6 @@ function renderTerminal(container, known) {
   container.innerHTML =
     '<div class="terminal-view">' +
     '<div class="terminal-header">' +
-    '<button type="button" class="btn terminal-tool-btn terminal-back-btn" title="返回窗口列表" aria-label="返回窗口列表">' +
-    _terminalToolIcon('<path d="m15 18-6-6 6-6"/><path d="M9 12h10"/>') + '</button>' +
     '<div class="terminal-header-pills"></div>' +
     '<span class="terminal-header-title"></span>' +
     '<div class="terminal-header-actions" role="toolbar" aria-label="终端控制">' +
@@ -1077,11 +1072,6 @@ function renderTerminal(container, known) {
   // Set title
   titleEl.textContent = escapeHtml(state.currentSession) + ' : ' + state.currentWindow;
 
-  // Back button
-  view.querySelector('.terminal-back-btn').addEventListener('click', function () {
-    _backToWindows();
-  });
-
   // Font size buttons
   view.querySelectorAll('.terminal-font-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
@@ -1103,15 +1093,10 @@ function renderTerminal(container, known) {
   }
 
   view.querySelector('.terminal-refresh-btn').addEventListener('click', function () {
-    // In the multi-server shell, refetch this server's workspace and re-render
-    // in place. render()/updateSidebar() would jump back to the hidden old UI.
+    // Refetch this server's workspace and re-render in place.
     if (window.MsApp && typeof window.MsApp.refreshCurrentTerminal === 'function') {
       window.MsApp.refreshCurrentTerminal();
-      return;
     }
-    _sidebarSessionKey = '';
-    render();
-    updateSidebar();
   });
 
 
@@ -1208,7 +1193,7 @@ function renderTerminal(container, known) {
     if (state.currentPane) {
       var url = '/terminal.html?pane=' + encodeURIComponent(state.currentPane);
       var nativeWindow = window.webkit && window.webkit.messageHandlers
-        && window.webkit.messageHandlers.tmuxPanelOpenWindow;
+        && (window.webkit.messageHandlers.anymuxOpenWindow || window.webkit.messageHandlers.tmuxPanelOpenWindow);
       if (nativeWindow && typeof nativeWindow.postMessage === 'function') {
         nativeWindow.postMessage({ url: url, title: 'Tmux Terminal', width: 800, height: 600 });
       } else {
@@ -1304,7 +1289,7 @@ function _mountTerminal(termContainer, nozoom) {
 
   term.loadAddon(fitAddon);
   // URL + file-path links are both handled by FilePreview's unified provider
-  // (public/js/link-detect.js), which merges soft-wrapped rows — something the
+  // (link-detect.js, terminal plugin), which merges soft-wrapped rows — something the
   // old WebLinksAddon (per display row) could not do. No web-links addon.
   if (typeof FilePreview !== 'undefined' && TerminalTarget.hasNode()) {
     // Paths resolve on the pane's own machine: FilePreview calls go through the
@@ -2125,46 +2110,4 @@ function _showReconnectOverlay(term, paneId, nozoom) {
   }
 
   terminalState.reconnectTimer = setTimeout(tryReconnect, baseDelay);
-}
-
-// === Navigate back to windows and scroll to current window ===
-
-function _backToWindows() {
-  var windowIndex = state.currentWindow;
-  cleanupTerminal();
-  navigate('windows', { currentSession: state.currentSession });
-
-  // After render, scroll to the window card that was just open
-  if (windowIndex != null) {
-    _scrollToWindowCard(windowIndex);
-  }
-}
-
-function _scrollToWindowCard(windowIndex) {
-  // The render is async (fetches sessions then windows), so poll briefly
-  var attempts = 0;
-  var timer = setInterval(function () {
-    var card = document.querySelector('.swipe-container[data-window-index="' + windowIndex + '"]');
-    if (card) {
-      clearInterval(timer);
-      // Scroll only #content container, not the entire page
-      // (scrollIntoView scrolls all ancestors including body, pushing topbar out of view)
-      var contentEl = document.getElementById('content');
-      if (contentEl) {
-        var cardRect = card.getBoundingClientRect();
-        var contentRect = contentEl.getBoundingClientRect();
-        var targetTop = contentEl.scrollTop + (cardRect.top - contentRect.top) - (contentEl.clientHeight - card.offsetHeight) / 2;
-        contentEl.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
-      }
-      // Brief highlight
-      card.style.outline = '2px solid var(--accent-blue)';
-      card.style.outlineOffset = '2px';
-      card.style.borderRadius = '10px';
-      setTimeout(function () {
-        card.style.outline = '';
-        card.style.outlineOffset = '';
-      }, 1500);
-    }
-    if (++attempts > 20) clearInterval(timer);
-  }, 100);
 }

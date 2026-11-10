@@ -6,7 +6,7 @@ node_modules/
 .claude/worktrees/
 docs/superpowers/
 /dist/
-/macos/TmuxPanel/.build/
+/macos/Anymux/.build/
 
 # Root-level temp screenshots (project screenshots live in plugins/ui/client/screenshots/)
 /*.png

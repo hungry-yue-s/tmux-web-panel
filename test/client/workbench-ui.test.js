@@ -3,9 +3,11 @@ import { JSDOM } from 'jsdom';
 import { createWorkbench } from '../../plugins/workbench/client/index.js';
 
 const remote = { instanceId: '42:123', sessionId: '$1', windowId: '@1', paneId: '%1' };
-function fixture() {
+function fixture({ copiedTab, locks } = {}) {
   const dom = new JSDOM('<main id="host"></main><nav class="mobile-dock"></nav>', { url: 'https://panel.test' });
   const win = dom.window; const sessions = [];
+  if (copiedTab) win.sessionStorage.setItem('twp_native_tab', copiedTab);
+  if (locks) Object.defineProperty(win.navigator, 'locks', { value: locks });
   win.Api = { nodeUrl: (server, path) => '/n/' + server + path, workspaceUrl: (server, path) => '/n/' + server + '/api/workspace' + path,
     get: vi.fn(async () => ({ available: true, protocol: 1 })), post: vi.fn(async (_url, body) => ({ ...remote, requestId: body.requestId })), del: vi.fn() };
   win.Router = { go: vi.fn() }; win.MobileUI = { isMobile: () => false };
@@ -27,6 +29,47 @@ function fixture() {
 }
 
 describe('native workbench UI', () => {
+  it.each(['unavailable', 'rejected'])('keeps copied browser tabs on independent clients when Web Locks are %s', async mode => {
+    const options = { copiedTab: 'copied-tab', ...(mode === 'rejected' ? { locks: { request: () => Promise.reject(new Error('unavailable')) } } : {}) };
+    const first = fixture(options), second = fixture(options);
+    for (const f of [first, second]) {
+      const view = await f.api.create({ serverId: 'dev', ...remote, clientId: 'shared-client' });
+      await f.api.render('dev', view.id, { container: f.host });
+    }
+    expect(first.sessions[0].target.clientId).not.toBe(second.sessions[0].target.clientId);
+    first.close(); second.close();
+  });
+
+  it('splits the freshly confirmed native window and never writes when focus is unknown', async () => {
+    const f = fixture();
+    const view = await f.api.create({ serverId: 'dev', ...remote });
+    await f.api.render('dev', view.id, { container: f.host });
+    f.sessions[0].requestContext = async () => {
+      f.sessions[0].context = { ...f.sessions[0].context, windowId: '@9', paneId: '%8' };
+    };
+    await f.api.split('horizontal');
+    expect(f.win.Api.post).toHaveBeenLastCalledWith('/n/dev/api/workspace/windows/%409/panes', { paneId: '%8', direction: 'horizontal' });
+    f.win.Api.post.mockClear();
+    f.sessions[0].requestContext = async () => { throw new Error('native focus unknown'); };
+    await expect(f.api.split('vertical')).rejects.toThrow('native focus unknown');
+    expect(f.win.Api.post).not.toHaveBeenCalled(); f.close();
+  });
+  it('omits the disabled keypad and rejects its unavailable upload action', async () => {
+    const f = fixture();
+    f.win.PanelSlots = { hasPlugin: id => !['keypad', 'upload'].includes(id) };
+    f.win.MobileUI.isMobile = () => true;
+    f.win.FabDrawer = { mount: () => { throw new Error('disabled keypad must not mount'); } };
+    const view = await f.api.create({ serverId: 'dev', ...remote });
+    await f.api.render('dev', view.id, { container: f.host });
+    expect(f.host.querySelector('.fab-tool')).toBeNull();
+    expect(f.host.querySelector('.mobile-terminal-keyboard')).not.toBeNull();
+    f.close();
+  });
+  it('does not request native APIs when that server disabled the native backend', async () => {
+    const f = fixture(); f.win.PanelSlots = { hasPlugin: id => id !== 'control-terminal' };
+    await expect(f.api.create({ serverId: 'dev', ...remote })).rejects.toThrow('原生终端插件');
+    expect(f.win.Api.get).not.toHaveBeenCalled(); f.close();
+  });
   it('opens any existing window without creating/moving panes and restores the same client on remount', async () => {
     const f = fixture();
     const view = await f.api.create({ serverId: 'dev', ...remote, title: '任务' });

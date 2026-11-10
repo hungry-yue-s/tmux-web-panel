@@ -19,9 +19,11 @@
   // Reuse the existing terminal/preview clipboard call sites. Transparency stays web-only.
   window.webkit = window.webkit || {};
   window.webkit.messageHandlers = window.webkit.messageHandlers || {};
-  window.webkit.messageHandlers.tmuxPanelClipboard = {
+  window.webkit.messageHandlers.anymuxClipboard = {
     postMessage: function (value) { send(Object.assign({ type: 'clipboard' }, value)); }
   };
+  // The name a panel from before the rename looks for.
+  window.webkit.messageHandlers.tmuxPanelClipboard = window.webkit.messageHandlers.anymuxClipboard;
 
   function settings() {
     var host = document.getElementById('ms-view');

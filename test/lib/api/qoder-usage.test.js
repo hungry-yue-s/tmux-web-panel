@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { join } from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import { createQoderUsageReader } from '../../../lib/agent-providers/qoder-usage.js';
@@ -38,7 +39,7 @@ describe('read-only Qoder resource package usage', () => {
     expect(requests.map((frame) => frame.type)).toEqual(['control_request', 'control_request']);
     expect(requests.map((frame) => frame.request.type)).toEqual(['initialize', 'get_usage_info']);
     const [binary, args, options] = spawn.mock.calls[0];
-    expect(binary).toBe('/test-home/.local/bin/qodercli');
+    expect(binary).toBe(join('/test-home', '.local', 'bin', 'qodercli'));
     expect(options.cwd).toBe('/test-home');
     expect(args).toEqual(expect.arrayContaining(['--no-session-persistence', '--strict-mcp-config',
       '--mcp-config', '{"mcpServers":{}}', '--setting-sources', '', '--tools', '', '--disable-builtin-skills']));

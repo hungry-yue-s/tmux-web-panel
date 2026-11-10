@@ -1,0 +1,162 @@
+/* notifications's styles, moved out of the shell's style.css (plugins/ui/client/css).
+ * They load right after it (page.json order 50.6), each rule in its old
+ * order and @media, so the cascade is what it was. */
+
+.notification-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.notification-clear-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.notification-list {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.notification-item {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  border-left: 3px solid var(--accent-yellow);
+}
+
+.notification-item:hover {
+  background: var(--bg-hover);
+}
+
+.notification-item-read {
+  opacity: 0.5;
+  border-left-color: transparent;
+}
+
+.notification-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.notification-item-target {
+  font-size: 0.8rem;
+  color: var(--text-primary);
+}
+
+.notification-item-time {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.notification-item-command {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.notification-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.notification-mobile-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+}
+
+.notification-back-btn {
+  background: none;
+  border: none;
+  color: var(--accent-blue);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+@media (max-width: 767px) {
+  .notification-sheet-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 999;
+    animation: modal-fade-in 0.2s ease;
+  }
+
+  .notification-panel.notification-mobile-sheet {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    width: 100%;
+    max-width: 100%;
+    max-height: 75vh;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.4);
+    animation: sheetSlideUp 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+
+  .notification-mobile-sheet .notification-panel-header {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .notification-mobile-sheet .notification-panel-header::before {
+    content: '';
+    display: block;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    margin: 0 auto 10px;
+  }
+
+  .notification-mobile-sheet .notification-item {
+    min-height: 44px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+}
+
+.notification-panel-header {
+  min-height: 48px;
+  padding: 10px 14px;
+  border-bottom-color: var(--ui-border-soft);
+}
+
+.notification-panel-title {
+  color: var(--text-primary);
+  font-size: .9rem;
+}
+
+.notification-clear-btn {
+  min-height: 30px;
+  padding: 0 9px;
+  border-radius: var(--ui-radius-xs);
+}
+
+.notification-clear-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.notification-item {
+  min-height: 58px;
+  padding: 10px 14px;
+  border-bottom-color: var(--ui-border-soft);
+  border-left-width: 2px;
+}

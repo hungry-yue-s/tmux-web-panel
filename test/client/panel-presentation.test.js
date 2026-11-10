@@ -3,10 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
-const engine = readFileSync('plugins/ui/client/js/panel-presentation.js', 'utf8');
+const engine = readFileSync('plugins/files/client/js/panel-presentation.js', 'utf8');
 const themes = readFileSync('plugins/ui/client/js/theme.js', 'utf8');
 const example = readFileSync(repoPath('skills/panel-presentation/assets/example.html'), 'utf8');
-const html = '<!doctype html><meta name="tmux-panel-presentation" content="1">'
+const html = '<!doctype html><meta name="anymux-presentation" content="1">'
   + '<input value="initial"><details open><summary>Details</summary>Content</details>'
   + '<script>window.runs = (window.runs || 0) + 1;</script>';
 const windows = [];
@@ -16,8 +16,8 @@ function host({ native = false, transparency = 0, glass = 100 } = {}) {
   const win = new JSDOM('', { url: 'https://panel.test', runScripts: 'outside-only' }).window;
   windows.push(win);
   if (native) {
-    win.__tmuxPanelTransparency = true;
-    win.webkit = { messageHandlers: { tmuxPanelAppearance: { postMessage: vi.fn() } } };
+    win.__anymuxTransparency = true;
+    win.webkit = { messageHandlers: { anymuxAppearance: { postMessage: vi.fn() } } };
   }
   win.localStorage.setItem('tmux_native_transparency', String(transparency));
   win.localStorage.setItem('tmux_native_glass_intensity', String(glass));
@@ -95,7 +95,7 @@ describe('panel presentation protocol', () => {
   it('leaves ordinary HTML, unsupported versions and unrelated metadata untouched', () => {
     const { frame, engine } = host();
     for (const content of ['<h1>Own design</h1>', html.replace('content="1"', 'content="2"'),
-      '<script>var text = \'<meta name="tmux-panel-presentation" content="1">\';</script>']) {
+      '<script>var text = \'<meta name="anymux-presentation" content="1">\';</script>']) {
       engine.mount(frame, content);
       expect(frame.srcdoc).toBe(content);
       expect(frame.hasAttribute('data-panel-presentation')).toBe(false);

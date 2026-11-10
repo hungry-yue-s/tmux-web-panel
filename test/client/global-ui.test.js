@@ -1,8 +1,8 @@
-import { indexSource as composedIndex } from '../helpers/pages.js';
+import { indexSource as composedIndex, pageStyles } from '../helpers/pages.js';
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
-const styles = readFileSync('plugins/ui/client/css/style.css', 'utf8');
+const styles = pageStyles();
 const appSource = readFileSync('plugins/ui/client/js/app.js', 'utf8');
 const indexSource = composedIndex();
 
@@ -16,23 +16,11 @@ describe('global UI system', () => {
     expect(styles).toContain('@media (prefers-reduced-motion: reduce)');
   });
 
-  it('uses reusable SVG icons for sidebar actions and collapse states', () => {
-    expect(appSource).toContain('function _appIcon(name)');
-    expect(appSource).toContain('class="app-icon"');
-    expect(appSource).toContain("_appIcon('notifications')");
-    expect(appSource).toContain("_appIcon('fullscreen')");
-    expect(appSource).toContain("_sidebarCollapseContent(collapsed)");
-    expect(indexSource.match(/class="app-icon"/g)).toHaveLength(4);
-    expect(indexSource).toContain('id="btn-app-fullscreen"');
-  });
-
   it('keeps desktop and mobile navigation layouts explicitly covered', () => {
-    expect(styles).toMatch(/#sidebar\.collapsed[\s\S]*?width:\s*52px/);
     expect(styles).toContain('@media (max-width: 767px)');
-    expect(styles).toMatch(/#topbar[\s\S]*?min-height:\s*52px/);
-    expect(indexSource).toMatch(/href="\/css\/style\.css\?v=\d+"/);
-    expect(indexSource).toContain('/js/app-fullscreen.js?v=2');
-    expect(indexSource).toMatch(/src="\/js\/app\.js\?v=\d+"/);
+    expect(indexSource).toContain('class="mobile-dock"');
+    expect(indexSource).toMatch(/href="\/css\/style\.css(\?v=\d+)?"/);
+    expect(indexSource).toMatch(/src="\/js\/app\.js(\?v=\d+)?"/);
   });
 
   it('keeps the mobile terminal header compact while exposing a workspace sheet', () => {
@@ -50,7 +38,9 @@ describe('global UI system', () => {
     expect(styles).toMatch(/@media \(max-width:\s*767px\)[\s\S]*?\.ms-app\.mode-status \.ms-main,[\s\S]*?height:\s*calc\(100dvh - env\(safe-area-inset-bottom, 0px\)\);[\s\S]*?overflow-y:\s*auto/);
     expect(styles).toMatch(/@media \(max-width:\s*767px\)[\s\S]*?\.ms-app\.mode-terminal \.ms-main\s*\{[\s\S]*?height:\s*calc\(100dvh - env\(safe-area-inset-bottom, 0px\)\);[\s\S]*?display:\s*flex;[\s\S]*?flex-direction:\s*column;[\s\S]*?overflow:\s*hidden/);
     expect(styles).toMatch(/\.ms-content\.terminal-mode\s*\{[\s\S]*?width:\s*100%;[\s\S]*?max-width:\s*100%;[\s\S]*?min-width:\s*0;[\s\S]*?flex:\s*1 1 auto/);
-    expect(styles).toMatch(/\.ms-content\.terminal-mode \.terminal-stage,[\s\S]*?\.ms-content\.terminal-mode \.terminal-view,[\s\S]*?\.ms-content\.terminal-mode \.terminal-container\s*\{[\s\S]*?width:\s*100%;[\s\S]*?min-width:\s*0;/);
+    // The shell sizes the stage and view, the terminal plugin its container.
+    expect(styles).toMatch(/\.ms-content\.terminal-mode \.terminal-stage,\s*\.ms-content\.terminal-mode \.terminal-view\s*\{[\s\S]*?width:\s*100%;[\s\S]*?min-width:\s*0;/);
+    expect(styles).toMatch(/\.ms-content\.terminal-mode \.terminal-container\s*\{\s*width:\s*100%;[\s\S]*?min-width:\s*0;/);
   });
 
   it('keeps the new-shell terminal inside the exact remaining content height', () => {

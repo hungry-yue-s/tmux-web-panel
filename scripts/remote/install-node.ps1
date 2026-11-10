@@ -1,19 +1,19 @@
-# Installs tmux-web-panel on a Windows machine another panel manages over SSH.
+# Installs anymux on a Windows machine another panel manages over SSH.
 #
 # Not run directly: the managing panel uploads the source archive over SFTP,
 # then runs this script with `powershell -EncodedCommand` (plain words in any
 # login shell), with these variables prepended:
-#   $TwpArchive  archive path relative to the profile (.cache/tmux-web-panel/panel.tgz)
-#   $TwpPorts    ports to try for the panel, first free wins
+#   $AnymuxArchive  archive path relative to the profile (.cache/anymux/panel.tgz)
+#   $AnymuxPorts    ports to try for the panel, first free wins
 #
 # Result: scheduled tasks run the panel on 127.0.0.1 in node-only mode,
 # reachable only through the managing panel's SSH tunnel. Lines starting with
-# ">> " are progress steps; "TWP_RESULT=" is the final status.
+# ">> " are progress steps; "ANYMUX_RESULT=" is the final status.
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 function Log([string]$Message) { Write-Output ">> $Message" }
-function Done([string]$State) { Write-Output "TWP_RESULT=$State" }
+function Done([string]$State) { Write-Output "ANYMUX_RESULT=$State" }
 function Fail([string]$Message) { Write-Output "!! $Message"; Done 'failed'; exit 1 }
 
 # Native tools write progress to stderr; that must not abort the script. Their
@@ -29,10 +29,10 @@ function Refresh-Path {
   $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
 }
 
-$Prefix = Join-Path $env:USERPROFILE '.local\share\tmux-web-panel'
+$Prefix = Join-Path $env:USERPROFILE '.local\share\anymux'
 $App = Join-Path $Prefix 'app'
-$Archive = Join-Path $env:USERPROFILE $TwpArchive
-if (-not (Test-Path -LiteralPath $Archive)) { Fail "archive missing: $TwpArchive" }
+$Archive = Join-Path $env:USERPROFILE $AnymuxArchive
+if (-not (Test-Path -LiteralPath $Archive)) { Fail "archive missing: $AnymuxArchive" }
 
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 $elevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -77,19 +77,30 @@ try {
 
 $busy = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | ForEach-Object { $_.LocalPort })
 $port = $null
-foreach ($candidate in ($TwpPorts -split ' ')) {
+foreach ($candidate in ($AnymuxPorts -split ' ')) {
   if ($candidate -and -not ($busy -contains [int]$candidate)) { $port = [int]$candidate; break }
 }
-if (-not $port) { Fail "no free port among: $TwpPorts" }
+if (-not $port) { Fail "no free port among: $AnymuxPorts" }
 
 Log "install service on 127.0.0.1:$port"
 $optional = @()
-if ($env:TWP_SKIP_MOSH -eq '1' -or $env:TMUX_PANEL_SKIP_MOSH -eq '1') { $optional += '-SkipMosh' }
+# TMUX_PANEL_SKIP_MOSH: the name before the rename, still honored.
+if ($env:ANYMUX_SKIP_MOSH -eq '1' -or $env:TMUX_PANEL_SKIP_MOSH -eq '1') { $optional += '-SkipMosh' }
 $code = Native { & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $App 'scripts\install-service.ps1') install -ListenHost 127.0.0.1 -Port $port -NodeOnly -NodeBin $node @optional }
 if ($code -ne 0) { Fail 'install-service.ps1 failed' }
 
+# The copy installed before the rename; install-service.ps1 has replaced its tasks.
+$legacyPrefix = Join-Path $env:USERPROFILE '.local\share\tmux-web-panel'
+$legacyApp = Join-Path $legacyPrefix 'app'
+if (Test-Path -LiteralPath $legacyApp) {
+  Remove-Item -Recurse -Force -LiteralPath $legacyApp -ErrorAction SilentlyContinue
+  if (-not (Get-ChildItem -LiteralPath $legacyPrefix -Force -ErrorAction SilentlyContinue)) {
+    Remove-Item -LiteralPath $legacyPrefix -Force -ErrorAction SilentlyContinue
+  }
+}
+
 Log 'wait for the pairing file'
-$pairing = Join-Path $env:USERPROFILE '.config\tmux-web-panel\node.json'
+$pairing = Join-Path $env:USERPROFILE '.config\anymux\node.json'
 for ($i = 0; $i -lt 30; $i++) {
   if (Test-Path -LiteralPath $pairing) { Done 'succeeded'; exit 0 }
   Start-Sleep -Seconds 1

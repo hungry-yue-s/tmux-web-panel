@@ -1,5 +1,4 @@
 (function (global) {
-  var LOCAL_MONITOR_SECTIONS = ['performance', 'agents'];
   var ICONS = {
     terminal: '<svg class="ms-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>',
     gauge: '<svg class="ms-icon" viewBox="0 0 24 24"><path d="M20 13a8 8 0 1 0-16 0"/><path d="m12 13 4-4"/><path d="M5 19h14"/></svg>',
@@ -60,6 +59,9 @@
 
   function el(id) { return global.document.getElementById(id); }
   function mobileLayout() { return global.MobileUI ? global.MobileUI.isMobile() : global.innerWidth < 768; }
+
+  function terminalViews() { return global.PanelSlots?.terminalViews?.list() || []; }
+  function terminalView(route) { return global.PanelSlots?.terminalViews?.get(route?.name); }
 
   var AppShell = {
     _started: false,
@@ -122,25 +124,38 @@
       return 'local';
     },
 
+    /** What the plugins on this page put on a server's page (PanelSlots), hidden or not. */
+    _serverSections: function () {
+      return global.PanelSlots ? global.PanelSlots.serverSections.list() : [];
+    },
+
+    /** The status pages the page-visibility settings leave visible, in tab order. */
     localStatusSections: function () {
       var ui = global.Store.getState().ui;
-      var visibility = { performance: ui.showPerformance, agents: ui.showClaude || ui.showCodex };
-      return LOCAL_MONITOR_SECTIONS.filter(function (section) { return visibility[section]; });
+      return this._serverSections().filter(function (entry) {
+        return entry.monitor && (!entry.visible || entry.visible(ui));
+      }).map(function (entry) { return entry.id; });
+    },
+
+    /** Every section a server's page shows, in tab order: visible status pages and the rest. */
+    statusSections: function () {
+      var ui = global.Store.getState().ui;
+      return this._serverSections().filter(function (entry) {
+        return !entry.monitor || !entry.visible || entry.visible(ui);
+      });
     },
 
     defaultStatusSection: function () {
-      return this.localStatusSections()[0] || 'performance';
+      var shown = this.statusSections();
+      return this.localStatusSections()[0] || (shown[0] && shown[0].id) || 'connection';
     },
 
     resolveStatusSection: function (serverId, section) {
       if (section === 'connection') return 'connection';
-      if (!this.server(serverId)) return 'performance';
-      // Not a monitor page, so the page visibility settings do not hide it.
-      if (section === 'sessions') return 'sessions';
-      if ((section === 'claude' || section === 'codex') && this.localStatusSections().indexOf('agents') >= 0) {
-        return 'agents';
-      }
-      if (this.localStatusSections().indexOf(section) >= 0) return section;
+      if (!this.server(serverId)) return this.defaultStatusSection(serverId);
+      // An alias (the former claude and codex pages) resolves to its section.
+      var entry = global.PanelSlots ? global.PanelSlots.serverSections.get(section) : null;
+      if (entry && this.statusSections().indexOf(entry) >= 0) return entry.id;
       return this.defaultStatusSection(serverId);
     },
 
@@ -264,19 +279,27 @@
         + '%;background:' + color + '"></i></span></span>';
     },
 
-    SETTINGS_SECTIONS: [
-      ['appearance', '外观'],
-      ['management', '管理中心'],
-      ['security', '连接与安全'],
-      ['about', 'GitHub'],
-    ],
+    /** The settings page's sections, the shell's own and the plugins' (PanelSlots). */
+    settingsSections: function () {
+      if (!global.PanelSlots) return [];
+      return global.PanelSlots.settingsSections.list().filter(function (entry) {
+        return !entry.available || entry.available();
+      });
+    },
+
+    /** The section with this id, or the first one when it is not there (its plugin is off). */
+    settingsSection: function (id) {
+      var sections = this.settingsSections();
+      for (var i = 0; i < sections.length; i++) if (sections[i].id === id) return sections[i];
+      return sections[0] || null;
+    },
 
     _renderSettingsNav: function () {
-      var active = global.ServersPage ? global.ServersPage.settingsSection : 'appearance';
+      var active = this.settingsSection(global.ServersPage ? global.ServersPage.settingsSection : null);
       return '<div class="tree-section-head"><span>设置</span></div>'
-        + '<div class="settings-nav">' + this.SETTINGS_SECTIONS.map(function (entry) {
-          return '<button class="settings-nav-item' + (entry[0] === active ? ' selected' : '') + '"'
-            + ' data-settings-section="' + entry[0] + '">' + esc(entry[1]) + '</button>';
+        + '<div class="settings-nav">' + this.settingsSections().map(function (entry) {
+          return '<button class="settings-nav-item' + (entry === active ? ' selected' : '') + '"'
+            + ' data-settings-section="' + esc(entry.id) + '">' + esc(entry.label) + '</button>';
         }).join('') + '</div>';
     },
 
@@ -313,18 +336,9 @@
 
       var sessions = workspace.sessions || [];
       var actions = workspace.actions || {};
-      var workbench = global.Workbench;
-      var canWorkbench = !!(workbench && this.health(serverId).capabilities && this.health(serverId).capabilities.nativeWindow && this.health(serverId).capabilities.nativeWindow.available);
-      var views = workbench ? workbench.list(serverId) : [];
-      var localViews = views.length ? '<div class="tree-section-head"><span>工作台</span></div><div class="tree">'
-        + views.map(function (view) {
-          var stale = workspace.complete === true && workspace.instanceId && view.instanceId && workspace.instanceId !== view.instanceId;
-          return '<button class="tree-item ' + (stale ? 'wb-view-stale ' : '') + (((route && route.params) || {}).viewId === view.id ? 'active' : '') + '"'
-            + (stale ? ' title="此工作台绑定旧会话，目标已保留，不会自动替换或结束原任务"' : '') + ' data-route="'
-            + esc(global.Router.serialize({ name: 'workbench', params: { serverId: serverId, viewId: view.id } })) + '">'
-            + ICONS.overview + '<span>' + esc(view.title || '工作台') + '</span>'
-            + (stale ? '<small class="wb-view-state">旧会话</small>' : '') + '</button>';
-        }).join('') + '</div>' : '';
+      var localViews = terminalViews().map(function (entry) {
+        return entry.renderNavigation ? entry.renderNavigation(serverId, route, workspace) : '';
+      }).join('');
       var head = localViews + '<div class="tree-section-head"><span>会话</span>'
         + providerBadge(workspace)
         + (actions.createSession
@@ -356,9 +370,7 @@
           + '<span>' + esc(session.name) + '</span>'
           + '<span class="cmd">' + (session.windows || []).length + ' 个窗口</span>'
           + '</button>'
-          + (canWorkbench
-            ? '<button type="button" class="tree-add-button" data-action="new-workbench" data-session="' + esc(session.id)
-              + '" title="打开原生工作台" aria-label="在 ' + esc(session.name) + ' 中打开原生工作台">▦</button>' : '')
+          + terminalViews().map(function (entry) { return entry.renderSessionActions ? entry.renderSessionActions(serverId, session) : ''; }).join('')
           + (actions.createWindow
             ? '<button type="button" class="tree-add-button tree-create-window" data-action="new-window"'
               + ' data-session="' + esc(session.id) + '" title="新建窗口" aria-label="在 ' + esc(session.name) + ' 中新建窗口">+</button>'
@@ -381,11 +393,10 @@
       if (windows.length === 0) return '';
       var workspace = this.workspace(serverId);
       var actions = (workspace && workspace.actions) || {};
-      var capability = this.health(serverId).capabilities;
-      var native = !!(global.Workbench && capability && capability.nativeWindow && capability.nativeWindow.available);
-      var focused = global.Workbench && global.Workbench.currentContext ? global.Workbench.currentContext() : null;
+      var windowAction = terminalViews().map(function (entry) { return entry.windowAction && entry.windowAction(serverId); }).find(Boolean);
+      var focused = global.Blocks?.ui?.selectedContext();
       return '<div class="tree-window-list">' + windows.map(function (win) {
-        var active = params.windowId === win.id || !!(focused && focused.serverId === serverId && focused.windowId === win.id);
+        var active = params.windowId === win.id || !!(focused && focused.onTerminal && focused.serverId === serverId && focused.windowId === win.id);
         var pane = (win.panes || [])[0];
         var target = {
           name: 'terminal',
@@ -407,12 +418,12 @@
           + ' data-window-index="' + esc(String(win.index)) + '"'
           + ' data-entity-name="' + esc(win.name) + '">'
           + '<button class="tree-item ' + (active ? 'active' : '') + '"'
-          + (native ? ' data-action="open-workbench" data-server-id="' + esc(serverId) + '" data-session="' + esc(session.id) + '" data-window="' + esc(win.id) + '"' : ' data-route="' + esc(global.Router.serialize(target)) + '"')
+          + (windowAction ? ' data-action="' + esc(windowAction) + '" data-server-id="' + esc(serverId) + '" data-session="' + esc(session.id) + '" data-window="' + esc(win.id) + '"' : ' data-route="' + esc(global.Router.serialize(target)) + '"')
           + ' title="' + esc(win.name) + '"'
           + (active ? ' aria-current="page"' : '')
           + '><span class="tree-item-name">' + esc(win.name) + '</span>'
           + (command ? '<span class="cmd">' + esc(command) + '</span>' : '') + '</button>'
-          + ((native || actions.renameWindow || actions.closeWindow)
+          + ((windowAction || actions.renameWindow || actions.closeWindow)
             ? '<button type="button" class="tree-add-button tree-menu-button" data-action="workspace-entity-menu"'
               + ' aria-label="' + esc(win.name) + ' 的窗口操作" aria-haspopup="menu" aria-expanded="false"'
               + ' aria-controls="ms-sidebar-context-menu">⋯</button>'
@@ -441,7 +452,7 @@
       if (!title || !subtitle || !trigger) return;
       var serverId = this.activeServerId();
       var server = this.server(serverId);
-      var isTerminal = route && (route.name === 'terminal' || route.name === 'workbench');
+      var isTerminal = route && (route.name === 'terminal' || !!terminalView(route));
       trigger.hidden = false;
       trigger.disabled = false;
       trigger.setAttribute('aria-expanded', String(this.isMobileWorkspaceOpen()));
@@ -453,9 +464,8 @@
         var win = this._findWindow(session, params.windowId);
         title.textContent = win ? (win.index + ' ' + win.name) : '选择工作区';
         subtitle.textContent = session ? session.name : (server ? server.name : serverId);
-        if (route.name === 'workbench') {
-          var localView = global.Workbench && global.Workbench.get(params.viewId);
-          title.textContent = localView ? localView.title || '工作台' : '工作台';
+        if (terminalView(route)) {
+          title.textContent = terminalView(route).title(route);
           subtitle.textContent = server ? server.name : serverId;
         }
       } else {
@@ -478,10 +488,8 @@
     },
 
     mobilePaneId: function (route) {
-      if (route && route.name === 'workbench') {
-        var context = global.Workbench && global.Workbench.currentContext();
-        return context && context.serverId === route.params.serverId && context.viewId === route.params.viewId ? context.paneId : null;
-      }
+      var entry = terminalView(route);
+      if (entry) return entry.currentContext().paneId;
       var params = (route && route.params) || {};
       var session = this._findSession(this.workspace(params.serverId || 'local'), params.sessionId);
       var win = this._findWindow(session, params.windowId);
@@ -513,7 +521,7 @@
       if (!tree) return;
       var route = global.Store.getState().route || {};
       tree.innerHTML = this._renderTree(this.activeServerId(), route, true);
-      el('ms-mobile-workspace-sheet').classList.toggle('has-terminal', route.name === 'terminal' || route.name === 'workbench');
+      el('ms-mobile-workspace-sheet').classList.toggle('has-terminal', route.name === 'terminal' || !!terminalView(route));
     },
 
     _syncMobileWorkspaceSheet: function (route) {
@@ -636,7 +644,9 @@
       if (route.name === 'servers') return '状态';
       if (route.name === 'settings') return '设置';
       if (route.name === 'server') {
-        return ({ performance: '性能', agents: 'Agent 控制台', claude: 'Agent 控制台', codex: 'Agent 控制台', sessions: '会话', connection: '连接' })[route.params.section] || '性能';
+        var slots = global.PanelSlots && global.PanelSlots.serverSections;
+        var entry = slots && (slots.get(route.params.section) || slots.get(this.defaultStatusSection()));
+        return entry ? entry.label : '状态';
       }
       return '终端工作台';
     },
@@ -648,7 +658,7 @@
       for (var i = 0; i < nodes.length; i += 1) {
         var target = nodes[i].dataset.route || '';
         var isActive = false;
-        if (name === 'terminal' || name === 'workbench') isActive = target.indexOf('#/terminal/') === 0;
+        if (name === 'terminal' || !!terminalView({ name: name })) isActive = target.indexOf('#/terminal/') === 0;
         else if (name === 'servers' || name === 'server') isActive = target === '#/servers';
         else isActive = target === '#/' + name;
         nodes[i].classList.toggle('active', isActive);
@@ -905,7 +915,9 @@
   };
 
   // Native hit-test regions let AppKit drag blank chrome without stealing web controls.
-  var nativeActions = global.webkit && global.webkit.messageHandlers && global.webkit.messageHandlers.tmuxPanelAction;
+  var nativeHandlers = global.webkit && global.webkit.messageHandlers;
+  // tmuxPanelAction: a native app from before the rename.
+  var nativeActions = nativeHandlers && (nativeHandlers.anymuxAction || nativeHandlers.tmuxPanelAction);
   var chrome = global.document.querySelector('.workspace-chrome');
   if (nativeActions && chrome) {
     var pendingTitlebar = false;

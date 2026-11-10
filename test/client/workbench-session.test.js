@@ -53,6 +53,14 @@ export function fixture() {
 afterEach(() => vi.useRealTimers());
 
 describe('persistent native window sessions', () => {
+  it('uses the shipped Anymux font once its core is ready before opening the socket', async () => {
+    const f = fixture();
+    const pane = new NativeWindowSession(f.win, { container: f.host, target });
+    await pane.ready;
+    expect(pane.term.options.fontFamily.split(',')[0]).toBe("'Anymux Mono'");
+    expect(f.sockets).toHaveLength(1);
+    pane.dispose(); f.close();
+  });
   it('captures the target, fits before attach, restores bytes and ignores stale/duplicate frames', async () => {
     const f = fixture();
     const input = { ...target };

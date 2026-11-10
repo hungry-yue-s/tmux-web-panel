@@ -12,7 +12,10 @@ import { tmuxServerArgs } from '../../lib/tmux-server.js';
 
 export const name = 'mosh';
 
-export const inject = ['http', 'node', 'workspace', 'terminals', 'servers'];
+export const inject = ['http', 'node', 'workspace', 'terminals'];
+
+/** This machine's mosh-client is the hub's (mosh-hub); a Node-only install has none. */
+const NO_CLIENT = Object.freeze({ available: false, version: null, reason: 'not_a_hub' });
 
 export function apply(ctx) {
   const service = new MoshService({
@@ -20,11 +23,14 @@ export function apply(ctx) {
     terminalManager: ctx.terminals,
     tmuxSocketArgs: tmuxServerArgs(),
   });
-  const hubMosh = ctx.servers.mosh;
 
   // Both components, probed again: after an explicit install.
   const refreshComponents = async () => {
-    const [server, client] = await Promise.all([service.refreshCapability(), hubMosh.clientCapability({ force: true })]);
+    const hubMosh = ctx.get('moshHub');
+    const [server, client] = await Promise.all([
+      service.refreshCapability(),
+      hubMosh ? hubMosh.clientCapability({ force: true }) : NO_CLIENT,
+    ]);
     return { server: { available: server.available, version: server.version, reason: server.reason }, client };
   };
 

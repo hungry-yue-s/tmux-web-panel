@@ -1,0 +1,6 @@
+{
+  "serve": ["."],
+  "body": [
+    { "order": 192, "script": "/js/notebook-block.js" }
+  ]
+}

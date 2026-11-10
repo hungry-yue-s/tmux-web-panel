@@ -67,7 +67,7 @@ Claude 转换器移植自 [CC Switch v3.20.3](https://github.com/farion1231/cc-s
 - 阿里郎修复：4 个相关测试文件 53 项通过，覆盖员工及设备绑定、拒绝无关身份、首个匹配、阶段诊断、部分响应保留及界面反馈；语法和 diff 检查通过。
 - 实际只读查询：修复后的系统 curl 读取两份额度均 HTTP 200，整体约 9.9 秒。另以正常 URLSession 做一次受控对照请求，也返回有效资源包 JSON；无需将 Swift 探针加入产品。主资源池 0.69 / 24,500，Qoder 20,000 / 20,000，均来自当前账号真实接口。
 
-本机受限分析材料位于 `~/.cache/tmux-web-panel/reverse/{alilang,tokenswitch,ccswitch,qoder}/`，不提交提取物和身份材料。REA JavaScript 证据保留了包结构及语义分析；原生细节依据 Rust 符号与 LLVM 反汇编，不声称获得完整原生反编译结果。
+本机受限分析材料位于 `~/.cache/anymux/reverse/{alilang,tokenswitch,ccswitch,qoder}/`，不提交提取物和身份材料。REA JavaScript 证据保留了包结构及语义分析；原生细节依据 Rust 符号与 LLVM 反汇编，不声称获得完整原生反编译结果。
 
 ## dsh-tui（2026-10-22）
 
@@ -77,7 +77,7 @@ Claude 转换器移植自 [CC Switch v3.20.3](https://github.com/farion1231/cc-s
 
 配置写入 `$DSH_HOME/profiles/dsh-tui/cordis.patch.yml`（默认 `~/.dsh`），只增加 `tmux-enterprise` 提供方；TUI 的 `~/.dsh-tui/model.json`、`kernel.json` 保存下一次启动选择。本地中继密钥保存在 DSH 的 `~/.dsh/.credentials.yaml` 专用引用中，集团登录令牌仍只由面板服务端读取。保留 YAML 注释、`!!js` 表达式、原有模型及其他凭据，解析时不执行表达式。
 
-沿用 DSH 配置编辑器的 profile 锁及凭据锁；写入使用已有管理中心的原子替换和私有备份，位置为 `~/.config/tmux-web-panel/backups/`。失败时恢复已完成且未被其他进程改动的文件。明确固定到其他后端的 profile 会拒绝切换，避免显示虚假生效状态；命令行或环境中的显式后端选择仍以 DSH 自身规则为准。
+沿用 DSH 配置编辑器的 profile 锁及凭据锁；写入使用已有管理中心的原子替换和私有备份，位置为 `~/.config/anymux/backups/`。失败时恢复已完成且未被其他进程改动的文件。明确固定到其他后端的 profile 会拒绝切换，避免显示虚假生效状态；命令行或环境中的显式后端选择仍以 DSH 自身规则为准。
 
 本机验证版本：dsh-tui 0.16.1、DSH 0.2.1-rc.2。已在现有账号刷新登录后，通过真实面板 API 切到集团 Auto；DSH 配置组合检查通过，原生 DSH headless 使用相同提供方配置和实际集团中继完成流式调用，退出码 0、回复 `OK`，未发送项目代码。请求使用独立临时 Harness home，测试结束已清理；现有 dsh-tui 保持集团 Auto 作为新会话默认。此验证确认真实请求可用，未独立核对集团账单扣减。
 

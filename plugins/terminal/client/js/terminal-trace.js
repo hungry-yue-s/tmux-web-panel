@@ -22,7 +22,7 @@
 var TerminalTrace = (function () {
   'use strict';
 
-  var STORAGE_KEY = 'twp_terminal_trace';
+  var STORAGE_KEY = 'anymux_terminal_trace';
   var STABLE_QUIET_MS = 1000;
   var REDRAW_MIN_CHARS = 512;
   var KEEP = 20;

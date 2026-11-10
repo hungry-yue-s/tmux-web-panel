@@ -32,7 +32,7 @@ export { HttpError, readJson, sendJson } from './router.js';
 export const name = 'http';
 
 /** The WebSocket an upgrade became; diagnostics reads its buffered bytes. */
-export const UPGRADED_SOCKET = Symbol.for('twp.upgradedSocket');
+export const UPGRADED_SOCKET = Symbol.for('anymux.upgradedSocket');
 
 
 const JSON_LIMIT = '100kb';

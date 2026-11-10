@@ -19,7 +19,7 @@ function fixture(options = {}) {
   }
   class Control extends EventEmitter {
     constructor(args) { super(); this.args = args; this.commands = []; this.disposed = false; }
-    async command(line) { this.commands.push(line); if (line.startsWith('display-message')) return Buffer.from('99:100|' + this.args.sessionId); if (line.startsWith('list-clients')) { if (state.failQueryOnce) { state.failQueryOnce = false; throw new Error('temporary query failure'); } return Buffer.from(state.context); } if (line.includes(' -Q ')) { options.onRefresh?.({ natives, state }); if (!options.holdCapture) natives[0].complete(); } return Buffer.from(''); }
+    async command(line) { this.commands.push(line); await options.beforeCommand?.(line); if (line.startsWith('display-message')) return Buffer.from('99:100|' + this.args.sessionId); if (line.startsWith('list-clients')) { if (state.failQueryOnce) { state.failQueryOnce = false; throw new Error('temporary query failure'); } return Buffer.from(state.context); } if (line.includes(' -Q ')) { options.onRefresh?.({ natives, state }); if (!options.holdCapture) natives[0].complete(); } return Buffer.from(''); }
     dispose() { this.disposed = true; }
   }
   const tmux = { run: vi.fn(async args => args[0] === 'list-windows' ? '99:100|$1|@2\n' : args[0] === 'list-clients' ? state.context : '1') };
@@ -214,6 +214,37 @@ describe('persistent native tmux window clients', () => {
     const count = frames.length; lease.close(); for (const resolve of pending) resolve(Buffer.from(f.state.context));
     expect((await Promise.all(requests)).every(error => error.code === 'WORKSPACE_UNAVAILABLE')).toBe(true);
     expect(frames).toHaveLength(count);
+  });
+
+  it.each(['display-message', 'refresh-client -f no-output'])('does not attach after the subscriber leaves during %s', async command => {
+    let release;
+    const f = tracked({ beforeCommand: line => line.startsWith(command) ? new Promise(resolve => { release = resolve; }) : undefined });
+    const lease = await f.pool.subscribe(target, () => {});
+    await until(() => release);
+    lease.close(); release(); await tick(); await tick();
+    expect(f.natives).toHaveLength(0);
+    expect(f.controls[0].disposed).toBe(true);
+    expect(f.pool.entries.size).toBe(0);
+  });
+
+  it('checks cancellation again before starting the native process', async () => {
+    let release, cancelled = false;
+    const f = tracked({ beforeCommand: line => line.startsWith('display-message') ? new Promise(resolve => { release = resolve; }) : undefined });
+    await f.pool.subscribe(target, () => {}, { cancelled: () => cancelled });
+    cancelled = true; release(); await tick(); await tick();
+    expect(f.natives).toHaveLength(0);
+    expect(f.controls[0].disposed).toBe(true);
+  });
+
+  it('allows a new subscriber while an abandoned startup is settling', async () => {
+    let release, held = false;
+    const f = tracked({ beforeCommand: line => {
+      if (!held && line.startsWith('display-message')) { held = true; return new Promise(resolve => { release = resolve; }); }
+    } });
+    const old = await f.pool.subscribe(target, () => {}); old.close();
+    const frames = [], resumed = await f.pool.subscribe(target, frame => frames.push(frame));
+    release(); await until(() => frames.some(frame => frame.type === 'snapshot'));
+    expect(f.natives).toHaveLength(1); expect(resumed.closed).toBe(false);
   });
 
   it('guards cancelled or disposed asynchronous preflights before opening attachments', async () => {

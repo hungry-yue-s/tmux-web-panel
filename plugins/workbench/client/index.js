@@ -1,6 +1,8 @@
 import { createViewStore, newId, validateWindowTarget } from './model.js';
 import { NativeWindowSession } from './native-window-session.js';
 import { openHistory } from './history.js';
+import { registerWorkbenchShell } from './shell.js';
+export { registerWorkbenchShell };
 
 export const name = 'workbench';
 export const inject = ['api'];
@@ -21,10 +23,10 @@ function tabIdentity(global) {
           claimed(!!lock); return lock ? new Promise(() => {}) : undefined;
         }).catch(() => claimed(null));
         const available = await claim;
-        if (available !== false) break; // unsupported lock contexts still get a fresh tab id
+        if (available !== false) { if (available !== true) id = newId('t'); break; }
         id = newId('t');
       }
-    }
+    } else id = newId('t'); // Without a lock, a copied sessionStorage id is unsafe.
     try { global.sessionStorage.setItem('twp_native_tab', id); } catch { /* current tab still works */ }
     return id;
   })();
@@ -42,6 +44,7 @@ export function createWorkbench(global, options = {}) {
   const emit = (name, detail) => global.dispatchEvent(new global.CustomEvent(name, { detail }));
   const changed = () => emit('workbench-views-changed', {});
   const nodeUrl = (serverId, path) => global.Api.nodeUrl(serverId, path);
+  const hasPlugin = (id, serverId) => global.PanelSlots?.hasPlugin(id, serverId) ?? true;
   const viewNow = () => mounted && store.get(mounted.viewId);
   function element(tag, className, text) {
     const node = doc.createElement(tag); if (className) node.className = className; if (text != null) node.textContent = text; return node;
@@ -69,8 +72,9 @@ export function createWorkbench(global, options = {}) {
       target, key: [generation, view?.id, target?.instanceId, target?.clientId, target?.sessionId, target?.windowId, target?.paneId, session?.status].join('\u0000'),
       source: target ? Object.freeze({ serverId: target.serverId, paneId: target.paneId }) : null });
   }
-  const announceFocus = () => emit('workbench-focus-changed', context());
+  const announceFocus = () => { emit('terminal-context-changed', context()); emit('workbench-focus-changed', context()); };
   async function supported(serverId) {
+    if (!hasPlugin('control-terminal', serverId)) throw new Error('此服务器未启用原生终端插件');
     const capability = await global.Api.get(nodeUrl(serverId, '/api/workbench/native-capability'));
     if (!capability?.available || capability.protocol !== 1) throw new Error('请更新 Node 和正在运行的 tmux。仅替换 tmux 程序不会更新已有服务，请在下一次安全重启 tmux 后启用；当前可使用兼容终端。');
     return true;
@@ -104,7 +108,10 @@ export function createWorkbench(global, options = {}) {
     let drawerOpen = false;
     const send = (data) => {
       if (mounted !== owner) return;
-      if (data === '__upload__') { upload.value = ''; upload.click(); }
+      if (data === '__upload__') {
+        if (!hasPlugin('upload', owner.serverId)) { notify('此服务器未启用上传插件'); return; }
+        upload.value = ''; upload.click();
+      }
       else if (!owner.session?.send(data)) notify('终端尚未连接，按键未发送');
     };
     const toggleDrawer = (open) => {
@@ -112,6 +119,7 @@ export function createWorkbench(global, options = {}) {
       drawerOpen = open;
       if (open && owner.menu) owner.menu.open = false;
       if (open) doc.activeElement?.blur?.();
+      if (open && !hasPlugin('keypad', owner.serverId)) return;
       if (open && !drawerApi && global.FabDrawer) {
         global.FabMigrate?.runOnce();
         drawerApi = global.FabDrawer.mount(drawer, { sendKey: send, onKeyboard: focusKeyboard, onClose: () => toggleDrawer(false) });
@@ -146,13 +154,13 @@ export function createWorkbench(global, options = {}) {
       const key = element('button', '', label); key.type = 'button'; key.dataset.wbKey = id; key.addEventListener('click', () => send(seq)); keys.append(key);
     }
     const keyboard = element('button', 'mobile-terminal-keyboard', '输入'); keyboard.type = 'button'; keyboard.setAttribute('aria-label', '打开键盘输入'); keyboard.addEventListener('click', focusKeyboard);
-    tools.append(trigger, keys, keyboard);
+    tools.append(...(hasPlugin('keypad', owner.serverId) ? [trigger] : []), keys, keyboard);
     owner.root.append(tools, upload, drawer);
     const sentinel = (event) => { if (drawerOpen && event.target.classList?.contains('xterm-helper-textarea')) toggleDrawer(false); };
     doc.addEventListener('focusin', sentinel);
     upload.addEventListener('change', async () => {
       const source = context().source;
-      if (!upload.files?.[0] || !source) return;
+      if (!upload.files?.[0] || !source || !hasPlugin('upload', source.serverId)) return;
       const form = new global.FormData(); form.append('file', upload.files[0]);
       try {
         const response = await global.fetch(nodeUrl(source.serverId, '/api/upload'), { method: 'POST', headers: global.Auth?.headers?.() || {}, body: form });
@@ -270,7 +278,8 @@ export function createWorkbench(global, options = {}) {
     },
     async split(direction = 'horizontal') {
       if (!['horizontal', 'vertical'].includes(direction)) throw new Error('无效分割方向');
-      const selected = context(); if (!selected.source) throw new Error('等待原生终端确认当前窗格');
+      const selected = await api.focusedContext();
+      if (context().key !== selected.key) throw new Error('原生终端焦点已变化，请重新分窗');
       const path = '/windows/' + encodeURIComponent(selected.windowId) + '/panes';
       const url = global.Api.workspaceUrl ? global.Api.workspaceUrl(selected.serverId, path) : nodeUrl(selected.serverId, '/api/workspace' + path);
       return global.Api.post(url, { paneId: selected.paneId, direction });
@@ -281,8 +290,9 @@ export function createWorkbench(global, options = {}) {
       if (title == null) return; if (typeof title !== 'string' || !title.trim() || title.length > 120) throw new Error('名称需为 1–120 个字符');
       store.update(id, (saved) => { saved.title = title.trim(); }); changed();
     },
-    openHistory() {
-      const selected = context(); if (!selected.target || !mounted) throw new Error('等待原生终端确认当前窗格');
+    async openHistory() {
+      const selected = await api.focusedContext();
+      if (!mounted || context().key !== selected.key) throw new Error('原生终端焦点已变化，请重新打开历史');
       const owner = mounted, id = selected.paneId;
       if (owner.histories.has(id)) { owner.histories.get(id).dialog.focus(); return owner.histories.get(id); }
       owner.closeDrawer(); const reader = openHistory(global, selected.target, { title: store.get(owner.viewId).title, onClose: () => owner.histories.delete(id) });
@@ -303,6 +313,7 @@ export function apply(ctx, config = {}) {
   const api = createWorkbench(globalThis, config); ctx.provide('workbench', api);
   ctx.effect(() => {
     const previous = globalThis.Workbench; globalThis.Workbench = api; globalThis.dispatchEvent(new CustomEvent('workbench-ready'));
-    return () => { api.unmount(); if (globalThis.Workbench === api) globalThis.Workbench = previous; };
+    const unregister = registerWorkbenchShell(globalThis, api);
+    return () => { unregister(); if (globalThis.Workbench === api) globalThis.Workbench = previous; };
   });
 }

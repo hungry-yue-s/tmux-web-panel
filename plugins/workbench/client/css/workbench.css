@@ -41,7 +41,7 @@ html[data-native-transparency] .wb-window-terminal .xterm-viewport { background:
 .wb-history-header .wb-button, .wb-history-footer .wb-button { min-height:44px; }
 .wb-history-footer { justify-content:flex-start; border-top:1px solid var(--workspace-line,var(--border-subtle)); border-bottom:0; }
 .wb-history-hint, .wb-history-status { flex:0 0 auto; margin:0; padding:6px 14px; color:var(--workspace-muted,var(--text-secondary)); font-size:12px; line-height:1.5; }
-.wb-history-content { flex:1 1 0; min-height:0; margin:0; padding:12px 14px; overflow:auto; color:inherit; background:var(--workspace-bg,var(--bg-primary)); font:13px/1.6 'Tmux Panel Mono',ui-monospace,monospace; white-space:pre; tab-size:8; scrollbar-color:var(--workspace-line-strong,var(--border)) transparent; scrollbar-width:thin; }
+.wb-history-content { flex:1 1 0; min-height:0; margin:0; padding:12px 14px; overflow:auto; color:inherit; background:var(--workspace-bg,var(--bg-primary)); font:13px/1.6 'Anymux Mono',ui-monospace,monospace; white-space:pre; tab-size:8; scrollbar-color:var(--workspace-line-strong,var(--border)) transparent; scrollbar-width:thin; }
 .wb-history-content:focus-visible { outline:2px solid var(--workspace-accent,var(--accent-blue)); outline-offset:-2px; }
 .wb-history .wb-button:disabled { opacity:.45; cursor:default; }
 @media (prefers-reduced-motion:reduce) { .wb-stage *, .wb-stage *::after { transition:none!important; animation:none!important; } }

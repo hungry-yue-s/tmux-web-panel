@@ -1,9 +1,9 @@
 {
-  "name": "tmux-web-panel",
+  "name": "anymux",
   "version": "1.0.0",
   "description": "",
   "bin": {
-    "tmux-panel": "bin/panel.js"
+    "anymux-panel": "bin/panel.js"
   },
   "scripts": {
     "start": "node bin/panel.js",

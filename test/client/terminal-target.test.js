@@ -99,10 +99,13 @@ describe('local server', () => {
     expect(TerminalTarget.wsUrl('%12', false)).toBe('wss://panel.example:7681/ws/terminal/%2512?token=abc');
   });
 
-  it('falls back to the name/index API only when no stable window id is known', async () => {
-    const { TerminalTarget, legacy } = loadTarget();
-    await TerminalTarget.listPanes('DataAnt', '2');
-    expect(legacy.get).toHaveBeenCalledWith('/api/sessions/DataAnt/windows/2/panes');
+  it('asks nothing before a window is in view, rather than guessing one by name', async () => {
+    const { TerminalTarget, legacy, scoped } = loadTarget();
+    await expect(TerminalTarget.listPanes('DataAnt', '2')).rejects.toThrow('还没打开好');
+    await expect(TerminalTarget.splitPane('DataAnt', '2', '%1', 'vertical')).rejects.toThrow('还没打开好');
+    expect(scoped.get).not.toHaveBeenCalled();
+    expect(scoped.post).not.toHaveBeenCalled();
+    expect(legacy.get).not.toHaveBeenCalled();
   });
 });
 
@@ -131,15 +134,12 @@ describe('remote server', () => {
     );
   });
 
-  it('prefixes the name/index fallback too, so it can never hit the panel host', async () => {
-    const { TerminalTarget, legacy } = loadTarget();
+  it('labels a pane through that server\'s workspace API even before its window is known', async () => {
+    const { TerminalTarget, legacy, scoped } = loadTarget();
     TerminalTarget.set({ serverId: 'api-linux' });
-
-    await TerminalTarget.listPanes('DataAnt', '2');
     await TerminalTarget.setPaneLabel('%3', 'x');
-
-    expect(legacy.get).toHaveBeenCalledWith('/n/api-linux/api/sessions/DataAnt/windows/2/panes');
-    expect(legacy.put).toHaveBeenCalledWith('/n/api-linux/api/panes/%253/label', { label: 'x' });
+    expect(scoped.patch).toHaveBeenCalledWith('/n/api-linux/api/workspace/panes/%253', { label: 'x' });
+    expect(legacy.put).not.toHaveBeenCalled();
   });
 
   it('returns an empty list when the window is gone', async () => {
@@ -152,7 +152,7 @@ describe('remote server', () => {
 
 describe('terminal renderer wiring', () => {
   const terminalSrc = readFileSync('plugins/terminal/client/js/terminal.js', 'utf8');
-  const panesSrc = readFileSync('plugins/ui/client/js/panes.js', 'utf8');
+  const panesSrc = readFileSync('plugins/terminal/client/js/panes.js', 'utf8');
 
   it('has no hardcoded session paths left in the terminal renderer', () => {
     expect(terminalSrc).not.toMatch(/'\/api\/sessions\//);

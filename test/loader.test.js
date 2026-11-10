@@ -69,6 +69,8 @@ describe('Loader', () => {
     expect(status.broken.error).toMatch(/boom/);
     expect(status.missing.state).toBe('failed');
     expect(status.missing.error).toMatch(/Cannot find module/);
+    // Only running entries count as there for the pages.
+    expect(loader.activeIds()).toEqual([]);
   });
 
   it('turns an entry off and on at runtime, undoing what it registered', async () => {
@@ -79,8 +81,10 @@ describe('Loader', () => {
     await loader.setDisabled('counter', true);
     expect(alive).toBe(0);
     expect(loader.status()[0]).toMatchObject({ disabled: true, state: 'off' });
+    expect(loader.activeIds()).toEqual([]);
     await loader.setDisabled('counter', false);
     expect(alive).toBe(1);
+    expect(loader.activeIds()).toEqual(['counter']);
   });
 
   it('does not mount a disabled entry', async () => {

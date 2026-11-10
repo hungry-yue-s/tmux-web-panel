@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Tmux Panel · 多服务器 UI Demo</title>
+  <title>Anymux · 多服务器 UI Demo</title>
   <style>
     :root {
       --bg-primary: #1a1b26;
@@ -566,7 +566,7 @@
       <div class="sidebar-resizer" role="separator" aria-label="调整侧边栏宽度" aria-orientation="vertical" aria-valuemin="220" aria-valuemax="360" aria-valuenow="248" tabindex="0"></div>
       <div class="brand">
         <div class="brand-mark">&gt;_</div>
-        <div class="brand-copy"><div class="brand-name"><span class="brand-long">Tmux Panel</span><span class="brand-short">Tmux</span></div><div class="brand-meta">CONTROL CENTER</div></div>
+        <div class="brand-copy"><div class="brand-name"><span class="brand-long">Anymux</span><span class="brand-short">Tmux</span></div><div class="brand-meta">CONTROL CENTER</div></div>
         <button class="icon-btn" data-action="notifications" aria-label="通知"><span id="bell-icon"></span></button>
         <button class="sidebar-toggle" data-action="sidebar-toggle" aria-label="展开侧边栏" aria-expanded="false" title="展开侧边栏">›</button>
       </div>
@@ -640,7 +640,7 @@
     const sessions = [
       { name: 'DataAnt', windows: ['三绿 · codex', 'OSS · fish', '风控点总结 · codex', 'vmos · adb'] },
       { name: 'DogFooding', windows: ['code-rl · claude', 'Qwen-windows · pwsh', 'Frontier-Bench · fish'] },
-      { name: '本机管理和工具开发', windows: ['tmux-web-panel · codex', 'WorkspaceAtlas · fish'] }
+      { name: '本机管理和工具开发', windows: ['anymux · codex', 'WorkspaceAtlas · fish'] }
     ];
 
     let filter = 'all';
@@ -816,9 +816,9 @@
         '<div><div class="section-head"><h3>Top 压力来源</h3><span>按加权压力排序</span></div><div class="card">' + pressureRows() + '</div></div></div>';
     }
     function chartSvg() { return '<svg class="chart" viewBox="0 0 700 190" preserveAspectRatio="none"><defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7aa2f7" stop-opacity=".35"/><stop offset="1" stop-color="#7aa2f7" stop-opacity="0"/></linearGradient></defs><path class="chart-grid" d="M0 25H700M0 75H700M0 125H700M0 175H700"/><path class="chart-area" d="M0 142L50 132L100 145L150 104L200 116L250 92L300 110L350 82L400 96L450 61L500 78L550 48L600 64L650 41L700 55V190H0Z"/><path class="chart-line" d="M0 142L50 132L100 145L150 104L200 116L250 92L300 110L350 82L400 96L450 61L500 78L550 48L600 64L650 41L700 55"/></svg>'; }
-    function pressureRows() { return [['CloudShell','74%','1.0 GB','4.9'],['DogFooding:code-rl','28%','312 MB','3.7'],['Google','25%','6.1 GB','3.1'],['tmux-web-panel','18%','215 MB','2.4']].map((row, i) => '<div class="pressure-row"><span class="rank">' + (i + 1) + '</span><strong>' + row[0] + '</strong><span class="metric">' + row[1] + '</span><span class="metric">' + row[2] + '</span><span class="yellow mono">' + row[3] + '</span></div>').join(''); }
+    function pressureRows() { return [['CloudShell','74%','1.0 GB','4.9'],['DogFooding:code-rl','28%','312 MB','3.7'],['Google','25%','6.1 GB','3.1'],['anymux','18%','215 MB','2.4']].map((row, i) => '<div class="pressure-row"><span class="rank">' + (i + 1) + '</span><strong>' + row[0] + '</strong><span class="metric">' + row[1] + '</span><span class="metric">' + row[2] + '</span><span class="yellow mono">' + row[3] + '</span></div>').join(''); }
     function terminalView(server, provider) {
-      const intro = provider === 'ssh' ? '<span class="muted">Connected via SSH Session · managed by Tmux Panel</span><br><br>' : '';
+      const intro = provider === 'ssh' ? '<span class="muted">Connected via SSH Session · managed by Anymux</span><br><br>' : '';
       return '<div class="card terminal-preview"><div class="terminal-body">' + intro + '<span class="prompt">yuebiao@' + server.id + '</span>:<span class="path">~/projects/dataant-risk</span>$ git status --short<br> M src/risk/device-profile.ts<br>?? notes/investigation.md<br><br><span class="prompt">yuebiao@' + server.id + '</span>:<span class="path">~/projects/dataant-risk</span>$ <span class="cursor"></span></div></div>';
     }
     function unavailableWorkspaceView(server) {

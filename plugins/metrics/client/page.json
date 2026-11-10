@@ -1,8 +1,12 @@
 {
   "serve": ["."],
+  "head": [
+    { "order": 50.5, "style": "/css/metrics.css" }
+  ],
   "body": [
     { "order": 230, "script": "/js/system-stats.js?v=2" },
     { "order": 240, "script": "/js/perf-utils.js?v=1" },
-    { "order": 250, "script": "/js/perf-panel.js?v=5" }
+    { "order": 250, "script": "/js/perf-panel.js?v=5" },
+    { "order": 255, "script": "/js/perf-section.js" }
   ]
 }

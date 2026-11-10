@@ -9,11 +9,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/legacy-env.sh"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEMPLATE="$PROJECT_DIR/relay/index.template.html"
-CONFIG="${DUCKDNS_CONFIG:-$HOME/.config/tmux-web-panel/duckdns.env}"
-SITE_DIR="${RELAY_SITE_DIR:-$HOME/.config/tmux-web-panel/relay-site}"
-CA_CRT="$HOME/.config/tmux-web-panel/ca/ca.crt"
+CONFIG="${DUCKDNS_CONFIG:-$(anymux_dir .config)/duckdns.env}"
+SITE_DIR="${RELAY_SITE_DIR:-$(anymux_dir .config)/relay-site}"
+CA_CRT="$(anymux_dir .config)/ca/ca.crt"
 PORT="${PANEL_PORT:-7681}"
 PUBLISH=0
 [[ "${1:-}" == "--publish" ]] && PUBLISH=1

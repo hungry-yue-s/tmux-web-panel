@@ -1,4 +1,4 @@
-# Tmux Panel — Deep Current workspace
+# Anymux — Deep Current workspace
 
 ## Product
 A daily-use tmux workstation inside a Swift WKWebView shell and browsers. Chinese interface. The terminal is the actual work surface; sessions/windows, file preview, server status, agent usage, and settings support it. This is a native-feeling desktop utility, not a landing page, dashboard, or concept illustration. Prototype data is synthetic and must stay marked 演示. No production writes or service restarts during review.
@@ -23,7 +23,7 @@ Status: top-level machine context, wide typographic metrics and sparklines, calm
 Settings: carefully composed theme choices and native-material preview with two independent sliders and visible numeric outputs. Transparent preview must not wash out text. System font, clear labels, useful grouping. No implementation warnings in normal product flow.
 All current view IDs, state and interactions must survive: nav, session expand/collapse, window selection, sidebar collapse, font adjustment, layout controls, overflow actions, theme dark/light, transparency/glass sliders, preview hide/restore, mobile workspace sheet, keyboard and pointer dock resizing. Do not delete the existing script or leave hidden view placeholders. The standalone canvas remains a static fallback. An isolated live bridge may reuse existing xterm/FitAddon/Maple and the existing WebSocket protocol ONLY when hostname is127.0.0.1 and port17681. It may attach only the synthetic 产品开发 windows, supports input/resize/theme/font and disposes on exit; never connect production.
 Native transparency0–50 and glass0–100 independent, browsers opaque. Keep compatibility with html.tmux-native-shell and html.tmux-native-titlebar; use true native buttons with80px safe region, never draw new SVG traffic lights over them.
-Preview contract for implementation: modal-first then explicit dock,320–820px width, hide preserves tabs/read position, close affects requested tab only. One separator per major region. No new dependency or external asset needed. The product's brand is the existing Tmux Panel text, no invented logo.
+Preview contract for implementation: modal-first then explicit dock,320–820px width, hide preserves tabs/read position, close affects requested tab only. One separator per major region. No new dependency or external asset needed. The product's brand is the existing Anymux text, no invented logo.
 
 ## Responsive and accessibility
 Desktop44px titlebar and28–32px compact controls; touch targets44px below768px. 375px mobile workspace trigger, navigation bottom sheet, file preview fills screen. At768px terminal remains usable; consider hiding excess breadcrumb/toolbar labels. No root horizontal overflow at375/768/1280/2560px. Local document tables may scroll inside their region.

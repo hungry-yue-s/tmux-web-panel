@@ -79,6 +79,15 @@ export class Loader extends Service {
     });
   }
 
+  /**
+   * The ids of the entries running now. Pages (window.PANEL_PLUGINS) and a
+   * node's info (node.plugins) both report this, and PanelSlots.hasPlugin
+   * reads either, so they must mean the same thing.
+   */
+  activeIds() {
+    return this.status().filter((entry) => entry.state === 'active').map((entry) => entry.id);
+  }
+
   /** Turns an entry off (disposing everything it registered) or back on. */
   async setDisabled(id, disabled) {
     const entry = this.entries.find((item) => item.id === id);

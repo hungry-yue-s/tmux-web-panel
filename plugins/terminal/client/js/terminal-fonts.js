@@ -13,7 +13,7 @@ var TerminalFonts = (function () {
   'use strict';
 
   var data = typeof window !== 'undefined' ? window.TERMINAL_FONT_SLICES : null;
-  var family = data ? data.family : 'Tmux Panel Mono';
+  var family = data ? data.family : 'Anymux Mono';
   var slices = [];
   var faceCache = {}; // sliceIndex:weight -> FontFace
   var requested = {}; // sliceIndex:weight -> promise

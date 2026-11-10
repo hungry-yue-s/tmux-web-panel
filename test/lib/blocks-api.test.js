@@ -21,7 +21,7 @@ let app;
 let events;
 
 beforeAll(async () => {
-  dir = await realpath(await mkdtemp(join(tmpdir(), 'twp-blocks-')));
+  dir = await realpath(await mkdtemp(join(tmpdir(), 'anymux-blocks-')));
   const roots = [apiPath(dir)];
   const pathGuard = createPathGuard(roots);
   events = [];
@@ -214,6 +214,7 @@ describe('git block API', () => {
       res = await request(app).get('/api/git/file').query({ path, rev: 'INDEX', file: 'notes.md' });
       expect(res.body.data.content).toBe('# Three\n');
       res = await request(app).get('/api/git/file').query({ path, rev: 'HEAD', file: 'new name.txt' });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
       expect(res.body.data.content).toBe('kept\nas it was\nhere\n');
     });
 
@@ -349,7 +350,7 @@ describe('file save', () => {
   });
 });
 
-describe('twp open and notebooks', () => {
+describe('anymux open and notebooks', () => {
   it('broadcasts files and urls to the browsers', async () => {
     const native = join(dir, 'open.txt');
     await writeFile(native, 'x');

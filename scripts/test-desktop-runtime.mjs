@@ -12,7 +12,7 @@ import https from 'node:https';
 
 const exec = promisify(execFile);
 const pause = ms => new Promise(done => setTimeout(done, ms));
-const productionLabels = ['com.tmux-web-panel', 'com.tmux-web-panel.tmux-server'];
+const productionLabels = ['com.anymux', 'com.anymux.tmux-server'];
 let phase = 'preflight', dataDir, socketRoot, labels, runtime, productionBefore;
 let cleanupAllowed = false, primaryError;
 const cleanupErrors = [];
@@ -52,7 +52,7 @@ async function freePort() {
 function helperEnvironment() {
   const env = { ...process.env, PATH: join(runtime, 'bin') + ':/usr/bin:/bin:/usr/sbin:/sbin', TMUX: '' };
   for (const key of Object.keys(env)) {
-    if (key.startsWith('TMUX_PANEL_') || ['AUTH', 'PORT', 'HOST', 'HTTP_PORT', 'TLS_CERT', 'TLS_KEY', 'TLS_AUTO', 'TMUX_TMPDIR'].includes(key)) delete env[key];
+    if (key.startsWith('ANYMUX_') || ['AUTH', 'PORT', 'HOST', 'HTTP_PORT', 'TLS_CERT', 'TLS_KEY', 'TLS_AUTO', 'TMUX_TMPDIR'].includes(key)) delete env[key];
   }
   return env;
 }
@@ -109,10 +109,11 @@ async function login(username, password) {
   return response.body.data.token;
 }
 async function verifySession(token, name, tmuxPID) {
-  const status = await api('/api/status', { token });
-  check(status.status === 200 && status.body.success && typeof status.body.data?.sessions === 'number' && status.body.data.sessions >= 1, 'STATUS_OR_TRUSTED_TOKEN_FAILED');
-  const sessions = await api('/api/sessions', { token });
-  check(sessions.status === 200 && sessions.body.success && Array.isArray(sessions.body.data) && sessions.body.data.some(session => session.name === name), 'SESSION_NOT_PRESERVED');
+  const login = await api('/api/auth/check', { token });
+  check(login.status === 200 && login.body.success, 'STATUS_OR_TRUSTED_TOKEN_FAILED');
+  const workspace = await api('/api/workspace', { token });
+  check(workspace.status === 200 && workspace.body.success && Array.isArray(workspace.body.data?.sessions)
+    && workspace.body.data.sessions.some(session => session.name === name), 'SESSION_NOT_PRESERVED');
   check((await job(labels.tmux)).pid === tmuxPID, 'TMUX_PID_CHANGED');
 }
 async function removeTestJob(label) {
@@ -139,8 +140,8 @@ try {
   productionBefore = await productionSnapshot();
   dataDir = resolve(await mkdtemp(join(tmpdir(), 'tmux-desktop-用户 & data-')));
   const suffix = createHash('sha256').update(dataDir).digest('hex').slice(0, 10);
-  labels = { panel: 'com.tmux-web-panel.desktop.' + suffix, tmux: 'com.tmux-web-panel.desktop.' + suffix + '.tmux' };
-  socketRoot = join('/tmp', 'tmux-panel-' + process.getuid() + '-' + suffix);
+  labels = { panel: 'com.anymux.desktop.' + suffix, tmux: 'com.anymux.desktop.' + suffix + '.tmux' };
+  socketRoot = join('/tmp', 'anymux-' + process.getuid() + '-' + suffix);
   check(!(await job(labels.panel)).loaded && !(await job(labels.tmux)).loaded, 'TEST_LABEL_ALREADY_EXISTS');
   // Reserve only a new socket directory; never reuse a leftover server socket.
   await mkdir(socketRoot, { mode: 0o700 });
@@ -156,12 +157,12 @@ try {
 
   phase = 'https-session';
   let token = await login(username, password);
-  const created = await api('/api/sessions', { method: 'POST', body: { name: sessionName }, token });
+  const created = await api('/api/workspace/sessions', { method: 'POST', body: { name: sessionName }, token });
   check(created.status === 201 && created.body.success, 'CREATE_SESSION_FAILED');
   const tmuxPID = (await job(labels.tmux)).pid;
   check(tmuxPID, 'TMUX_PID_MISSING');
   await verifySession(token, sessionName, tmuxPID);
-  console.log('PASS CA-verified HTTPS login, session creation and numeric status');
+  console.log('PASS CA-verified HTTPS login, session creation and the workspace');
 
   phase = 'immediate-restart';
   const newPort = await freePort();

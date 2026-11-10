@@ -13,6 +13,7 @@ import {
   initTokenPersistence,
   flushTokenPersistence,
 } from '../../lib/auth.js';
+import { POSIX_MODES } from '../helpers/permissions.js';
 
 describe('hashPassword', () => {
   it('returns an object with salt and hash', () => {
@@ -225,7 +226,7 @@ describe('token persistence at shutdown', () => {
     expect(() => readFileSync(file)).toThrow();
     flushTokenPersistence(tokenMap);
     expect(vi.getTimerCount()).toBe(0);
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    if (POSIX_MODES) expect(statSync(file).mode & 0o777).toBe(0o600);
     const restarted = new Map();
     initTokenPersistence(restarted, file);
     expect(restarted.get(token)).toEqual({ expiresAt: null, trusted: true });

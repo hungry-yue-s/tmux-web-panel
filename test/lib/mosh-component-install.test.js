@@ -15,7 +15,7 @@ import { MoshService } from '../../lib/mosh/server.js';
 const dirs = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
-function fixture({ platform = 'linux', output = '>> check\nTWP_COMPONENT_RESULT=ready\n', code = 0, onComponentInstalled = vi.fn() } = {}) {
+function fixture({ platform = 'linux', output = '>> check\nANYMUX_COMPONENT_RESULT=ready\n', code = 0, onComponentInstalled = vi.fn() } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'mosh-install-job-')); dirs.push(dir);
   mkdirSync(join(dir, 'scripts', 'remote'), { recursive: true });
   writeFileSync(join(dir, 'scripts/install-mosh.sh'), 'echo fixed-component\r\n');
@@ -25,7 +25,7 @@ function fixture({ platform = 'linux', output = '>> check\nTWP_COMPONENT_RESULT=
   writeFileSync(join(dir, 'vendor/tmux/tmux.c'), '');
   const stream = vi.fn(async (_words, options) => { options.onOutput(output); return code; });
   const connection = { stream, uploadFile: vi.fn() };
-  const links = { connection: vi.fn(() => connection), basic: vi.fn(() => ({ detect: vi.fn(async () => ({ platform, posix: platform !== 'windows' })) })), recheck: vi.fn() };
+  const links = { connection: vi.fn(() => connection), detect: vi.fn(async () => ({ platform, posix: platform !== 'windows' })), recheck: vi.fn() };
   const registry = { require: vi.fn(() => ({ id: 'local', kind: 'local' })) };
   const localStream = vi.fn(async (_words, options) => { options.onOutput(output); return code; });
   const pack = vi.fn();
@@ -44,8 +44,8 @@ describe('fixed Mosh component jobs', () => {
     expect(await finished(f.installer)).toMatchObject({ state: 'succeeded', operation: 'mosh', result: 'ready', skipMosh: false });
     const [words, options] = f.stream.mock.calls[0];
     expect(words).toEqual(['sh', '-s']);
-    expect(options.input).toContain('TWP_MOSH_ROLE=server\n');
-    expect(options.input).toContain("TWP_SUDO_PASSWORD='p'\\''a$(echo hi)'");
+    expect(options.input).toContain('ANYMUX_MOSH_ROLE=server\n');
+    expect(options.input).toContain("ANYMUX_SUDO_PASSWORD='p'\\''a$(echo hi)'");
     expect(f.pack).not.toHaveBeenCalled();
     expect(f.connection.uploadFile).not.toHaveBeenCalled();
     expect(f.links.recheck).not.toHaveBeenCalled();
@@ -57,7 +57,7 @@ describe('fixed Mosh component jobs', () => {
     const f = fixture({ platform: 'darwin' });
     f.installer.startComponent('local');
     expect((await finished(f.installer, 'local')).state).toBe('succeeded');
-    expect(f.localStream.mock.calls[0][1].input).toContain('TWP_MOSH_ROLE=both');
+    expect(f.localStream.mock.calls[0][1].input).toContain('ANYMUX_MOSH_ROLE=both');
     expect(f.links.connection).not.toHaveBeenCalled();
     expect(f.registry.require).toHaveBeenCalledWith('local');
   });
@@ -79,13 +79,13 @@ describe('fixed Mosh component jobs', () => {
   });
 
   it.each(['needs_password', 'maintenance_required', 'unsupported'])('keeps %s distinct from success and retryable without a reinstall', async (state) => {
-    const f = fixture({ output: `TWP_COMPONENT_REASON=reason_code\nTWP_COMPONENT_RESULT=${state}\n`, code: 1 });
+    const f = fixture({ output: `ANYMUX_COMPONENT_REASON=reason_code\nANYMUX_COMPONENT_RESULT=${state}\n`, code: 1 });
     f.installer.startComponent('box');
     expect(await finished(f.installer)).toMatchObject({ state, result: state, component: { reason: 'reason_code' } });
     expect(f.onComponentInstalled).not.toHaveBeenCalled();
   });
 
-  it.each([[0, ''], [1, 'TWP_COMPONENT_RESULT=ready\n']])('does not invent success from exit %s or a contradictory marker', async (code, output) => {
+  it.each([[0, ''], [1, 'ANYMUX_COMPONENT_RESULT=ready\n']])('does not invent success from exit %s or a contradictory marker', async (code, output) => {
     const f = fixture({ code, output }); f.installer.startComponent('box');
     expect((await finished(f.installer)).state).toBe('failed');
   });
@@ -110,7 +110,7 @@ describe('fixed Mosh component jobs', () => {
   it('does not apply an old target result to a reconfigured server or interrupt its package transaction', async () => {
     const f = fixture(); let complete;
     f.stream.mockImplementation((_words, options) => new Promise(resolve => {
-      complete = () => { options.onOutput('TWP_COMPONENT_RESULT=ready\n'); resolve(0); };
+      complete = () => { options.onOutput('ANYMUX_COMPONENT_RESULT=ready\n'); resolve(0); };
     }));
     f.installer.startComponent('box');
     await vi.waitFor(() => expect(complete).toBeTypeOf('function'));
@@ -125,14 +125,14 @@ describe('fixed Mosh component jobs', () => {
   });
 
   it('passes the explicit optional-install choice through both platform installers', () => {
-    expect(posixInstallScript('body', { skipMosh: true })).toContain('TWP_SKIP_MOSH=1\n');
+    expect(posixInstallScript('body', { skipMosh: true })).toContain('ANYMUX_SKIP_MOSH=1\n');
     expect(Buffer.from(windowsInstallWords('body', { skipMosh: true }).at(-1), 'base64').toString('utf16le'))
-      .toContain("$env:TWP_SKIP_MOSH = '1'");
+      .toContain("$env:ANYMUX_SKIP_MOSH = '1'");
   });
 
   it('parses component warnings separately from a successful primary Node install and redacts split secrets', () => {
     const log = new InstallLog();
-    log.write('>> sec', 'secret'); log.write('ret\nTWP_COMPONENT_REASON=offline\nTWP_COMPONENT_RESULT=failed\nTWP_RESULT=succeeded\n', 'secret');
+    log.write('>> sec', 'secret'); log.write('ret\nANYMUX_COMPONENT_REASON=offline\nANYMUX_COMPONENT_RESULT=failed\nANYMUX_RESULT=succeeded\n', 'secret');
     log.end('secret');
     expect(log.result).toBe('succeeded');
     expect(log.component).toEqual({ reason: 'offline', result: 'failed' });
@@ -141,7 +141,7 @@ describe('fixed Mosh component jobs', () => {
 
   it.each(['e', 'ready', 'succeeded'])('keeps public result enums intact when a password is %s', (password) => {
     const log = new InstallLog();
-    log.write(`>> private ${password}\nTWP_COMPONENT_RESULT=ready\nTWP_RESULT=succeeded\n`, password);
+    log.write(`>> private ${password}\nANYMUX_COMPONENT_RESULT=ready\nANYMUX_RESULT=succeeded\n`, password);
     log.end(password);
     expect(log.component.result).toBe('ready');
     expect(log.result).toBe('succeeded');
@@ -149,7 +149,7 @@ describe('fixed Mosh component jobs', () => {
   });
 
   it('keeps the core Node installation successful when the optional component fails', async () => {
-    const f = fixture({ output: 'TWP_COMPONENT_REASON=offline\nTWP_COMPONENT_RESULT=failed\nTWP_RESULT=succeeded\n' });
+    const f = fixture({ output: 'ANYMUX_COMPONENT_REASON=offline\nANYMUX_COMPONENT_RESULT=failed\nANYMUX_RESULT=succeeded\n' });
     f.installer.start('box');
     expect(await finished(f.installer)).toMatchObject({ state: 'succeeded', operation: 'node', component: { result: 'failed', reason: 'offline' } });
     expect(f.onComponentInstalled).not.toHaveBeenCalled();

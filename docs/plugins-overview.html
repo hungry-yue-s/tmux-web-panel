@@ -314,9 +314,9 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
 
 <div class="wrap">
   <header class="hero">
-    <div class="eyebrow">tmux-web-panel · 插件架构</div>
+    <div class="eyebrow">anymux · 插件架构</div>
     <h1>整个面板现在由<span class="hl">插件</span>组装</h1>
-    <p class="lede">参照 DeepSeek Harness 的做法，面板改跑在 Cordis 插件内核上。原来一个入口文件里的手工接线，拆成了 24 个各自声明依赖的插件；原来手写的主页面，改由各插件声明的脚本组装。业务代码原样保留。</p>
+    <p class="lede">参照 DeepSeek Harness 的做法，面板改跑在 Cordis 插件内核上。原来一个入口文件里的手工接线，拆成了 42 个各自声明依赖的插件；原来手写的主页面，改由各插件声明的脚本组装。业务代码原样保留。</p>
     <div class="facts">
       <div class="fact"><b>24</b><span>插件，列在 profiles/panel.yml</span></div>
       <div class="fact"><b>691 → 5</b><span>行：server/index.js 只剩兼容入口</span></div>
@@ -388,7 +388,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
       <div class="idea">
         <div><h3>配置即组装</h3><p class="from">一份可打印、可覆盖的清单</p></div>
         <div>
-          <p>整个产品就是 <code>profiles/panel.yml</code> 里那 24 行。不在清单里的插件不会被加载，代码里没有别的组装入口。</p>
+          <p>整个产品就是 <code>profiles/panel.yml</code> 里那 42 行。不在清单里的插件不会被加载，代码里没有别的组装入口。</p>
           <p>想改组装，不改清单，而是叠一层补丁（关掉、换实现、改配置、插入新插件）。<code>node bin/panel.js --dump-config</code> 打印叠完补丁后的最终结果。</p>
         </div>
       </div>
@@ -412,7 +412,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
   </section>
 
   <section id="plugins">
-    <h2><span class="win">3:</span>24 个插件和它们的依赖</h2>
+    <h2><span class="win">3:</span>42 个插件和它们的依赖</h2>
     <p class="sub">按依赖分层：每一层只依赖它上面的层。点一个插件，看它做什么、依赖谁、谁依赖它。</p>
     <div class="graph" id="graph">
       <div id="layers"></div>
@@ -431,18 +431,22 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
         <pre><code>plugins/metrics/
 ├── index.js              <span class="c">服务端：挂 /api/system-stats 等路由</span>
 └── client/
-    ├── page.json         <span class="c">往主页面放哪些脚本</span>
+    ├── page.json         <span class="c">往主页面放哪些样式和脚本</span>
+    ├── css/metrics.css   <span class="c">只有它的脚本产生的元素的样式</span>
     └── js/
         ├── system-stats.js
         ├── perf-utils.js
-        └── perf-panel.js</code></pre>
+        ├── perf-panel.js
+        └── perf-section.js <span class="c">注册服务器页的“性能”分区</span></code></pre>
         <pre><code><span class="c">// client/page.json</span>
 {
   <span class="s">"serve"</span>: [<span class="s">"."</span>],
+  <span class="s">"head"</span>: [{ <span class="s">"order"</span>: 50.5, <span class="s">"style"</span>: <span class="s">"/css/metrics.css"</span> }],
   <span class="s">"body"</span>: [
     { <span class="s">"order"</span>: 230, <span class="s">"script"</span>: <span class="s">"/js/system-stats.js"</span> },
     { <span class="s">"order"</span>: 240, <span class="s">"script"</span>: <span class="s">"/js/perf-utils.js"</span> },
-    { <span class="s">"order"</span>: 250, <span class="s">"script"</span>: <span class="s">"/js/perf-panel.js"</span> }
+    { <span class="s">"order"</span>: 250, <span class="s">"script"</span>: <span class="s">"/js/perf-panel.js"</span> },
+    { <span class="s">"order"</span>: 255, <span class="s">"script"</span>: <span class="s">"/js/perf-section.js"</span> }
   ]
 }</code></pre>
       </div>
@@ -450,7 +454,8 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
         <div class="pane-head"><strong>要点</strong></div>
         <ul class="notes">
           <li><code>serve: ["."]</code> 把 <code>client/</code> 挂到网站根下，所以 <code>/js/perf-panel.js</code> 就是这个目录里的文件。</li>
-          <li><code>order</code> 是全局顺序。各插件的脚本按它排进同一个页面，排出来的结果和原来手写的 <code>index.html</code> 一致。</li>
+          <li><code>order</code> 是全局顺序。各插件的脚本按它排进同一个页面；插件的样式表排在外壳的 <code>style.css</code> 之后（50.x），层叠顺序和合在一起时一样。</li>
+          <li>外壳不认识这个插件：<code>perf-section.js</code> 往 <code>PanelSlots.serverSections</code> 里注册“性能”分区，插件关掉就没有这个分区。</li>
           <li>插件在 <code>apply</code> 里调用 <code>ctx.ui.contribute(page.json)</code>。这次登记也是可撤销的：插件关掉，脚本从页面上消失。</li>
           <li>服务端的业务逻辑在 <code>lib/metrics/</code>，插件只负责把它接到 HTTP 上。</li>
           <li>新功能照这个样子写成一个插件，再在 <code>panel.yml</code> 里加一行。</li>
@@ -464,8 +469,8 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
     <p class="sub">从服务管理器拉起进程，到第一个浏览器请求能被处理。</p>
     <ol class="steps">
       <li><div><b>服务管理器启动 <code>bin/panel.js</code></b><small>systemd、launchd 或 Windows 计划任务，环境变量（PORT、AUTH、TLS_*…）和以前一样注入。旧服务单元还写着 server/index.js 的，经那一行兼容入口转进来。</small></div></li>
-      <li><div><b>读清单 <code>profiles/panel.yml</code></b><small>得到 24 个条目，每条是 id、use（用哪个实现）、config、disabled。</small></div></li>
-      <li><div><b>叠补丁</b><small>先叠配置目录里的 <code>patch.yml</code>（默认 ~/.config/tmux-web-panel/patch.yml），再叠命令行上的每个 <code>--patch</code>。没有补丁就是原样。</small></div></li>
+      <li><div><b>读清单 <code>profiles/panel.yml</code></b><small>得到 42 个条目，每条是 id、use（用哪个实现）、config、disabled。</small></div></li>
+      <li><div><b>叠补丁</b><small>先叠配置目录里的 <code>patch.yml</code>（默认 ~/.config/anymux/patch.yml），再叠命令行上的每个 <code>--patch</code>。没有补丁就是原样。</small></div></li>
       <li><div><b>Loader 挂载每个条目</b><small>按清单顺序交给 Cordis；Cordis 按 inject 等依赖就绪再调用各插件的 apply。某个插件启动失败只影响它和依赖它的插件，进程最后以失败码退出，让服务管理器看得到。</small></div></li>
       <li><div><b>http 开始监听，ui 组装主页面</b><small>此时所有路由、WebSocket 升级、页面脚本都已登记。</small></div></li>
       <li><div><b>关机：反向撤销</b><small>收到停止信号后按依赖反向撤销所有插件，比如先结束 Mosh 会话，再结束 Hub 的 Mosh 终端，最后断开到各 Node 的链路。最多等 15 秒。</small></div></li>
@@ -479,7 +484,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
       <div class="pipe-row">
         <div class="stage"><span class="ord">order −100</span><b>诊断计时</b><span class="who">diagnostics</span></div>
         <div class="arrow">→</div>
-        <div class="stage"><span class="ord">order −50</span><b>/n/:serverId 转发</b><span class="who">servers</span><br>发往别的机器的请求在这里转给对应 Node</div>
+        <div class="stage"><span class="ord">order −50</span><b>/n/:serverId 转发</b><span class="who">hub-relay</span><br>发往别的机器的请求在这里转给对应 Node</div>
         <div class="arrow">→</div>
         <div class="stage"><span class="ord">固定</span><b>压缩</b><span class="who">http</span></div>
         <div class="arrow">→</div>
@@ -501,9 +506,9 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
     <div class="compose" id="compose">
       <div class="col">
         <div class="box"><span class="mono">terminal/client/page.json</span><small>xterm、字体切片、终端脚本</small></div>
-        <div class="box"><span class="mono">files/client/page.json</span><small>文件预览、分窗、Git block</small></div>
-        <div class="box" id="metrics-box"><span class="mono">metrics/client/page.json</span><small>system-stats.js 等 3 个脚本</small></div>
-        <div class="box"><span class="mono">… 另外 7 个插件</span><small>auth、notifications、agent-hub…</small></div>
+        <div class="box"><span class="mono">files/client/page.json</span><small>文件预览、分窗、files.css</small></div>
+        <div class="box" id="metrics-box"><span class="mono">metrics/client/page.json</span><small>metrics.css 和 system-stats.js 等 4 个脚本</small></div>
+        <div class="box"><span class="mono">… 另外 13 个插件</span><small>keypad、git、notifications、agent-hub…</small></div>
       </div>
       <div class="to">→</div>
       <div class="col">
@@ -525,7 +530,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
     <h2><span class="win">8:</span>用补丁改组装</h2>
     <p class="sub">补丁是一个操作列表，按顺序作用在清单上。不需要改仓库里的任何文件。</p>
     <div class="patch">
-      <pre><code><span class="c"># ~/.config/tmux-web-panel/patch.yml</span>
+      <pre><code><span class="c"># ~/.config/anymux/patch.yml</span>
 
 <span class="c"># 这台机器不需要 Agent 控制台</span>
 - id: <span class="s">agent-hub</span>
@@ -534,7 +539,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
 <span class="c"># 测试：整个面板用私有 tmux server</span>
 - id: <span class="s">tmux</span>
   config:
-    socket: <span class="s">twp-test</span>
+    socket: <span class="s">anymux-test</span>
 
 <span class="c"># 加一个自己写的插件，放在 files 后面</span>
 - insert:
@@ -558,24 +563,24 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
     <div class="same">
       <div><h3>业务逻辑</h3><p>原 server/ 的模块整体搬进 lib/，逻辑不变。Windows 上 tmux 客户端那批契约（一次只换一个客户端、输入暂存、控制台回收）都还在 TerminalManager 里。</p></div>
       <div><h3>页面外观和行为</h3><p>组装出来的主页面与原来手写的 index.html 一致，前端脚本没有改写。</p></div>
-      <div><h3>启动参数</h3><p>环境变量（PORT、HOST、AUTH、NODE_ONLY、TLS_*、HTTP_PORT、TMUX_PANEL_CONFIG_DIR）和命令行参数照旧。</p></div>
-      <div><h3>数据和配置</h3><p>配置目录还是 ~/.config/tmux-web-panel，令牌、通知、服务器列表、会话保护设置原地读取。</p></div>
+      <div><h3>启动参数</h3><p>环境变量（PORT、HOST、AUTH、NODE_ONLY、TLS_*、HTTP_PORT、ANYMUX_CONFIG_DIR）和命令行参数照旧。</p></div>
+      <div><h3>数据和配置</h3><p>配置目录还是 ~/.config/anymux，令牌、通知、服务器列表、会话保护设置原地读取。</p></div>
       <div><h3>服务管理</h3><p>仍然只经 systemd、launchd 或 install-service.ps1 启停。安装脚本已改成直接启动 bin/panel.js。</p></div>
-      <div><h3>Hub 与 Node</h3><p>/n/:serverId 转发、node token、证书指纹固定、直连和 Mosh 的规则都没变，只是分别落在 servers、node、mosh 插件里。</p></div>
+      <div><h3>Hub 与 Node</h3><p>/n/:serverId 转发、node token、证书指纹固定、直连和 Mosh 的规则都没变，只是分别落在 node、hub-links、server-health、hub-relay、mosh、mosh-hub 等插件里。</p></div>
     </div>
   </section>
 
   <section id="status">
     <h2><span class="win">10:</span>验证和部署</h2>
-    <p class="sub">改造完成时（2026-11-06）的验证结果，以及把一台机器切换到新结构的步骤。</p>
+    <p class="sub">插件再拆细之后（2026-11-09）的验证结果，以及把一台机器切换到新结构的步骤。</p>
     <div class="state">
       <div class="card">
         <h3>验证</h3>
         <dl class="kv">
-          <dt>全部测试</dt><dd>约 2500 个，分目录跑。失败的只有改造前在这台 Windows 上就失败的那批（缺 openssl、权限位、CRLF），清单在 docs/plugins.md <span class="pill ok">无新增失败</span></dd>
-          <dt>前端测试</dt><dd><span class="pill ok">全部通过</span></dd>
-          <dt>整机集成</dt><dd>真实启动整个清单：登录、/api 守卫、WebSocket 鉴权、终端接入、运行时开关插件 <span class="pill ok">通过</span></dd>
-          <dt>真实浏览器</dt><dd>私有 tmux server + 临时配置目录：登录、会话列表、终端可用，无报错 <span class="pill ok">通过</span></dd>
+          <dt>全部测试</dt><dd>2473 个，分目录跑，Windows 上全部通过；另有 82 个只在别的平台运行 <span class="pill ok">0 失败</span></dd>
+          <dt>整机集成</dt><dd>真实启动整个清单：登录、/api 守卫、WebSocket 鉴权、终端接入、运行时开关插件、页面和 /api/node/info 里的插件清单 <span class="pill ok">通过</span></dd>
+          <dt>真实浏览器</dt><dd>私有 tmux server + 临时配置：终端、服务器页、设置、命令面板、通知、文件预览和分窗、手机布局和工具盘，无报错；关掉全部可选插件也没有 404 <span class="pill ok">通过</span></dd>
+          <dt>样式拆分</dt><dd>拆出去的 8 个样式表合起来与原来的规则逐条相同；上面每个页面里每个元素的计算样式（含伪元素）与原来一个 style.css 时完全一致 <span class="pill ok">0 差异</span></dd>
         </dl>
       </div>
       <div class="card">
@@ -583,7 +588,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
         <ol>
           <li>拉取代码后运行 <code>npm install</code>（新增了 vendor/ 下的本地依赖）</li>
           <li>Linux、macOS 重新运行 <code>scripts/install-service.sh install</code>，服务单元改为直接启动 bin/panel.js。不重装也能启动：旧单元经 server/index.js 兼容入口进来。Windows 的计划任务经 run-panel.ps1 启动，脚本已经改好，不用重装</li>
-          <li>经服务管理器重启面板：<code>systemctl --user restart tmux-web-panel</code>，Windows 用 <code>scripts/install-service.ps1 restart</code>。浏览器里的终端会断开重连，tmux 会话不受影响</li>
+          <li>经服务管理器重启面板：<code>systemctl --user restart anymux</code>，Windows 用 <code>scripts/install-service.ps1 restart</code>。浏览器里的终端会断开重连，tmux 会话不受影响</li>
         </ol>
         <p style="margin:10px 0 0;font-size:14px;color:var(--muted)">旧结构留下的两处路径由面板启动时自动修好：指向旧位置的 tmux-agent 技能链接，和 public/js/ 下的中继配置。</p>
       </div>
@@ -592,50 +597,68 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
       <h3>还可以继续做的</h3>
       <ol>
         <li>把前端的全局脚本逐个改成浏览器端的 ES 模块插件，全局对象换成服务</li>
+        <li>把右侧分窗从文件预览移进外壳，让 Git、浏览器 block 在没有 files 时也能停靠</li>
         <li>把 lib/ 里的大模块（terminal.js、api/files.js、api/agent-hub.js）按接缝拆成更小的插件</li>
       </ol>
       <p style="margin:10px 0 0;font-size:14px;color:var(--muted)">都不影响现在的功能，可以随功能迭代逐步做。约定和陷阱写在 <a href="plugins.md">docs/plugins.md</a>。</p>
     </div>
   </section>
 
-  <footer>tmux-web-panel 插件化重写图解 · 详细约定见 <a href="plugins.md">docs/plugins.md</a></footer>
+  <footer>anymux 插件化重写图解 · 详细约定见 <a href="plugins.md">docs/plugins.md</a></footer>
 </div>
 
 <script>
 (function () {
   var P = {
-    logger: { use: 'logger-console', d: '把 Cordis 的日志打印到进程控制台，也就是 journald 或 Windows 计划任务的日志。', deps: [] },
-    timer: { use: '@cordisjs/plugin-timer', d: 'Cordis 自带的定时器服务。插件经它注册的定时器，随插件停掉一起清除。', deps: [] },
-    launch: { d: '读环境变量、命令行和配置文件，提供端口、配置目录、TLS 等启动参数。没叫 runtime 是因为那是 Cordis 的保留名。', deps: [] },
-    tmux: { d: '本机的 tmux 操作，并决定用哪个 tmux server：正式运行用默认的，测试和冒烟用私有的（-L / -S）。', deps: [] },
-    http: { d: 'HTTP(S) 服务器、中间件和路由的排序、WebSocket 升级，以及 HTTP 到 HTTPS 的跳转。', deps: ['launch'] },
-    diagnostics: { d: '远程性能诊断：在压缩和转发之前统计每个响应的字节数和耗时。', deps: ['launch', 'http'] },
-    node: { d: '把本机作为 Node：配对文件 node.json、node token、/api/node/info，以及本机能力声明。', deps: ['launch', 'http', 'tmux'] },
-    workspace: { d: '会话、窗口、窗格这棵树。工作区接口、终端网关和面板插件都只和它打交道。', deps: ['http', 'tmux'] },
-    'tmux-api': { d: '页面还在用的旧接口：按名字和序号操作会话、窗口、窗格，以及 /api/status。', deps: ['http', 'tmux'] },
-    notifications: { d: '完成通知（存在磁盘上），以及把 agent 钩子事件变成通知的 agentEvents 服务。', deps: ['launch', 'http'] },
-    pins: { d: '置顶的窗口，重启后保留。启动时清掉已经不存在的窗口。', deps: ['launch', 'http', 'tmux'] },
-    share: { d: '把渲染好的预览存成 /s/:id 快照。这个地址不需要登录，只读快照，不读文件系统。', deps: ['launch', 'http', 'timer'] },
-    files: { d: '本机文件：浏览、预览、上传，以及作用在文件上的 block：Git、SQLite、notebook 和 twp open。', deps: ['launch', 'http'] },
-    metrics: { d: 'CPU、内存、IO 及其历史，占用资源的进程，每个窗口的占用，以及移动端按键盘用的场景识别。', deps: ['http'] },
-    'agent-hub': { d: 'Agent 控制台：Claude 和 Codex 的用量窗口、切换提供方、Codex 预热和内置的企业模型中继。', deps: ['launch', 'http'] },
-    'session-protection': { d: '会话保护：定期用 tmux-resurrect 保存，新 tmux server 起来时自动恢复。用私有 tmux server 时自动关闭，不碰你的快照。', deps: ['launch', 'http', 'tmux'] },
-    client: { d: '浏览器端的 Cordis 内核：/client/boot.js、import map 和清单，决定页面运行哪些前端插件。', deps: ['http'] },
-    ui: { d: '挂载各插件的 client/ 目录，按 page.json 组装主页面，并给本地资源加上内容哈希。', deps: ['launch', 'http'] },
-    auth: { d: '谁能用这个面板：密码和 TOTP 登录、令牌、/api 守卫、WebSocket 鉴权。', deps: ['launch', 'http', 'node'] },
-    terminal: { d: '浏览器终端接入 tmux 窗格。CLAUDE.md 里 Windows 的全部契约原样保留在 TerminalManager 里。', deps: ['launch', 'http', 'workspace'] },
-    status: { d: '每个页面保持的 /ws/status 连接：轮询 tmux 的完成和活动，并把其他插件发出的事件推给页面。', deps: ['launch', 'http', 'notifications'] },
-    servers: { d: '多服务器的 Hub 一侧：服务器列表和健康检查、每台一条 SSH 链路、/n/:serverId 转发、安装 Node、Hub 端的 Mosh 终端。', deps: ['launch', 'http', 'auth', 'node', 'terminal', 'timer'] },
-    mosh: { d: 'Node 端为 Hub 运行的 Mosh 会话（可选实验）。/api/mosh 只认 node token 加 Hub 调用标记。', deps: ['http', 'node', 'workspace', 'terminal', 'servers'] },
-    'panel-plugins': { d: '面板插件：从仓库 catalog/ 安装经过审核的插件（tmux-agent），工具经 MCP 提供。', deps: ['launch', 'http', 'tmux', 'workspace', 'servers'] }
+    logger: { use: "logger-console", d: "把 Cordis 的日志打印到进程控制台，也就是 journald 或 Windows 计划任务的日志。", deps: [] },
+    timer: { use: "@cordisjs/plugin-timer", d: "Cordis 自带的定时器服务。插件经它注册的定时器，随插件停掉一起清除。", deps: [] },
+    launch: { d: "读环境变量、命令行和配置文件，提供端口、配置目录、TLS 等启动参数。没叫 runtime 是因为那是 Cordis 的保留名。", deps: [] },
+    http: { d: "HTTP(S) 服务器、中间件和路由的排序、WebSocket 升级，以及 HTTP 到 HTTPS 的跳转。", deps: ['launch'] },
+    diagnostics: { d: "远程性能诊断：在压缩和转发之前统计每个响应的字节数和耗时。", deps: ['launch','http'] },
+    tmux: { d: "本机的 tmux 操作，并决定用哪个 tmux server：正式运行用默认的，测试和冒烟用私有的（-L / -S）。", deps: [] },
+    node: { d: "把本机作为 Node：配对文件 node.json、node token、/api/node/info（含本机在运行的插件清单），以及本机能力声明。", deps: ['launch','http','tmux'] },
+    auth: { d: "谁能用这个面板：密码和 TOTP 登录、令牌、/api 守卫、WebSocket 鉴权、/api/auth/check。", deps: ['launch','http','node'] },
+    workspace: { d: "会话、窗口、窗格这棵树，全部按稳定 ID；布局选择器要的窗口布局、窗格内容、调整大小和交换也在这里。按名字和序号的旧接口已经删除。", deps: ['http','tmux'] },
+    status: { d: "每个页面保持的 /ws/status 连接：轮询 tmux 的完成和活动，并把其他插件发出的事件推给页面。有通知和 Agent 事件时接上它们。", deps: ['launch','http'] },
+    terminal: { d: "浏览器终端接入 tmux 窗格，CLAUDE.md 里 Windows 的全部契约保留在 TerminalManager 里；前端有终端、xterm、字体切片、窗格条和链接识别。", deps: ['launch','http','workspace'] },
+    keypad: { d: "移动端工具盘：按键、命令、模板和按场景排序，以及按本机已装工具给出初始场景的 /api/scene/discover。", deps: ['http'] },
+    layouts: { d: "窗口布局选择器：预设布局、拖动调整、交换窗格。只有前端，经 workspace 的接口。", deps: ['ui'] },
+    pins: { d: "置顶的窗口，重启后保留。启动时清掉已经不存在的窗口。", deps: ['launch','http','tmux'] },
+    notifications: { d: "完成通知，存在磁盘上，/api/notifications 和页面上的通知面板。", deps: ['launch','http'] },
+    'agent-events': { d: "Agent 钩子事件（/api/agent-events）；有通知插件时把它们变成通知。", deps: ['http'] },
+    files: { d: "本机文件：浏览、预览、文件根与路径守卫（fileAccess），以及文件预览和右侧分窗。", deps: ['http'] },
+    upload: { d: "上传文件到窗格所在的目录。", deps: ['launch','http'] },
+    git: { d: "Git block：状态、diff、历史、提交，大提交按文件分批加载。", deps: ['http','files'] },
+    sqlite: { d: "SQLite 预览：表、查询、分页，用 Node 内置的 node:sqlite，不需要 sqlite3 命令。", deps: ['http','files'] },
+    notebook: { d: "Jupyter notebook 的只读预览。", deps: ['http','files'] },
+    open: { d: "窗格里的 anymux open：把文件或网址交给页面打开。", deps: ['http','files'] },
+    browser: { d: "浏览器 block：在终端旁边打开本机端口或任意网址。只有前端。", deps: ['ui'] },
+    share: { d: "把渲染好的预览存成 /s/:id 快照。这个地址不需要登录，只读快照，不读文件系统。", deps: ['launch','http','timer'] },
+    metrics: { d: "CPU、内存、IO 及其历史，占用资源的进程，每个窗口的占用；服务器页的“性能”。", deps: ['http'] },
+    'agent-usage': { d: "Claude 和 Codex 的用量窗口。", deps: ['launch','http'] },
+    'agent-hub': { d: "Agent 控制台：Codex 账号、CC Switch 供应商、切换、预热、Qoder；用到集团模型时找 enterprise-ai。", deps: ['launch','http'] },
+    'enterprise-ai': { d: "集团模型池和内嵌的模型中继，以及它们的启停。", deps: ['launch'] },
+    'panel-plugins': { d: "面板插件：从仓库 catalog/ 安装经过审核的插件（tmux-agent），工具经 MCP 提供。", deps: ['launch','http','tmux','workspace'] },
+    'managed-resources': { d: "项目自建的 tmux、技能链接和基础 tmux 配置；管理中心里的 tmux 与技能面板。", deps: ['launch','http','tmux'] },
+    'session-protection': { d: "会话保护：定期用 tmux-resurrect 保存，新 tmux server 起来时自动恢复。用私有 tmux server 时自动关闭，不碰你的快照。", deps: ['launch','http','tmux','managed-resources'] },
+    mosh: { d: "Node 端为 Hub 运行的 Mosh 会话（可选实验）。/api/mosh 只认 node token 加 Hub 调用标记；卸载时结束这些进程。", deps: ['http','node','workspace','terminal'] },
+    'server-registry': { d: "Hub：服务器列表 servers.json。", deps: ['launch'] },
+    'hub-links': { d: "Hub：到每台服务器的一条 SSH 链路（端口转发、读配对文件）。", deps: ['launch','server-registry'] },
+    'server-health': { d: "Hub：定期探测每台服务器，选择 API 和终端走哪条路，推送状态。", deps: ['node','server-registry','hub-links'] },
+    'hub-relay': { d: "Hub：/n/:serverId 转发，把机器相关的请求原样交给对应 Node。", deps: ['http','auth','server-registry','hub-links'] },
+    servers: { d: "Hub：/api/servers，增删改服务器。", deps: ['http','server-registry','hub-links','server-health'] },
+    'node-installer': { d: "Hub：给只能 SSH 登录的机器安装 Node，或补装 Mosh 组件。", deps: ['http','server-registry','hub-links','server-health'] },
+    'basic-mode': { d: "Hub：没装面板的机器，只提供工作区和终端（基础模式）。", deps: ['http','hub-links','terminal','timer'] },
+    'mosh-hub': { d: "Hub：Mosh 终端；卸载时先经链路结束 Node 上的会话，链路才关。", deps: ['http','node','server-registry','hub-links'] },
+    client: { d: "浏览器端的 Cordis 内核：/client/boot.js、import map 和清单，决定页面运行哪些前端插件。", deps: ['http'] },
+    ui: { d: "外壳：挂载各插件的 client/ 目录，按 page.json 组装主页面（含本机在运行的插件清单），给本地资源加内容哈希；插槽、命令面板、block 框架。", deps: ['launch','http'] }
   };
   var LAYERS = [
-    { t: '不依赖别人', ids: ['logger', 'timer', 'launch', 'tmux'] },
-    { t: '依赖 launch', ids: ['http'] },
-    { t: '依赖 http 等基础插件', ids: ['diagnostics', 'node', 'workspace', 'tmux-api', 'notifications', 'pins', 'share', 'files', 'metrics', 'agent-hub', 'session-protection', 'client', 'ui'] },
-    { t: '依赖上一层的功能', ids: ['auth', 'terminal', 'status'] },
-    { t: '依赖 auth、node、terminal', ids: ['servers'] },
-    { t: '依赖 servers', ids: ['mosh', 'panel-plugins'] }
+    { t: "不依赖别人", ids: ['logger','timer','launch','tmux'] },
+    { t: "依赖 launch", ids: ['http','enterprise-ai','server-registry'] },
+    { t: "依赖 http、server-registry", ids: ['diagnostics','node','workspace','status','keypad','pins','notifications','agent-events','files','upload','share','metrics','agent-usage','agent-hub','managed-resources','hub-links','client','ui'] },
+    { t: "依赖 files、node、workspace 等", ids: ['auth','terminal','layouts','git','sqlite','notebook','open','browser','panel-plugins','session-protection','server-health','mosh-hub'] },
+    { t: "依赖 terminal、server-health、auth", ids: ['mosh','hub-relay','servers','node-installer','basic-mode'] }
   ];
   var users = {};
   Object.keys(P).forEach(function (id) { users[id] = []; });
@@ -699,7 +722,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
     btn.textContent = off ? '重新打开 metrics' : '关掉 metrics';
     mbox.classList.toggle('off', off);
     note.textContent = off
-      ? '页面上不再有 system-stats.js 等 3 个脚本，/api/system-stats 返回 404。其他功能照常。'
+      ? '页面上不再有它的样式表和 system-stats.js 等 4 个脚本，服务器页没有“性能”分区，/api/system-stats 返回 404，外壳也不再请求它。其他功能照常。'
       : '关掉一个插件时，页面和接口会发生什么？';
   });
 

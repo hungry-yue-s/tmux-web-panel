@@ -47,7 +47,7 @@
   .mobile-terminal-quick-keys { display: flex; gap: 4px; }
   .mobile-terminal-quick-keys button {
     padding: 0 9px;
-    font-family: 'Tmux Panel Mono', ui-monospace, monospace;
+    font-family: 'Anymux Mono', ui-monospace, monospace;
     color: var(--workspace-muted, var(--text-secondary));
     background: transparent;
   }

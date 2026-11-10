@@ -5,11 +5,12 @@ import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import YAML from 'yaml';
 import { applyPatch, dumpEntries, ProfileError, readProfile, resolveEntries, resolveUse, ROOT } from '../kernel/profile.js';
+import { defaultProfile } from '../kernel/app.js';
 
 let dir;
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'twp-profile-'));
+  dir = await mkdtemp(join(tmpdir(), 'anymux-profile-'));
 });
 
 afterEach(async () => {
@@ -33,11 +34,26 @@ describe('resolveUse', () => {
 });
 
 describe('readProfile', () => {
-  it('reads the shipped node profile', async () => {
+  it('reads the shipped panel profile', async () => {
     const profile = await readProfile('panel');
     expect(profile.name).toBe('panel');
     expect(profile.entries.map((entry) => entry.id).slice(0, 4)).toEqual(['logger', 'timer', 'launch', 'http']);
     expect(profile.entries.at(-1).id).toBe('ui');
+  });
+
+  it('ships a Node-only profile: the panel without the hub, the shared previews and the pages', async () => {
+    const panel = (await readProfile('panel')).entries.map((entry) => entry.id);
+    const node = (await readProfile('node')).entries.map((entry) => entry.id);
+    expect(node.every((id) => panel.includes(id))).toBe(true);
+    expect(panel.filter((id) => !node.includes(id)).sort()).toEqual([
+      'basic-mode', 'browser', 'client', 'hub-links', 'hub-relay', 'layouts', 'mosh-hub', 'node-installer',
+      'server-health', 'server-registry', 'servers', 'share', 'ui',
+      'workbench',
+    ]);
+    // Same ids, same order: a user's patch applies to either.
+    expect(panel.filter((id) => node.includes(id))).toEqual(node);
+    expect(defaultProfile({ NODE_ONLY: '1' })).toBe('node');
+    expect(defaultProfile({})).toBe('panel');
   });
 
   it('rejects unknown keys, bad ids and duplicates with the file in the message', async () => {

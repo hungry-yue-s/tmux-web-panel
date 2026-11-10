@@ -2,17 +2,18 @@
 // panel — start a panel from a profile.
 //
 //   panel [profile] [--profile <name|path>] [--patch <file>]... [--home <dir>] [--dump-config]
+//   panel --check-dependencies    exits 1, saying what to run, when a dependency is missing
 //
-// The profile names the plugins; patches (the home patch, then each --patch)
-// change them. --dump-config prints the result and exits without starting.
+// The profile names the plugins: panel, or node when NODE_ONLY=1. Patches (the
+// home patch, then each --patch) change them. --dump-config prints the result
+// and exits without starting.
 //
 // The old server's options (--config for the desktop app, --port, --host,
 // --auth, --tls-cert, --tls-key, --http-port, --poll-interval,
 // --max-connections) are accepted unchanged; the runtime plugin reads them.
 
 import { parseArgs } from 'node:util';
-import { createApp, defaultHome } from '../kernel/app.js';
-import { dumpEntries, resolveEntries } from '../kernel/profile.js';
+import { missingDependencies, missingDependenciesMessage } from '../kernel/dependencies.js';
 
 // Ending mosh processes may take longer than the rest; this only bounds a stall.
 const STOP_TIMEOUT_MS = 15_000;
@@ -25,6 +26,18 @@ function usage() {
 }
 
 async function main() {
+  // The kernel and the plugins import these; check before importing them.
+  const missing = missingDependencies();
+  if (missing.length) {
+    console.error(`[panel] ${missingDependenciesMessage(missing)}`);
+    return 1;
+  }
+  // Before anything reads ANYMUX_* or the config directory (lib/legacy-names.js).
+  const { adoptLegacyEnv, migrateLegacyDirs } = await import('../lib/legacy-names.js');
+  adoptLegacyEnv();
+  const { createApp, defaultHome, defaultProfile } = await import('../kernel/app.js');
+  const { dumpEntries, resolveEntries } = await import('../kernel/profile.js');
+
   let parsed;
   try {
     parsed = parseArgs({
@@ -34,6 +47,7 @@ async function main() {
         patch: { type: 'string', multiple: true, default: [] },
         home: { type: 'string' },
         'dump-config': { type: 'boolean', default: false },
+        'check-dependencies': { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
         ...Object.fromEntries(RUNTIME_OPTIONS.map((option) => [option, { type: 'string' }])),
       },
@@ -47,12 +61,16 @@ async function main() {
     console.log(usage());
     return 0;
   }
+  // Service installers run this before (re)starting the panel: reaching here means nothing is missing.
+  if (values['check-dependencies']) return 0;
   if (positionals.length > 1 || (positionals.length === 1 && values.profile)) {
     console.error(usage());
     return 2;
   }
+  // Only a starting service moves the old directories, never a --dump-config.
+  if (!values['dump-config']) migrateLegacyDirs();
   const options = {
-    profile: values.profile ?? positionals[0] ?? 'panel',
+    profile: values.profile ?? positionals[0] ?? defaultProfile(),
     patches: values.patch,
     home: values.home ?? defaultHome(),
   };

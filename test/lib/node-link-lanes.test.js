@@ -175,6 +175,40 @@ describe('independent node SSH terminal lane', () => {
     expect(f.forwards[1].child.kill).not.toHaveBeenCalled();
   });
 
+  it('refreshes a failed API pairing at a new port while preserving the healthy terminal', async () => {
+    const f = await fixture();
+    const terminal = await f.ws('/ws/pane-stream/%251');
+    const replacement = http.createServer((_req, res) => res.end('{"protocol":1,"hostname":"replacement"}'));
+    const port = await listen(replacement);
+    const wss = new WebSocketServer({ server: replacement });
+    wss.on('connection', ws => ws.on('message', () => ws.send('new listener')));
+    cleanups.push(() => { for (const ws of wss.clients) ws.terminate(); wss.close(); });
+    f.link.connection.fetchPairing = vi.fn(async () => ({ protocol: 1, host: '127.0.0.1', port, tls: false, token: 'fixture' }));
+    f.failApi();
+    await expect(f.link.info()).rejects.toMatchObject({ code: 'NODE_NOT_RUNNING' });
+    await expect(f.link.info()).resolves.toMatchObject({ hostname: 'replacement' });
+    await echo(terminal);
+    const next = await f.ws('/ws/pane-stream/%252');
+    const reply = once(next, 'message'); next.send('probe');
+    expect(String((await reply)[0])).toBe('new listener');
+    const oldLane = f.forwards[1];
+    expect(oldLane.child.kill).not.toHaveBeenCalled();
+    const ended = once(terminal, 'close'); terminal.close(); await ended;
+    await vi.waitFor(() => expect(oldLane.child.kill).toHaveBeenCalledOnce());
+  });
+
+  it('invalidates the old terminal when the refreshed pairing changes identity', async () => {
+    const f = await fixture();
+    const terminal = await f.ws('/ws/pane-stream/%251');
+    f.link.connection.fetchPairing = vi.fn(async () => ({ ...f.link._pairing, token: 'replacement-token' }));
+    f.failApi();
+    await expect(f.link.info()).rejects.toMatchObject({ code: 'NODE_NOT_RUNNING' });
+    await f.link.ensure();
+    await vi.waitFor(() => expect(terminal.readyState).toBe(WebSocket.CLOSED));
+    expect(f.link._pairing.token).toBe('replacement-token');
+    expect(f.link.generation).toBe(1);
+  });
+
   it('kills a cancelled terminal forward that has spawned but is not listening yet', async () => {
     const f = await fixture();
     await f.link.ensure();

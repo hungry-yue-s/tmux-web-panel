@@ -2,7 +2,7 @@
 // The desktop app calls this helper with JSON on stdin. Only launchd starts
 // background services; this process configures and inspects its own installation.
 import { access, appendFile, chmod, copyFile, cp, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { constants } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -16,7 +16,10 @@ import { hashPassword } from '../lib/auth.js';
 import { ensureDesktopCertificates, inspectDesktopCertificates } from './desktop-certificates.mjs';
 
 const exec = promisify(execFile);
-const DEFAULT_DATA = join(homedir(), 'Library/Application Support/Tmux Panel');
+const DEFAULT_DATA = join(homedir(), 'Library/Application Support/Anymux');
+// The data directory of an installation made before the rename (Tmux Panel).
+const LEGACY_DEFAULT_DATA = join(homedir(), 'Library/Application Support/Tmux Panel');
+const LEGACY_LABEL = 'com.tmux-web-panel.desktop';
 const SYSTEM_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
 const TMUX_CONFIG = 'set -g exit-empty off\nset -g mouse on\nset -g history-limit 50000\nset -g default-terminal "tmux-256color"\n';
 const delay = ms => new Promise(done => setTimeout(done, ms));
@@ -105,13 +108,17 @@ export async function isPortAvailable(port, host = '127.0.0.1') {
 export class DesktopRuntime {
   constructor(input = {}, { run = exec, home = homedir() } = {}) {
     this.input = input; this.home = home; this.run = run;
-    this.root = resolve(input.dataDir || process.env.TMUX_PANEL_DATA_DIR || DEFAULT_DATA);
+    this.root = resolve(input.dataDir || process.env.ANYMUX_DATA_DIR || process.env.TMUX_PANEL_DATA_DIR || DEFAULT_DATA);
     this.bundle = input.runtimePath ? resolve(input.runtimePath) : null;
-    const suffix = this.root === DEFAULT_DATA ? '' : '.' + createHash('sha256').update(this.root).digest('hex').slice(0, 10);
-    this.label = 'com.tmux-web-panel.desktop' + suffix; this.tmuxLabel = this.label + '.tmux';
+    const suffix = this.root === DEFAULT_DATA || this.root === LEGACY_DEFAULT_DATA ? '' : '.' + createHash('sha256').update(this.root).digest('hex').slice(0, 10);
+    // An installation from before the rename keeps its launchd labels and tmux
+    // socket directory: its jobs are registered under those names and its tmux
+    // server, with every session, listens there.
+    this.legacy = this.root === LEGACY_DEFAULT_DATA || existsSync(join(home, 'Library/LaunchAgents', LEGACY_LABEL + suffix + '.plist'));
+    this.label = (this.legacy ? LEGACY_LABEL : 'com.anymux.desktop') + suffix; this.tmuxLabel = this.label + '.tmux';
     this.uid = process.getuid?.() ?? 0;
     // Darwin's per-user TMPDIR can exceed the Unix-domain socket path limit.
-    this.socketRoot = join('/tmp', 'tmux-panel-' + this.uid + '-' + createHash('sha256').update(this.root).digest('hex').slice(0, 10));
+    this.socketRoot = join('/tmp', (this.legacy ? 'tmux-panel-' : 'anymux-') + this.uid + '-' + createHash('sha256').update(this.root).digest('hex').slice(0, 10));
     this.paths = { configuration: join(this.root, 'settings.json'), logs: join(this.root, 'logs'), events: join(this.root, 'setup-events.jsonl'),
       relaySite: join(this.root, 'relay-site'), tlsCertificate: join(this.root, 'tls/cert.pem'), caCertificate: join(this.root, 'tls/ca.crt') };
   }
@@ -187,7 +194,8 @@ export class DesktopRuntime {
       requiresRestart,
       status: { managedInstalled: publicConfig(config).initialized, runtimeAvailable: !!m, runtimeError,
         moshPreparation: publicMoshPreparation(config.moshPreparation),
-        legacyInstalled: await exists(join(this.home, 'Library/LaunchAgents/com.tmux-web-panel.plist')),
+        legacyInstalled: await exists(join(this.home, 'Library/LaunchAgents/com.anymux.plist'))
+          || await exists(join(this.home, 'Library/LaunchAgents/com.tmux-web-panel.plist')),
         portAvailable, suggestedPort, endpoint: current,
         lanEndpoint: panelState === 'running' && !requiresRestart && config.listenOnLAN && lanIPs()[0] ? endpoint(config, lanIPs()[0]) : null,
         nodeVersion: m?.nodeVersion || null, tmuxVersion: m?.tmuxVersion || null, panelState, tmuxState, certificateNeedsRenewal,
@@ -224,9 +232,9 @@ export class DesktopRuntime {
       }
     }
     if (script) {
-      const env = { ...process.env, TWP_MOSH_ROLE: 'both',
+      const env = { ...process.env, ANYMUX_MOSH_ROLE: 'both',
         PATH: join(config.runtimePath, 'bin') + ':' + SYSTEM_PATH };
-      delete env.TMUX; delete env.TMUX_PANE; delete env.TWP_SUDO_PASSWORD;
+      delete env.TMUX; delete env.TMUX_PANE; delete env.ANYMUX_SUDO_PASSWORD;
       let output = '', exited = false;
       try {
         const pending = this.run('/bin/sh', [script], { env, maxBuffer: 256 * 1024 });
@@ -234,8 +242,8 @@ export class DesktopRuntime {
         const completed = await pending;
         output = String(completed.stdout || ''); exited = true;
       } catch (error) { output = String(error.stdout || ''); }
-      const results = [...output.matchAll(/^TWP_COMPONENT_RESULT=(ready|failed|needs_password|maintenance_required|unsupported|skipped)\s*$/gm)];
-      const reasons = [...output.matchAll(/^TWP_COMPONENT_REASON=([a-z0-9_]{1,80})\s*$/gm)];
+      const results = [...output.matchAll(/^ANYMUX_COMPONENT_RESULT=(ready|failed|needs_password|maintenance_required|unsupported|skipped)\s*$/gm)];
+      const reasons = [...output.matchAll(/^ANYMUX_COMPONENT_REASON=([a-z0-9_]{1,80})\s*$/gm)];
       result = results.at(-1)?.[1] || 'failed';
       reason = reasons.at(-1)?.[1] || (result === 'ready' || result === 'skipped' ? null : exited ? 'component_result_missing' : 'component_process_failed');
       if (!exited && (result === 'ready' || result === 'skipped')) { result = 'failed'; reason = 'component_process_failed'; }
@@ -257,7 +265,7 @@ export class DesktopRuntime {
     await chmod(this.socketRoot, 0o700);
     const runtime = config.runtimePath;
     const env = { PATH: [join(runtime, 'bin'), join(this.home, '.local/bin'), '/opt/homebrew/bin', '/usr/local/bin', SYSTEM_PATH].join(':'),
-      TMUX_PANEL_CONFIG_DIR: this.root, TMUX_PANEL_MANAGED_RUNTIME: '1', TMUX_TMPDIR: this.socketRoot,
+      ANYMUX_CONFIG_DIR: this.root, ANYMUX_MANAGED_RUNTIME: '1', TMUX_TMPDIR: this.socketRoot,
       TERMINFO_DIRS: join(runtime, 'share/terminfo') + ':/usr/share/terminfo', LANG: 'en_US.UTF-8', LC_CTYPE: 'en_US.UTF-8' };
     const files = {};
     for (const [name, label, args] of [

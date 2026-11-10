@@ -1,0 +1,27 @@
+/* session-protection's styles, moved out of the shell's style.css (plugins/ui/client/css).
+ * They load right after it (page.json order 50.7), each rule in its old
+ * order and @media, so the cascade is what it was. */
+
+/* Server page "会话": session protection, history, tmux settings. */
+
+.sp-page { display: grid; gap: 12px; max-width: 860px; }
+
+.sp-card { padding: 16px 18px; }
+
+.sp-switch, .sp-choice { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+
+.sp-switch { margin-top: 12px; }
+
+.sp-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px 18px; margin-top: 12px; }
+
+.sp-facts { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; font-size: 11px; }
+
+.sp-notice { margin-top: 12px; padding: 9px 11px; border-radius: 6px; font-size: 11px; line-height: 1.5; background: var(--ms-yellow-tint); color: var(--text-primary); }
+
+.sp-notice.ok { background: var(--ms-green-tint); }
+
+.sp-notice.error { background: var(--ms-red-tint); color: var(--accent-red); }
+
+.sp-snapshot { margin-top: 10px; border-top: 1px solid var(--border-subtle); padding-top: 8px; }
+
+.sp-needs { margin: 10px 0 0; padding-left: 18px; font-size: 11px; line-height: 1.7; }

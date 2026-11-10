@@ -11,14 +11,14 @@ const remote = readFileSync(resolve(import.meta.dirname, '../../scripts/remote/i
 // the real installer entry point, package manager and services can never execute.
 export const WINDOWS_HARNESS = String.raw`
 $ErrorActionPreference = 'Stop'
-$source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:TWP_MOSH_TEST_SOURCE))
+$source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:ANYMUX_MOSH_TEST_SOURCE))
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'INSTALLER_PARSE_FAILED' }
 $functions = $ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $false)
 foreach ($definition in $functions) { Invoke-Expression $definition.Extent.Text }
 $originalRoot = (Get-Item -LiteralPath 'Function:Get-MoshRoot').ScriptBlock
-function Get-MoshRoot([string]$RequestedRoot) { return 'C:\twp-isolated-mosh-test' }
+function Get-MoshRoot([string]$RequestedRoot) { return 'C:\anymux-isolated-mosh-test' }
 function Get-Content { param([switch]$Raw, [string]$Encoding, [string]$LiteralPath) if ($script:RootFixture -eq 'saved') { if ($Encoding -ne 'UTF8') { throw 'CONFIG_ENCODING_REQUIRED' }; return '{"msys2Root":"C:\\fixture-saved-msys"}' }; throw 'UNMOCKED_CONTENT_READ' }
 function Test-Path {
   param([string]$LiteralPath)
@@ -39,7 +39,7 @@ function Invoke-MoshNative([string]$File, [string[]]$Arguments) {
   $text = ''; $code = 0
   switch (Split-Path -Leaf $File) {
     'mosh-server.exe' {
-      $script:Case.RuntimePathCorrect = $env:PATH.StartsWith('C:\twp-isolated-mosh-test\usr\bin;') -and $env:MSYS -eq 'winsymlinks:nativestrict noglob'
+      $script:Case.RuntimePathCorrect = $env:PATH.StartsWith('C:\anymux-isolated-mosh-test\usr\bin;') -and $env:MSYS -eq 'winsymlinks:nativestrict noglob'
       if ($script:Case.Broken) { $code = 1 } else { $text = 'mosh-server (mosh 1.4.0)' }
     }
     'pacman-conf.exe' { $text = if ($script:Case.WeakPolicy) { 'PackageOptional DatabaseOptional' } else { 'PackageRequired PackageTrustedOnly DatabaseOptional' } }
@@ -85,12 +85,12 @@ $cases = @(
 $rows = @()
 foreach ($item in $cases) {
   $script:Case = $item; $script:Case.Calls=@(); $script:Case.InstallCalls=0; $script:Case.LockChecks=0
-  $env:PATH='TWP_TEST_ORIGINAL_PATH'; $env:MSYS='glob winsymlinks:nativestrict'
-  $env:TWP_SKIP_MOSH=$(if($item.InternalSkip){'1'}else{''}); $env:TMUX_PANEL_SKIP_MOSH=$(if($item.ExternalSkip){'1'}else{''})
+  $env:PATH='ANYMUX_TEST_ORIGINAL_PATH'; $env:MSYS='glob winsymlinks:nativestrict'
+  $env:ANYMUX_SKIP_MOSH=$(if($item.InternalSkip){'1'}else{''}); $env:TMUX_PANEL_SKIP_MOSH=$(if($item.ExternalSkip){'1'}else{''}); $env:TWP_SKIP_MOSH=''
   $role=$(if($item.Role){$item.Role}else{'server'})
   $result=Install-Mosh -RequestedRoot 'C:\ignored-test-root' -RequestedRole $role -Skip ([bool]$item.Skip)
   $rows += [pscustomobject]@{name=$item.Name;state=$result.State;reason=$result.Reason;installCalls=$item.InstallCalls;calls=$item.Calls;
-    runtimePathCorrect=[bool]$item.RuntimePathCorrect;envRestored=($env:PATH -eq 'TWP_TEST_ORIGINAL_PATH' -and $env:MSYS -eq 'glob winsymlinks:nativestrict')}
+    runtimePathCorrect=[bool]$item.RuntimePathCorrect;envRestored=($env:PATH -eq 'ANYMUX_TEST_ORIGINAL_PATH' -and $env:MSYS -eq 'glob winsymlinks:nativestrict')}
 }
 $oldRoot=$env:MSYS2_ROOT
 try {
@@ -110,7 +110,7 @@ describe('Windows Mosh integration contract', () => {
     expect(source).not.toMatch(/Stop-Process|Stop-ScheduledTask|Start-ScheduledTask|kill-server|attach-session|New-NetFirewallRule/);
     expect(source).not.toMatch(/'-Sy'|'-Syu'|Remove-Item|Set-Content|WriteAllText/);
     expect(source).toContain("'-Sp', '--needed', '--noconfirm'");
-    expect(source).toContain('TWP_COMPONENT_RESULT=$($result.State)');
+    expect(source).toContain('ANYMUX_COMPONENT_RESULT=$($result.State)');
     expect(source).toContain("if ($result.State -in @('ready', 'skipped')) { exit 0 }");
   });
 
@@ -118,20 +118,20 @@ describe('Windows Mosh integration contract', () => {
     expect(service.indexOf("$component = Join-Path $PSScriptRoot 'install-mosh.ps1'"))
       .toBeGreaterThan(service.indexOf('Start-Task $PanelTask'));
     expect(service).toContain('[switch]$SkipMosh');
-    expect(remote).toContain("$env:TWP_SKIP_MOSH -eq '1' -or $env:TMUX_PANEL_SKIP_MOSH -eq '1'");
+    expect(remote).toContain("$env:ANYMUX_SKIP_MOSH -eq '1' -or $env:TMUX_PANEL_SKIP_MOSH -eq '1'");
     expect(remote).toContain('-NodeBin $node @optional');
     expect(remote).not.toContain("Join-Path $App 'scripts\\install-mosh.ps1'");
     expect(service).toContain('the panel remains installed');
   });
 });
 
-const powershell = process.platform === 'win32' ? 'powershell.exe' : process.env.TWP_TEST_PWSH;
+const powershell = process.platform === 'win32' ? 'powershell.exe' : process.env.ANYMUX_TEST_PWSH;
 describe.skipIf(!powershell)('isolated PowerShell Mosh policy (all native/filesystem operations mocked)', () => {
   let rows;
   beforeAll(() => {
     const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(WINDOWS_HARNESS, 'utf16le').toString('base64')], {
       encoding: 'utf8', timeout: 15_000, maxBuffer: 256_000,
-      env: { ...process.env, TWP_MOSH_TEST_SOURCE: Buffer.from(source).toString('base64') },
+      env: { ...process.env, ANYMUX_MOSH_TEST_SOURCE: Buffer.from(source).toString('base64') },
     });
     expect(result.status, result.stderr).toBe(0);
     rows = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1));

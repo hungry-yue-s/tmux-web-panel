@@ -6,7 +6,7 @@ import fs from 'node:fs';
 let FP;
 beforeAll(() => {
   const w = {};
-  new Function('window', fs.readFileSync('plugins/ui/client/js/link-detect.js', 'utf8'))(w);
+  new Function('window', fs.readFileSync('plugins/terminal/client/js/link-detect.js', 'utf8'))(w);
   globalThis.LinkDetect = w.LinkDetect;
   new Function('window', fs.readFileSync('plugins/files/client/js/file-preview.js', 'utf8'))(w);
   FP = w.FilePreview._test;

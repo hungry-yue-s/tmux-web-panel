@@ -3,7 +3,7 @@
 param(
   [string]$Msys2Root = $(if ($env:MSYS2_ROOT) { $env:MSYS2_ROOT } else { 'C:\msys64' }),
   [string]$SourceDirectory,
-  [string]$InstallRoot = (Join-Path $env:USERPROFILE '.local\share\tmux-web-panel\tmux'),
+  [string]$InstallRoot = (Join-Path $env:USERPROFILE '.local\share\anymux\tmux'),
   [ValidateRange(1, 32)][int]$Jobs = 2
 )
 $ErrorActionPreference = 'Stop'

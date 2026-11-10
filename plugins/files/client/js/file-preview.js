@@ -67,13 +67,28 @@ var FilePreview = (function () {
   // The order this window's tabs were saved in, until they are all back.
   var _savedTabOrder = null;
   var _draggedTabId = null;
-  var TAB_DRAG_TYPE = 'application/x-tmux-panel-tab';
+  var TAB_DRAG_TYPE = 'application/x-anymux-tab';
   var _blockWindowsGoneListener = null;
   var _switchingDockContext = false;
   var _pendingBlockKey = null;
   var _sideSetWidth = null;
   var BLOCK_SIDE_WIDTH = 560;
-  var BLOCK_WIDTH_KEY = 'twp_block_side_width';
+  var BLOCK_WIDTH_KEY = 'anymux_block_side_width';
+  var _workspaceRevisions = {};
+
+  function _terminalContext() {
+    var ui = window.Blocks && window.Blocks.ui;
+    var context = ui && ui.currentContext ? ui.currentContext() : null;
+    return context && context.onTerminal ? context : null;
+  }
+
+  function _sourceForPane(paneId) {
+    var context = _terminalContext();
+    return {
+      serverId: context && context.serverId || (window.Api && window.Api.activeServerId ? window.Api.activeServerId() : 'local'),
+      paneId: paneId || (context ? context.paneId : _currentPaneId),
+    };
+  }
 
   /**
    * Identifies one window's dock state.
@@ -166,7 +181,8 @@ var FilePreview = (function () {
       version: DOCK_STATE_VERSION,
       tabs: _fileTabs().slice(0, MAX_PERSISTED_DOCK_TABS).map(function (tab) {
         var saved = { path: tab.path, paneId: tab.paneId || null };
-        if (_dockContextKey.split('\u0000')[1] === 'local-view' && tab.source) saved.source = tab.source;
+        if (tab.source && (_dockContextKey.split('\u0000')[1] === 'local-view'
+          || tab.source.serverId !== _dockContextKey.split('\u0000')[0])) saved.source = tab.source;
         return saved;
       }).filter(function (tab) { return typeof tab.path === 'string' && tab.path.charAt(0) === '/'; }),
       activePath: active && !active.block ? active.path : null,
@@ -188,14 +204,28 @@ var FilePreview = (function () {
   function reconcileWorkspace(serverId, workspace) {
     if (!serverId || !workspace || workspace.provider !== 'tmux' || workspace.complete !== true
       || !Array.isArray(workspace.sessions)
+      || workspace.sessions.some(function (session) {
+        return !session || session.windowsComplete === false || !Array.isArray(session.windows)
+          || typeof session.windowCount === 'number' && session.windows.length !== session.windowCount
+          || session.windows.some(function (win) { return !win || typeof win.id !== 'string' || win.panesComplete === false; });
+      })
       || !(typeof workspace.instanceId === 'string' && workspace.instanceId
         || workspace.instanceId === null && workspace.sessions.length === 0)) return;
+    var revisionKey = serverId + '\u0000' + workspace.instanceId;
+    if (typeof workspace.revision === 'number' && workspace.revision < _workspaceRevisions[revisionKey]) return;
     var live = new Set();
     workspace.sessions.forEach(function (session) {
       session.windows.forEach(function (win) {
         live.add(_makeDockContextKey(serverId, win.id, workspace.instanceId));
       });
     });
+    // A native client's verified window is newer evidence than a delayed tree.
+    // Pending focus may retain that identity too; absence is not a deletion.
+    var focused = _terminalContext();
+    if (focused && focused.serverId === serverId && focused.windowId
+      && (focused.instanceId && focused.instanceId !== workspace.instanceId
+        || !live.has(_makeDockContextKey(serverId, focused.windowId, focused.instanceId)))) return;
+    if (typeof workspace.revision === 'number') _workspaceRevisions[revisionKey] = workspace.revision;
     if (_dockContextKey) {
       var current = _dockContextKey.split('\u0000');
       if (current[0] === serverId && current[1] !== 'local-view' && !live.has(_dockContextKey)) {
@@ -241,8 +271,7 @@ var FilePreview = (function () {
   }
 
   function _dockLayout() {
-    return document.querySelector('.ms-app.mode-terminal .ms-main')
-      || document.getElementById('main-layout');
+    return document.querySelector('.ms-app.mode-terminal .ms-main');
   }
 
   function _isMobileReader() {
@@ -265,13 +294,8 @@ var FilePreview = (function () {
     var layoutWidth = layout ? layout.getBoundingClientRect().width : 0;
     if (!layoutWidth) layoutWidth = window.innerWidth || 0;
 
-    var sidebar = layout ? layout.querySelector('#sidebar') : null;
-    var sidebarWidth = 0;
-    if (sidebar && window.getComputedStyle(sidebar).display !== 'none') {
-      sidebarWidth = sidebar.getBoundingClientRect().width || sidebar.offsetWidth || 0;
-    }
-
-    var available = Math.max(0, layoutWidth - sidebarWidth);
+    // .ms-main is the column beside the shell's sidebar: all of it is shared.
+    var available = Math.max(0, layoutWidth);
     var min = 320;
     // Dragging left may use 70% of the shared workstage, including restored
     // widths. Keep the file in a modal when the 320px minimum cannot fit.
@@ -1302,7 +1326,8 @@ var FilePreview = (function () {
     saved.tabs.forEach(function (tab) {
       chain = chain.then(function () {
         if (!_isDockContextCurrent(contextKey, generation)) return false;
-        return openFile(tab.path, tab.paneId, { restoring: true, source: tab.source });
+        return openFile(tab.path, tab.paneId, { restoring: true,
+          source: tab.source || { serverId: contextKey.split('\u0000')[0], paneId: tab.paneId } });
       }).then(function (opened) {
         if (!_isDockContextCurrent(contextKey, generation)) return;
         if (opened === true) {
@@ -2044,7 +2069,9 @@ var FilePreview = (function () {
     }
     function copyPng(blobPromise) {
       var handlers = win.webkit && win.webkit.messageHandlers;
-      if (handlers && handlers.tmuxPanelClipboard) {
+      // tmuxPanelClipboard: a native app from before the rename.
+      var clipboard = handlers && (handlers.anymuxClipboard || handlers.tmuxPanelClipboard);
+      if (clipboard) {
         return blobPromise.then(function (blob) {
           if (blob.size > 16 * 1024 * 1024) throw new Error('图片超过 16 MB');
           return new Promise(function (resolve, reject) {
@@ -2054,7 +2081,7 @@ var FilePreview = (function () {
               var result = String(reader.result || '');
               var comma = result.indexOf(',');
               if (comma < 0) { reject(new Error('PNG 编码失败')); return; }
-              handlers.tmuxPanelClipboard.postMessage({ pngBase64: result.slice(comma + 1) });
+              clipboard.postMessage({ pngBase64: result.slice(comma + 1) });
               resolve();
             };
             reader.readAsDataURL(blob);
@@ -2610,7 +2637,7 @@ var FilePreview = (function () {
     var nativeWindow = null;
     try {
       var handlers = window.webkit && window.webkit.messageHandlers;
-      nativeWindow = handlers && handlers.tmuxPanelOpenWindow;
+      nativeWindow = handlers && (handlers.anymuxOpenWindow || handlers.tmuxPanelOpenWindow);
     } catch (_) { /* browser path below */ }
     if (_currentFile.isText || _currentFile.isMarkdown || _currentFile.isXlsx) {
       // Open the tab synchronously (popup blockers require a user-gesture-time
@@ -3573,7 +3600,8 @@ var FilePreview = (function () {
 
     Promise.all([_loadScript(CDN.hljs), _loadCSS(CDN.hljsCss)])
       .then(function () {
-        if (window.hljs && language) {
+        // highlight.js logs an error for a language it lacks before throwing: ask first.
+        if (window.hljs && language && window.hljs.getLanguage(language)) {
           try {
             var result = window.hljs.highlight(content, { language: language, ignoreIllegals: true });
             code.innerHTML = result.value;
@@ -4123,7 +4151,8 @@ var FilePreview = (function () {
           html: false,
           linkify: true,
           highlight: function (str, lang) {
-            if (window.hljs && lang) {
+            // Fences in a language highlight.js lacks (mermaid, powershell...) stay plain.
+            if (window.hljs && lang && window.hljs.getLanguage(lang)) {
               try {
                 return window.hljs.highlight(str, { language: lang, ignoreIllegals: true }).value;
               } catch (_) { /* fallback */ }
@@ -4235,7 +4264,7 @@ var FilePreview = (function () {
 
   // Runs on a single LOGICAL line (wrapped rows already merged); returns
   // matches { text, kind, href, lineRef, startCol, endCol }. All regex logic
-  // lives in public/js/link-detect.js (window.LinkDetect) so it is unit-tested.
+  // lives in the terminal plugin's link-detect.js (window.LinkDetect) so it is unit-tested.
   //   kind 'web'       -> open href in a new browser tab
   //   kind 'file'      -> open in the file preview (lineRef jumps to a line)
   //   kind 'ambiguous' -> let the user choose web vs file (e.g. example.com)
@@ -4400,7 +4429,8 @@ var FilePreview = (function () {
   }
 
   function openFromBuffer(paneId) {
-    var source = { serverId: window.Api && window.Api.activeServerId ? window.Api.activeServerId() : 'local', paneId: paneId };
+    var source = _sourceForPane(paneId);
+    paneId = source.paneId;
     var _authHeaders = typeof Auth !== 'undefined' ? Auth.headers() : {};
     // No usable path → open the pane's cwd. '.' is resolved server-side against
     // #{pane_current_path} (resolveInputPath).
@@ -4619,7 +4649,12 @@ var FilePreview = (function () {
       return Promise.resolve();
     }
     if (info.isArchive) return _renderArchive(body, info);
-    if (info.isSqlite && window.Blocks) return window.Blocks.renderSqlite(body, info);
+    if (info.isSqlite) {
+      // The sqlite plugin's view; without it, the file is only offered for download.
+      if (window.Blocks && window.Blocks.renderSqlite) return window.Blocks.renderSqlite(body, info);
+      _renderUnavailable(body, 'SQLite 预览没有启用。', source.rawUrl, filename);
+      return Promise.resolve();
+    }
     return source.loadContent().then(function (data) {
       if (!isCurrent()) return false;
       if (options.onContent) options.onContent(data.content);
@@ -4636,7 +4671,7 @@ var FilePreview = (function () {
       } else {
         _renderCode(body, data.content, data.language, options.targetLine);
         // Git changes in the gutter, like an editor.
-        if (options.gitGutter && window.Blocks) window.Blocks.decorateGitGutter(body, info.absPath);
+        if (options.gitGutter && window.Blocks && window.Blocks.decorateGitGutter) window.Blocks.decorateGitGutter(body, info.absPath);
       }
       return true;
     });
@@ -4804,10 +4839,9 @@ var FilePreview = (function () {
     }
     var body = _createModal(filePath);
     // _createModal saves the previous dock tab before the new file owns these.
-    _currentPaneId = paneId || _currentPaneId;
-    var source = opts && opts !== true && opts.source;
-    _currentSource = source ? { serverId: source.serverId, paneId: source.paneId || _currentPaneId }
-      : { serverId: window.Api && window.Api.activeServerId ? window.Api.activeServerId() : 'local', paneId: _currentPaneId };
+    var source = opts && opts !== true && opts.source || _sourceForPane(paneId);
+    _currentPaneId = source.paneId || paneId || null;
+    _currentSource = { serverId: source.serverId, paneId: _currentPaneId };
     _currentOpenPath = filePath;
     if (!keepDir) _dirContext = null;
     var requestId = ++_previewGeneration;
@@ -4835,7 +4869,7 @@ var FilePreview = (function () {
     }
 
     var qs = '?path=' + encodeURIComponent(filePath);
-    if (paneId) qs += '&paneId=' + encodeURIComponent(paneId);
+    if (_currentPaneId) qs += '&paneId=' + encodeURIComponent(_currentPaneId);
 
     var _authHeaders = typeof Auth !== 'undefined' ? Auth.headers() : {};
 
@@ -4865,7 +4899,7 @@ var FilePreview = (function () {
         }
         return _renderResolvedPreview(body, res.data, targetLine, {
           requestId: requestId,
-          paneId: paneId || _currentPaneId,
+          paneId: _currentPaneId,
           markdownFragment: markdownFragment,
         });
       })
@@ -5279,6 +5313,12 @@ var FilePreview = (function () {
   }
 
   if (typeof document !== 'undefined') {
+    window.addEventListener('terminal-context-changed', function (event) {
+      var context = event.detail;
+      if (context && context.onTerminal && context.serverId && context.windowId) {
+        switchDockContext(context.serverId, context.windowId, context.instanceId);
+      }
+    });
     document.addEventListener('visibilitychange', _syncAutoRefresh);
     document.addEventListener('tmux-theme-change', _refreshMermaidTheme);
     ['tmux-theme-change', 'tmux-transparency-change', 'tmux-glass-change'].forEach(function (event) {

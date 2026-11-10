@@ -1,20 +1,20 @@
 ---
-title: Tmux Web Panel 多服务器入口与 UI/UX 重构设计
+title: Anymux 多服务器入口与 UI/UX 重构设计
 aliases:
   - 多服务器管理 UIUX
   - 应用入口重构
 tags:
-  - tmux-web-panel
+  - anymux
   - product-design
   - ui-ux
   - multi-server
 status: proposed
 created: 2026-08-30
 updated: 2026-08-30
-project: tmux-web-panel
+project: anymux
 ---
 
-# Tmux Web Panel 多服务器入口与 UI/UX 重构设计
+# Anymux 多服务器入口与 UI/UX 重构设计
 
 > [!example] 可点击 Demo
 > [打开多服务器 UI Demo](demos/multi-server-ui-demo.html)，可体验工作台、服务器列表、服务器概览、性能、tmux、连接以及移动端布局。
@@ -214,7 +214,7 @@ UI 规则：
 
 ```text
 ┌────────────── 248px ──────────────┬───────────────────────────────┐
-│ Tmux Panel                 [通知] │ 工作台 / 服务器 / 当前上下文   │
+│ Anymux                 [通知] │ 工作台 / 服务器 / 当前上下文   │
 │                                   │                               │
 │ ▣ 工作台                          │                               │
 │ ◉ 服务器                     8    │          主内容区              │

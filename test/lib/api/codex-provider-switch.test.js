@@ -28,7 +28,7 @@ describe('embedded Codex provider switcher', () => {
     await writeFile(join(home, '.codex/config.toml'), 'service_tier="fast"\nmodel_reasoning_effort="high"\n[mcp_servers.demo]\ncommand="demo"\n');
     const row = { id: 'group', name: 'Group', category: 'custom', is_current: 0,
       settings_config: JSON.stringify({ auth: { OPENAI_API_KEY: 'local-key' }, config: 'model_provider="tmux_enterprise"\nmodel="mode-auto"\n[model_providers.tmux_enterprise]\nbase_url="http://127.0.0.1:15723/codex/v1"\nwire_api="responses"\n' }),
-      meta: JSON.stringify({ tmuxPanelEnterprise: 'tmux-panel-token-switch-v1' }) };
+      meta: JSON.stringify({ anymuxEnterprise: 'anymux-token-switch-v1' }) };
     const runSQLite = async (_path, query) => query.includes('from providers where') ? JSON.stringify([row])
       : query.includes('proxy_live_backup') ? '[{"count":0}]' : '[]';
     await createCodexProviderSwitcher({ home, databasePath: join(home, 'cc.db'), runSQLite })('group');
@@ -155,6 +155,6 @@ describe('embedded Codex provider switcher', () => {
     expect(await readFile(join(home, '.codex', 'config.toml'), 'utf8')).toBe(originalConfig);
     expect(JSON.parse(await readFile(join(home, '.cc-switch', 'settings.json'), 'utf8')).currentProviderCodex).toBe('official');
     expect(calls.at(-1)).toContain("id='official'");
-    await expect(readFile(join(home, '.config', 'tmux-web-panel', 'codex-provider-switch.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(home, '.config', 'anymux', 'codex-provider-switch.json'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

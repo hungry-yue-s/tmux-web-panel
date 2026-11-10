@@ -94,6 +94,14 @@ export function apply(ctx, config = {}) {
   const apiGuard = tokenAuth(tokens, { isServiceToken: node.isNodeToken, allowLocal });
   const loginOnly = tokenAuth(tokens, { allowLocal });
 
+  // Whether this browser's login on this panel still holds: the page asks
+  // when another server answered 401, which proves nothing about this login.
+  const check = express.Router();
+  check.get('/', (req, res, next) => (guarded ? loginOnly : (_req, _res, pass) => pass())(req, res, () => {
+    res.json({ success: true, data: { authenticated: true }, error: null });
+  }));
+  ctx.http.mount('/api/auth/check', check);
+
   if (guarded) {
     // Everything under /api needs a token, except the login routes themselves.
     ctx.http.use((req, res, next) => {

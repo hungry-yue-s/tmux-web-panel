@@ -12,7 +12,7 @@ function Mosh-Result([string]$State, [string]$Reason = '') {
 }
 
 function Get-MoshRoot([string]$RequestedRoot) {
-  $config = Join-Path $env:USERPROFILE '.config\tmux-web-panel\windows-service.json'
+  $config = Join-Path $env:USERPROFILE '.config\anymux\windows-service.json'
   if (Test-Path -LiteralPath $config) {
     $saved = Get-Content -Raw -Encoding UTF8 -LiteralPath $config | ConvertFrom-Json
     if ($saved.msys2Root) { return [IO.Path]::GetFullPath([string]$saved.msys2Root) }
@@ -40,7 +40,9 @@ function Mosh-NativeFailure([string]$Text, [string]$Fallback) {
 }
 
 function Install-Mosh([string]$RequestedRoot, [string]$RequestedRole = 'server', [bool]$Skip = $false) {
-  if ($Skip -or $env:TWP_SKIP_MOSH -eq '1' -or $env:TMUX_PANEL_SKIP_MOSH -eq '1') { return Mosh-Result 'skipped' 'user_skipped' }
+  # Pre-rename names count only while ANYMUX_SKIP_MOSH is unset, so a panel's explicit '0' wins.
+  $skipSetting = if ($env:ANYMUX_SKIP_MOSH) { $env:ANYMUX_SKIP_MOSH } elseif ($env:TMUX_PANEL_SKIP_MOSH) { $env:TMUX_PANEL_SKIP_MOSH } else { $env:TWP_SKIP_MOSH }
+  if ($Skip -or $skipSetting -eq '1') { return Mosh-Result 'skipped' 'user_skipped' }
   if ($RequestedRole -ne 'server') { return Mosh-Result 'unsupported' 'client_platform' }
   $root = Get-MoshRoot $RequestedRoot
   $bin = Join-Path $root 'usr\bin'
@@ -105,7 +107,7 @@ function Install-Mosh([string]$RequestedRoot, [string]$RequestedRole = 'server',
 try { $result = Install-Mosh -RequestedRoot $Msys2Root -RequestedRole $Role -Skip ([bool]$SkipMosh) }
 catch [System.UnauthorizedAccessException] { $result = Mosh-Result 'maintenance_required' 'windows_admin_required' }
 catch { $result = Mosh-Result 'failed' 'component_check_failed' }
-Write-Output "TWP_COMPONENT_RESULT=$($result.State)"
-if ($result.Reason) { Write-Output "TWP_COMPONENT_REASON=$($result.Reason)" }
+Write-Output "ANYMUX_COMPONENT_RESULT=$($result.State)"
+if ($result.Reason) { Write-Output "ANYMUX_COMPONENT_REASON=$($result.Reason)" }
 if ($result.State -in @('ready', 'skipped')) { exit 0 }
 exit 1

@@ -66,7 +66,7 @@ describe('attachBasicTerminal', () => {
   it('attaches to remote tmux through the uploaded one-word script, in its own quota scope', async () => {
     const host = {
       resolvePane: vi.fn(async (paneId) => ({ provider: 'tmux', paneId })),
-      attachArgs: vi.fn(async () => ['-tt', 'box', '.cache/tmux-web-panel/attach-3-0']),
+      attachArgs: vi.fn(async () => ['-tt', 'box', '.cache/anymux/attach-3-0']),
       connection: { sshEnv: () => ({ ASKPASS: '1' }) },
     };
     const terminalManager = { create: vi.fn(() => 'conn-1') };
@@ -82,7 +82,7 @@ describe('attachBasicTerminal', () => {
     const [, paneId, cols, rows, nozoom, options] = terminalManager.create.mock.calls[0];
     expect([paneId, cols, rows, nozoom]).toEqual(['%3', 100, 30, false]);
     expect(options.scope).toBe('box');
-    expect(options.spawn.args.at(-1)).toBe('.cache/tmux-web-panel/attach-3-0');
+    expect(options.spawn.args.at(-1)).toBe('.cache/anymux/attach-3-0');
     expect(options.spawn.env).toEqual({ ASKPASS: '1' });
     expect(ws.sent[0]).toEqual({ type: 'ready', paneId: '%3', provider: 'tmux', persistence: 'tmux' });
   });

@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { loadSlots } from '../helpers/slots.js';
+import { registerWorkbenchShell } from '../../plugins/workbench/client/shell.js';
+import { BLOCKS, WORKSPACE_BLOCKS } from '../helpers/blocks.js';
 
 const ROUTER = readFileSync('plugins/ui/client/js/router.js', 'utf8');
 const STORE = readFileSync('plugins/ui/client/js/store.js', 'utf8');
 const SHELL = readFileSync('plugins/ui/client/js/app-shell.js', 'utf8');
-const BLOCKS = readFileSync('plugins/files/client/js/blocks.js', 'utf8');
-const WORKSPACE_BLOCKS = readFileSync('plugins/files/client/js/blocks-workspace.js', 'utf8');
+const SERVERS = readFileSync('plugins/ui/client/js/servers.js', 'utf8');
 
 const SHELL_DOM = `<!DOCTYPE html><html><body>
   <div class="ms-app sidebar-collapsed">
@@ -50,9 +52,10 @@ const TMUX_ACTIONS = {
 };
 
 
-function loadShell() {
+function loadShell({ sections = true } = {}) {
   const dom = new JSDOM(SHELL_DOM, { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window;
+  loadSlots(win, { sections });
   win.eval(ROUTER);
   win.eval(STORE);
   win.eval(SHELL);
@@ -174,7 +177,7 @@ describe('AppShell sidebar tree', () => {
       id: '$8', name: '环境部署', active: true,
       windows: [
         // A node not yet updated still sends the path MSYS2 tmux reports.
-        { id: '@1', index: 1, name: 'Tmux-panel', active: true, panes: [{ id: '%1', command: 'C:\\\\Users\\\\me\\\\.local\\\\bin\\\\claude.exe' }] },
+        { id: '@1', index: 1, name: 'Anymux', active: true, panes: [{ id: '%1', command: 'C:\\\\Users\\\\me\\\\.local\\\\bin\\\\claude.exe' }] },
         { id: '@0', index: 0, name: 'bash', panes: [{ id: '%0', command: 'bash' }] },
       ],
     }] });
@@ -182,7 +185,7 @@ describe('AppShell sidebar tree', () => {
     ctx.Shell.render();
     const rows = [...ctx.document.querySelectorAll('.tree-window-row')];
     const named = rows.find((row) => row.dataset.window === '@1');
-    expect(named.querySelector('.tree-item-name').textContent).toBe('Tmux-panel');
+    expect(named.querySelector('.tree-item-name').textContent).toBe('Anymux');
     expect(named.querySelector('.cmd').textContent).toBe('claude');
     expect(named.textContent).not.toContain('Users');
     const auto = rows.find((row) => row.dataset.window === '@0');
@@ -496,7 +499,7 @@ describe('AppShell window bar', () => {
     const chip = (ctx) => ctx.document.querySelector('.pane-git-chip');
     const entries = (ctx) => ({
       'the shortcut': () => ctx.document.dispatchEvent(new ctx.win.KeyboardEvent('keydown', { altKey: true, shiftKey: true, code: 'KeyG', bubbles: true })),
-      'the command palette': () => ctx.win.Blocks.commands().find((command) => command.id === 'git').run(),
+      'the command palette': () => ctx.win.PanelSlots.commands.get('git').run(),
       'Blocks.openGit': () => ctx.win.Blocks.openGit(),
     });
 
@@ -508,6 +511,7 @@ describe('AppShell window bar', () => {
         current = { ...current, paneId: '%7', key: 'fresh' };
         return { ...current, focusRequestKey: 'cached' };
       } };
+      registerWorkbenchShell(ctx.win, ctx.win.Workbench);
       ctx.win.Blocks.openGit();
       await vi.waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith('git', { path: '/repo/focused' }));
       expect(get.mock.calls[0][1].paneId).toBe('%7'); ctx.win.close();
@@ -1147,9 +1151,40 @@ describe('AppShell status server resolution', () => {
   });
 });
 
+describe('AppShell sections from the plugins on the page (PanelSlots)', () => {
+  it('shows no tab, settings section or default for a plugin whose scripts are not there', () => {
+    const ctx = loadShell({ sections: false });
+    ctx.win.eval(SERVERS);
+    seedTwoServers(ctx.Store);
+    // Only the shell's own: the connection tab and three settings sections.
+    expect(ctx.Shell.statusSections().map((s) => s.id)).toEqual(['connection']);
+    expect(ctx.Shell.localStatusSections()).toEqual([]);
+    expect(ctx.Shell.defaultStatusSection('local')).toBe('connection');
+    expect(ctx.Shell.resolveStatusSection('local', 'performance')).toBe('connection');
+    expect(ctx.Shell.settingsSections().map((s) => s.id)).toEqual(['appearance', 'security', 'about']);
+    expect(ctx.Shell.settingsSection('management').id).toBe('appearance');
+
+    // The metrics plugin's registration alone brings its tab back, first.
+    ctx.win.eval(readFileSync('plugins/metrics/client/js/perf-section.js', 'utf8'));
+    expect(ctx.Shell.statusSections().map((s) => s.id)).toEqual(['performance', 'connection']);
+    expect(ctx.Shell.defaultStatusSection('local')).toBe('performance');
+  });
+
+  it('orders every plugin section and resolves the former usage pages to the Agent console', () => {
+    const ctx = loadShell();
+    ctx.win.eval(SERVERS);
+    seedTwoServers(ctx.Store);
+    expect(ctx.Shell.statusSections().map((s) => s.id)).toEqual(['performance', 'agents', 'sessions', 'connection']);
+    expect(ctx.Shell.resolveStatusSection('local', 'codex')).toBe('agents');
+    ctx.Store.setUi({ showPerformance: false, showClaude: false, showCodex: true });
+    expect(ctx.Shell.statusSections().map((s) => s.id)).toEqual(['agents', 'sessions', 'connection']);
+  });
+});
+
 describe('AppShell settings navigation', () => {
   it('renders a settings nav instead of the server tree', () => {
     const ctx = loadShell();
+    ctx.win.eval(SERVERS);
     seedTwoServers(ctx.Store);
     ctx.Store.setRoute({ name: 'settings', params: {} });
     ctx.Shell.render();
@@ -1163,6 +1198,7 @@ describe('AppShell settings navigation', () => {
 
   it('marks the active settings section', () => {
     const ctx = loadShell();
+    ctx.win.eval(SERVERS);
     ctx.win.ServersPage = { settingsSection: 'about' };
     ctx.Store.setRoute({ name: 'settings', params: {} });
     ctx.Shell.render();
@@ -1374,7 +1410,7 @@ describe('native titlebar drag regions', () => {
     win.document.getElementById('ms-window-context').getBoundingClientRect = () => ({ left: 200, top: 8, width: 150, height: 28 });
     win.document.querySelector('button').getBoundingClientRect = () => ({ left: 360, top: 8, width: 100, height: 28 });
     const messages = [];
-    win.webkit = { messageHandlers: { tmuxPanelAction: { postMessage: message => messages.push(message) } } };
+    win.webkit = { messageHandlers: { anymuxAction: { postMessage: message => messages.push(message) } } };
     win.requestAnimationFrame = callback => { callback(); return 1; };
     win.eval(SHELL);
     win.AppShell._setHeaderCopy('本机 / 会话 / 窗口');
@@ -1397,7 +1433,7 @@ describe('native titlebar drag regions', () => {
     button.getBoundingClientRect = () => ({ left: 900, top: 8, width: 28, height: 28 });
     summary.getBoundingClientRect = () => ({ left: 940, top: 8, width: 28, height: 28 });
     const messages = [];
-    win.webkit = { messageHandlers: { tmuxPanelAction: { postMessage: (message) => messages.push(message) } } };
+    win.webkit = { messageHandlers: { anymuxAction: { postMessage: (message) => messages.push(message) } } };
     win.requestAnimationFrame = (callback) => { callback(); return 1; };
     win.eval(SHELL);
     expect(messages[0]).toMatchObject({ action: 'titlebarDragRegions', height: 44, viewportWidth: 1024,

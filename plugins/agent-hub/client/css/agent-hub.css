@@ -1,0 +1,159 @@
+/* agent-hub's styles, moved out of the shell's style.css (plugins/ui/client/css).
+ * They load right after it (page.json order 50.1), each rule in its old
+ * order and @media, so the cascade is what it was. */
+
+.local-agent-host { margin-top: 0; }
+
+.ah-loading,
+.ah-empty,
+.ah-error {
+  padding: 24px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--ui-radius-md);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg-card) 82%, transparent);
+}
+
+.ah-error { color: var(--accent-red); border-color: color-mix(in srgb, var(--accent-red) 35%, var(--border-subtle)); }
+
+.ah-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 11px; }
+
+.ah-source-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+
+.ah-source-card, .ah-profile-card, .ah-usage-card, .ah-activity-list {
+  border: 1px solid var(--border-subtle);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--bg-card) 92%, var(--bg-primary));
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .08);
+}
+
+.ah-source-card { min-width: 0; padding: 17px; color: inherit; text-align: left; cursor: pointer; font: inherit; }
+
+.ah-source-card:hover { border-color: color-mix(in srgb, var(--accent-blue) 38%, var(--border-subtle)); }
+
+.ah-source-card.selected { border-color: var(--accent-blue); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-blue) 18%, transparent), 0 12px 30px rgba(0, 0, 0, .08); }
+
+.ah-source-card.claude { border-top-color: color-mix(in srgb, var(--accent-orange) 70%, var(--border-subtle)); }
+
+.ah-source-card.codex { border-top-color: color-mix(in srgb, var(--accent-blue) 70%, var(--border-subtle)); }
+
+.ah-source-card.qoder { border-top-color: color-mix(in srgb, var(--accent-purple) 70%, var(--border-subtle)); }
+
+.ah-source-card.dsh { border-top-color: color-mix(in srgb, var(--accent-blue) 70%, var(--border-subtle)); }
+
+.ah-source-head { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; margin-bottom: 18px; }
+
+.ah-agent-mark {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-primary) 76%, transparent);
+  font: 700 15px/1 var(--ms-mono);
+}
+
+.ah-quota { display: grid; grid-template-columns: minmax(92px, 1fr) minmax(70px, 1.5fr) 38px; align-items: center; gap: 10px; margin: 10px 0; font-size: 11px; }
+
+.ah-quota .ah-quota-counts { grid-column: 1 / -1; white-space: normal; }
+
+.ah-quota-track { position: relative; height: 7px; overflow: hidden; border-radius: 999px; background: var(--bg-primary); }
+
+.ah-quota-used { top: 0; height: 100%; background: var(--text-muted); }
+
+.ah-quota-used.green { background: var(--accent-green); }
+
+.ah-quota-used.yellow { background: var(--accent-yellow); }
+
+.ah-quota-used.red { background: var(--accent-red); }
+
+.ah-quota-time { bottom: 0; height: 2px; background: color-mix(in srgb, var(--text-primary) 75%, transparent); }
+
+.ah-source-stats { display: flex; justify-content: space-between; gap: 12px; margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--border-subtle); color: var(--text-muted); font-size: 10px; }
+
+.ah-card-route { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; min-height: 46px; }
+
+.ah-current-profile { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; padding: 17px 20px; border: 1px solid color-mix(in srgb, var(--accent-green) 45%, var(--border-subtle)); border-radius: 13px; background: color-mix(in srgb, var(--accent-green) 5%, var(--bg-card)); }
+
+.ah-current-profile.unknown { border-color: var(--border-subtle); }
+
+.ah-current-next { min-width: 170px; padding-left: 20px; border-left: 1px solid var(--border-subtle); }
+
+.ah-binding-note { display: flex; flex-wrap: wrap; gap: 8px 22px; padding: 10px 14px; border: 1px solid var(--border-subtle); border-radius: 10px; color: var(--text-muted); background: color-mix(in srgb, var(--bg-card) 75%, transparent); font-size: 10px; }
+
+.ah-profile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 10px; }
+
+.ah-profile-card { min-width: 0; padding: 15px; }
+
+.ah-profile-card.active { border-color: color-mix(in srgb, var(--accent-green) 50%, var(--border-subtle)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-green) 12%, transparent), 0 12px 30px rgba(0, 0, 0, .08); }
+
+.ah-account-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+
+.ah-card-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; }
+
+.ah-account-name { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+
+.ah-profile-type { margin-bottom: 5px; color: var(--accent-blue); font: 700 9px/1 var(--ms-mono); text-transform: uppercase; }
+
+.ah-account-meta { margin-top: 3px; overflow: hidden; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+
+.ah-account-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-subtle); color: var(--text-muted); font-size: 9px; }
+
+.ah-account-message { min-height: 47px; display: grid; place-items: center; color: var(--text-muted); font-size: 10px; }
+
+.ah-budget-list { min-height: 47px; display: flex; align-items: center; gap: 18px; color: var(--text-muted); font-size: 10px; }
+
+.ah-usage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+
+.ah-usage-card { padding: 15px; }
+
+.ah-usage-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+
+.ah-consumption { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); min-height: 74px; }
+
+.ah-model-usage { margin-top: 10px; overflow-x: auto; }
+
+.ah-enterprise-status { min-height: 2.8em; margin: 0 0 12px; color: var(--text-muted); font-size: 11px; line-height: 1.6; }
+
+.ah-enterprise-help { margin: 0 0 12px; color: var(--text-secondary); font-size: 10px; line-height: 1.6; }
+
+.ah-managed-models { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 8px; }
+
+.ah-managed-note { grid-column: 1 / -1; margin: 2px 0; color: var(--text-muted); font-size: 10px; line-height: 1.6; }
+
+.ah-managed-profile { padding: 12px; }
+
+.ah-managed-profile .ah-account-top { margin-bottom: 0; }
+
+.ah-managed-profile .ah-account-name { white-space: normal; overflow-wrap: anywhere; }
+
+.ah-managed-profile .ah-capability-note { margin: 8px 0 0; }
+
+.ah-capability-note { color: var(--text-muted); font-size: 10px; line-height: 1.6; }
+
+.ah-activity-list { overflow: hidden; }
+
+.ah-activity-row { display: grid; grid-template-columns: minmax(0, 1fr) 110px 110px auto 82px; align-items: center; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--border-subtle); font-size: 10px; }
+
+.ah-activity-row:last-child { border-bottom: 0; }
+
+.ah-session-profile { color: var(--text-muted); }
+
+@media (max-width: 1100px) {
+  .ah-source-grid { grid-template-columns: 1fr 1fr; }
+  .ah-activity-row { grid-template-columns: minmax(0, 1fr) 100px 110px auto; }
+}
+
+@media (max-width: 720px) {
+  .ah-actions { width: 100%; align-items: stretch; flex-direction: column; }
+  .ah-source-grid,
+  .ah-profile-grid,
+  .ah-managed-models,
+  .ah-usage-grid { grid-template-columns: 1fr; }
+  .ah-source-card.qoder { grid-column: auto; }
+  .ah-current-profile { grid-template-columns: 1fr; gap: 12px; }
+  .ah-current-next { min-width: 0; padding: 12px 0 0; border-top: 1px solid var(--border-subtle); border-left: 0; }
+  .ah-activity-row { grid-template-columns: minmax(0, 1fr) auto; }
+}

@@ -23,8 +23,8 @@
     _installStarts: {},
     _installReads: {},
     _resizing: false,
-    _perfPanelMounted: false,
-    _agentHubMounted: false,
+    /** The server page section (PanelSlots) the current route started, to stop on leaving. */
+    _mountedSection: null,
     /** Bumped per route: whatever an older route was waiting for no longer applies. */
     _routeGeneration: 0,
     /** serverId -> the workspace read under way, and when the last one arrived. */
@@ -34,7 +34,7 @@
     _serversRequest: null,
     /** What the live terminal shows, so showing it again does not attach again. */
     _terminalMountKey: null,
-    _workbenchMountKey: null,
+    _mountedTerminalView: null,
     _resolvingDefaultWindow: false,
 
     /**
@@ -129,9 +129,7 @@
         if (global.FilePreview && typeof global.FilePreview.reconcileWorkspace === 'function') {
           global.FilePreview.reconcileWorkspace(serverId, workspace);
         }
-        if (global.Workbench && typeof global.Workbench.reconcileWorkspace === 'function') {
-          global.Workbench.reconcileWorkspace(serverId, workspace);
-        }
+        for (const entry of global.PanelSlots?.terminalViews?.list() || []) entry.reconcileWorkspace?.(serverId, workspace);
         this._workspaceReadAt[serverId] = Date.now();
         global.Store.setWorkspace(serverId, workspace);
         return workspace;
@@ -154,6 +152,8 @@
 
     /** One read per server at a time: a poll never stacks up behind a slow link. */
     refreshMetrics(serverId) {
+      // A server without the metrics plugin has nothing to show in the rail.
+      if (global.PanelSlots && !global.PanelSlots.hasPlugin('metrics', serverId)) return Promise.resolve();
       if (this._metricsRequests[serverId]) return this._metricsRequests[serverId];
       const request = this._readMetrics(serverId).finally(() => {
         delete this._metricsRequests[serverId];
@@ -197,25 +197,24 @@
       }
       global.document.querySelectorAll('.mobile-header > .mobile-pane-strip, .mobile-header > .terminal-refresh-btn')
         .forEach(node => node.remove());
-      if (route.name !== 'workbench' && this._workbenchMountKey) {
-        if (global.Workbench) global.Workbench.unmount();
-        this._workbenchMountKey = null;
+      const terminalView = global.PanelSlots?.terminalViews?.get(route.name);
+      if (this._mountedTerminalView && this._mountedTerminalView !== terminalView) {
+        this._mountedTerminalView.unmount(); this._mountedTerminalView = null;
       }
       if (route.name !== 'terminal') {
-        if (route.name !== 'workbench') this._setDockContext(null, null);
+        if (!terminalView) this._setDockContext(null, null);
         // Otherwise its attach client stays connected with nothing on screen.
         this._terminalMountKey = null;
         this._resolvingDefaultWindow = false;
         if (typeof global.cleanupTerminal === 'function') global.cleanupTerminal();
       }
-      // PerfPanel owns interval timers; leaving its route must stop them.
-      this._teardownPerfPanel();
-      this._teardownAgentHub();
-      this._teardownSessionProtection();
+      // A section may own timers (the performance page polls); leaving its route stops them.
+      this._unmountServerSection();
       const serverId = (route.params && route.params.serverId) || 'local';
 
-      if (route.name === 'workbench') {
-        await this._renderWorkbench(route, serverId, view, generation);
+      if (terminalView) {
+        this._mountedTerminalView = terminalView;
+        await terminalView.mount({ route, serverId, view, isCurrent: () => generation === this._routeGeneration });
         return;
       }
 
@@ -233,9 +232,8 @@
       if (route.name === 'settings') {
         view.classList.remove('terminal-mode');
         view.innerHTML = global.ServersPage.renderSettings();
-        if (global.ServersPage.settingsSection === 'management' && global.ManagementPage) {
-          await global.ManagementPage.mount(view.querySelector('#managed-resources'));
-        }
+        const settings = global.AppShell.settingsSection(global.ServersPage.settingsSection);
+        if (settings && typeof settings.mount === 'function') await settings.mount(view);
         return;
       }
 
@@ -254,9 +252,7 @@
         if (global.TerminalTarget.serverId !== serverId) global.TerminalTarget.set({ serverId });
         view.classList.remove('terminal-mode');
         view.innerHTML = global.ServersPage.renderServer(route);
-        this._mountPerfPanel(route);
-        this._mountAgentHub(route);
-        this._mountSessionProtection(route);
+        this._mountServerSection(route);
         if (section === 'connection' || global.AppShell.health(serverId).node?.installed === false) {
           this._restoreInstallJob(serverId, route, generation);
         }
@@ -265,103 +261,33 @@
         await Promise.all(global.AppShell.servers().map((s) => this.refreshMetrics(s.id)));
         // The route may have moved on while those two were in flight.
         if (generation !== this._routeGeneration || !global.Router.isSame(global.Router.current(), route)) return;
-        this._teardownPerfPanel();
-        this._teardownAgentHub();
-        this._teardownSessionProtection();
+        this._unmountServerSection();
         view.innerHTML = global.ServersPage.renderServer(route);
-        this._mountPerfPanel(route);
-        this._mountAgentHub(route);
-        this._mountSessionProtection(route);
+        this._mountServerSection(route);
         return;
       }
 
+      if (route.name !== 'terminal') {
+        view.classList.remove('terminal-mode');
+        view.textContent = '此页面插件未启用。请从会话列表打开终端。';
+        return;
+      }
       await this._renderTerminal(route, serverId, view, generation);
     },
 
-    async _renderWorkbench(route, serverId, view, generation) {
-      const viewId = route.params.viewId;
-      const key = serverId + '\u0000' + viewId;
-      if (this._workbenchMountKey === key && view.querySelector('#ms-workbench-host')) return;
-      if (global.Workbench) global.Workbench.unmount();
-      this._workbenchMountKey = null;
-      global.TerminalTarget.set({ serverId, viewId, provider: 'tmux' });
-      if (global.state) global.state.currentTab = 'terminal';
-      view.classList.add('terminal-mode');
-      view.innerHTML = '<section class="section terminal-stage" id="ms-workbench-host"></section>';
-      const host = view.querySelector('#ms-workbench-host');
-      if (!global.Workbench) {
-        host.textContent = '正在加载本地工作台…';
-        return;
-      }
-      const saved = global.Workbench.get(viewId);
-      if (!saved || saved.serverId !== serverId) {
-        this._setDockContext(null, null);
-        host.textContent = '此原生工作台不存在。旧版原型布局数据仍保留，请从现有窗口打开工作台。';
-        return;
-      }
-      // The saved view can attach immediately; the sidebar's machine tree catches up separately.
-      if (!global.AppShell.workspace(serverId)) this.refreshWorkspace(serverId, { shared: true });
-      global.AppShell.setHeader((global.AppShell.server(serverId) || {}).name || serverId, saved.title || '本地工作台', '');
-      if (global.FilePreview && global.FilePreview.switchViewContext) global.FilePreview.switchViewContext(serverId, viewId);
-      this._workbenchMountKey = key;
-      await global.Workbench.render(serverId, viewId, { container: host });
-      if (generation !== this._routeGeneration) return;
-      this._syncWorkbenchContext(global.Workbench.currentContext());
+    /** Starts the section a server route shows (PanelSlots), once its HTML is in the page. */
+    _mountServerSection(route) {
+      if (!route || route.name !== 'server') return;
+      const entry = global.PanelSlots && global.PanelSlots.serverSections.get((route.params || {}).section);
+      if (!entry || typeof entry.mount !== 'function') return;
+      if (entry.mount(route)) this._mountedSection = entry;
     },
 
-    _syncWorkbenchContext(context) {
-      const route = global.Router.current();
-      if (!context || route.name !== 'workbench' || context.serverId !== route.params.serverId || context.viewId !== route.params.viewId) return;
-      global.TerminalTarget.set({ ...context, provider: 'tmux' });
-      if (global.state) global.state.currentPane = context.paneId || null;
-      global.AppShell.render();
-    },
-
-    /** Returns the PerfPanel mode owned by this status route. */
-    _localPerfMode(route) {
-      if (!route || route.name !== 'server') return null;
-      const section = (route.params || {}).section;
-      return section === 'performance' ? section : null;
-    },
-
-    _mountPerfPanel(route) {
-      const mode = this._localPerfMode(route);
-      if (!mode) return;
-      if (!global.PerfPanel || typeof global.PerfPanel.start !== 'function') return;
-      if (!global.document.getElementById('perf-panel')) return;
-      global.PerfPanel.start(mode);
-      this._perfPanelMounted = true;
-    },
-
-    _teardownPerfPanel() {
-      if (!this._perfPanelMounted) return;
-      this._perfPanelMounted = false;
-      if (global.PerfPanel && typeof global.PerfPanel.stop === 'function') global.PerfPanel.stop();
-    },
-
-    _mountAgentHub(route) {
-      if (!route || route.name !== 'server' || (route.params || {}).section !== 'agents') return;
-      if (!global.AgentHub || typeof global.AgentHub.start !== 'function') return;
-      if (!global.document.getElementById('agent-hub')) return;
-      global.AgentHub.start();
-      this._agentHubMounted = true;
-    },
-
-    _teardownAgentHub() {
-      if (!this._agentHubMounted) return;
-      this._agentHubMounted = false;
-      if (global.AgentHub && typeof global.AgentHub.stop === 'function') global.AgentHub.stop();
-    },
-
-    _mountSessionProtection(route) {
-      if (!route || route.name !== 'server' || (route.params || {}).section !== 'sessions') return;
-      const host = global.document.getElementById('session-protection-host');
-      if (!host || !global.SessionProtectionPage) return;
-      global.SessionProtectionPage.mount(host, (route.params || {}).serverId || 'local');
-    },
-
-    _teardownSessionProtection() {
-      if (global.SessionProtectionPage) global.SessionProtectionPage.unmount();
+    /** Stops the section the last server route started. */
+    _unmountServerSection() {
+      const entry = this._mountedSection;
+      this._mountedSection = null;
+      if (entry && typeof entry.unmount === 'function') entry.unmount();
     },
 
     async _renderTerminal(route, serverId, view, generation) {
@@ -608,9 +534,7 @@
       // this panel that addresses its own panes) is limited to the local server.
       const remote = global.AppShell.activeServerId() !== 'local';
 
-      // The shell's sidebar and Window Bar replace both of these.
-      const back = header.querySelector('.terminal-back-btn');
-      if (back) back.remove();
+      // The shell's sidebar and Window Bar replace the title.
       const title = header.querySelector('.terminal-header-title');
       if (title) title.remove();
 
@@ -710,7 +634,7 @@
       // The user may have gone elsewhere meanwhile, maybe to another server. This
       // tree must not reach that page's header, terminal or dock.
       if (generation !== this._routeGeneration || !global.Router.isSame(global.Router.current(), route)) return;
-      if (route.name === 'workbench') {
+      if (global.PanelSlots?.terminalViews?.get(route.name)) {
         global.AppShell.render();
         return;
       }
@@ -868,7 +792,7 @@
           actions.closeSession && ['close-session', '关闭', true],
         ]
         : [
-          global.Workbench && ['open-legacy-terminal', '打开兼容终端', false],
+          global.PanelSlots?.terminalViews?.list().length && ['open-legacy-terminal', '打开兼容终端', false],
           actions.renameWindow && ['rename-window', '重命名', false],
           actions.closeWindow && ['close-window', '关闭', true],
         ];
@@ -901,12 +825,12 @@
 
     /** Single delegated listener for the whole shell. */
     _bindEvents() {
-      global.addEventListener('workbench-focus-changed', event => this._syncWorkbenchContext(event.detail));
-      global.addEventListener('workbench-views-changed', () => global.AppShell.render());
-      global.addEventListener('workbench-ready', () => {
+      global.addEventListener('terminal-views-changed', () => {
         global.AppShell.render();
         const route = global.Router.current();
-        if (route.name === 'workbench') this._onRoute(route).catch(err => this._reportRouteFailure(err));
+        if (this._mountedTerminalView || global.PanelSlots?.terminalViews?.get(route.name)) {
+          this._onRoute(route).catch(err => this._reportRouteFailure(err));
+        }
       });
       global.document.addEventListener('input', (event) => {
         if (!global.Theme) return;
@@ -1040,21 +964,11 @@
         name: node.dataset.entityName || (row && row.dataset.entityName) || null,
       };
 
-      if (action === 'new-workbench' || action === 'open-workbench') {
-        if (!global.Workbench) throw new Error('本地工作台尚未加载');
-        const generation = this._routeGeneration;
-        const route = global.Router.current();
-        const workspace = global.AppShell.workspace(serverId) || await this.refreshWorkspace(serverId, { shared: true });
-        if (generation !== this._routeGeneration || !global.Router.isSame(global.Router.current(), route)) return;
-        const sessionId = node.dataset.session || (row && row.dataset.session);
-        const session = global.AppShell._findSession(workspace, sessionId);
-        if (!session || !workspace.instanceId) throw new Error('请等待会话读取完成');
-        const windowId = node.dataset.window || (row && row.dataset.window);
-        const win = (session.windows || []).find(item => item.id === windowId) || (!windowId && ((session.windows || []).find(item => item.active) || (session.windows || [])[0]));
-        if (windowId && !win) throw new Error('此窗口已不存在，请刷新会话列表');
-        const existing = global.Workbench.list ? global.Workbench.list(serverId).find(item => item.instanceId === workspace.instanceId && item.sessionId === sessionId && item.windowId === (win && win.id)) : null;
-        const created = existing || await global.Workbench.create({ serverId, sessionId, instanceId: workspace.instanceId, ...(win ? { windowId: win.id } : {}), title: (win && win.name) || session.name });
-        if (generation === this._routeGeneration && global.Router.isSame(global.Router.current(), route)) global.Workbench.open(created.id);
+      const owner = (global.PanelSlots?.terminalViews?.list() || []).find(entry => entry.actions?.[action]);
+      if (owner) {
+        const generation = this._routeGeneration, route = global.Router.current();
+        await owner.actions[action]({ serverId, node, row,
+          isCurrent: () => generation === this._routeGeneration && global.Router.isSame(global.Router.current(), route) });
         return;
       }
 
@@ -1097,10 +1011,9 @@
         const route = global.Router.current();
         const server = global.AppShell.server(serverId);
         const paneId = global.AppShell.mobilePaneId(route);
-        if ((route.name !== 'terminal' && route.name !== 'workbench') || !server || !paneId) return;
+        if ((route.name !== 'terminal' && !global.PanelSlots?.terminalViews?.get(route.name)) || !server || !paneId) return;
         if (global.FilePreview) {
-          if (route.name === 'workbench') global.FilePreview.openFile('.', paneId, { source: { serverId, paneId } });
-          else global.FilePreview.openFile('.', paneId);
+          global.FilePreview.openFile('.', paneId, { source: { serverId, paneId } });
         }
         return;
       }
@@ -1261,6 +1174,8 @@
     /** Recover the server's job after reloading this page without starting an installation. */
     async _restoreInstallJob(serverId, route, generation) {
       if (this._installJobs[serverId] || this._installReads[serverId]) return;
+      // Installing is this hub's node-installer plugin.
+      if (global.PanelSlots && !global.PanelSlots.hasPlugin('node-installer')) return;
       this._installReads[serverId] = true;
       try {
         const status = await global.Api.get(this._installPath(serverId, 'node'));

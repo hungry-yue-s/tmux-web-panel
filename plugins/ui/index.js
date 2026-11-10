@@ -69,9 +69,22 @@ export default class UiService extends Service {
       } catch (error) {
         ctx.logger.warn('could not move public/js/relay-config.js: %s', error.message);
       }
+      // scripts/setup-relay.sh writes it where a relay is set up; the login
+      // page loads it everywhere, so elsewhere it gets an empty one, not a 404.
+      ctx.http.get('/js/relay-config.js', async ({ res }) => {
+        const config = await readFile(RELAY_CONFIG, 'utf8').catch(() => "window.PANEL_RELAY_PAGE = '';\n");
+        res.type('application/javascript').set('Cache-Control', 'no-cache').send(config);
+      });
     }
 
     this.contribute(OWN_CONTRIBUTION);
+    // The plugins this panel runs, rendered with each page, so the page calls
+    // only the APIs that are there (PanelSlots.hasPlugin, slots.js).
+    this.part('head', 0, () => {
+      const loader = ctx.get('loader');
+      const active = loader ? loader.activeIds() : [];
+      return `<script>window.PANEL_PLUGINS = ${JSON.stringify(active).replace(/</g, '\\u003c')};</script>`;
+    });
 
     const router = express.Router();
     router.get(PAGE_RE, (req, res, next) => {

@@ -21,7 +21,7 @@ function escapeRegExp(text) {
 }
 
 /**
- * `/api/panes/:paneId` → named parameter; a trailing `/*` matches the rest of
+ * `/api/workspace/panes/:paneId` → named parameter; a trailing `/*` matches the rest of
  * the path (also nothing) as `params['*']`.
  */
 export function compilePath(path) {

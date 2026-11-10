@@ -83,8 +83,26 @@ describe('desktop settings and lifecycle', () => {
     expect(report.status.runtimeAvailable).toBe(true);
     await expect(stat(manager.root)).rejects.toMatchObject({ code: 'ENOENT' });
     expect(JSON.stringify(report)).not.toContain('test-password-2026');
-    expect(manager.label).not.toBe('com.tmux-web-panel');
+    expect(manager.label).not.toBe('com.anymux');
     expect(Buffer.byteLength(join(manager.socketRoot, 'tmux-501/default'))).toBeLessThan(100);
+  });
+
+  it('keeps the launchd labels and tmux socket of an installation made before the rename', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'tmux-desktop-legacy-'));
+    cleanups.push(() => rm(home, { recursive: true, force: true }));
+    const dataDir = join(home, 'Application Support/工作台');
+    const current = new DesktopRuntime({ dataDir }, { home });
+    expect(current.label).toMatch(/^com\.anymux\.desktop\.[0-9a-f]{10}$/);
+    expect(basename(current.socketRoot)).toMatch(/^anymux-/);
+
+    // Its jobs were registered as com.tmux-web-panel.desktop…, and its server listens under tmux-panel-….
+    const legacyLabel = current.label.replace('com.anymux.desktop', 'com.tmux-web-panel.desktop');
+    await mkdir(join(home, 'Library/LaunchAgents'), { recursive: true });
+    await writeFile(join(home, 'Library/LaunchAgents', legacyLabel + '.plist'), '<plist/>');
+    const legacy = new DesktopRuntime({ dataDir }, { home });
+    expect(legacy.label).toBe(legacyLabel);
+    expect(legacy.tmuxLabel).toBe(legacyLabel + '.tmux');
+    expect(basename(legacy.socketRoot)).toBe(basename(current.socketRoot).replace(/^anymux-/, 'tmux-panel-'));
   });
 
   it('returns JSON when the CLI is invoked through a symlink', async () => {
@@ -172,7 +190,7 @@ describe('desktop settings and lifecycle', () => {
         expect(args[0]).toBe(join(bundle, 'app/scripts/install-mosh.sh'));
         expect(calls.filter(([, words]) => words[0] === 'bootstrap')).toHaveLength(2);
         shellOptions = options;
-        return { stdout: '>> checking components\nTWP_COMPONENT_RESULT=ready\n' };
+        return { stdout: '>> checking components\nANYMUX_COMPONENT_RESULT=ready\n' };
       }
       return original(file, args, options);
     });
@@ -181,10 +199,10 @@ describe('desktop settings and lifecycle', () => {
     expect(result.configuration.prepareMosh).toBe(true);
     expect(result.status.moshPreparation).toMatchObject({ result: 'ready', reason: null });
     expect(result.status.moshPreparation).not.toHaveProperty('available');
-    expect(shellOptions.env.TWP_MOSH_ROLE).toBe('both');
+    expect(shellOptions.env.ANYMUX_MOSH_ROLE).toBe('both');
     expect(shellOptions.env.TMUX).toBeUndefined();
     expect(shellOptions.env.TMUX_PANE).toBeUndefined();
-    expect(shellOptions.env.TWP_SUDO_PASSWORD).toBeUndefined();
+    expect(shellOptions.env.ANYMUX_SUDO_PASSWORD).toBeUndefined();
     const events = await manager.events();
     expect(events.at(-1)).toMatchObject({ id: 'mosh', status: 'complete' });
     expect(events.findIndex(e => e.id === 'health')).toBeLessThan(events.findIndex(e => e.id === 'mosh'));
@@ -198,7 +216,7 @@ describe('desktop settings and lifecycle', () => {
     const original = manager.run;
     manager.run = vi.fn(async (file, args, options) => {
       if (file === '/bin/sh') throw Object.assign(new Error('private process failure'), {
-        stdout: 'private-process-output\nTWP_COMPONENT_RESULT=unsupported\nTWP_COMPONENT_REASON=homebrew_missing\n',
+        stdout: 'private-process-output\nANYMUX_COMPONENT_RESULT=unsupported\nANYMUX_COMPONENT_REASON=homebrew_missing\n',
       });
       return original(file, args, options);
     });
@@ -243,7 +261,7 @@ describe('desktop settings and lifecycle', () => {
     manager.run = vi.fn(async (file, args, options) => {
       if (file === '/bin/sh') {
         expect(args[0]).toContain('/runtime/unit-test/app/scripts/install-mosh.sh');
-        return { stdout: 'TWP_COMPONENT_RESULT=ready\n' };
+        return { stdout: 'ANYMUX_COMPONENT_RESULT=ready\n' };
       }
       return original(file, args, options);
     });
@@ -268,7 +286,7 @@ describe('desktop settings and lifecycle', () => {
     manager.run = vi.fn(async (file, args, options) => {
       if (file === '/bin/sh') {
         expect(args[0]).toBe(join(bundle, 'app/scripts/install-mosh.sh'));
-        return { stdout: 'TWP_COMPONENT_RESULT=ready\n' };
+        return { stdout: 'ANYMUX_COMPONENT_RESULT=ready\n' };
       }
       return original(file, args, options);
     });
@@ -285,7 +303,7 @@ describe('desktop settings and lifecycle', () => {
     await manager.execute('initialize');
     const original = manager.run;
     manager.run = vi.fn(async (file, args, options) => {
-      if (file === '/bin/sh') throw Object.assign(new Error('fixture exit failure'), { stdout: 'TWP_COMPONENT_RESULT=ready\n' });
+      if (file === '/bin/sh') throw Object.assign(new Error('fixture exit failure'), { stdout: 'ANYMUX_COMPONENT_RESULT=ready\n' });
       return original(file, args, options);
     });
     const result = await manager.execute('prepare-mosh');
@@ -358,7 +376,8 @@ describe('desktop settings and lifecycle', () => {
     await expect(manager.execute('repair')).rejects.toMatchObject({ code: 'TMUX_MIGRATION_REQUIRED' });
   }, 20000);
 
-  it('rejects a runtime whose binary is readable but not executable', async () => {
+  // Windows has no execute permission bit: chmod 0o600 leaves the file runnable there.
+  it.skipIf(process.platform === 'win32')('rejects a runtime whose binary is readable but not executable', async () => {
     const { manager, bundle } = await fixture();
     await chmod(join(bundle, 'bin/tmux'), 0o600);
     await expect(manager.manifest(bundle)).rejects.toMatchObject({ code: 'RUNTIME_MISSING' });

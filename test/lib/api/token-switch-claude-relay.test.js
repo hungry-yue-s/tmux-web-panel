@@ -1,15 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 
 import { createTokenSwitchClaudeRelay } from '../../../lib/agent-providers/token-switch-claude-relay.js';
+import { runSQLiteJson } from '../../../lib/sqlite-json.js';
+import { sqliteExec } from '../../helpers/sqlite.js';
 
 const roots = [];
 const NOW = 1_800_000_000_000;
-const execFileAsync = promisify(execFile);
 const NATIVE_CONFIG = 'model_provider = "tokenswitch"\nmodel = "mode-Auto"\n[model_providers.tokenswitch]\nbase_url = "http://127.0.0.1:15722/v1"\nwire_api = "responses"\nexperimental_bearer_token = "native-local-bearer"\n';
 
 async function fixture() {
@@ -94,7 +93,7 @@ describe('Token Switch Claude relay preview', () => {
 
   it('can preview its own existing provider without rewriting it', async () => {
     const { home } = await fixture();
-    const runSQLite = database({ existing: [{ id: 'token-switch-claude-relay', is_current: 0, meta: '{"tmuxPanelRelay":"token-switch-claude-relay-v1"}' }] });
+    const runSQLite = database({ existing: [{ id: 'token-switch-claude-relay', is_current: 0, meta: '{"anymuxRelay":"token-switch-claude-relay-v1"}' }] });
     await expect(createTokenSwitchClaudeRelay({ home, runSQLite, now: () => NOW }).preview())
       .resolves.toMatchObject({ prepared: false, dryRun: true });
     expect(runSQLite.mock.calls.every(([_path, query]) => /^select /i.test(query))).toBe(true);
@@ -168,7 +167,7 @@ describe('Token Switch Claude relay preview', () => {
   it('does not update an owned relay while it is current', async () => {
     const { home } = await fixture();
     const mutateSQLite = vi.fn();
-    const runSQLite = database({ existing: [{ id: 'token-switch-claude-relay', is_current: 1, meta: '{"tmuxPanelRelay":"token-switch-claude-relay-v1"}' }] });
+    const runSQLite = database({ existing: [{ id: 'token-switch-claude-relay', is_current: 1, meta: '{"anymuxRelay":"token-switch-claude-relay-v1"}' }] });
     await expect(createTokenSwitchClaudeRelay({ home, runSQLite, mutateSQLite, now: () => NOW }).prepare())
       .rejects.toMatchObject({ code: 'PROVIDER_CHANGED' });
     expect(mutateSQLite).not.toHaveBeenCalled();
@@ -178,15 +177,15 @@ describe('Token Switch Claude relay preview', () => {
     const { home } = await fixture();
     const path = join(home, '.cc-switch', 'cc-switch.db');
     await rm(path);
-    await execFileAsync('sqlite3', [path, `create table providers (
+    sqliteExec(path, `create table providers (
       id text,app_type text,name text,settings_config text,category text,created_at integer,
       notes text,meta text,is_current integer,in_failover_queue integer,primary key(id,app_type)
     ); create table proxy_config (app_type text,listen_address text,listen_port integer);
     insert into proxy_config values ('claude','127.0.0.1',15721);
-    insert into providers values ('original','claude','Original','{}','custom',0,'','{}',1,0);`]);
+    insert into providers values ('original','claude','Original','{}','custom',0,'','{}',1,0);`);
     const tokenRows = database({ providers: [provider('codex', 'Auto', 1)] });
     const runSQLite = async (databasePath, query) => databasePath === path
-      ? (await execFileAsync('sqlite3', ['-readonly', '-json', path, query])).stdout
+      ? await runSQLiteJson(path, query, { readonly: true })
       : tokenRows(databasePath, query);
     const relay = createTokenSwitchClaudeRelay({ home, runSQLite, now: () => NOW });
     await expect(relay.prepare()).resolves.toMatchObject({ prepared: true });
@@ -210,7 +209,7 @@ describe('Token Switch Claude relay preview', () => {
       const result = await runSQLite(databasePath, query);
       if (databasePath === path && query.includes('select id, meta') && !claimed) {
         claimed = true;
-        await execFileAsync('sqlite3', [path, "update providers set meta='{}',settings_config='ownership-race' where id='token-switch-claude-relay'"]);
+        sqliteExec(path, "update providers set meta='{}',settings_config='ownership-race' where id='token-switch-claude-relay'");
       }
       return result;
     };

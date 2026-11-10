@@ -1,0 +1,4 @@
+#!/bin/sh
+# Wrapper so `anymux` works from PATH; see anymux.mjs.
+here=$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")
+exec node "$here/anymux.mjs" "$@"

@@ -8,11 +8,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SERVICE_NAME="tmux-web-panel"
+. "$SCRIPT_DIR/legacy-env.sh"
+SERVICE_NAME="anymux"
 LABEL="com.${SERVICE_NAME}.lan-ip-sync"
 PANEL_LABEL="com.${SERVICE_NAME}"
 LEGACY_LABEL="com.${SERVICE_NAME}.duckdns"
-CONFIG="${DUCKDNS_CONFIG:-$HOME/.config/tmux-web-panel/duckdns.env}"
+CONFIG="${DUCKDNS_CONFIG:-$(anymux_dir .config)/duckdns.env}"
 PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
 LEGACY_PLIST="$HOME/Library/LaunchAgents/${LEGACY_LABEL}.plist"
 LOG_DIR="$HOME/Library/Logs/${SERVICE_NAME}"
@@ -39,8 +40,8 @@ Usage: $0 <install|uninstall|status|run>
   run        Run scripts/sync-lan-ip.sh once in the foreground, forcing a push.
 
 Environment variables:
-  DUCKDNS_CONFIG Credentials file (default: ~/.config/tmux-web-panel/duckdns.env)
-  DUCKDNS_DOMAIN Name used by \`status\` for the DoH lookup (default: tmux-panel)
+  DUCKDNS_CONFIG Credentials file (default: ~/.config/anymux/duckdns.env)
+  DUCKDNS_DOMAIN Name used by \`status\` for the DoH lookup (default: anymux)
   SYNC_INTERVAL  Backstop poll seconds (default: 1800)
   PORT           Panel port used in the URLs below (default: 7681)
 

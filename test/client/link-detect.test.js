@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 
-const src = fs.readFileSync('plugins/ui/client/js/link-detect.js', 'utf8');
+const src = fs.readFileSync('plugins/terminal/client/js/link-detect.js', 'utf8');
 const sandbox = { window: {} };
 new Function('window', src)(sandbox.window);
 const LD = sandbox.window.LinkDetect;

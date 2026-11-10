@@ -8,8 +8,8 @@
 ## tmux 运行时
 
 - **构建并安装 / 重新构建** 调用现有 `scripts/build-tmux.sh`，源码来自 `vendor/tmux` 固定子模块。构建依赖仍须按原有安装文档准备，缺失依赖会在日志显示失败。
-- 二进制安装到 `~/.local/share/tmux-web-panel/bin/tmux`，上一版本保留为 `tmux.previous`，可在页面回退。
-- 构建异步执行，页面显示最近 64 KiB 日志。结果记录在 `~/.config/tmux-web-panel/tmux-build.json`。
+- 二进制安装到 `~/.local/share/anymux/bin/tmux`，上一版本保留为 `tmux.previous`，可在页面回退。
+- 构建异步执行，页面显示最近 64 KiB 日志。结果记录在 `~/.config/anymux/tmux-build.json`。
 - 面板重启后，未记录完成的构建显示“结果待核对”，不会因为文件存在就报告构建成功。
 - 构建或回退不重启运行中的 tmux，也不删除其会话。页面版本表示磁盘上的项目二进制版本，不表示运行中的 tmux server 已升级。服务重启仍使用项目原有服务管理方式。
 - 不提供一键删除正在使用的 tmux 运行时，避免破坏面板和 companion service。
@@ -23,7 +23,7 @@ tmux 相关的设置都在**每台服务器的“会话”页面**（`plugins/se
 | 会话保护 | 一个开关：自动保存（每 5 分钟），tmux 重新启动后自动恢复。显示上次保存时间和规模；tmux 重启后自动恢复过，会说明是何时、恢复了几个会话、来自哪次保存。另有“立即保存”。没有会话时不保存，以免覆盖上一次的记录。 |
 | 恢复时重新打开的程序 | 按类别勾选：AI 编程助手（claude 用 `--continue`、codex 用 `resume --last`，接着上次的对话）、编辑器、查看器、系统监控、在窗格里另开的 shell。窗格里出现过的其他程序会单独列出，默认不勾选，因为重新运行任意命令必须由用户自己决定。不勾选就只恢复窗口、窗格和目录。 |
 | 找回会话 | 按时间列出保存记录（内容有变化才留一份，保留 30 天），可以恢复其中的任意一个会话。恢复时作为新会话打开，名字被占用时加“恢复”，不会合并进正在运行的会话。 |
-| 面板需要的 tmux 设置 | 开启鼠标、保留 5 万行输出历史、没有会话时 tmux 也继续运行，以及这些设置是否已生效。未生效时，用一个按钮在 `~/.tmux.conf` 末尾加入带标记的 `source-file` 区块：先备份，你的其他设置保持不变，符号链接形式的 dotfile 也保留链接。之前手写进片段 `~/.config/tmux-web-panel/tmux.conf` 的设置继续生效，页面会说明有几行。 |
+| 面板需要的 tmux 设置 | 开启鼠标、保留 5 万行输出历史、没有会话时 tmux 也继续运行，以及这些设置是否已生效。未生效时，用一个按钮在 `~/.tmux.conf` 末尾加入带标记的 `source-file` 区块：先备份，你的其他设置保持不变，符号链接形式的 dotfile 也保留链接。之前手写进片段 `~/.config/anymux/tmux.conf` 的设置继续生效，页面会说明有几行。 |
 
 如果用户自己的 `~/.tmux.conf` 已经加载了 tmux-resurrect（例如经 TPM 搭配 tmux-continuum），页面显示“由你的 tmux 配置负责”，不提供开关和程序选择，面板也不自动保存或恢复；“立即保存”和“找回会话”仍然可用。
 
@@ -37,7 +37,7 @@ tmux 相关的设置都在**每台服务器的“会话”页面**（`plugins/se
 
 首个插件为 `tmux-agent`，支持安装、启用、停用、更新和卸载。当前目录为仓库随附的受控插件目录，不接受任意 URL 或上传代码。
 
-安装将 `catalog/tmux-agent/` 复制到 `~/.config/tmux-web-panel/plugins/` 下的独立版本目录；完成入口校验后才激活。
+安装将 `catalog/tmux-agent/` 复制到 `~/.config/anymux/plugins/` 下的独立版本目录；完成入口校验后才激活。
 安装状态持久化在该目录的 `state.json`。更新从当前仓库重新复制并保留启停状态。
 停用/卸载立即阻止新的 MCP 请求，不停止已经启动的 tmux 命令，不删除任务日志。
 
@@ -63,7 +63,7 @@ https://你的面板地址/api/plugins/tmux-agent/mcp
 | Agent 协作 | `send_task`, `get_job`, `wait_job` | 特定 worker 回复标记；不等于独立验证通过 |
 
 命令在执行主机的新 tmux 窗口里运行，任务目录为该主机的
-`~/.local/share/tmux-web-panel/agent-jobs/<job-id>/`，包含元数据、输出日志和退出码。
+`~/.local/share/anymux/agent-jobs/<job-id>/`，包含元数据、输出日志和退出码。
 MCP 或面板断开不会结束任务。输出返回最近 64 KiB，完整日志保留在磁盘。
 命令默认使用 `sh`，需要 bash 语法时显式调用 bash。
 
@@ -77,7 +77,7 @@ Agent 任务发送到已有窗格，通过唯一标记从最多 2000 行、64 Ki
 目录由项目维护：
 
 - `tmux-agent`：使用插件管理 tmux 和 worker。
-- `tmux-panel`：管理当前项目的运行时、配置、插件和 skill。
+- `anymux`：管理当前项目的运行时、配置、插件和 skill。
 
 安装到面板所在机器的 `~/.codex/skills/` 或 `~/.claude/skills/`，以符号链接指向仓库的 skill 源目录。
 项目更新后内容同步生效；移除只删除指向本项目目录的链接。

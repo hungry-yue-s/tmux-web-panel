@@ -18,8 +18,10 @@ describe('readDiskIo', () => {
   });
 
   afterEach(() => {
+    // No vi.doUnmock here: it also cancelled the next test's vi.doMock, which
+    // then read the real /proc/diskstats (nothing on Windows, real disks on Linux).
+    // Each test installs its own mock; the mock ends with this file.
     vi.useRealTimers();
-    vi.doUnmock('node:fs/promises');
   });
 
   test('returns zero rates on first call and records baseline state', async () => {

@@ -3,15 +3,15 @@ import groovy.json.JsonOutput
 plugins { id 'com.android.application' }
 
 android {
-    namespace 'com.tmuxpanel.app'
+    namespace 'com.anymux.app'
     compileSdk 36
     defaultConfig {
-        applicationId 'com.tmuxpanel.app'
+        applicationId 'com.anymux.app'
         minSdk 26
         targetSdk 36
         versionCode 1
         versionName '1.0.0'
-        buildConfigField 'String', 'DEFAULT_ENDPOINT', JsonOutput.toJson(providers.environmentVariable('TMUX_PANEL_URL').getOrElse(''))
+        buildConfigField 'String', 'DEFAULT_ENDPOINT', JsonOutput.toJson(providers.environmentVariable('ANYMUX_URL').getOrElse(''))
     }
     buildFeatures { buildConfig true }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
@@ -20,7 +20,7 @@ android {
 }
 
 def trustResources = tasks.register('generatePanelTrust') {
-    def caPath = providers.environmentVariable('TMUX_PANEL_CA_CERT').getOrElse('')
+    def caPath = providers.environmentVariable('ANYMUX_CA_CERT').getOrElse('')
     inputs.property('caPath', caPath)
     if (caPath) inputs.file(caPath)
     outputs.dir(layout.buildDirectory.dir('generated/panelTrust/res'))
@@ -32,7 +32,7 @@ def trustResources = tasks.register('generatePanelTrust') {
         if (caPath) {
             def certificate = file(caPath).text
             if (!certificate.contains('-----BEGIN CERTIFICATE-----') || certificate.contains('PRIVATE KEY')) {
-                throw new GradleException('TMUX_PANEL_CA_CERT must contain only public PEM certificates, never private keys')
+                throw new GradleException('ANYMUX_CA_CERT must contain only public PEM certificates, never private keys')
             }
             new File(out, 'raw').mkdirs()
             copy { from caPath; into new File(out, 'raw'); rename { 'panel_ca.crt' } }

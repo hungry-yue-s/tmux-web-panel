@@ -38,6 +38,8 @@ const BARE = {
   cordis: '/client/vendor/cordis/index.js',
   cosmokit: '/client/vendor/cosmokit/index.mjs',
   '@cordisjs/plugin-timer': '/client/vendor/plugin-timer/index.js',
+  '@anymux/client': '/client/lib/index.js',
+  // The name before the rename; plugins written then still import it.
   '@twp/client': '/client/lib/index.js',
 };
 

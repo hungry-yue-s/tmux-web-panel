@@ -2,6 +2,7 @@ import { indexSource as composedIndex } from '../helpers/pages.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { loadSlots } from '../helpers/slots.js';
 
 const themeSource = readFileSync('plugins/ui/client/js/theme.js', 'utf8');
 const terminalSource = readFileSync('plugins/terminal/client/js/terminal.js', 'utf8');
@@ -15,15 +16,15 @@ let dom;
 function loadTheme(themeId, { native = false, transparency, legacyNative = false, glass, appearance = false } = {}) {
   dom = new JSDOM('<!doctype html><html><body></body></html>', {
     runScripts: 'outside-only',
-    url: 'https://tmux-panel.test/',
+    url: 'https://anymux.test/',
   });
   if (themeId) dom.window.localStorage.setItem('tmux_theme', themeId);
   if (transparency !== undefined) dom.window.localStorage.setItem('tmux_native_transparency', transparency);
   if (glass !== undefined) dom.window.localStorage.setItem('tmux_native_glass_intensity', glass);
   if (appearance) dom.window.webkit = {
-    messageHandlers: { tmuxPanelAppearance: { postMessage: vi.fn() } },
+    messageHandlers: { anymuxAppearance: { postMessage: vi.fn() } },
   };
-  if (native) dom.window.__tmuxPanelTransparency = true;
+  if (native) dom.window.__anymuxTransparency = true;
   if (legacyNative) dom.window.document.documentElement.classList.add('tmux-native-shell');
   dom.window.eval(themeSource);
   return dom.window.Theme;
@@ -31,6 +32,7 @@ function loadTheme(themeId, { native = false, transparency, legacyNative = false
 
 function renderSettings() {
   dom.window.Store = { getState: () => ({ ui: { showPerformance: true } }) };
+  loadSlots(dom.window);
   dom.window.eval(appShellSource);
   dom.window.AppShell.setHeader = vi.fn();
   dom.window.eval(serversSource);
@@ -111,7 +113,7 @@ describe('extended terminal themes', () => {
   });
 
   it('loads the theme before its terminal and preview consumers', () => {
-    const page = new JSDOM(indexSource, { url: 'https://tmux-panel.test/' });
+    const page = new JSDOM(indexSource, { url: 'https://anymux.test/' });
     try {
       // Content-hash caching is verified by weak-network.test.js; asset presence
       // and load order must not depend on a historical manual ?v= counter.
@@ -273,7 +275,7 @@ describe('native glass intensity', () => {
 
   it('preserves the current material by default and bounds values before sending them to native', () => {
     const Theme = loadTheme(null, { native: true, appearance: true });
-    const send = dom.window.webkit.messageHandlers.tmuxPanelAppearance.postMessage;
+    const send = dom.window.webkit.messageHandlers.anymuxAppearance.postMessage;
     expect(Theme.getGlassIntensity()).toBe(100);
     expect(send).toHaveBeenLastCalledWith({ glassIntensity: 100 });
     for (const [value, expected] of [[0, 0], [34.7, 35], [150, 100], [-10, 0], ['bad', 100]]) {
@@ -291,7 +293,7 @@ describe('native glass intensity', () => {
     dom.window.MsApp._bindEvents();
     const slider = dom.window.document.getElementById('native-glass-intensity');
     const output = dom.window.document.getElementById('native-glass-intensity-value');
-    const send = dom.window.webkit.messageHandlers.tmuxPanelAppearance.postMessage;
+    const send = dom.window.webkit.messageHandlers.anymuxAppearance.postMessage;
     expect(slider.labels[0].textContent).toBe('毛玻璃强度');
     expect([slider.type, slider.min, slider.max, slider.value]).toEqual(['range', '0', '100', '65']);
     expect(send).toHaveBeenLastCalledWith({ glassIntensity: 65 });

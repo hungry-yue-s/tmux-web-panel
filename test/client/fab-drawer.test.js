@@ -2,9 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
-const sceneSource = readFileSync('plugins/terminal/client/js/fab-scene.js', 'utf8');
-const heatSource = readFileSync('plugins/terminal/client/js/fab-heat.js', 'utf8');
-const drawerSource = readFileSync('plugins/terminal/client/js/fab-drawer.js', 'utf8');
+const sceneSource = readFileSync('plugins/keypad/client/js/fab-scene.js', 'utf8');
+const heatSource = readFileSync('plugins/keypad/client/js/fab-heat.js', 'utf8');
+const drawerSource = readFileSync('plugins/keypad/client/js/fab-drawer.js', 'utf8');
 const terminalSource = readFileSync('plugins/terminal/client/js/terminal.js', 'utf8');
 let dom;
 
@@ -31,6 +31,21 @@ function button(win, label, selector = '.fab-drawer-btn') {
 }
 
 afterEach(() => dom?.window.close());
+
+describe('scene discovery', () => {
+  it('asks the server in view once, through the authenticated client, and seeds from the answer', async () => {
+    const win = boot();
+    win.localStorage.removeItem('fab-discover-v1');
+    const get = vi.fn(() => Promise.resolve({ terminal: { topFullCommands: [{ command: 'npm test' }] } }));
+    win.Api = { activeUrl: (path) => '/n/box' + path, get };
+    win.FabDrawer.mount(win.document.getElementById('host'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(get).toHaveBeenCalledWith('/n/box/api/scene/discover');
+    expect(win.localStorage.getItem('fab-discover-v1')).toContain('"at"');
+    win.FabDrawer.mount(win.document.getElementById('host'));
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('Codex mobile drawer', () => {
   it('selects the active pane in the multi-server shell and sends real input frames', () => {

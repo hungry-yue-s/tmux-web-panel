@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { pageStyles } from '../helpers/pages.js';
 
 const terminalSource = readFileSync('plugins/terminal/client/js/terminal.js', 'utf8');
-const styles = readFileSync('plugins/ui/client/css/style.css', 'utf8');
+const styles = pageStyles();
 const routerSource = readFileSync('plugins/ui/client/js/router.js', 'utf8');
 const actualRouter = new Function('window', routerSource + '\nreturn window.Router;')({});
 
@@ -11,7 +12,7 @@ describe('terminal toolbar controls', () => {
     expect(terminalSource).toContain('function _terminalToolIcon(paths)');
     expect(terminalSource).toContain('class="terminal-tool-icon"');
 
-    ['返回窗口列表', '刷新终端', '标签页模式', '分屏模式', '减小字号',
+    ['刷新终端', '标签页模式', '分屏模式', '减小字号',
       '增大字号', '新增分屏', '设置当前窗格标签', '从 tmux 缓冲区打开文件',
       '在新窗口打开', '全屏'].forEach((label) => {
       expect(terminalSource).toContain(`aria-label="${label}"`);
@@ -41,7 +42,7 @@ describe('terminal pop-out routing', () => {
       location: { href: 'https://panel.example/?theme=ivory&standalone=status#/terminal/local' },
       Router: { current: () => route, serialize: vi.fn(actualRouter.serialize) },
       open: vi.fn(),
-      webkit: native ? { messageHandlers: { tmuxPanelOpenWindow: { postMessage: nativePost } } } : null,
+      webkit: native ? { messageHandlers: { anymuxOpenWindow: { postMessage: nativePost } } } : null,
     };
     const toast = vi.fn();
     const code = terminalSource.slice(terminalSource.indexOf('  // Pop-out button'), terminalSource.indexOf('  // Fullscreen button'));

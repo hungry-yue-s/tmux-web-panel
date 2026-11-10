@@ -2,14 +2,19 @@
 // SFTP, the node token that only opens this machine's own API, and
 // GET /api/node/info (docs/architecture.md, "Hub 与 Node").
 //
-// `home` (the directory holding ~/.config/tmux-web-panel/node.json) exists so
+// `home` (the directory holding ~/.config/anymux/node.json) exists so
 // tests and smoke runs never overwrite the real pairing file.
 //
 // Optional components report themselves in the info through
 // `setCapability(name, probe)` (e.g. mosh, moshClient); the caller wraps it
 // in ctx.effect so the capability goes away with the plugin that set it.
+//
+// `/n/local/…` is this machine's own address: the prefix comes off here
+// (order -60), before the hub relay, which handles every other server and may
+// not be loaded at all.
 
 import { homedir } from 'node:os';
+import { rewriteLocalNodePath } from '../../lib/hub/proxy.js';
 import { initNodeIdentity } from '../../lib/node/identity.js';
 import { collectNodeInfo } from '../../lib/node/info.js';
 import { handle } from '../../lib/servers/errors.js';
@@ -31,12 +36,20 @@ export async function apply(ctx, config) {
   });
   /** capability name → probe returning { available, version, reason } */
   const capabilities = new Map();
-  const info = () => collectNodeInfo({
-    tmuxVersion: () => ctx.tmux.version(),
-    mosh: capabilities.get('mosh') ?? null,
-    moshClient: capabilities.get('moshClient') ?? null,
-    controlTerminal: capabilities.get('controlTerminal') ?? null,
-    nativeWindow: capabilities.get('nativeWindow') ?? null,
+  // The plugins this installation runs, so a hub's pages only call what is there.
+  const plugins = () => {
+    const loader = ctx.get('loader');
+    return loader ? loader.activeIds() : null;
+  };
+  const info = async () => ({
+    ...await collectNodeInfo({
+      tmuxVersion: () => ctx.tmux.version(),
+      mosh: capabilities.get('mosh') ?? null,
+      moshClient: capabilities.get('moshClient') ?? null,
+      controlTerminal: capabilities.get('controlTerminal') ?? null,
+      nativeWindow: capabilities.get('nativeWindow') ?? null,
+    }),
+    plugins: plugins(),
   });
   const setCapability = (capability, probe) => {
     capabilities.set(capability, probe);
@@ -44,6 +57,15 @@ export async function apply(ctx, config) {
       if (capabilities.get(capability) === probe) capabilities.delete(capability);
     };
   };
+  ctx.http.use((req, res, next) => {
+    rewriteLocalNodePath(req);
+    next();
+  }, { order: -60 });
+  ctx.http.useUpgrade(({ req }) => {
+    rewriteLocalNodePath(req);
+    return false;
+  }, { order: -60 });
+
   const router = express.Router();
   router.get('/', handle(async () => info()));
   ctx.http.mount('/api/node/info', router);

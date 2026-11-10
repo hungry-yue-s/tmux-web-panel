@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { BLOCKS, WORKSPACE_BLOCKS } from '../helpers/blocks.js';
 
 const source = readFileSync('plugins/diagnostics/client/js/diagnostics.js', 'utf8');
 const apiSource = readFileSync('plugins/ui/client/js/api.js', 'utf8');
 const traceSource = readFileSync('plugins/terminal/client/js/terminal-trace.js', 'utf8');
-const blocksSource = readFileSync('plugins/files/client/js/blocks.js', 'utf8');
-const gitSource = readFileSync('plugins/files/client/js/blocks-workspace.js', 'utf8');
+const blocksSource = BLOCKS;
+const gitSource = WORKSPACE_BLOCKS;
 const TARGET = 'cc-windows';
 let dom;
 beforeEach(() => { vi.useFakeTimers(); });
@@ -72,7 +73,7 @@ describe('opt-in client diagnostics', () => {
       await new Promise(resolve => ctx.win.setTimeout(resolve, 40));
       return {
         ok: true, status: 200,
-        headers: { get: key => ({ 'Content-Length': '123', 'X-TWP-Diagnostic-Id': 'node-id-123', 'X-TWP-Hub-Diagnostic-Id': 'hub-id-123' })[key] ?? null },
+        headers: { get: key => ({ 'Content-Length': '123', 'X-Anymux-Diagnostic-Id': 'node-id-123', 'X-Anymux-Hub-Diagnostic-Id': 'hub-id-123' })[key] ?? null },
         json: () => new Promise(resolve => ctx.win.setTimeout(() => resolve({ success: true, data: { root: '/PRIVATE_DIRECTORY', files: [] } }), 80)),
       };
     });
@@ -83,7 +84,7 @@ describe('opt-in client diagnostics', () => {
     await vi.advanceTimersByTimeAsync(4880);
     const api = ctx.events().find(event => event.kind === 'api');
     expect(api).toMatchObject({ path: '/api/git/status', method: 'POST', status: 200, code: 'OK', durationMs: 120, ttfbMs: 40, responseBytes: 123, requestId: 'node-id-123', parentRequestId: 'hub-id-123' });
-    expect(ctx.fetch.mock.calls[1][1].headers['X-TWP-Diagnostic-Id']).toBe(api.traceId);
+    expect(ctx.fetch.mock.calls[1][1].headers['X-Anymux-Diagnostic-Id']).toBe(api.traceId);
     expect(JSON.stringify(ctx.batches())).not.toMatch(/PRIVATE_/);
   });
 
@@ -175,7 +176,7 @@ describe('opt-in client diagnostics', () => {
 
   it.each([false, true])('expires and restores the prior trace state (previously enabled=%s)', async previous => {
     const ctx = await setup({ lifetime: 2000, traceEnabled: previous });
-    const storage = ctx.win.localStorage.getItem('twp_terminal_trace');
+    const storage = ctx.win.localStorage.getItem('anymux_terminal_trace');
     expect(storage).toBe(previous ? '1' : null);
     if (!previous) expect(ctx.enable).toHaveBeenCalledWith({ persist: false });
     const span = ctx.diagnostic.beginGit(TARGET);
@@ -183,7 +184,7 @@ describe('opt-in client diagnostics', () => {
     span({ code: 'GIT_RENDER_ERROR', message: 'PRIVATE_ERROR' });
     expect(ctx.diagnostic.enabled(TARGET)).toBe(false);
     expect(ctx.win.TerminalTrace.enabled()).toBe(previous);
-    expect(ctx.win.localStorage.getItem('twp_terminal_trace')).toBe(storage);
+    expect(ctx.win.localStorage.getItem('anymux_terminal_trace')).toBe(storage);
     expect(ctx.batches()).toEqual([]);
   });
 

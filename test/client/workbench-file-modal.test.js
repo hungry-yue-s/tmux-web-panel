@@ -35,7 +35,7 @@ describe('file modal beside workbench tool tabs', () => {
   });  it('invalidates an old native file link source after the client loses its verified instance', async () => {
     const dom = new JSDOM('', { url: 'https://panel.test' }); const win = dom.window;
     const fetch = vi.fn();
-    new Function('window', readFileSync('plugins/ui/client/js/link-detect.js', 'utf8'))(win);
+    new Function('window', readFileSync('plugins/terminal/client/js/link-detect.js', 'utf8'))(win);
     new Function('window', 'document', 'fetch', 'Auth', 'LinkDetect', readFileSync('plugins/files/client/js/file-preview.js', 'utf8'))(win, win.document, fetch, { headers: () => ({}) }, win.LinkDetect);
     const term = new xterm.Terminal({ cols: 80, rows: 24, allowProposedApi: true }); let provider, verified = true;
     const registration = { dispose: vi.fn() };

@@ -10,7 +10,7 @@ git submodule update --init --recursive
 ```
 
 The installer always builds tmux from the pinned `vendor/tmux` Git submodule and
-atomically deploys it to `~/.local/share/tmux-web-panel/bin/tmux`. It does not
+atomically deploys it to `~/.local/share/anymux/bin/tmux`. It does not
 fall back to a system tmux. Clone this repository with `--recurse-submodules`,
 or run the submodule command above after cloning.
 
@@ -28,7 +28,7 @@ plugin client from being blocked again when the initial client disconnects.
 The pinned submodule remains unchanged. After building, check this with:
 
 ```bash
-node scripts/test-tmux-startup.mjs ~/.local/share/tmux-web-panel/bin/tmux
+node scripts/test-tmux-startup.mjs ~/.local/share/anymux/bin/tmux
 ```
 
 To update the maintained tmux revision, check out the desired upstream commit
@@ -56,7 +56,7 @@ The installer can generate and reuse a self-signed certificate containing
 TLS_AUTO=1 AUTH=user:pass ./scripts/install-service.sh install
 ```
 
-The certificate is stored under `~/.config/tmux-web-panel/tls/`. Re-running the
+The certificate is stored under `~/.config/anymux/tls/`. Re-running the
 command reuses it while it is valid and still covers the current IP; otherwise
 it is regenerated. Set `TLS_DIR` or `TLS_DAYS` to override the storage directory
 or lifetime. Other devices must trust the generated certificate explicitly, or
@@ -72,7 +72,7 @@ their browser will show a certificate warning.
 | `./scripts/install-service.sh logs` | Tail service logs |
 
 - **Linux** — systemd user service (`~/.config/systemd/user/`), restarts on failure, enables lingering
-- **macOS** — launchd user agent (`~/Library/LaunchAgents/`), logs at `~/Library/Logs/tmux-web-panel/`
+- **macOS** — launchd user agent (`~/Library/LaunchAgents/`), logs at `~/Library/Logs/anymux/`
 
 ## Session persistence across reboots
 
@@ -81,7 +81,7 @@ reboots**. The web panel only reads existing sessions — it does not create or
 persist them. To survive reboots:
 
 1. **The installer ships a companion tmux service** that boots the tmux server on
-   login: `tmux-server.service` on Linux and `com.tmux-web-panel.tmux-server.plist`
+   login: `tmux-server.service` on Linux and `com.anymux.tmux-server.plist`
    on macOS. The tmux service is loaded before the web panel so restored sessions
    are available immediately.
 2. **Session protection is built in** (each server's **会话** page). The panel

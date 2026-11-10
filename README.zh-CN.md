@@ -1,10 +1,12 @@
 <div align="center">
 
-<img src="plugins/ui/client/app-icon.png" width="76" alt="Tmux Web Panel 图标">
+<img src="plugins/ui/client/app-icon.png" width="76" alt="Anymux 图标">
 
 [English](README.md) | 中文版
 
-# Tmux Web Panel
+# Anymux
+
+<sub>原名 tmux-web-panel。已有安装照常可用，重装或重启服务时换成新名字，见<a href="docs/architecture.md#改名兼容tmux-web-panel--anymux">改名说明</a>。</sub>
 
 原生客户端：[macOS](macos/README.md) · [Android](android/README.md)（`npm run build:android`）。
 
@@ -16,7 +18,7 @@ session、window、pane 都在，文档渲染、性能看板、还有追到手�
 
 <img src="docs/assets/readme/hero.png" alt="桌面端，终端旁边停着一张渲染好的 Mermaid 图" width="100%">
 
-<img src="docs/assets/readme/illustrations/xiaohei-viewers-zh.svg" alt="手绘概念图：电脑浏览器、手机浏览器和 macOS App 都通过 tmux-web-panel 打开同一个仍在运行的 tmux 现场" width="88%">
+<img src="docs/assets/readme/illustrations/xiaohei-viewers-zh.svg" alt="手绘概念图：电脑浏览器、手机浏览器和 macOS App 都通过 anymux 打开同一个仍在运行的 tmux 现场" width="88%">
 
 <sub>插画的小黑手绘风格来自 <a href="https://github.com/helloianneo/ian-xiaohei-illustrations">Ian Xiaohei Illustrations</a>。</sub>
 
@@ -26,7 +28,7 @@ session、window、pane 都在，文档渲染、性能看板、还有追到手�
 
 ## 下载桌面客户端
 
-不想配置开发环境，请到 [GitHub Releases](https://github.com/hungry-yue-s/tmux-web-panel/releases) 的 **Assets** 下载适合自己 Mac 芯片架构的完整安装包；不要选 **Source code (zip)**。完整包内置服务端、Node 与项目 tmux，首次打开按引导创建本机账号，并在“设置与运行状态”查看准备进度、服务状态和日志。
+不想配置开发环境，请到 [GitHub Releases](https://github.com/hungry-yue-s/anymux/releases) 的 **Assets** 下载适合自己 Mac 芯片架构的完整安装包；不要选 **Source code (zip)**。完整包内置服务端、Node 与项目 tmux，首次打开按引导创建本机账号，并在“设置与运行状态”查看准备进度、服务状态和日志。
 
 默认只在本机使用，手机连接、DNS 和引导网页都可稍后选配。先读[桌面首次使用指南](docs/desktop-onboarding.md)，构建与签名说明见 [macOS 客户端](macos/README.md)。仅下载源码的用户继续使用下面的源码部署流程。
 
@@ -122,7 +124,7 @@ tmux 自己只有三层：**Session 管一件事**，**Window 像这件事里的
 
 <img src="docs/assets/readme/illustrations/xiaohei-tmux-layers-zh.svg" alt="手绘层级图：Session 里装多个 Window，Window 再分成 Pane；Codex、Claude、lazygit 和 bash 分别跑在不同 Pane 里" width="90%">
 
-手机、桌面浏览器、macOS App 都只是取景器。它们连的是 `tmux-web-panel`，由面板处理登录、网页、API 和终端连接，再去 attach tmux。所以关掉页面只是放下取景器，tmux 里的活不会停；换一台设备打开，还能回到同一个 Pane。
+手机、桌面浏览器、macOS App 都只是取景器。它们连的是 `anymux`，由面板处理登录、网页、API 和终端连接，再去 attach tmux。所以关掉页面只是放下取景器，tmux 里的活不会停；换一台设备打开，还能回到同一个 Pane。
 
 面板内部是跑在 [Cordis](https://github.com/cordiverse/cordis) 内核（与 DeepSeek Harness 同一内核）上的一组插件：`profiles/panel.yml` 列出它们，每个功能是一个插件，服务端和前端放在一起，插件注册的东西随插件撤销。`node bin/panel.js --dump-config` 打印组装结果。详见 [docs/plugins.md](docs/plugins.md)。
 
@@ -135,7 +137,7 @@ flowchart LR
     end
 
     subgraph deployment["面板部署在这台电脑"]
-        panel["tmux-web-panel<br/>负责登录 · 网页 · API · 终端连接"]
+        panel["anymux<br/>负责登录 · 网页 · API · 终端连接"]
 
         subgraph localTmux["本地 tmux：页面关了，任务还在"]
             direction TB
@@ -201,7 +203,7 @@ macOS 上还有个原生 SwiftUI 外壳，npm run build:macos 构建，多菜单
 
 ### Windows
 
-Windows 上是原生 Node.js 配 [MSYS2](https://www.msys2.org/) 的 tmux 包：pane 里跑的是 MSYS2 登录 shell（默认 UCRT64），node-pty 通过 ConPTY 挂上去。systemd/launchd 换成 `\tmux-web-panel\` 下的两个计划任务：`tmux-server` 守着 `tmux -D`，`tmux-web-panel` 在 node 退出 3 秒后自动拉起。
+Windows 上是原生 Node.js 配 [MSYS2](https://www.msys2.org/) 的 tmux 包：pane 里跑的是 MSYS2 登录 shell（默认 UCRT64），node-pty 通过 ConPTY 挂上去。systemd/launchd 换成 `\anymux\` 下的两个计划任务：`tmux-server` 守着 `tmux -D`，`anymux` 在 node 退出 3 秒后自动拉起。
 
 ```powershell
 winget install OpenJS.NodeJS.LTS
@@ -211,7 +213,7 @@ npm ci
 .\scripts\install-service.ps1 status | restart | stop | logs | uninstall
 ```
 
-在管理员 PowerShell 里安装，任务开机即启动、无需登录（S4U）；否则在你登录时启动（`-Trigger Logon`）。配置写在仅本人可读的 `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`，日志在同目录 `logs\`。文件预览用的是 pane 里显示的 MSYS 路径（`/home/me`、`/c/Users/me`），原生程序打印的 `C:\...` 路径也能点开。Windows 上暂不提供按进程的 CPU/内存/IO 统计和 pane 端口探测。
+在管理员 PowerShell 里安装，任务开机即启动、无需登录（S4U）；否则在你登录时启动（`-Trigger Logon`）。配置写在仅本人可读的 `%USERPROFILE%\.config\anymux\windows-service.json`，日志在同目录 `logs\`。文件预览用的是 pane 里显示的 MSYS 路径（`/home/me`、`/c/Users/me`），原生程序打印的 `C:\...` 路径也能点开。Windows 上暂不提供按进程的 CPU/内存/IO 统计和 pane 端口探测。
 
 想让另一台机器（比如 Mac）上的面板管理这台 Windows：开启 OpenSSH Server（很多云镜像默认已开），然后在那边添加这台机器即可。对方只用到 SFTP 和端口转发，所以 sshd 的登录 shell 是什么都没关系。详见[架构说明](docs/architecture.md)。
 
@@ -224,7 +226,7 @@ npm ci
 - 手机收藏跳转页即可：它经 DoH 查到当前 IP，带着会话 token 跳过去，IP 变了也不用重新登录；
 - `scripts/setup-totp.sh` 启用 TOTP 双因素（扫码绑定，密钥存本地 0600 文件）。
 
-Duck DNS 和 GitHub Pages 都是免费服务；账号与 token 只存在 `~/.config/tmux-web-panel/` 下，不进仓库。登录限速、凭据文件权限等安全默认值见[配置与认证](docs/authentication.md)。
+Duck DNS 和 GitHub Pages 都是免费服务；账号与 token 只存在 `~/.config/anymux/` 下，不进仓库。登录限速、凭据文件权限等安全默认值见[配置与认证](docs/authentication.md)。
 
 ---
 

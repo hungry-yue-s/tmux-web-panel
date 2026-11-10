@@ -6,8 +6,8 @@
   <title>Terminal</title>
   <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=6.0.0">
   <!-- terminal-font-preload -->
-  <link rel="preload" href="/fonts/tpm/tpm-400-core.c21636df8e.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="/fonts/tpm/tpm-700-core.540225bef8.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/amm/amm-400-core.c21636df8e.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/amm/amm-700-core.540225bef8.woff2" as="font" type="font/woff2" crossorigin>
   <!-- /terminal-font-preload -->
   <link rel="stylesheet" href="/css/terminal-fonts.css">
   <script src="/vendor/xterm/xterm.js?v=6.0.0"></script>
@@ -76,7 +76,7 @@
       var container = document.getElementById('terminal');
       term.open(container);
 
-      var FONT_FAMILY = "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
+      var FONT_FAMILY = "'Anymux Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
       var lateFont = false;
       function applyFont() {
         lateFont = false;
@@ -175,7 +175,7 @@
       function _copyToClipboard(text) {
         try {
           var handlers = window.webkit && window.webkit.messageHandlers;
-          var nativeHandler = handlers && handlers.tmuxPanelClipboard;
+          var nativeHandler = handlers && (handlers.anymuxClipboard || handlers.tmuxPanelClipboard);
           if (nativeHandler && typeof nativeHandler.postMessage === 'function') {
             nativeHandler.postMessage({ text: String(text) });
             return;

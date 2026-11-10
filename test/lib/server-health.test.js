@@ -77,6 +77,12 @@ describe('statusFromNodeInfo', () => {
     expect(statusFromNodeInfo('old', nodeInfo(), { transport: 'ssh', latencyMs: 1, now: 0 }).capabilities)
       .not.toHaveProperty('mosh');
   });
+
+  it('passes on which plugins the node runs, and null from a node too old to say', () => {
+    const info = { ...nodeInfo(), plugins: ['files', 'git'] };
+    expect(statusFromNodeInfo('box', info, { transport: 'ssh', latencyMs: 1, now: 0 }).node.plugins).toEqual(['files', 'git']);
+    expect(statusFromNodeInfo('old', nodeInfo(), { transport: 'ssh', latencyMs: 1, now: 0 }).node.plugins).toBeNull();
+  });
 });
 
 describe('HealthService', () => {
@@ -100,7 +106,7 @@ describe('HealthService', () => {
     remoteInfo = vi.fn(async () => nodeInfo());
     mode = vi.fn(async () => 'node');
     basicDetect = vi.fn(async () => ({ posix: true, platform: 'linux', arch: 'x86_64', hostname: 'bare', tmux: { available: true, version: '3.4', reason: null } }));
-    links = { mode, link: vi.fn(() => ({ info: remoteInfo })), basic: vi.fn(() => ({ detect: basicDetect })) };
+    links = { mode, link: vi.fn(() => ({ info: remoteInfo })), detect: basicDetect };
   });
 
   afterEach(async () => {
@@ -206,7 +212,7 @@ describe('HealthService', () => {
       const status = await makeService().probe('api-linux');
 
       expect(remoteInfo).not.toHaveBeenCalled();
-      expect(basicDetect).toHaveBeenCalledWith({ force: true });
+      expect(basicDetect).toHaveBeenCalledWith('api-linux');
       expect(status).toMatchObject({
         state: ServerState.ONLINE,
         facts: { hostname: 'bare', platform: 'linux' },

@@ -1,0 +1,6 @@
+{
+  "serve": ["."],
+  "body": [
+    { "order": 340, "script": "/js/layout-picker.js" }
+  ]
+}

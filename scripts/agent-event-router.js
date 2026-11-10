@@ -3,8 +3,10 @@
 import http from 'node:http';
 import https from 'node:https';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { adoptLegacyEnv, appDir } from '../lib/legacy-names.js';
+
+adoptLegacyEnv();
 
 function parseArgs(argv) {
   const args = { bell: true };
@@ -36,7 +38,7 @@ function shouldBell(event) {
 
 function localPanelToken() {
   try {
-    const file = join(homedir(), '.config', 'tmux-web-panel', 'tokens.json');
+    const file = join(appDir('config'), 'tokens.json');
     const entries = JSON.parse(readFileSync(file, 'utf8'));
     if (!Array.isArray(entries)) return '';
     const now = Date.now();
@@ -104,8 +106,8 @@ if (args.bell && shouldBell(event)) {
   }
 }
 
-const panelUrl = args.panelUrl || args['panel-url'] || process.env.TMUX_WEB_PANEL_AGENT_EVENTS_URL || 'https://127.0.0.1:7681/api/agent-events';
-const panelToken = args.panelToken || args['panel-token'] || process.env.TMUX_WEB_PANEL_TOKEN || localPanelToken();
+const panelUrl = args.panelUrl || args['panel-url'] || process.env.ANYMUX_AGENT_EVENTS_URL || 'https://127.0.0.1:7681/api/agent-events';
+const panelToken = args.panelToken || args['panel-token'] || process.env.ANYMUX_TOKEN || localPanelToken();
 const monitorUrl = args.monitorUrl || args['monitor-url'] || process.env.AGENT_MONITOR_URL || '';
 const monitorToken = args.monitorToken || args['monitor-token'] || process.env.AGENT_MONITOR_TOKEN || '';
 

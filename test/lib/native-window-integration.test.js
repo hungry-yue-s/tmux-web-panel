@@ -21,7 +21,7 @@ async function fixture() {
   const dir = await realpath(await mkdtemp(join(process.platform === 'darwin' ? '/tmp' : tmpdir(), 'twp-native-window-'))), socket = join(dir, 'socket');
   const run = async args => (await exec(binary, ['-S', socket, ...args], { env, encoding: 'utf8', timeout: 15_000, maxBuffer: 16 * 1024 * 1024 })).stdout;
   const config = join(dir, 'tmux.conf'), worker = join(dir, 'worker.cjs');
-  await writeFile(config, "set -g status-left NATIVE-STATUS\nset -g status-left-length 40\nset -g status-right ''\nset -g pane-border-status top\nset -g pane-border-format 'NATIVE-BORDER #{pane_id}'\nset -g mouse on\nbind x split-window -h\n");
+  await writeFile(config, "set -g status-left NATIVE-STATUS\nset -g status-left-length 40\nset -g status-right ''\nset -g window-status-current-format 'NATIVE-MODE:#{pane_in_mode}'\nset -g pane-border-status top\nset -g pane-border-format 'NATIVE-BORDER #{pane_id}'\nset -g mouse on\nbind x split-window -h\n");
   await writeFile(worker, "process.stdout.write(Array.from({length:70},(_,i)=>'LINE'+i).join('\\r\\n')+'\\r\\nREADY');setInterval(()=>{},1000);");
   await run(['-f', config, 'new-session', '-d', '-s', 'native-window-test', '-x', '80', '-y', '24', process.execPath, worker]);
   const readIdentity = async () => parsePrivateTmuxIdentity(await run(['display-message', '-p', PRIVATE_TMUX_IDENTITY_FORMAT]), socket), identity = await readIdentity();
@@ -74,7 +74,7 @@ describe.skipIf(!binary || !existsSync(binary) || process.platform === 'win32')(
     try {
       const first = await f.connect(); first.lease.input(Buffer.from('\x02['));
       await until(() => f.run(['display-message', '-p', '-t', f.paneId, '#{pane_in_mode}']), text => text.trim() === '1');
-      await sleep(100); await first.render(); const previous = visible(first.term);
+      const previous = await until(async () => { await first.render(); return visible(first.term); }, screen => screen.lines.join('\n').includes('NATIVE-MODE:1'));
       const clients = await f.run(['list-clients', '-F', '#{client_pid}|#{client_tty}']);
       first.lease.close(); await sleep(50);
       expect(await f.run(['list-clients', '-F', '#{client_pid}|#{client_tty}'])).toBe(clients);

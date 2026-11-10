@@ -85,7 +85,7 @@ describe('attach script', () => {
     expect(script).toContain("exec tmux -u select-pane -t '%12' \\; if-shell -F -t '%12' '#{window_zoomed_flag}' '' 'resize-pane -Z -t %12' \\; attach-session -d -t '%12'");
     expect(attachScript('%12', true)).toContain("'#{window_zoomed_flag}' 'resize-pane -Z -t %12' ''");
     // One remote word: survives Windows OpenSSH pasting it unquoted.
-    expect(attachScriptName('%12', true)).toBe('.cache/tmux-web-panel/attach-12-1');
+    expect(attachScriptName('%12', true)).toBe('.cache/anymux/attach-12-1');
   });
 
   it('refuses anything but a numeric tmux pane id', () => {
@@ -149,10 +149,28 @@ describe('BasicHost', () => {
     const first = await host.attachArgs('%3', false);
     await host.attachArgs('%3', false);
 
-    expect(first).toEqual(['-tt', 'box', '.cache/tmux-web-panel/attach-3-0']);
+    expect(first).toEqual(['-tt', 'box', '.cache/anymux/attach-3-0']);
     expect(connection.uploads).toHaveLength(1);
-    expect(connection.uploads[0]).toMatchObject({ remote: '.cache/tmux-web-panel/attach-3-0', options: { mode: '755' } });
+    expect(connection.uploads[0]).toMatchObject({ remote: '.cache/anymux/attach-3-0', options: { mode: '755' } });
     expect(connection.uploads[0].content).toBe(attachScript('%3', false));
+  });
+
+  it('serves the layout picker through remote tmux, and refuses it for hosted shells', async () => {
+    const { host, connection } = makeHost();
+    await host.setWindowLayout('@2', { layout: 'tiled' });
+    expect(connection.scripts.at(-1)).toContain('select-layout');
+    await expect(host.setWindowLayout('@2', { layout: 'spiral' })).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR });
+
+    const bare = makeHost({ detect: 'kernel=Linux\narch=x86_64\nhostname=box\n' }).host;
+    for (const call of [
+      () => bare.getWindowLayout('@2'),
+      () => bare.setWindowLayout('@2', { layout: 'tiled' }),
+      () => bare.capturePane('%3'),
+      () => bare.resizePane('%3', { direction: 'left', amount: 1 }),
+      () => bare.swapPanes('%3', { target: '%4' }),
+    ]) {
+      await expect(call()).rejects.toMatchObject({ code: ErrorCode.UNSUPPORTED });
+    }
   });
 
   it('bumps the revision once per mutation', async () => {

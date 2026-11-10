@@ -12,8 +12,8 @@ assert(process.argv[2], 'Pass a runtime directory');
 const write = process.argv.includes('--write-manifest');
 const manifestPath = path.join(root, 'manifest.json');
 const previous = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : {};
-const arch = process.env.TMUX_PANEL_ARCH || previous.arch || process.arch;
-const minimumMacOS = process.env.TMUX_PANEL_MINIMUM_MACOS || previous.minimumMacOS || '13.5';
+const arch = process.env.ANYMUX_ARCH || previous.arch || process.arch;
+const minimumMacOS = process.env.ANYMUX_MINIMUM_MACOS || previous.minimumMacOS || '13.5';
 assert(['arm64', 'x64'].includes(arch), 'Unsupported runtime architecture');
 const machine = arch === 'arm64' ? 'arm64' : 'x86_64';
 const binaryFiles = [];
@@ -49,7 +49,7 @@ for (const name of binaryFiles) {
 }
 const tmuxImports = execFileSync('/usr/bin/nm', ['-u', path.join(root, 'bin/tmux')], { encoding: 'utf8' });
 assert(!/\b_tiparm(?:_s)?\b/.test(tmuxImports), 'tmux must use tparm for minimum macOS compatibility');
-for (const relative of ['bin/node', 'bin/tmux', 'app/bin/panel.js', 'app/profiles/panel.yml', 'app/vendor/cordis/lib/index.js', 'app/vendor/tmux/tmux.c', 'app/vendor/tmux-plugins/tmux-resurrect/scripts/save.sh','app/scripts/remote/install-node.sh', 'app/plugins/ui/client/index.html', 'app/plugins/terminal/client/fonts/LICENSE-SymbolsNerdFont.txt', 'licenses/THIRD-PARTY-NOTICES.md', 'app/scripts/desktop-runtime.mjs', 'app/scripts/desktop-certificates.mjs', 'app/relay/index.template.html', 'app/catalog/tmux-agent/panel-plugin.json', 'app/skills/tmux-panel/SKILL.md']) {
+for (const relative of ['bin/node', 'bin/tmux', 'app/bin/panel.js', 'app/profiles/panel.yml', 'app/vendor/cordis/lib/index.js', 'app/vendor/tmux/tmux.c', 'app/vendor/tmux-plugins/tmux-resurrect/scripts/save.sh','app/scripts/remote/install-node.sh', 'app/plugins/ui/client/index.html', 'app/plugins/terminal/client/fonts/LICENSE-SymbolsNerdFont.txt', 'licenses/THIRD-PARTY-NOTICES.md', 'app/scripts/desktop-runtime.mjs', 'app/scripts/desktop-certificates.mjs', 'app/relay/index.template.html', 'app/catalog/tmux-agent/panel-plugin.json', 'app/skills/anymux/SKILL.md']) {
   assert(fs.existsSync(path.join(root, relative)), `Missing bundled component: ${relative}`);
 }
 assert(!fs.existsSync(path.join(root, 'app/plugins/ui/client/js/relay-config.js')), 'Personal generated relay config must not be distributed');
@@ -61,14 +61,14 @@ execFileSync(path.join(root, 'bin/node'), ['--check', path.join(root, 'app/bin/p
 const require = createRequire(path.join(root, 'app/package.json'));
 const pty = require('node-pty');
 await new Promise((resolve, reject) => {
-  const terminal = pty.spawn('/usr/bin/printf', ['tmux-panel-pty-ok'], { name: 'xterm-256color', cols: 80, rows: 24, cwd: root, env: { PATH: '/usr/bin:/bin' } });
+  const terminal = pty.spawn('/usr/bin/printf', ['anymux-pty-ok'], { name: 'xterm-256color', cols: 80, rows: 24, cwd: root, env: { PATH: '/usr/bin:/bin' } });
   let output = '';
   // macOS may validate a newly signed spawn helper on its first execution.
   const timer = setTimeout(() => { terminal.kill(); reject(new Error('Bundled PTY smoke test timed out')); }, 30000);
   terminal.onData(value => { output += value; });
   terminal.onExit(({ exitCode }) => {
     clearTimeout(timer);
-    if (exitCode === 0 && output.includes('tmux-panel-pty-ok')) resolve();
+    if (exitCode === 0 && output.includes('anymux-pty-ok')) resolve();
     else reject(new Error('Bundled PTY smoke test failed'));
   });
 });
@@ -82,8 +82,8 @@ if (write) {
   }
   const buildId = `desktop-${arch}-${digest.digest('hex').slice(0, 20)}`;
   fs.writeFileSync(manifestPath, JSON.stringify({ schemaVersion: 1, buildId, arch, nodeVersion, tmuxVersion, minimumMacOS,
-    nodeSource: process.env.TMUX_PANEL_NODE_SOURCE || previous.nodeSource,
-    tmuxSourceCommit: process.env.TMUX_PANEL_TMUX_SOURCE_COMMIT ?? previous.tmuxSourceCommit ?? '',
+    nodeSource: process.env.ANYMUX_NODE_SOURCE || previous.nodeSource,
+    tmuxSourceCommit: process.env.ANYMUX_TMUX_SOURCE_COMMIT ?? previous.tmuxSourceCommit ?? '',
     machO: binaryFiles.map(name => path.relative(root, name)), files: hashes }, null, 2) + '\n');
 }
 console.log(`Runtime verified: ${arch}; ${nodeVersion}; ${tmuxVersion}; minimum macOS ${minimumMacOS}; PTY passed`);

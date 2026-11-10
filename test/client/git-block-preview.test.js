@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
+import { BLOCKS, WORKSPACE_BLOCKS } from '../helpers/blocks.js';
 
 const INSTANCE = '1873:1700000000';
 const PREVIEW = fs.readFileSync('plugins/files/client/js/file-preview.js', 'utf8');
-const HOST = fs.readFileSync('plugins/files/client/js/block-host.js', 'utf8');
-const BLOCKS = fs.readFileSync('plugins/files/client/js/blocks.js', 'utf8');
-const WORKSPACE_BLOCKS = fs.readFileSync('plugins/files/client/js/blocks-workspace.js', 'utf8');
+const HOST = fs.readFileSync('plugins/ui/client/js/block-host.js', 'utf8');
 
 const COMMIT = 'c1c1c1c1c1c1c1c1';
 const NOTES_DIFF = 'diff --git a/notes.md b/notes.md\nindex 1..2 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1,2 +1,2 @@\n-# One\n+# Two\n same\n';

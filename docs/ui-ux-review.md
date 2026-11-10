@@ -25,9 +25,9 @@
 
 ## 环境与证据边界
 
-独立工作树 `/tmp/tmux-panel-uiux-20261021/source`，launchd 服务 `com.tmux-web-panel.uiux.server` 与 `com.tmux-web-panel.uiux.tmux`，仅监听 `127.0.0.1:17681`。tmux wrapper 强制指定独立 socket；Node 预加载模块将 `os.homedir()` 绑定到独立演示 profile，没有修改系统 HOME。正式服务 PID 69377、tmux PID 1363 保持运行。
+独立工作树 `/tmp/anymux-uiux-20261021/source`，launchd 服务 `com.anymux.uiux.server` 与 `com.anymux.uiux.tmux`，仅监听 `127.0.0.1:17681`。tmux wrapper 强制指定独立 socket；Node 预加载模块将 `os.homedir()` 绑定到独立演示 profile，没有修改系统 HOME。正式服务 PID 69377、tmux PID 1363 保持运行。
 
-独立 Swift 应用 `dist/uiux-review/Tmux Panel Review.app` 使用 bundle ID `com.tmux-web-panel.uiux-review` 和 `TMUX_PANEL_URL`。已在原生可访问性树确认 URL 为 17681。调试代码不经过正式静态目录。
+独立 Swift 应用 `dist/uiux-review/Anymux Review.app` 使用 bundle ID `com.anymux.uiux-review` 和 `ANYMUX_URL`。已在原生可访问性树确认 URL 为 17681。调试代码不经过正式静态目录。
 
 设计平台只收到演示终端截图和经过检查的 UI 源码上下文，没有上传正式终端或用户文件。性能页读取当前机器的只读指标，相关截图仅保留在本机。
 
@@ -166,7 +166,7 @@ Superdesign 的 Opus 生成请求及一次重试均因额度不足被阻止。�
 
 [review-terminal.js](design/review-terminal.js) 内联于原型，只在主机名严格为 `127.0.0.1` 且端口为 `17681` 时加载本地 xterm 资源并连接独立服务。只选择合成“产品开发”会话的四个窗口；其他地址和 Superdesign 画布保留静态内容。输入/输出、字体、主题与尺寸变化使用现有 WebSocket 协议，切窗顺序断开旧连接并隔离过期回调，退出释放资源。原型并非正式应用功能回归的替代。
 
-合成“工作区”窗口在 `/tmp/tmux-panel-uiux-20261021/demo-workspace` 运行不读取用户 RC 的交互 shell；示例文件与输出均属于该临时环境。通过真实输入执行 `printf 'review-input-ok\n'`，收到实际结果；字号 14→15→14、窗口切换与快速连续切换、分隔条拖动后的 WebSocket resize 均已验证，连接状态无错误。
+合成“工作区”窗口在 `/tmp/anymux-uiux-20261021/demo-workspace` 运行不读取用户 RC 的交互 shell；示例文件与输出均属于该临时环境。通过真实输入执行 `printf 'review-input-ok\n'`，收到实际结果；字号 14→15→14、窗口切换与快速连续切换、分隔条拖动后的 WebSocket resize 均已验证，连接状态无错误。
 
 [deep-current.tmux.conf](design/deep-current.tmux.conf) 仅应用于独立 socket，8 项读回断言通过：深灰青边界、铜色活动标记、无整段反显标题、右侧自动隐藏滚动条、1 列覆盖宽度和 650ms 延迟。没有改用户配置、tmux 源码或子模块。若后续确实需要源码能力，按用户要求从官方最新版 fork，再在隔离构建目录与 socket 验证；本轮配置能力已满足需求。服务恢复时现有 `ensurePaneBorderConfig` 可能重新设置标题格式，预览配置文件已注明需重新应用。
 

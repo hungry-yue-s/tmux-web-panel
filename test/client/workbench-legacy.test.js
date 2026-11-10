@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import * as workbench from '../../plugins/workbench/client/index.js';
 
 const source = name => readFileSync(name, 'utf8');
 const windows = [];
@@ -11,6 +12,9 @@ function setup() {
   Object.defineProperty(w, 'innerWidth', { value: 1440 });
   w.Auth = { headers: () => ({ Authorization: 'Bearer test' }) };
   w.Api = { activeServerId: () => 'remote', nodeUrl: (id, path) => id === 'local' ? path : '/n/' + id + path };
+  w.eval(source('plugins/ui/client/js/slots.js'));
+  let api;
+  Object.defineProperty(w, 'Workbench', { configurable: true, get: () => api, set(value) { api = value; workbench.registerWorkbenchShell(w, value); } });
   w.fetch = vi.fn(async url => {
     const path = new URL(url, w.location.href).searchParams.get('path');
     return { status: 200, json: async () => ({ success: true, data: String(url).includes('/info')
@@ -22,6 +26,23 @@ function setup() {
 afterEach(() => { windows.splice(0).forEach(w => w.close()); });
 
 describe('local workbench bridges', () => {
+  it('refreshes the tree for a newly focused native pane without remounting the terminal', async () => {
+    const w = setup();
+    w.eval(source('plugins/ui/client/js/router.js')); w.eval(source('plugins/ui/client/js/store.js'));
+    const route = { name: 'workbench', params: { serverId: 'remote', viewId: 'v1' } };
+    w.Store.setRoute(route);
+    const previous = { provider: 'tmux', instanceId: '1:2', complete: true, sessions: [{ id: '$1', windows: [{ id: '@1', panes: [{ id: '%1' }] }] }] };
+    const current = { ...previous, sessions: [{ id: '$1', windows: [{ id: '@1', panes: [{ id: '%1' }, { id: '%2' }] }] }] };
+    w.Store.setWorkspace('remote', previous);
+    w.Api.workspaceUrl = id => '/n/' + id + '/api/workspace';
+    w.Api.get = vi.fn(async () => current);
+    w.eval(source('plugins/ui/client/js/app-shell.js')); w.eval(source('plugins/ui/client/js/ms-app.js'));
+    const context = { onTerminal: true, serverId: 'remote', viewId: 'v1', instanceId: '1:2', sessionId: '$1', windowId: '@1', paneId: '%2', key: 'fresh' };
+    w.Workbench = { currentContext: () => context };
+    w.dispatchEvent(new w.CustomEvent('terminal-context-changed', { detail: context }));
+    await vi.waitFor(() => expect(w.AppShell.workspace('remote').sessions[0].windows[0].panes).toHaveLength(2));
+    expect(w.Api.get).toHaveBeenCalledExactlyOnceWith('/n/remote/api/workspace', expect.any(Object));
+  });
   it('round trips a local view route separately from a tmux window route', () => {
     const w = setup();
     w.eval(source('plugins/ui/client/js/router.js'));
@@ -35,7 +56,7 @@ describe('local workbench bridges', () => {
     w.Store = { getState: () => ({ route: { name: 'workbench', params: { serverId: 'remote', viewId: 'v1' } } }) };
     w.Workbench = { currentContext: () => focus, focusedContext: () => focus };
     w._resolveFocusedPaneId = () => { throw new Error('legacy focus must not be consulted'); };
-    w.eval(source('plugins/files/client/js/blocks.js'));
+    w.eval(source('plugins/ui/client/js/blocks-kit.js'));
     expect(w.Blocks.ui.currentContext()).toMatchObject({ viewId: 'v1', paneId: '%7', serverId: 'remote' });
     expect(w.Blocks.ui.selectedContext().key).toBe('v1:leaf1');
     expect(await w.Blocks.ui.focusedContext()).toMatchObject({ paneId: '%7', serverId: 'remote' });
@@ -47,7 +68,7 @@ describe('local workbench bridges', () => {
     w.Workbench = { currentContext: () => null, focusedContext: () => null };
     w.state = { currentPane: '%99' };
     w.TerminalTarget = { serverId: 'remote', sessionId: '$old', windowId: '@old' };
-    w.eval(source('plugins/files/client/js/blocks.js'));
+    w.eval(source('plugins/ui/client/js/blocks-kit.js'));
     expect(w.Blocks.ui.currentContext()).toMatchObject({ serverId: 'remote', viewId: 'v1', paneId: null });
     expect(w.Blocks.ui.selectedContext()).toMatchObject({ onTerminal: true, paneId: null });
     await expect(w.Blocks.ui.focusedContext()).rejects.toThrow('尚未确认');
@@ -164,7 +185,7 @@ describe('local workbench bridges', () => {
     const w = setup();
     w.eval(source('plugins/files/client/js/file-preview.js'));
     await w.FilePreview.switchViewContext('remote', 'v1');
-    w.eval(source('plugins/files/client/js/block-host.js'));
+    w.eval(source('plugins/ui/client/js/block-host.js'));
     w.BlockHost.register('draft', { title: '草稿', perWindow: true, create() {
       const node = w.document.createElement('textarea');
       node.value = 'keep draft';
@@ -175,7 +196,7 @@ describe('local workbench bridges', () => {
     expect(draft).not.toBeNull();
     w.FilePreview.reconcileWorkspace('remote', { provider: 'tmux', instanceId: '8:9', complete: true, sessions: [] });
     expect(w.document.querySelector('textarea')).toBe(draft);
-    expect([...Array(w.localStorage.length)].map((_, i) => w.localStorage.key(i)).some(k => k.startsWith('twp_view_blocks_v1:'))).toBe(true);
+    expect([...Array(w.localStorage.length)].map((_, i) => w.localStorage.key(i)).some(k => k.startsWith('anymux_view_blocks_v1:'))).toBe(true);
   });
 
   it('finishes creating a layout without navigating over a newer user route', async () => {

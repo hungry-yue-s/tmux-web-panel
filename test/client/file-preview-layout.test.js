@@ -1,19 +1,20 @@
 import { describe, it, expect, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
+import { pageStyles } from '../helpers/pages.js';
 
 const INSTANCE = '1873:1700000000';
 
 const source = fs.readFileSync('plugins/files/client/js/file-preview.js', 'utf8');
 const appSource = fs.readFileSync('plugins/ui/client/js/app.js', 'utf8');
 const msAppSource = fs.readFileSync('plugins/ui/client/js/ms-app.js', 'utf8');
-const styles = fs.readFileSync('plugins/ui/client/css/style.css', 'utf8');
+const styles = pageStyles();
 const paletteSource = fs.readFileSync('plugins/ui/client/js/command-palette.js', 'utf8');
 const workspaceStyles = fs.readFileSync('plugins/ui/client/css/workspace.css', 'utf8');
 
 function createPreview({ storage = {}, missingPaths = [], context = ['local', '@0'], auth } = {}) {
   const dom = new JSDOM(
-    '<!doctype html><body><div id="main-layout"><main id="content"><div class="terminal-view"></div></main></div></body>',
+    '<!doctype html><body><div class="ms-app mode-terminal"><main class="ms-main"><div class="terminal-view"></div></main></div></body>',
     { url: 'https://panel.test/' }
   );
   Object.defineProperty(dom.window, 'innerWidth', { value: 1440, configurable: true });
@@ -51,7 +52,7 @@ function createPreview({ storage = {}, missingPaths = [], context = ['local', '@
 
 function createLivePreview({ visible = false } = {}) {
   const dom = new JSDOM(
-    '<!doctype html><body><div id="main-layout"><main id="content"><div class="terminal-view"></div></main></div></body>',
+    '<!doctype html><body><div class="ms-app mode-terminal"><main class="ms-main"><div class="terminal-view"></div></main></div></body>',
     { url: 'https://panel.test/' }
   );
   Object.defineProperty(dom.window, 'innerWidth', { value: 1440, configurable: true });
@@ -131,7 +132,7 @@ function createLivePreview({ visible = false } = {}) {
 
 function createDirectoryPreview() {
   const dom = new JSDOM(
-    '<!doctype html><body><div id="main-layout"><main id="content"><div class="terminal-view"></div></main></div></body>',
+    '<!doctype html><body><div class="ms-app mode-terminal"><main class="ms-main"><div class="terminal-view"></div></main></div></body>',
     { url: 'https://panel.test/' }
   );
   Object.defineProperty(dom.window, 'innerWidth', { value: 1440, configurable: true });
@@ -506,7 +507,7 @@ describe('file preview dock tabs', () => {
 
     const postMessage = vi.fn();
     dom.window.webkit = {
-      messageHandlers: { tmuxPanelClipboard: { postMessage } },
+      messageHandlers: { anymuxClipboard: { postMessage } },
     };
     const getContext = vi.spyOn(dom.window.HTMLCanvasElement.prototype, 'getContext')
       .mockReturnValue({ drawImage: vi.fn(), fillRect: vi.fn(), fillStyle: '' });
@@ -720,7 +721,7 @@ describe('file preview dock tabs', () => {
     dockCurrent(dom);
     const dock = dom.window.document.querySelector('.fp-dock');
     expect(dock).not.toBeNull();
-    expect(dock.parentElement.id).toBe('main-layout');
+    expect(dock.parentElement.classList.contains('ms-main')).toBe(true);
     expect(dom.window.document.body.classList.contains('fp-side-open')).toBe(true);
     expect(dock.querySelectorAll('.fp-dock-tab-item')).toHaveLength(1);
     expect(dock.querySelector('.fp-dock-tab').textContent).toBe('one.md');
@@ -728,7 +729,7 @@ describe('file preview dock tabs', () => {
 
   it('docks into the visible multi-server terminal shell', async () => {
     const dom = new JSDOM(
-      '<!doctype html><body><div id="legacy-shell" hidden><div id="main-layout"></div></div>'
+      '<!doctype html><body>'
       + '<div class="ms-app mode-terminal"><main class="ms-main"><header class="ms-topbar"></header>'
       + '<div class="ms-content terminal-mode"><section class="terminal-stage">'
       + '<div class="terminal-view"></div></section></div></main></div></body>',
@@ -749,7 +750,6 @@ describe('file preview dock tabs', () => {
 
     expect(dom.window.document.querySelector('.fp-dock').parentElement)
       .toBe(dom.window.document.querySelector('.ms-main'));
-    expect(dom.window.document.querySelector('#main-layout .fp-dock')).toBeNull();
     expect(styles).toMatch(/\.ms-app\.mode-terminal \.fp-dock\s*\{[\s\S]*?grid-column:\s*2;[\s\S]*?grid-row:\s*1 \/ 3/);
   });
 
@@ -1232,13 +1232,13 @@ describe('file preview dock tabs', () => {
     const state = dom.window.localStorage.getItem(dead);
     dom.window.localStorage.setItem(live, state);
     dom.window.localStorage.setItem(remote, state);
-    dom.window.localStorage.setItem('twp_blocks_v1:local', 'tool-state');
+    dom.window.localStorage.setItem('anymux_blocks_v1:local', 'tool-state');
     preview.reconcileWorkspace('local', { provider: 'tmux', instanceId: INSTANCE, complete: true,
       sessions: [{ id: '$other', windows: [{ id: '@7' }] }] });
     expect(dom.window.localStorage.getItem(dead)).toBeNull();
     expect(dom.window.localStorage.getItem(live)).toBe(state);
     expect(dom.window.localStorage.getItem(remote)).toBe(state);
-    expect(dom.window.localStorage.getItem('twp_blocks_v1:local')).toBe('tool-state');
+    expect(dom.window.localStorage.getItem('anymux_blocks_v1:local')).toBe('tool-state');
     expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
     await preview.switchDockContext('local', '@8', INSTANCE);
     expect(dom.window.localStorage.getItem(dead)).toBeNull(); // switching cannot recreate it
@@ -1429,10 +1429,8 @@ describe('file preview dock tabs', () => {
     dom.window.close(); reloaded.dom.window.close();
   });
 
-  it('uses stable window IDs in the modern shell without legacy interference', () => {
-    expect(appSource).toContain("if (document.querySelector('.ms-app')) return;");
-    expect(appSource).toContain("'legacy-local'");
-    expect(appSource).toContain('FilePreview.switchDockContext(null, null)');
+  it('uses stable window IDs in the shell', () => {
+    expect(appSource).not.toContain('switchDockContext');
     expect(msAppSource).toContain('this._setDockContext(serverId, win.id, workspace.instanceId)');
     expect(msAppSource.match(/_setDockContext\(null, null\)/g).length).toBeGreaterThanOrEqual(5);
   });
@@ -1472,14 +1470,12 @@ describe('file preview dock tabs', () => {
     expect(dock.style.width).toBe(dock.style.flexBasis);
   });
 
-  it('defaults to 360px and allows 70 percent of the workstage after excluding the sidebar', async () => {
+  it('defaults to 360px and allows 70 percent of the workstage beside the sidebar', async () => {
     const { dom, preview } = createPreview();
     const doc = dom.window.document;
-    // Legacy layout includes its sidebar; the modern shell passes only ms-main.
-    const layout = doc.querySelector('#main-layout');
-    layout.getBoundingClientRect = () => ({ width: 1200 });
-    const sidebar = doc.createElement('aside'); sidebar.id = 'sidebar';
-    sidebar.getBoundingClientRect = () => ({ width: 248 }); layout.prepend(sidebar);
+    // .ms-main is the column beside the shell's 248px sidebar in a 1200px page.
+    const layout = doc.querySelector('.ms-main');
+    layout.getBoundingClientRect = () => ({ width: 1200 - 248 });
     await preview.openFile('/tmp/one.md', '%1'); dockCurrent(dom);
     const dock = doc.querySelector('.fp-dock');
     expect(dock.style.width).toBe('360px');
@@ -1496,9 +1492,7 @@ describe('file preview dock tabs', () => {
     const { dom, preview } = createPreview();
     const doc = dom.window.document;
     Object.defineProperty(dom.window, 'innerWidth', { value: 1200, configurable: true });
-    const app = doc.createElement('div'); app.className = 'ms-app mode-terminal';
-    const main = doc.createElement('main'); main.className = 'ms-main';
-    main.appendChild(doc.querySelector('.terminal-view')); app.appendChild(main); doc.body.appendChild(app);
+    const main = doc.querySelector('.ms-app.mode-terminal .ms-main');
     let workstageWidth = 952;
     main.getBoundingClientRect = () => ({ width: workstageWidth });
     const key = preview._test.dockStateKey('local', '@0', INSTANCE);

@@ -39,7 +39,7 @@ var NotificationPanel = (function () {
     try {
       var webkit = window.webkit;
       var handlers = webkit && webkit.messageHandlers;
-      var handler = handlers && handlers.tmuxPanelNotification;
+      var handler = handlers && (handlers.anymuxNotification || handlers.tmuxPanelNotification);
       if (!handler || typeof handler.postMessage !== 'function') return;
 
       handler.postMessage({
@@ -89,12 +89,6 @@ var NotificationPanel = (function () {
     _updateBadge();
     _syncAttention();
     if (_isOpen) _rerenderPanel();
-  }
-
-  function add(notification) {
-    // Legacy path: called from app.js _applyCompletedWindows.
-    // With server-side persistence, notifications are added via monitor.js → WebSocket push.
-    // This is now a no-op — the server push path (handleServerPush) handles it.
   }
 
   function markRead(id) {
@@ -371,7 +365,6 @@ var NotificationPanel = (function () {
   }
 
   return {
-    add: add,
     markRead: markRead,
     _markReadByWindow: markReadByWindow,
     clearAll: clearAll,

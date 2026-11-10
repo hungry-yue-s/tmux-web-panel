@@ -4,11 +4,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+. "$SCRIPT_DIR/legacy-env.sh"
 RUNTIME="${1:?Usage: bundle-macos-runtime.sh OUTPUT_RUNTIME_DIRECTORY}"
-CACHE="${TMUX_PANEL_BUILD_CACHE:-$PROJECT_DIR/dist/macos-build-cache}"
-NODE_VERSION="${TMUX_PANEL_NODE_VERSION:-24.22.1}"
-MINIMUM_MACOS="${TMUX_PANEL_MINIMUM_MACOS:-13.5}"
-ARCH="${TMUX_PANEL_ARCH:-$(uname -m)}"
+CACHE="${ANYMUX_BUILD_CACHE:-$PROJECT_DIR/dist/macos-build-cache}"
+NODE_VERSION="${ANYMUX_NODE_VERSION:-24.22.1}"
+MINIMUM_MACOS="${ANYMUX_MINIMUM_MACOS:-13.5}"
+ARCH="${ANYMUX_ARCH:-$(uname -m)}"
 [[ "$ARCH" == x86_64 ]] && ARCH=x64
 case "$ARCH" in arm64) MACHINE=arm64;; x64) MACHINE=x86_64;; *) echo "Unsupported macOS architecture: $ARCH" >&2; exit 1;; esac
 if [[ "$(uname -m)" == arm64 && "$MACHINE" == x86_64 ]]; then
@@ -26,13 +27,13 @@ done
 mkdir -p "$CACHE/downloads" "$RUNTIME/bin" "$RUNTIME/lib" "$RUNTIME/app" "$RUNTIME/licenses"
 CACHE="$(cd "$CACHE" && pwd)"
 RUNTIME="$(cd "$RUNTIME" && pwd)"
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/tmux-panel-runtime.XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/anymux-runtime.XXXXXX")"
 cleanup() {
   local status=$?
   if [[ "$status" != 0 ]]; then
     if [[ -f "$WORK/tmux/config.log" ]]; then cp "$WORK/tmux/config.log" "$CACHE/last-$ARCH-tmux-config.log"; fi
   fi
-  if [[ "$status" != 0 && "${TMUX_PANEL_KEEP_BUILD:-0}" == 1 ]]; then
+  if [[ "$status" != 0 && "${ANYMUX_KEEP_BUILD:-0}" == 1 ]]; then
     echo "Preserved failed build: $WORK" >&2
   else
     rm -rf "$WORK"
@@ -139,7 +140,7 @@ for name in libevent_core.pc libutf8proc.pc; do cp "$PREFIX/lib/pkgconfig/$name"
 )
 install -m 755 "$WORK/tmux/tmux" "$RUNTIME/bin/tmux"
 /usr/bin/strip -S "$RUNTIME/bin/tmux"
-/usr/bin/codesign --force --sign "${TMUX_PANEL_CODESIGN_IDENTITY:--}" "$RUNTIME/bin/tmux"
+/usr/bin/codesign --force --sign "${ANYMUX_CODESIGN_IDENTITY:--}" "$RUNTIME/bin/tmux"
 cp "$PROJECT_DIR/vendor/tmux/COPYING" "$RUNTIME/licenses/tmux-COPYING.txt"
 
 echo 'Copying server resources and installing production dependencies...'
@@ -176,7 +177,7 @@ cat > "$RUNTIME/licenses/THIRD-PARTY-NOTICES.md" <<'NOTICES'
 - Maple Mono: ../app/plugins/terminal/client/fonts/OFL-MapleMono.txt.
 - Symbols Nerd Font Mono: ../app/plugins/terminal/client/fonts/LICENSE-SymbolsNerdFont.txt (upstream v3.4.0 and glyph-source notices).
 - npm production packages: each package's original notices in ../app/node_modules/.
-- Tmux Panel: ../app/package.json declares ISC. This source checkout does not contain a root project license text; the declaration is retained as metadata and does not replace a license grant.
+- Anymux: ../app/package.json declares ISC. This source checkout does not contain a root project license text; the declaration is retained as metadata and does not replace a license grant.
 NOTICES
 "$WORK/node/bin/node" "$WORK/node/lib/node_modules/npm/bin/npm-cli.js" ci --omit=dev --no-audit --no-fund --registry=https://registry.npmjs.org --prefix "$RUNTIME/app"
 # Keep the matching addon only; all other platform prebuilds are irrelevant and
@@ -184,6 +185,6 @@ NOTICES
 find "$RUNTIME/app/node_modules/node-pty/prebuilds" -mindepth 1 -maxdepth 1 -type d ! -name "darwin-$ARCH" -exec rm -rf {} +
 TMUX_SOURCE_COMMIT="$(git -C "$PROJECT_DIR/vendor/tmux" rev-parse HEAD)"
 if [[ -n "$(git -C "$PROJECT_DIR/vendor/tmux" status --porcelain)" ]]; then TMUX_SOURCE_COMMIT=''; fi
-TMUX_PANEL_ARCH="$ARCH" TMUX_PANEL_MINIMUM_MACOS="$MINIMUM_MACOS" TMUX_PANEL_NODE_SOURCE="$NODE_BASE/$NODE_ARCHIVE" TMUX_PANEL_TMUX_SOURCE_COMMIT="$TMUX_SOURCE_COMMIT" \
+ANYMUX_ARCH="$ARCH" ANYMUX_MINIMUM_MACOS="$MINIMUM_MACOS" ANYMUX_NODE_SOURCE="$NODE_BASE/$NODE_ARCHIVE" ANYMUX_TMUX_SOURCE_COMMIT="$TMUX_SOURCE_COMMIT" \
   "$RUNTIME/bin/node" "$SCRIPT_DIR/verify-macos-runtime.mjs" "$RUNTIME" --write-manifest
 echo "Bundled runtime: $RUNTIME"

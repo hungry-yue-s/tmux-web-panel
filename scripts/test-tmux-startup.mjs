@@ -25,7 +25,7 @@ async function until(check, message) {
 for (const [foreground, disconnect] of [[true, false], [true, true], [false, true]]) {
   test(`${foreground ? 'foreground' : 'daemon'} startup, initial client ${disconnect ? 'disconnects' : 'stays'}`, { timeout: 20000 }, async () => {
     // Short socket paths also work within macOS's Unix socket path limit.
-    const dir = mkdtempSync('/tmp/twp-startup-');
+    const dir = mkdtempSync('/tmp/anymux-startup-');
     const socket = join(dir, 'socket');
     const ready = join(dir, 'ready');
     const release = join(dir, 'release');

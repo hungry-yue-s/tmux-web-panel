@@ -4,15 +4,15 @@ README 重做过程中实际踩到、观察到或验证过的问题。每条都�
 
 | # | 严重度 | 问题 | 证据 / 位置 | 建议 |
 |---|--------|------|-------------|------|
-| 1 | 高 | ⌘K 命令面板在多服务器 shell 下选中后不跳转。面板能打开、能模糊过滤，但点选或回车后界面停在原窗口。根因是 `_selectItem()` 走 app.js 的 legacy `navigate()`，而 legacy `render()` 在 `.ms-app` 存在时直接 return，全程不碰 `location.hash` 和 Router | `plugins/ui/client/js/command-palette.js:93-105`，`plugins/ui/client/js/app.js:335-368`、`app.js:376-380` | palette 改调 `Router`，序列化成 `#/terminal/:serverId/:sessionId/:windowId/:paneId`，补一条 ms-shell 下的跳转测试 |
-| 2 | 中 | 测试红灯。`npm test` 当前 4 个失败，`test/api/claude-usage.test.js` 3 例（full data、not_configured、OAuth 失败降级），`test/api/disk-io.test.js` 1 例（sector delta 速率）。claude 三例断言 `modelUsage['claude-opus-4-6']`、`dailyActivity` 长度等，疑似定价表或日期窗口漂移，disk-io 例对采样间隔敏感 | `npm test` 输出，97 files / 1411 tests / 4 failed | 修 fixture 或断言，disk-io 例改为注入固定时间戳 |
+| 1 | 已解决 | ⌘K 命令面板在多服务器 shell 下选中后不跳转（当时 `_selectItem()` 走 legacy `navigate()`）。现在窗口条目都带路由、经 `Router.go` 跳转；2026-11-06 删除了按旧 `state` 拼条目、再走 `navigate()` 的分支，工作区数据到达前只提供页面 | `plugins/ui/client/js/command-palette.js` | — |
+| 2 | 已解决 | 测试红灯（claude-usage 3 例、disk-io 1 例）。2026-11-06 复核：claude-usage 已通过；disk-io 的根因不是采样间隔，而是 afterEach 里的 `vi.doUnmock` 取消了下一个测试的 `vi.doMock`，于是读到真实的 `/proc/diskstats`（Windows 上为空，Linux 上是真实磁盘） | `test/lib/api/disk-io.test.js` | 已去掉 doUnmock |
 | 3 | 中 | 终端模式按「用户 + server」持久化，不区分设备。桌面切到分屏后手机打开同一 server 会继承分屏，窄屏上两个 pane 挤到不可读，本次捕获中实际复现 | `plugins/ui/client/js/store.js:2-15` 的 `terminalModeByServer` | 小视口回落 tab，或按设备维度持久化 |
 | 4 | 中 | `plugins/ui/client/screenshots/` 全量过期且含真实会话名。4 月截图仍是 legacy shell，侧栏带真实中文会话名，README 若继续引用即泄露工作信息 | `plugins/ui/client/screenshots/*.png` | 删除该目录，README 统一引用 `docs/assets/readme/` |
-| 5 | 低 | CLAUDE.md 与代码漂移。契约写分窗宽度 320–820px，代码已改为 `min(可用宽度 * 0.7)` | `CLAUDE.md`「文件预览分窗契约」，`plugins/files/client/js/file-preview.js:188`，commit `c897f9e` | 更新 CLAUDE.md 契约描述 |
+| 5 | 已解决 | CLAUDE.md 与代码漂移（分窗宽度上限 820px）。CLAUDE.md 现写明最大为可用工作区的 70%、不再设 820px 上限 | `CLAUDE.md`「文件预览分窗契约」 | — |
 | 6 | 低 | 仓库根目录散落一次性截图与证书文件。`claude-auto-detect.png`、`drawer-*.png`、`nexus-*.png`、`terminal-*.png`、`tmux-render-abnormal.png`、`layout-test-open.png`、`cert.pem`、`key.pem` 都只靠 `.gitignore` 兜底，工作树里长期存在 | `git status` 与根目录列表 | 从工作树移除，证书类文件不应留在仓库目录 |
 | 7 | 低 | 性能页对任何已登录客户端暴露进程名与会话名，Top 压力来源和 Windows 与系统进程两块都是。单机自用没问题，多人共用一个面板时是信息泄露面 | `plugins/metrics/client/js/perf-panel.js`，`lib/api/` 下 window-stats 相关 | 共享部署时加配置项或脱敏，README 截图需 sanitize（本次已做） |
-| 8 | 待验证 | 移动端 drawer 按键在合成 touch 序列后抽屉关闭，和「按键不退出」契约不符。可能是 touch 坐标命中抽屉拖拽热区，或 focus 哨兵把合成事件判成软键盘信号 | `CLAUDE.md`「移动端工具盘交互契约」，`plugins/terminal/client/js/fab-drawer.js` | 真机复现，若属实给 kbd 按钮加 `touch-action` 或阻止拖拽判定 |
-| 9 | 待验证 | 场景自动识别延迟。pane 内进程改名为 `claude`（`exec -a`）后约 5s，drawer 场景芯片仍显示「终端」 | `plugins/terminal/client/js/fab-scene.js:13-264`，`lib/monitor.js` 的 pane-cmd 事件 | 核对 pane-cmd 推送周期与 ps 名称读取，必要时缩短探测间隔 |
+| 8 | 待验证 | 移动端 drawer 按键在合成 touch 序列后抽屉关闭，和「按键不退出」契约不符。可能是 touch 坐标命中抽屉拖拽热区，或 focus 哨兵把合成事件判成软键盘信号 | `CLAUDE.md`「移动端工具盘交互契约」，`plugins/keypad/client/js/fab-drawer.js` | 真机复现，若属实给 kbd 按钮加 `touch-action` 或阻止拖拽判定 |
+| 9 | 待验证 | 场景自动识别延迟。pane 内进程改名为 `claude`（`exec -a`）后约 5s，drawer 场景芯片仍显示「终端」 | `plugins/keypad/client/js/fab-scene.js:13-264`，`lib/monitor.js` 的 pane-cmd 事件 | 核对 pane-cmd 推送周期与 ps 名称读取，必要时缩短探测间隔 |
 | 10 | 待验证 | `/css/style.css` 偶发加载不完整。捕获过程中多次出现整页无样式或半样式渲染，`link.sheet` 存在但布局规则缺失，重试即恢复，疑似共享 Chrome 上该请求被截断或复位 | 捕获脚本 `ensureStyled` 与 `assertReady` 的重试日志 | 给静态资源加 `onerror` 重试或内联关键 CSS，若确认与本仓库服务端无关则忽略 |
 | 11 | 低 | README 旧文案严重落后于实现，没提多服务器工作台、性能与 Claude/Codex 页、场景抽屉、Mermaid 导出、归档预览这些 | 旧 `README.md` | 本次已重写，后续大功能同步更新 README |
 
@@ -63,9 +63,10 @@ README 重做过程中实际踩到、观察到或验证过的问题。每条都�
 - 面板服务被强制重启时，操作系统会关闭它名下的控制台，如果此时有客户端附着，server 仍有小概率退出。这时依靠上面的卡死检测和自动恢复。
 - 连接建立后约 30ms 内就断开的极端情况，个别 `conhost.exe` 和读取线程要到面板重启才释放。
 - 历次退出留下的孤儿窗格进程没有清理，判断不了里面是否还有用户的程序，需要人工确认。
+- 2026-11-06 的真实浏览器冒烟（私有 `-L` server，Chrome 1400×900 打开终端页、切到服务器页和设置页）：server 由面板进程里的 `new-session -d` 起的三次（其中一次是 master 的代码）都在离开终端页后不再应答（`no server running`）；按计划任务的方式 `setsid -w tmux -D` 起的两次，一次在终端页时 tmux 命令卡住 8 秒没有应答，一次全程正常。不应答的 server 并没有退出：三天后（11-09）它们的 tmux 进程都还在，socket 照样回答 `no server running`，几分钟后才陆续自行消失，没有人结束它们。所以表现是卡住、不是崩溃，“socket 不应答”不能当作“进程已经没了”。同日（11-09）又跑了五次：`setsid` 起的一次在终端页卡住，约 45 分钟后仍未自行退出，连发给它的 `display-message` 客户端也一起卡住，只能按命令行里的私有 socket 名核对后结束；面板进程起的四次全程正常。所以卡住不一定会自己恢复。没有 resize 和多次接入、只接入一次再断开的对照实验里 server 一直存活（含控制台回收之后）。这说明终端客户端在 Windows 上的变更仍可能卡住 server，和改造无关；具体是哪一步没有查清。正式 server 由包装脚本的卡死检测和会话保护兜底。
 - 包装脚本的探测偶尔会失败。20:45 之后 `tmux-server.log` 有两次在 server 运行时又记录 `starting`，接着是 `open terminal failed: not a terminal` 和退出码 1：这是新起的 `tmux -D` 连上现有 server 后失败，不是 server 退出（pid 从 19:04 起没变）。两次都发生在全量测试运行期间（20:55:25 到 20:56:13、22:10:43 到 22:11:33），同一段时间面板日志有 5 次 tmux 命令失败。负载导致超时只是推测，未证实。手动起的 server 上这没有影响；计划任务的 server 上，连续 3 次没有应答（约 1 分钟）会被结束，再靠自动恢复回来，届时窗格里的程序要重新打开。
 
-**实验规则。** 不要在默认 tmux server 上做接入、resize、断开实验，只碰临时会话也不行，会话隔离不等于 server 隔离。每条命令显式用 `tmux -S <私有 socket>` 或 `-L <唯一名称>`，带超时，并从实验及全部子进程环境移除 `TMUX` / `TMUX_PANE`。`TMUX_TMPDIR` 不能覆盖继承的 `TMUX` socket，不能单独作为隔离。清理前以相同 socket 参数核对 `socket_path` 和 server PID 归属；无法核对就不结束。不要在普通 shell 里手动起默认 socket 的 tmux。Windows 使用绝对 tmux 可执行路径时，PATH 中的 POSIX 包装不会提供隔离。
+**实验规则。** 不要在默认 tmux server 上做接入、resize、断开实验，只碰临时会话也不行，会话隔离不等于 server 隔离。每条命令显式用 `tmux -S <私有 socket>` 或 `-L <唯一名称>`，带超时，并从实验及全部子进程环境移除 `TMUX` / `TMUX_PANE`。`TMUX_TMPDIR` 不能覆盖继承的 `TMUX` socket，不能单独作为隔离。清理前以相同 socket 参数核对 `socket_path` 和 server PID 归属；无法核对就不结束。不要在普通 shell 里手动起默认 socket 的 tmux。在同一个进程里启动面板做实验时，`tmux` 插件卸载（`app.stop()`）会撤销私有 server 的选择，之后这个进程里的 tmux 命令回到默认 server：核对和清理必须在 stop 之前做，读 `socket_path` 要显式带 `-t <会话>`（没有客户端附着时不带目标会失败）。Windows 使用绝对 tmux 可执行路径时，PATH 中的 POSIX 包装不会提供隔离。
 
 ### ENV-2 Windows：手动启动的 tmux server，窗格里找不到 claude（2026-10-30）
 
@@ -228,11 +229,11 @@ node-pty 报告退出比进程消失晚约 1 秒（中位 1.0 到 1.4 秒），�
 
 **2026-11-05 复核。** 同机最小 Swift 并发程序和完整 App 的临时签名产物也在进入应用代码前收到 SIGKILL，采样停在 `_dyld_start + 0`；换 SDK、链接器和文件 inode 均未解决。使用本机已有的有效代码签名身份后，最小程序、真正编译的设置自测及完整 App 均可执行。该对照确认本机有可用的签名路径，不能据此指认具体的系统或企业防护规则。
 
-**打包修复。** 自测和内层 tmux 构建现在都遵循 `TMUX_PANEL_CODESIGN_IDENTITY`，默认仍为临时签名。本地证书开发包使用普通代码签名：没有 Apple Team ID 的本地证书若被强加 Hardened Runtime，Node 加载已签名的 `pty.node` 会报 Team ID 不一致。Developer ID、公证和公开分发构建继续强制 Hardened Runtime，不添加关闭库验证的权限。最终签名后的真实 PTY 烟测仍检查输出和退出码，等待上限从 5 秒改为 30 秒；本机已测到首次执行需 5501ms，原期限会误杀正常启动。
+**打包修复。** 自测和内层 tmux 构建现在都遵循 `ANYMUX_CODESIGN_IDENTITY`，默认仍为临时签名。本地证书开发包使用普通代码签名：没有 Apple Team ID 的本地证书若被强加 Hardened Runtime，Node 加载已签名的 `pty.node` 会报 Team ID 不一致。Developer ID、公证和公开分发构建继续强制 Hardened Runtime，不添加关闭库验证的权限。最终签名后的真实 PTY 烟测仍检查输出和退出码，等待上限从 5 秒改为 30 秒；本机已测到首次执行需 5501ms，原期限会误杀正常启动。
 
 **2026-11-05 的验证边界。** 本地身份签名下的编译自测通过，打包与桌面运行时回归 23/23，完整包两轮 Runtime/PTy 验证及深度严格验签通过；曾有一次 staging App 实际启动并稳定运行。后续完整候选仍在 `.app` 上下文被系统终止，连不含项目代码的全标准最小 App 也能复现；同一签名字节移到 App 外可以执行。签名身份有效、`anchor trusted` 和严格校验通过，因此不能把本地证书签名当作稳定执行授权，也不能把单次启动当作最终替换验收。当时保留旧 App，等待正常系统打开流程的具体提示；未更改信任或防护策略。公共安装包通过 macOS 分发验证仍需 Developer ID 和 Apple 公证。
 
-**2026-11-06 部署复核。** 最新 master 与已构建候选的原生源码一致，复用完整 build 6，在备份当前 build 1 后正常退出旧客户端、同卷原子交换到原来的 `dist/macos/Tmux Panel.app`，再从原路径启动。新版进入前台、完成启动并创建窗口；安装包内的 Node 24.22.1、tmux next-3.8 和真实 PTY 验证也全部通过，没有改写已签名的 manifest。Node 服务进程、tmux 实例与全部 26 个原有窗格保持不变，Dock 入口仍指向原路径。此次实际执行与替换验收通过，未更改系统信任或防护策略；先前 SIGKILL 的具体系统原因仍未确定，不能将本次成功归因于某条未经验证的策略变化。
+**2026-11-06 部署复核。** 最新 master 与已构建候选的原生源码一致，复用完整 build 6，在备份当前 build 1 后正常退出旧客户端、同卷原子交换到原来的 `dist/macos/Anymux.app`，再从原路径启动。新版进入前台、完成启动并创建窗口；安装包内的 Node 24.22.1、tmux next-3.8 和真实 PTY 验证也全部通过，没有改写已签名的 manifest。Node 服务进程、tmux 实例与全部 26 个原有窗格保持不变，Dock 入口仍指向原路径。此次实际执行与替换验收通过，未更改系统信任或防护策略；先前 SIGKILL 的具体系统原因仍未确定，不能将本次成功归因于某条未经验证的策略变化。
 
 ### ENV-8：macOS 客户端读取桌面壁纸阻塞主线程（2026-11-05）
 
@@ -241,6 +242,52 @@ node-pty 报告退出比进程消失晚约 1 秒（中位 1.0 到 1.4 秒），�
 **处理与边界。** 壁纸读取和 ImageIO 解码移到后台串行队列，同一屏幕/URL 的进行中请求去重，以请求代次丢弃过期结果，只在主线程更新图层。原有透明与原生全屏下的壁纸语义保留。原生 release 编译通过；截至 2026-11-05，完整 `.app` 的前台执行仍受 ENV-7 所述限制，不能把编译成功写成已完成客户端替换。
 
 **2026-11-06 后验。** 包含此修复的 build 6 已在原路径替换并成功前台运行。两秒进程采样显示主线程处于正常 AppKit 事件循环，未再停在同步壁纸文件读取；实际运行验收见上节部署复核。
+
+### ENV-9 Windows：OpenSSH 启动不了 shell 脚本写的 askpass（2026-11-06）
+
+**现象与证据。** 用密码登录的服务器，Windows 上的 Hub 配对和端口转发都拿不到密码。在本机 sshd 上用一个不存在的用户各试一次：系统 `System32\OpenSSH\ssh.exe` 对 `SSH_ASKPASS=*.sh` 报 `CreateProcessW failed error:193`，MSYS2 的 `ssh.exe` 同样没有运行它；两者都能运行 `.cmd`。
+
+**处理。** Windows 上 `SSH_ASKPASS` 指向 `lib/transport/ssh-askpass.cmd`（`askpassHelper()`），它和 `.sh` 一样只启动 `ssh-askpass.js`，密码不进命令行；`.gitattributes` 让 `*.cmd` 保持 CRLF。
+
+### ENV-10 Windows：没有 sqlite3 命令行（2026-11-06）
+
+**现象。** CC Switch / Token Switch 的读取、供应商切换和企业中继注册都调用 `sqlite3` 命令行；Windows 一般没有它，这些功能在 Windows 上静默失效，对应测试也一直失败。
+
+**处理与边界。** `lib/sqlite-json.js` 优先用 Node 自带的 `node:sqlite`（22.13 起不需要参数），没有时才退回命令行；两者保持命令行的约定：只读查询返回 `-json` 的文本，写入像 `-bail` 一样遇错即停、连接关闭时回滚未提交的事务、错误不带脚本内容、不创建不存在的数据库。语句按引号和注释之外的分号拆分，不支持 `CREATE TRIGGER` 正文。
+
+### ENV-11 Windows：替换文件时目标被短暂占用（2026-11-06）
+
+**现象与证据。** 原子写（写临时文件再改名覆盖）在 Windows 上偶发 `EPERM`：目标正被读取、杀毒或索引打开的那几毫秒里改名失败，结果直接丢失。tmux 构建结果因此停在旧状态，`plugin-management` 的测试时好时坏（日志里是 `rename ... EPERM`）。
+
+**处理。** 所有原子写都经 `lib/atomic-file.js` 的 `replaceFile`：Windows 上对 `EPERM` / `EACCES` / `EBUSY` 重试至多两秒，其它平台和其它错误第一次失败即报。
+
+### ENV-12 Windows：只改 HOME 的测试会写到真实家目录（2026-11-06）
+
+**已确认的事故。** `install-agent-hooks` 的测试只设置了 `HOME`，而 Windows 上的 `os.homedir()` 读 `USERPROFILE`，所以每次运行都往真实的 `~/.qoder/settings.json`、`~/.codex/hooks.json` 安装钩子。安装是幂等的，钩子早已存在，内容与 10 月 26 日最早的备份逐字节相同；但每次都留下一个 `.bak-*` 备份（截至发现时 59 + 42 个）。
+
+**防止重现。** 测试要隔离家目录时同时设置 `HOME` 和 `USERPROFILE`，或者把家目录作为参数传给被测模块；安装脚本没有改动时不再备份和重写文件。
+
+**清理。** 2026-11-10 核对这 101 个备份与现用文件逐字节相同后删除。
+
+### ENV-13 Windows：tmux 在保存中途不应答，空快照成了 `last`（2026-11-10）
+
+**现象与证据。** 部署时发现本机默认 tmux server（11-06 23:52 起）没有任何子进程，也就是一个会话都没有。快照目录（MSYS 家目录下的 `.local/share/tmux/resurrect/`）里，`last` 和 `tmux_resurrect_20261106T133507.txt` 都是 0 字节，前一份 13:28:51 的有 1960 字节。`tmux-server.log` 在一分钟后（13:36:21）记录 server “stopped answering” 并结束重启，23:48:27 又以退出码 -1 退出一次。两次新 server 都没有恢复任何会话。
+
+**原因。** tmux-resurrect 的 `save.sh` 先写新快照，只要它和上一份不同就让 `last` 指向它（MSYS2 上 `ln -s` 是复制）。保存时 tmux 不应答，里面每条 tmux 命令都拿不到输出，于是写出空文件并成了 `last`。会话保护只在有会话时才保存，却没有检查保存的结果；新 server 恢复时读到的 `last` 没有会话，就什么也没恢复，resurrect 自带的恢复键同样如此。
+
+**处理。** `lib/session-protection/snapshot.js`：
+
+- `repairLast` 在 `last` 不可用时，把它指回最近一份可用的快照：Linux/macOS 上仍是链接（建链接没有权限时改为副本），MSYS2 上是带原快照时间的副本。
+  - 不可用指两种情况：没有会话；或者没写完，即没有最后写的 `state` 行，或者只有窗格行、没有任何窗口行（没有窗口名和布局）。
+  - 只缺某个窗口的行不算：那是保存过程中有会话关掉了。这台机器上 2364 份历史快照按这个标准全部可用。
+  - 比那份更新的空快照一并删除，免得被 resurrect 算进保留的备份；写了一半的保留，“找回会话”里仍能看到。
+- 会话保护每次保存后调用 `repairLast`。修正过就把这次保存记为失败，页面上能看到。
+- 每个 server 实例第一次处理时也调用一次，已经坏掉的机器部署后即自愈。
+- `readLatest` 遇到不可用的 `last` 同样回退到最近一份可用的快照，用户自己加载 resurrect 时（不改他的文件）也是如此。
+
+“找回会话”列表本来就跳过空快照，所以 11-06 13:28 那份一直可以手动找回。
+
+**另一件同期的事，原因未查清。** 11-06 18:48 到 11-10 11:01 这一次面板进程，从第一次检查起所有 tmux 命令都失败：会话保护 6623 次、perf-history 21019 次，stderr 都为空，不是 `no server running`。同期包装脚本每 10 秒探测都得到应答，没有结束过 23:52 起的 server，所以 server 本身在应答。11-10 经计划任务重启面板后不再失败。进程已经结束，现场无法还原。如果再出现“面板日志里 tmux 命令持续失败、`tmux-server.log` 却安静”，先在结束面板前抓下当时 tmux 客户端进程的状态和面板进程环境。
 
 ## 捕获环境备注
 

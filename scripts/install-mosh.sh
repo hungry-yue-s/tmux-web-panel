@@ -2,9 +2,9 @@
 # Optional Mosh components. Safe to stream to sh -s; no repository path needed.
 set +x
 set -eu
-unset twp_mosh_password
-twp_mosh_password=${TWP_SUDO_PASSWORD:-}
-unset TWP_SUDO_PASSWORD
+unset anymux_mosh_password
+anymux_mosh_password=${ANYMUX_SUDO_PASSWORD:-}
+unset ANYMUX_SUDO_PASSWORD TWP_SUDO_PASSWORD
 LC_ALL=C
 export LC_ALL
 PATH="${PATH:-/usr/bin:/bin}:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:/usr/bin:/bin"
@@ -12,31 +12,35 @@ export PATH
 
 log() { printf '>> %s\n' "$*"; }
 finish() {
-  printf 'TWP_COMPONENT_RESULT=%s\n' "$1"
-  [ -z "${2:-}" ] || printf 'TWP_COMPONENT_REASON=%s\n' "$2"
+  printf 'ANYMUX_COMPONENT_RESULT=%s\n' "$1"
+  [ -z "${2:-}" ] || printf 'ANYMUX_COMPONENT_REASON=%s\n' "$2"
   case "$1" in ready|skipped) exit 0 ;; needs_password) exit 3 ;; *) exit 1 ;; esac
 }
-role=${TWP_MOSH_ROLE:-both}
+role=${ANYMUX_MOSH_ROLE:-both}
 case "$role" in client|server|both) ;; *) finish failed invalid_role ;; esac
-if [ "${TMUX_PANEL_SKIP_MOSH:-0}" = 1 ] || [ "${TWP_SKIP_MOSH:-0}" = 1 ]; then finish skipped opted_out; fi
+# This script also arrives on stdin (`sh -s`) without its siblings, so the
+# pre-rename names (TMUX_PANEL_*, TWP_*) are read here rather than through legacy-env.sh.
+ANYMUX_MOSH_CLIENT=${ANYMUX_MOSH_CLIENT:-${TMUX_PANEL_MOSH_CLIENT:-}}
+ANYMUX_MOSH_SERVER=${ANYMUX_MOSH_SERVER:-${TMUX_PANEL_MOSH_SERVER:-}}
+if [ "${ANYMUX_SKIP_MOSH:-${TMUX_PANEL_SKIP_MOSH:-${TWP_SKIP_MOSH:-0}}}" = 1 ]; then finish skipped opted_out; fi
 
 usable() {
-  twp_binary=$1
-  twp_override=$2
-  if [ -n "$twp_override" ]; then twp_path=$twp_override
-  else twp_path=$(command -v "$twp_binary" 2>/dev/null) || return 1; fi
-  [ -x "$twp_path" ] || return 1
-  twp_version=$("$twp_path" --version 2>/dev/null) || return 1
-  printf '%s\n' "$twp_version" | grep -Eq "^$twp_binary \\(mosh [0-9]+([.][0-9]+)+[A-Za-z0-9.+_-]*\\)"
+  anymux_binary=$1
+  anymux_override=$2
+  if [ -n "$anymux_override" ]; then anymux_path=$anymux_override
+  else anymux_path=$(command -v "$anymux_binary" 2>/dev/null) || return 1; fi
+  [ -x "$anymux_path" ] || return 1
+  anymux_version=$("$anymux_path" --version 2>/dev/null) || return 1
+  printf '%s\n' "$anymux_version" | grep -Eq "^$anymux_binary \\(mosh [0-9]+([.][0-9]+)+[A-Za-z0-9.+_-]*\\)"
 }
 ready() {
-  if [ "$role" != server ]; then usable mosh-client "${TMUX_PANEL_MOSH_CLIENT:-}" || return 1; fi
-  if [ "$role" != client ]; then usable mosh-server "${TMUX_PANEL_MOSH_SERVER:-}" || return 1; fi
+  if [ "$role" != server ]; then usable mosh-client "${ANYMUX_MOSH_CLIENT:-}" || return 1; fi
+  if [ "$role" != client ]; then usable mosh-server "${ANYMUX_MOSH_SERVER:-}" || return 1; fi
 }
 log "checking Mosh components ($role)"
 if ready; then finish ready; fi
-if { [ "$role" != server ] && [ -n "${TMUX_PANEL_MOSH_CLIENT:-}" ]; } ||
-   { [ "$role" != client ] && [ -n "${TMUX_PANEL_MOSH_SERVER:-}" ]; }; then
+if { [ "$role" != server ] && [ -n "${ANYMUX_MOSH_CLIENT:-}" ]; } ||
+   { [ "$role" != client ] && [ -n "${ANYMUX_MOSH_SERVER:-}" ]; }; then
   finish maintenance_required configured_component_unusable
 fi
 
@@ -69,15 +73,15 @@ password_verified=0
 if [ "$manager" != brew ] && [ "$(id -u)" != 0 ]; then
   command -v sudo >/dev/null 2>&1 || finish needs_password sudo_unavailable
   if ! sudo -n true >/dev/null 2>&1; then
-    [ -n "$twp_mosh_password" ] || finish needs_password sudo_required
-    if ! printf '%s\n' "$twp_mosh_password" | sudo -S -p '' -v >/dev/null 2>&1; then
+    [ -n "$anymux_mosh_password" ] || finish needs_password sudo_required
+    if ! printf '%s\n' "$anymux_mosh_password" | sudo -S -p '' -v >/dev/null 2>&1; then
       finish needs_password sudo_auth_failed
     fi
     password_verified=1
   fi
   privilege=sudo
 fi
-unset twp_mosh_password
+unset anymux_mosh_password
 run() {
   if [ "$privilege" = sudo ]; then sudo -n env LC_ALL=C "$@" </dev/null
   else "$@" </dev/null; fi

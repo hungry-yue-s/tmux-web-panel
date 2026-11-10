@@ -216,7 +216,7 @@ describe('Api 401 handling', () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(401, { success: false, error: 'upstream credentials rejected' }))
       .mockResolvedValueOnce(jsonResponse(200, { success: true, data: {} }));
     await expect(Api.get(path)).rejects.toMatchObject({ status: 401 });
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([path, '/api/status']);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([path, '/api/auth/check']);
     expect(win.Auth.clearToken).not.toHaveBeenCalled();
     expect(win.location.href).toBe('http://localhost/index.html');
   });
@@ -234,7 +234,7 @@ describe('Api 401 handling', () => {
     const { Api, win, fetchMock } = loadApi();
     let finish;
     fetchMock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-    const rejected = Api.get('/api/status').catch(error => error);
+    const rejected = Api.get('/api/auth/check').catch(error => error);
     win.Auth.headers = () => ({ Authorization: 'Bearer newer-fixture-session' });
     finish(jsonResponse(401, null));
     expect(await rejected).toMatchObject({ status: 401 });
@@ -258,13 +258,13 @@ describe('Api 401 handling', () => {
   it('shares a single hub confirmation for concurrent remote 401s', async () => {
     const { Api, win, fetchMock } = loadApi();
     let finish;
-    fetchMock.mockImplementation(path => path === '/api/status'
+    fetchMock.mockImplementation(path => path === '/api/auth/check'
       ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(jsonResponse(401, null)));
     const rejected = Promise.all([Api.get('/n/a/api/workspace').catch(error => error), Api.get('/n/b/api/workspace').catch(error => error)]);
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     finish(jsonResponse(200, { success: true, data: {} }));
     expect((await rejected).map(error => error.status)).toEqual([401, 401]);
-    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/status')).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/auth/check')).toHaveLength(1);
     expect(win.Auth.clearToken).not.toHaveBeenCalled();
   });
 });
@@ -283,7 +283,28 @@ describe('legacy API authentication', () => {
     finish(jsonResponse(401, null));
     await vi.waitFor(() => expect(changed ? start : win.Auth.clearToken).toHaveBeenCalledOnce());
     expect(changed ? win.Auth.clearToken : start).not.toHaveBeenCalled();
-    expect(fetchMock.mock.calls[0][0]).toBe('/api/status');
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/auth/check');
+  });
+
+  it('asks the server in view for pins only when that server runs the pins plugin', () => {
+    const app = fs.readFileSync(new URL('../../plugins/ui/client/js/app.js', import.meta.url), 'utf8');
+    const from = app.indexOf('function _startApp() {');
+    const source = app.slice(from, app.indexOf('\n}\n', from) + 3);
+    const startWith = (serverId, plugins) => {
+      const api = { get: vi.fn(async () => ({ data: { pins: [] } })) };
+      const slots = { hasPlugin: vi.fn((id, server) => (plugins[server] || []).includes(id)) };
+      const start = new Function('PanelSlots', 'Api', 'api', 'state', 'statusSocket', source + '; return _startApp;')(
+        slots, { activeServerId: () => serverId }, api, {}, { connect() {} },
+      );
+      start();
+      return { api, slots };
+    };
+    // The hub runs pins, the node in view does not: no request to it.
+    let run = startWith('box', { local: ['pins'], box: [] });
+    expect(run.slots.hasPlugin).toHaveBeenCalledWith('pins', 'box');
+    expect(run.api.get).not.toHaveBeenCalled();
+    run = startWith('box', { local: [], box: ['pins'] });
+    expect(run.api.get).toHaveBeenCalledWith('/api/pins');
   });
 
   it.each(['get', 'post', 'put', 'delete'])('checks the rejected %s request through the shared hub guard', async (method) => {
@@ -295,7 +316,7 @@ describe('legacy API authentication', () => {
       .mockResolvedValueOnce(jsonResponse(200, { success: true, data: {} }));
     win.TerminalTarget = { serverId: 'windows' };
     await expect(client[method]('/api/example', {})).rejects.toThrow('401');
-    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/n/windows/api/example', '/api/status']);
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/n/windows/api/example', '/api/auth/check']);
     expect(win.Auth.clearToken).not.toHaveBeenCalled();
   });
 });

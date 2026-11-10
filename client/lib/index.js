@@ -1,4 +1,4 @@
-// Small DOM helpers shared by client plugins (import from '@twp/client').
+// Small DOM helpers shared by client plugins (import from '@anymux/client').
 
 /**
  * Creates an element. `props`: `class`, `dataset`, `on<Event>` listeners,

@@ -10,6 +10,7 @@ import {
   loadTotpSecret,
   enrollTotp,
 } from '../../lib/totp.js';
+import { POSIX_MODES } from '../helpers/permissions.js';
 
 // RFC 6238 Appendix B secret ("12345678901234567890" in base32).
 const RFC_SECRET = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
@@ -79,7 +80,7 @@ describe('enrolment file', () => {
       const secret = enrollTotp(path);
       expect(loadTotpSecret(path)).toBe(secret);
       // 0600: no group/other bits at all.
-      expect(statSync(path).mode & 0o077).toBe(0);
+      if (POSIX_MODES) expect(statSync(path).mode & 0o077).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

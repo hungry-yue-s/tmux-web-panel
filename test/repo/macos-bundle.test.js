@@ -27,7 +27,7 @@ describe('macOS distribution build guards', () => {
     try {
       const output = join(temp, 'runtime');
       const result = spawnSync('bash', ['scripts/bundle-macos-runtime.sh', output], {
-        encoding: 'utf8', env: { ...process.env, TMUX_PANEL_ARCH: 'riscv64' },
+        encoding: 'utf8', env: { ...process.env, ANYMUX_ARCH: 'riscv64' },
       });
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('Unsupported macOS architecture');
@@ -50,13 +50,13 @@ describe('macOS distribution build guards', () => {
       const result = spawnSync('bash', ['-c', `set -euo pipefail
 SIGN_FLAGS=(--force --sign 'Test Signing Identity' --timestamp --options runtime)
 codesign() {
-  printf '%s\\n' "$@" > "$TWP_TEST_SIGN_ARGS"
+  printf '%s\\n' "$@" > "$ANYMUX_TEST_SIGN_ARGS"
   printf 'signed fixture\\n' > "\${!#}"
 }
 ${helper[0]}
 sign_runtime_binary "$1" --entitlements "$2"
 `, 'runtime-signing-test', binary, entitlements], {
-        encoding: 'utf8', env: { ...process.env, TWP_TEST_SIGN_ARGS: argv }, timeout: 5000,
+        encoding: 'utf8', env: { ...process.env, ANYMUX_TEST_SIGN_ARGS: argv }, timeout: 5000,
       });
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(binary, 'utf8')).toBe('signed fixture\n');
@@ -100,8 +100,8 @@ printf '%s\\n' "\${SIGN_FLAGS[@]}"
     const temp = mkdtempSync(join(tmpdir(), 'tmux-public-build-guard-'));
     try {
       const result = spawnSync('bash', ['scripts/build-macos-app.sh'], {
-        encoding: 'utf8', env: { ...process.env, TMUX_PANEL_DIST_DIR: join(temp, 'output'),
-          TMUX_PANEL_DISTRIBUTION: '1', TMUX_PANEL_CODESIGN_IDENTITY: '-', TMUX_PANEL_NOTARY_PROFILE: '', TMUX_PANEL_ARCH: process.arch },
+        encoding: 'utf8', env: { ...process.env, ANYMUX_DIST_DIR: join(temp, 'output'),
+          ANYMUX_DISTRIBUTION: '1', ANYMUX_CODESIGN_IDENTITY: '-', ANYMUX_NOTARY_PROFILE: '', ANYMUX_ARCH: process.arch },
       });
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('Public distribution requires');

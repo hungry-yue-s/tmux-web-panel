@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  existsSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import express from 'express';
@@ -9,7 +11,7 @@ import { JSDOM } from 'jsdom';
 import {
   DEFAULT_PROGRAMS, choiceFor, choiceList, isValidChoice, programName, restoreCommand, resurrectProcessOptions,
 } from '../../lib/session-protection/catalog.js';
-import { layoutSize, listSnapshots, parseSnapshot, readLatest, summarize } from '../../lib/session-protection/snapshot.js';
+import { layoutSize, listSnapshots, parseSnapshot, readLatest, repairLast, summarize } from '../../lib/session-protection/snapshot.js';
 import { freeName, restoreSession } from '../../lib/session-protection/restore.js';
 import { SessionProtection } from '../../lib/session-protection/service.js';
 import { createSessionProtectionRouter } from '../../lib/api/session-protection.js';
@@ -64,7 +66,7 @@ describe('program choices', () => {
   });
 
   it('gives resurrect the same choices, replacing its built-in list', () => {
-    expect(resurrectProcessOptions([])).toEqual({ defaultProcesses: '_twp_none_', processes: 'false' });
+    expect(resurrectProcessOptions([])).toEqual({ defaultProcesses: '_anymux_none_', processes: 'false' });
     const { processes } = resurrectProcessOptions(['ai', 'monitors', 'cmd:npm']);
     expect(processes).toContain('"~claude->claude --continue"');
     expect(processes).toContain('htop');
@@ -103,6 +105,92 @@ describe('snapshots', () => {
     expect(await readLatest(dir)).toBeNull();
     writeFileSync(join(dir, 'last'), SNAPSHOT);
     expect((await readLatest(dir)).snapshot.sessions).toHaveLength(2);
+  });
+
+  it('restores the newest save with sessions when `last` is an empty save', async () => {
+    const dir = temp();
+    writeFileSync(join(dir, 'tmux_resurrect_20261027T100000.txt'), SNAPSHOT);
+    writeFileSync(join(dir, 'tmux_resurrect_20261027T120000.txt'), '');
+    writeFileSync(join(dir, 'last'), '');
+    utimesSync(join(dir, 'tmux_resurrect_20261027T100000.txt'), new Date(1000e3), new Date(1000e3));
+    utimesSync(join(dir, 'tmux_resurrect_20261027T120000.txt'), new Date(2000e3), new Date(2000e3));
+    const latest = await readLatest(dir);
+    expect(latest.snapshot.sessions).toHaveLength(2);
+    expect(latest.at).toBe(new Date(1000e3).toISOString());
+    // With nothing better there is nothing to restore.
+    rmSync(join(dir, 'tmux_resurrect_20261027T100000.txt'));
+    expect((await readLatest(dir)).snapshot.sessions).toEqual([]);
+  });
+
+  it('points an empty `last` back at the newest save with sessions and drops the empty saves', async () => {
+    const dir = temp();
+    const files = {
+      'tmux_resurrect_20261027T080000.txt': ['', 500e3],
+      'tmux_resurrect_20261027T100000.txt': [SNAPSHOT, 1000e3],
+      'tmux_resurrect_20261027T110000.txt': ['state\t\t\n', 1500e3],
+      'tmux_resurrect_20261027T120000.txt': ['', 2000e3],
+    };
+    for (const [name, [text, time]] of Object.entries(files)) {
+      writeFileSync(join(dir, name), text);
+      utimesSync(join(dir, name), new Date(time), new Date(time));
+    }
+    writeFileSync(join(dir, 'last'), '');
+    expect(await repairLast(dir)).toEqual({ id: 'tmux_resurrect_20261027T100000.txt', at: new Date(1000e3).toISOString() });
+    // A copy, as MSYS2 makes it, dated like the save it copies.
+    expect(lstatSync(join(dir, 'last')).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(dir, 'last'), 'utf8')).toBe(SNAPSHOT);
+    expect(statSync(join(dir, 'last')).mtimeMs).toBe(1000e3);
+    // Only the empty saves newer than it go; older ones are resurrect's business.
+    expect(readdirSync(dir).sort()).toEqual(['last', 'tmux_resurrect_20261027T080000.txt', 'tmux_resurrect_20261027T100000.txt']);
+    // A `last` with sessions, or nothing better to point at, is left alone.
+    expect(await repairLast(dir)).toBeNull();
+    writeFileSync(join(dir, 'last'), '');
+    rmSync(join(dir, 'tmux_resurrect_20261027T100000.txt'));
+    expect(await repairLast(dir)).toBeNull();
+    expect(readFileSync(join(dir, 'last'), 'utf8')).toBe('');
+    expect(await repairLast(join(dir, 'missing'))).toBeNull();
+  });
+
+  it('knows a save that tmux stopped answering part way through', () => {
+    expect(parseSnapshot(SNAPSHOT).complete).toBe(true);
+    const lines = SNAPSHOT.trim().split('\n');
+    const panesOnly = lines.filter((line) => line.startsWith('pane')).join('\n') + '\n';
+    const noState = lines.filter((line) => !line.startsWith('state')).join('\n') + '\n';
+    const noWindows = lines.filter((line) => !line.startsWith('window')).join('\n') + '\n';
+    for (const text of [panesOnly, noState, noWindows, '']) {
+      expect(parseSnapshot(text).complete).toBe(false);
+    }
+    // A session that closed between resurrect's pane and window calls.
+    const oneWindowMissing = lines.filter((line) => !line.startsWith('window\tops')).join('\n') + '\n';
+    expect(parseSnapshot(oneWindowMissing).complete).toBe(true);
+    // It still has sessions: "find a session" can offer it.
+    expect(parseSnapshot(panesOnly).sessions).toHaveLength(2);
+  });
+
+  it('moves `last` off a partial save but keeps that save', async () => {
+    const dir = temp();
+    const panesOnly = SNAPSHOT.split('\n').filter((line) => line.startsWith('pane')).join('\n') + '\n';
+    writeFileSync(join(dir, 'tmux_resurrect_20261027T100000.txt'), SNAPSHOT);
+    writeFileSync(join(dir, 'tmux_resurrect_20261027T120000.txt'), panesOnly);
+    writeFileSync(join(dir, 'last'), panesOnly);
+    utimesSync(join(dir, 'tmux_resurrect_20261027T100000.txt'), new Date(1000e3), new Date(1000e3));
+    utimesSync(join(dir, 'tmux_resurrect_20261027T120000.txt'), new Date(2000e3), new Date(2000e3));
+    expect((await readLatest(dir)).snapshot.sessions[0].windows[0].name).toBe('shell');
+    expect(await repairLast(dir)).toMatchObject({ id: 'tmux_resurrect_20261027T100000.txt' });
+    expect(readFileSync(join(dir, 'last'), 'utf8')).toBe(SNAPSHOT);
+    expect(readdirSync(dir).sort()).toEqual(['last', 'tmux_resurrect_20261027T100000.txt', 'tmux_resurrect_20261027T120000.txt']);
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps `last` a link where resurrect made one', async () => {
+    const dir = temp();
+    writeFileSync(join(dir, 'tmux_resurrect_20261027T100000.txt'), SNAPSHOT);
+    writeFileSync(join(dir, 'tmux_resurrect_20261027T120000.txt'), '');
+    utimesSync(join(dir, 'tmux_resurrect_20261027T100000.txt'), new Date(1000e3), new Date(1000e3));
+    utimesSync(join(dir, 'tmux_resurrect_20261027T120000.txt'), new Date(2000e3), new Date(2000e3));
+    symlinkSync('tmux_resurrect_20261027T120000.txt', join(dir, 'last'));
+    await repairLast(dir);
+    expect(lstatSync(join(dir, 'last')).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(dir, 'last'))).toBe('tmux_resurrect_20261027T100000.txt');
   });
 });
 
@@ -166,9 +254,11 @@ function fakeTmux({ running = true, sessions = [], options = {} } = {}) {
     state.commands.push(args);
     switch (command) {
       case 'display-message':
-        return ['4242', '1700000000', '/bin/bash', state.options['@twp-protect-seen'] || '',
-          state.options['@twp-restored-at'] || '', state.options['@twp-restored-from'] || '', state.options['@twp-restored-sessions'] || '',
+        return ['4242', '1700000000', '/bin/bash', state.options['@anymux-protect-seen'] || '',
+          state.options['@anymux-restored-at'] || '', state.options['@anymux-restored-from'] || '', state.options['@anymux-restored-sessions'] || '',
           state.options['@resurrect-save-script-path'] || '', state.options['@resurrect-dir'] || '', state.options['@continuum-restore'] || '',
+          state.options['@twp-protect-seen'] || '', state.options['@twp-restored-at'] || '',
+          state.options['@twp-restored-from'] || '', state.options['@twp-restored-sessions'] || '',
         ].join('=:=') + '\n';
       case 'show-environment': return `HOME=${state.home}\n`;
       case 'show-options': return (state.options['status-right'] || '') + '\n';
@@ -223,8 +313,8 @@ describe('SessionProtection', () => {
     const { protection } = setup({ tmux });
     await protection.tick();
     expect(tmux.state.sessions).toEqual(['环境 部署', 'ops']);
-    expect(tmux.state.options['@twp-protect-seen']).toBe('4242');
-    expect(tmux.state.options['@twp-restored-sessions']).toBe('2');
+    expect(tmux.state.options['@anymux-protect-seen']).toBe('4242');
+    expect(tmux.state.options['@anymux-restored-sessions']).toBe('2');
     expect(tmux.state.options['@resurrect-processes']).toContain('claude');
     // Reopened programs may still be starting: no save straight away.
     expect(tmux.state.commands.some((args) => args[0] === 'run-shell' && args[1].includes('save.sh'))).toBe(false);
@@ -259,7 +349,7 @@ describe('SessionProtection', () => {
     const { protection, clock } = setup({ tmux, now: 1_700_000_030_000 });
     await protection.tick();
     expect(tmux.state.sessions).toEqual(['0', 'ops', '环境 部署']);
-    expect(tmux.state.options['@twp-restored-sessions']).toBe('1');
+    expect(tmux.state.options['@anymux-restored-sessions']).toBe('1');
     const saves = () => tmux.state.commands.filter((args) => args[0] === 'run-shell' && args[1].includes('save.sh'));
     expect(saves()).toHaveLength(0);
     clock.now += 300_000;
@@ -317,12 +407,60 @@ describe('SessionProtection', () => {
     expect(tmux.state.sessions).toHaveLength(2);
   });
 
+  it('treats a server the panel saw under its old name as seen, and still reports that restore', async () => {
+    const tmux = fakeTmux({ options: {
+      '@twp-protect-seen': '4242', '@twp-restored-at': '2026-11-01T00:00:00.000Z',
+      '@twp-restored-from': '2026-10-31T23:55:00.000Z', '@twp-restored-sessions': '3',
+    } });
+    const { protection } = setup({ tmux });
+    await protection.tick();
+    // Seen before the rename: an empty server stays empty rather than being restored again.
+    expect(tmux.state.sessions).toEqual([]);
+    expect((await protection.status()).autoRestore).toEqual({
+      at: '2026-11-01T00:00:00.000Z', from: '2026-10-31T23:55:00.000Z', sessions: 3,
+    });
+  });
+
   it('never saves while tmux has no sessions, so the last save survives', async () => {
-    const tmux = fakeTmux({ options: { '@twp-protect-seen': '1' } });
+    const tmux = fakeTmux({ options: { '@anymux-protect-seen': '1' } });
     const { protection } = setup({ tmux, snapshot: null });
     await protection.tick();
     expect(tmux.state.commands.some((args) => args[0] === 'run-shell' && args[1].includes('save.sh'))).toBe(false);
     await expect(protection.saveNow()).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('keeps the previous save when tmux stops answering during one', async () => {
+    const tmux = fakeTmux({ sessions: ['main'], options: { '@anymux-protect-seen': '4242' } });
+    const { protection, dir } = setup({ tmux });
+    utimesSync(join(dir, 'tmux_resurrect_20261027T120000.txt'), new Date(1000e3), new Date(1000e3));
+    const real = tmux.exec.getMockImplementation();
+    tmux.exec.mockImplementation(async (file, args) => {
+      if (args[0] === 'run-shell' && args[1].includes('save.sh')) {
+        // What resurrect leaves when every tmux call in it gets no answer.
+        writeFileSync(join(dir, 'tmux_resurrect_20261027T130000.txt'), '');
+        writeFileSync(join(dir, 'last'), '');
+        return { stdout: '', stderr: '' };
+      }
+      return real(file, args);
+    });
+    await protection.tick();
+    expect(protection.lastSave).toMatchObject({ ok: false, error: expect.stringContaining('did not answer') });
+    expect(readFileSync(join(dir, 'last'), 'utf8')).toBe(SNAPSHOT);
+    expect(existsSync(join(dir, 'tmux_resurrect_20261027T130000.txt'))).toBe(false);
+    await expect(protection.saveNow()).rejects.toThrow(/did not answer/);
+  });
+
+  it('restores a new server from the newest save with sessions when an empty save became `last`', async () => {
+    const tmux = fakeTmux();
+    const { protection, dir } = setup({ tmux });
+    utimesSync(join(dir, 'tmux_resurrect_20261027T120000.txt'), new Date(1000e3), new Date(1000e3));
+    writeFileSync(join(dir, 'tmux_resurrect_20261027T130000.txt'), '');
+    writeFileSync(join(dir, 'last'), '');
+    await protection.tick();
+    expect(tmux.state.sessions).toEqual(['环境 部署', 'ops']);
+    expect(tmux.state.options['@anymux-restored-from']).toBe(new Date(1000e3).toISOString());
+    // resurrect's own restore key reads `last` too.
+    expect(readFileSync(join(dir, 'last'), 'utf8')).toBe(SNAPSHOT);
   });
 
   it('stays out of the way of a resurrect the user loads in ~/.tmux.conf', async () => {
@@ -359,7 +497,7 @@ describe('SessionProtection', () => {
   });
 
   it('brings back one session from history under a free name', async () => {
-    const tmux = fakeTmux({ sessions: ['ops'], options: { '@twp-protect-seen': '1' } });
+    const tmux = fakeTmux({ sessions: ['ops'], options: { '@anymux-protect-seen': '1' } });
     const { protection } = setup({ tmux });
     const restored = await protection.restore('tmux_resurrect_20261027T120000.txt', 'ops');
     expect(restored.name).toBe('ops 恢复');

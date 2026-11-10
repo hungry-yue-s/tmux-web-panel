@@ -153,7 +153,7 @@ Mac 安装了官方 Homebrew Mosh 1.4.0 bottle，仅用于隔离验收。最终 
 
 产品接入另有一个可复现的域名问题：官方 Mosh 1.4.0 的 raw `mosh-client` 使用 `AI_NUMERICHOST`，不会像 SSH 一样解析传入域名。Hub 现改为先用有期限的 OS 地址查询，再把 numeric IP 传给客户端；IP 字面量不增加查询，取消、link reset、超时或无效结果都不能继续创建远端会话。这里只选择一次 OS 返回的地址，没有实现多地址/地址族回退；本次 Cc-windows 探针本来使用公网 IP 字面量，因此这个修复不能解释其失败。
 
-另一处条件性缺陷是能力检查与真实启动的环境不一致：Windows 使用外置 `TMUX_PANEL_MOSH_SERVER` 时，真正启动会前置 MSYS2 的 `usr/bin`，版本检查却未使用注入的环境和 runtime PATH，可能把缺少同目录 runtime DLL 的组件误报为不可用，并缓存结果。现在两者使用一致的 MSYS runtime 路径，保持调用方环境不变；Windows 外置组件和 Unix 环境各有回归。此缺陷未在当前正式环境实证，不能用来解释此前的 native 客户端退出。
+另一处条件性缺陷是能力检查与真实启动的环境不一致：Windows 使用外置 `ANYMUX_MOSH_SERVER` 时，真正启动会前置 MSYS2 的 `usr/bin`，版本检查却未使用注入的环境和 runtime PATH，可能把缺少同目录 runtime DLL 的组件误报为不可用，并缓存结果。现在两者使用一致的 MSYS runtime 路径，保持调用方环境不变；Windows 外置组件和 Unix 环境各有回归。此缺陷未在当前正式环境实证，不能用来解释此前的 native 客户端退出。
 
 ### 带独立状态的复测与本机 UDP 对照
 
@@ -201,7 +201,7 @@ UTC 12:43 的实时预检重新核对 Windows 临时组件大小、SHA256、版�
 
 正向 TCP 参考和有效的 Windows 回环将故障进一步收窄到**Mac 发送路径在 en0 观察点之前**，本机网络过滤或流重定向策略是优先核对方向。BPF 计数仍不是物理传输或特定过滤器拒绝规则的证明；未取得企业组件自身的决策日志，不能直接归因于某条规则。用户已明确该企业终端防护由公司统一管理。
 
-管理员核对项：以服务器配置/本轮私有 manifest 中的 Cc-windows 目标 IPv4 为准，先核对 Mac 到该目标 UDP60000 的出站、流重定向或拒绝记录；443 已在独立活跃监听对照中表现相同。后续 Mosh 的实际端口范围由 `TMUX_PANEL_MOSH_PORTS` 决定，现有默认是 UDP60000:61000，应按最终配置申请最小必要范围。客户端为本机原生 `mosh-client`，普通 Node/Python UDP 对照也复现同目标 EPIPE，因此不能只看应用版本或 Windows 系统防火墙开关。
+管理员核对项：以服务器配置/本轮私有 manifest 中的 Cc-windows 目标 IPv4 为准，先核对 Mac 到该目标 UDP60000 的出站、流重定向或拒绝记录；443 已在独立活跃监听对照中表现相同。后续 Mosh 的实际端口范围由 `ANYMUX_MOSH_PORTS` 决定，现有默认是 UDP60000:61000，应按最终配置申请最小必要范围。客户端为本机原生 `mosh-client`，普通 Node/Python UDP 对照也复现同目标 EPIPE，因此不能只看应用版本或 Windows 系统防火墙开关。
 
 当前 SSH/TCP 可通信；现有慢终端的全部延迟仍不能由这些 UDP 验证解释。Mosh 正式启用还依赖企业策略核对、UDP 双向复验、Windows 组件与产品端到端验收。本轮没有更改企业防护策略或正式连接方式。
 

@@ -3,15 +3,17 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { POSIX_MODES } from '../helpers/permissions.js';
 
 const script = resolve(import.meta.dirname, '../../scripts/install-service.sh');
 const tmuxServerScript = resolve(import.meta.dirname, '../../scripts/run-tmux-server.sh');
 const tmuxBuildScript = resolve(import.meta.dirname, '../../scripts/build-tmux.sh');
-const workDir = mkdtempSync(join(tmpdir(), 'tmux-web-panel-cert-test-'));
+const workDir = mkdtempSync(join(tmpdir(), 'anymux-cert-test-'));
 
 afterAll(() => rmSync(workDir, { recursive: true, force: true }));
 
-describe('install-service TLS automation', () => {
+// install-service.sh serves Linux and macOS; Windows has install-service.ps1.
+describe.skipIf(process.platform === 'win32')('install-service TLS automation', () => {
   it('generates and then reuses a protected certificate pair', () => {
     const env = { ...process.env, TLS_DIR: workDir, TLS_DAYS: '60' };
     const first = spawnSync('bash', [script, 'cert'], { env, encoding: 'utf8' });
@@ -22,7 +24,7 @@ describe('install-service TLS automation', () => {
     const key = join(workDir, 'key.pem');
     expect(readFileSync(cert, 'utf8')).toContain('BEGIN CERTIFICATE');
     expect(readFileSync(key, 'utf8')).toContain('PRIVATE KEY');
-    expect(statSync(key).mode & 0o777).toBe(0o600);
+    if (POSIX_MODES) expect(statSync(key).mode & 0o777).toBe(0o600);
 
     const details = execFileSync('openssl', ['x509', '-in', cert, '-text', '-noout'], { encoding: 'utf8' });
     expect(details).toContain('DNS:localhost');
@@ -60,7 +62,8 @@ describe('macOS tmux server launcher', () => {
     expect(syntax.status, syntax.stderr).toBe(0);
   });
 
-  it('runs tmux in foreground mode without an incompatible command', () => {
+  // The launcher runs on macOS; MSYS bash rewrites PATH entries to /c/... form.
+  it.skipIf(process.platform === 'win32')('runs tmux in foreground mode without an incompatible command', () => {
     const fakeTmux = join(workDir, 'fake-tmux');
     writeFileSync(fakeTmux, `#!/bin/sh
 if [ "$1" = "show-options" ]; then
