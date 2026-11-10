@@ -37,6 +37,15 @@ describe('SQLite without a sqlite3 command line', () => {
     expect(sqliteRows(path, 'select v from t where id = 1')).toEqual([{ v: 'z' }]);
   });
 
+  it('prints large integers, reals and BLOBs as the command line does', async () => {
+    const path = database();
+    sqliteExec(path, "create table w(big integer, neg integer, r real, b blob, n); insert into w values (9223372036854775807, -9007199254740993, 1.5, x'7a68e4b8ad', null);");
+    const text = await runSQLiteJson(path, 'select * from w', { readonly: true });
+    // What `sqlite3 -json` prints for that row.
+    expect(text).toBe('[{"big":9223372036854775807,"neg":-9007199254740993,"r":1.5,"b":"zh中","n":null}]');
+    expect(JSON.parse(text)[0]).toMatchObject({ r: 1.5, b: 'zh中', n: null });
+  });
+
   it('refuses to write read-only and never creates a missing database', async () => {
     const path = database();
     await expect(runSQLiteJson(path, "update t set v = 'z'", { readonly: true })).rejects.toThrow();

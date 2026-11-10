@@ -82,7 +82,7 @@ export default class UiService extends Service {
     // only the APIs that are there (PanelSlots.hasPlugin, slots.js).
     this.part('head', 0, () => {
       const loader = ctx.get('loader');
-      const active = loader ? loader.status().filter((entry) => entry.state === 'active').map((entry) => entry.id) : [];
+      const active = loader ? loader.activeIds() : [];
       return `<script>window.PANEL_PLUGINS = ${JSON.stringify(active).replace(/</g, '\\u003c')};</script>`;
     });
 

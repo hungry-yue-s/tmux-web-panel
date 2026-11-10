@@ -100,6 +100,16 @@ function Resolve-Node {
 
 # The panel imports package.json's dependencies. A checkout updated without
 # `npm install` lacks any newly added one, and the panel would not start.
+# The node the installed task runs (run-panel.ps1 reads nodeBin from the
+# config), so start/restart check with the same one; -NodeBin still wins.
+function Resolve-ServiceNode {
+  if (-not $NodeBin -and (Test-Path -LiteralPath $ConfigFile)) {
+    $saved = (Get-Content -Raw -Encoding UTF8 -LiteralPath $ConfigFile | ConvertFrom-Json).nodeBin
+    if ($saved -and (Test-Path -LiteralPath $saved)) { return $saved }
+  }
+  return Resolve-Node
+}
+
 function Assert-Dependencies([string]$Node) {
   & $Node (Join-Path $ProjectDir 'bin\panel.js') --check-dependencies
   if ($LASTEXITCODE -ne 0) { throw "Dependencies are missing. Run 'npm install' in $ProjectDir first." }
@@ -375,13 +385,13 @@ switch ($Action) {
   'install' { Install-Service }
   'uninstall' { Uninstall-Service }
   'start' {
-    if (-not $Tmux) { Assert-Dependencies (Resolve-Node) }
+    if (-not $Tmux) { Assert-Dependencies (Resolve-ServiceNode) }
     Start-Task $selected; Write-Ok "Started $selected"
   }
   'stop' { Stop-TaskTree $selected; Write-Ok "Stopped $selected" }
   'restart' {
     # Checked before stopping: a panel that cannot start must keep running.
-    if (-not $Tmux) { Assert-Dependencies (Resolve-Node) }
+    if (-not $Tmux) { Assert-Dependencies (Resolve-ServiceNode) }
     Stop-TaskTree $selected; Start-Task $selected; Write-Ok "Restarted $selected"
   }
   # A new run-tmux-server.ps1 without touching tmux: restart -Tmux would end the

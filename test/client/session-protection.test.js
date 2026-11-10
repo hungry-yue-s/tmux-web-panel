@@ -151,6 +151,36 @@ describe('snapshots', () => {
     expect(await repairLast(join(dir, 'missing'))).toBeNull();
   });
 
+  it('knows a save that tmux stopped answering part way through', () => {
+    expect(parseSnapshot(SNAPSHOT).complete).toBe(true);
+    const lines = SNAPSHOT.trim().split('\n');
+    const panesOnly = lines.filter((line) => line.startsWith('pane')).join('\n') + '\n';
+    const noState = lines.filter((line) => !line.startsWith('state')).join('\n') + '\n';
+    const noWindows = lines.filter((line) => !line.startsWith('window')).join('\n') + '\n';
+    for (const text of [panesOnly, noState, noWindows, '']) {
+      expect(parseSnapshot(text).complete).toBe(false);
+    }
+    // A session that closed between resurrect's pane and window calls.
+    const oneWindowMissing = lines.filter((line) => !line.startsWith('window\tops')).join('\n') + '\n';
+    expect(parseSnapshot(oneWindowMissing).complete).toBe(true);
+    // It still has sessions: "find a session" can offer it.
+    expect(parseSnapshot(panesOnly).sessions).toHaveLength(2);
+  });
+
+  it('moves `last` off a partial save but keeps that save', async () => {
+    const dir = temp();
+    const panesOnly = SNAPSHOT.split('\n').filter((line) => line.startsWith('pane')).join('\n') + '\n';
+    writeFileSync(join(dir, 'tmux_resurrect_20261027T100000.txt'), SNAPSHOT);
+    writeFileSync(join(dir, 'tmux_resurrect_20261027T120000.txt'), panesOnly);
+    writeFileSync(join(dir, 'last'), panesOnly);
+    utimesSync(join(dir, 'tmux_resurrect_20261027T100000.txt'), new Date(1000e3), new Date(1000e3));
+    utimesSync(join(dir, 'tmux_resurrect_20261027T120000.txt'), new Date(2000e3), new Date(2000e3));
+    expect((await readLatest(dir)).snapshot.sessions[0].windows[0].name).toBe('shell');
+    expect(await repairLast(dir)).toMatchObject({ id: 'tmux_resurrect_20261027T100000.txt' });
+    expect(readFileSync(join(dir, 'last'), 'utf8')).toBe(SNAPSHOT);
+    expect(readdirSync(dir).sort()).toEqual(['last', 'tmux_resurrect_20261027T100000.txt', 'tmux_resurrect_20261027T120000.txt']);
+  });
+
   it.skipIf(process.platform === 'win32')('keeps `last` a link where resurrect made one', async () => {
     const dir = temp();
     writeFileSync(join(dir, 'tmux_resurrect_20261027T100000.txt'), SNAPSHOT);

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import { EventEmitter } from 'node:events';
 
-import { createNodeProxy, isRelayable, parseNodePath, relayNodeUpgrade } from '../../lib/hub/proxy.js';
+import { createNodeProxy, isRelayable, parseNodePath, relayNodeUpgrade, rewriteLocalNodePath } from '../../lib/hub/proxy.js';
 import { requireSameOrigin } from '../../lib/api/same-origin.js';
 import { AppError, ErrorCode } from '../../lib/servers/errors.js';
 import { listen, request } from './api-helpers.js';
@@ -55,6 +55,8 @@ describe('createNodeProxy', () => {
     links = { link: vi.fn(() => link), mode: vi.fn(async () => 'node') };
     const registry = { has: (id) => id === 'api-linux' || id === 'local' };
     const app = express();
+    // The node plugin, which runs before the relay.
+    app.use((req, _res, next) => { if (!req.headers['x-node-off']) rewriteLocalNodePath(req); next(); });
     app.use(createNodeProxy({
       registry,
       links,
@@ -73,6 +75,12 @@ describe('createNodeProxy', () => {
     const res = await request(port, 'GET', '/n/local/api/workspace?x=1');
     expect(res.body).toEqual({ local: true, url: '/api/workspace?x=1' });
     expect(links.link).not.toHaveBeenCalled();
+  });
+
+  it('never relays /n/local itself, even without the node plugin', async () => {
+    const res = await request(port, 'GET', '/n/local/api/workspace', undefined, { 'x-node-off': '1' });
+    expect(res.status).toBe(404);
+    expect(links.mode).not.toHaveBeenCalled();
   });
 
   it('relays another server\'s machine path through its link', async () => {
@@ -133,14 +141,17 @@ describe('relayNodeUpgrade', () => {
 
   const registry = { has: (id) => id === 'api-linux' };
 
-  it('leaves non-relay paths to the caller and rewrites /n/local in place', () => {
+  it('leaves non-relay paths and /n/local to the caller; the node plugin rewrites /n/local', () => {
     const links = { link: vi.fn() };
     const plain = { url: '/ws/status' };
     expect(relayNodeUpgrade(plain, socket(), null, { registry, links, authorize: () => true })).toBe(false);
 
     const local = { url: '/n/local/ws/terminal/%251?cols=80' };
     expect(relayNodeUpgrade(local, socket(), null, { registry, links, authorize: () => true })).toBe(false);
+    expect(local.url).toBe('/n/local/ws/terminal/%251?cols=80');
+    expect(rewriteLocalNodePath(local)).toBe(true);
     expect(local.url).toBe('/ws/terminal/%251?cols=80');
+    expect(rewriteLocalNodePath(local)).toBe(false);
     expect(links.link).not.toHaveBeenCalled();
   });
 

@@ -16,7 +16,12 @@ export const inject = ['http'];
 
 /** @param {{ roots?: string[] }} [config] */
 export function apply(ctx, config) {
-  const roots = config?.roots ?? (IS_WINDOWS ? [...msysHomeRoots(), '/tmp'] : [homedir(), '/tmp']);
+  // The upload directory moved to its own plugin; ignoring the old key silently
+  // would put uploads somewhere other than where the patch says.
+  if (config?.uploadDir !== undefined) {
+    ctx.logger.warn('"uploadDir" is no longer read here: set it as the upload plugin\'s "dir" (- id: upload, config: { dir: ... })');
+  }
+  const roots = config?.roots ??(IS_WINDOWS ? [...msysHomeRoots(), '/tmp'] : [homedir(), '/tmp']);
   ctx.http.mount('/api/files', createFilesRouter(roots));
   ctx.provide('fileAccess', Object.freeze({ roots: Object.freeze([...roots]), pathGuard: createPathGuard(roots) }));
   // The front end, where there are pages at all.

@@ -20,11 +20,22 @@
       + '</p><pre>' + esc(build.output || build.message || '') + '</pre>' : '';
   }
 
+  // Both panels mount together: one request serves them (read-only, shared).
+  // A write drops it, so what is shown after an action is read after it.
+  let reading = null;
+  function read() {
+    if (!reading) {
+      const request = global.Api.get(api).finally(() => { if (reading === request) reading = null; });
+      reading = request;
+    }
+    return reading;
+  }
+
   /** Reads the resources into `host`, or shows why not with a retry; null when it could not. */
   async function load(host, again) {
     host.innerHTML = '<p role="status">正在读取管理状态…</p>';
     try {
-      const resources = await global.Api.get(api);
+      const resources = await read();
       return host.isConnected ? resources : null;
     } catch (error) {
       if (host.isConnected) host.innerHTML = '<p role="alert">' + esc(error.message) + '</p>' + button('重试', 'refresh');
@@ -42,11 +53,14 @@
       target.disabled = true;
       try {
         if (action === 'refresh') { await remount(); return; }
+        reading = null;
         await run(action, target);
+        reading = null;
         global.AppShell.toast(action === 'build' ? '构建已启动，可在此查看结果' : '操作完成');
         await remount();
       } catch (error) {
         // A filesystem error may interrupt a bulk operation after one install.
+        reading = null;
         await remount();
         page.feedback(error.message);
         global.AppShell.toast(error.message);

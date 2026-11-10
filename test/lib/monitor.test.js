@@ -339,75 +339,80 @@ describe('StatusMonitor', () => {
       return [{ windowIndex: 0, paneId: '%0', command }];
     }
 
-    it('detects command completion when pane returns to shell', async () => {
+    /** A notification store that records what it was given, like NotificationStore.add. */
+    function recordingStore() {
+      return {
+        notifications: [],
+        add(entry) {
+          const n = { id: String(this.notifications.length + 1), ...entry };
+          this.notifications.push(n);
+          return n;
+        },
+      };
+    }
+
+    async function pollWith(windows, paneCommands, session = SESSION) {
+      tmux.listSessions.mockResolvedValue(session);
+      tmux.listWindows.mockResolvedValue(windows);
+      tmux.listPaneCommands.mockResolvedValue(paneCommands);
+      await monitor.poll();
+    }
+
+    const sent = (ws, type) => ws.send.mock.calls.map((c) => JSON.parse(c[0])).filter((m) => m.type === type);
+
+    it('notifies when a pane returns to the shell, and sends no fields the page does not read', async () => {
+      const store = recordingStore();
+      monitor = new StatusMonitor({ notificationStore: store });
       const ws = createMockWs();
       monitor.subscribe(ws);
 
-      // Poll 1: command is 'node'
-      tmux.listSessions.mockResolvedValue(SESSION);
-      tmux.listWindows.mockResolvedValue(windowsWith(false));
-      tmux.listPaneCommands.mockResolvedValue(paneCommandsWith('node'));
-      await monitor.poll();
-
+      await pollWith(windowsWith(false), paneCommandsWith('node'));
       ws.send.mockClear();
+      await pollWith(windowsWith(false), paneCommandsWith('zsh'));
 
-      // Poll 2: command is 'zsh' (returned to shell)
-      tmux.listSessions.mockResolvedValue(SESSION);
-      tmux.listWindows.mockResolvedValue(windowsWith(false));
-      tmux.listPaneCommands.mockResolvedValue(paneCommandsWith('zsh'));
-      await monitor.poll();
-
-      // pane-cmd messages may also be sent; filter for the status message
-      const statusMsg = ws.send.mock.calls
-        .map(c => JSON.parse(c[0]))
-        .find(m => m.type === 'status');
-      expect(statusMsg).toBeDefined();
-      expect(statusMsg.data.completedWindows).toHaveLength(1);
-      expect(statusMsg.data.completedWindows[0]).toEqual({
-        session: 'main', windowIndex: 0, windowId: '@1', prevCommand: 'node', source: 'command',
-      });
-      expect(statusMsg.data.completedWindows[0].windowId).toMatch(/^@\d+$/);
+      expect(store.notifications).toEqual([
+        expect.objectContaining({ session: 'main', windowIndex: 0, windowName: 'bash', prevCommand: 'node' }),
+      ]);
+      expect(sent(ws, 'notifications')).toEqual([{ type: 'notifications', data: store.notifications }]);
+      for (const status of sent(ws, 'status')) {
+        expect(Object.keys(status.data).sort()).toEqual(['sessions', 'totalSessions', 'totalWindows']);
+      }
     });
 
     it('detects bell signal on rising edge only', async () => {
+      const store = recordingStore();
+      monitor = new StatusMonitor({ notificationStore: store });
       const ws = createMockWs();
       monitor.subscribe(ws);
 
-      // Poll 1: bell=false
-      tmux.listSessions.mockResolvedValue(SESSION);
-      tmux.listWindows.mockResolvedValue(windowsWith(false));
-      tmux.listPaneCommands.mockResolvedValue(paneCommandsWith('zsh'));
-      await monitor.poll();
-
+      await pollWith(windowsWith(false), paneCommandsWith('zsh'));
       ws.send.mockClear();
+      await pollWith(windowsWith(true), paneCommandsWith('zsh'));
+      expect(store.notifications).toEqual([expect.objectContaining({ session: 'main', windowIndex: 0, prevCommand: 'zsh' })]);
+      expect(sent(ws, 'notifications')).toHaveLength(1);
 
-      // Poll 2: bell=true (rising edge)
-      tmux.listSessions.mockResolvedValue(SESSION);
-      tmux.listWindows.mockResolvedValue(windowsWith(true));
-      tmux.listPaneCommands.mockResolvedValue(paneCommandsWith('zsh'));
-      await monitor.poll();
-
-      expect(ws.send).toHaveBeenCalledTimes(1);
-      const msg2 = JSON.parse(ws.send.mock.calls[0][0]);
-      expect(msg2.data.completedWindows).toHaveLength(1);
-      expect(msg2.data.completedWindows[0]).toEqual({
-        session: 'main', windowIndex: 0, windowId: '@1', prevCommand: 'zsh', source: 'bell',
-      });
-      expect(msg2.data.completedWindows[0].windowId).toMatch(/^@\d+$/);
-
+      // The bell is still up: no second notification.
       ws.send.mockClear();
+      await pollWith(windowsWith(true), paneCommandsWith('zsh'));
+      expect(store.notifications).toHaveLength(1);
+      expect(sent(ws, 'notifications')).toHaveLength(0);
+    });
 
-      // Poll 3: bell=true (still true — no re-fire)
-      tmux.listSessions.mockResolvedValue(SESSION);
-      tmux.listWindows.mockResolvedValue(windowsWith(true));
-      tmux.listPaneCommands.mockResolvedValue(paneCommandsWith('zsh'));
-      await monitor.poll();
+    it('hands completions to agent events when the notifications plugin is off', async () => {
+      const agentEvents = new AgentEventService({ notificationStore: null });
+      const ingest = vi.spyOn(agentEvents, 'ingest');
+      monitor = new StatusMonitor({ agentEvents });
+      const ws = createMockWs();
+      monitor.subscribe(ws);
 
-      // Should not broadcast again (state unchanged and no new completion)
-      if (ws.send.mock.calls.length > 0) {
-        const msg3 = JSON.parse(ws.send.mock.calls[0][0]);
-        expect(msg3.data.completedWindows).toBeUndefined();
-      }
+      await pollWith(windowsWith(false), paneCommandsWith('node'));
+      await pollWith(windowsWith(false), paneCommandsWith('zsh'));
+
+      expect(ingest).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'tmux', event: 'command_complete', session: 'main', windowId: '@1', prevCommand: 'node' }),
+        { notify: true },
+      );
+      expect(sent(ws, 'notifications')).toHaveLength(0);
     });
 
     it('dedupes a bell notification after an agent stop hook for the same window', async () => {
@@ -469,7 +474,9 @@ describe('StatusMonitor', () => {
       expect(ws.send).not.toHaveBeenCalled();
     });
 
-    it('emits completedPanes alongside completedWindows on pane transition', async () => {
+    it('notifies once per window however many of its panes finish', async () => {
+      const store = recordingStore();
+      monitor = new StatusMonitor({ notificationStore: store });
       const twoSessions = [
         { name: 'main', windows: 2, attached: true, lastActivity: '12345' },
       ];
@@ -506,33 +513,13 @@ describe('StatusMonitor', () => {
       ]);
       await monitor.poll();
 
-      // pane-cmd messages may also be sent; filter for the status message
-      const msg = ws.send.mock.calls
-        .map(c => JSON.parse(c[0]))
-        .find(m => m.type === 'status');
-      expect(msg).toBeDefined();
-
-      // completedWindows deduplicates by window — window 0 appears once, window 1 once
-      expect(msg.data.completedWindows).toHaveLength(2);
-      expect(msg.data.completedWindows).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ session: 'main', windowIndex: 0, windowId: '@10', source: 'command' }),
-          expect.objectContaining({ session: 'main', windowIndex: 1, windowId: '@11', source: 'command' }),
-        ]),
-      );
-      msg.data.completedWindows.forEach((cw) => {
-        expect(cw.windowId).toMatch(/^@\d+$/);
-      });
-
-      // completedPanes has one entry per pane — all three panes
-      expect(msg.data.completedPanes).toHaveLength(3);
-      expect(msg.data.completedPanes).toEqual(
-        expect.arrayContaining([
-          { session: 'main', windowIndex: 0, paneId: '%1', prevCommand: 'npm' },
-          { session: 'main', windowIndex: 0, paneId: '%2', prevCommand: 'node' },
-          { session: 'main', windowIndex: 1, paneId: '%3', prevCommand: 'python' },
-        ]),
-      );
+      // Window 0 had two panes finish; it is still one notification.
+      expect(store.notifications).toHaveLength(2);
+      expect(store.notifications).toEqual(expect.arrayContaining([
+        expect.objectContaining({ session: 'main', windowIndex: 0, windowName: 'win0' }),
+        expect.objectContaining({ session: 'main', windowIndex: 1, windowName: 'win1', prevCommand: 'python' }),
+      ]));
+      expect(sent(ws, 'notifications')).toHaveLength(1);
     });
 
     it('isolates pane command errors per session', async () => {

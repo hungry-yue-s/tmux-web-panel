@@ -106,7 +106,7 @@ describe('HealthService', () => {
     remoteInfo = vi.fn(async () => nodeInfo());
     mode = vi.fn(async () => 'node');
     basicDetect = vi.fn(async () => ({ posix: true, platform: 'linux', arch: 'x86_64', hostname: 'bare', tmux: { available: true, version: '3.4', reason: null } }));
-    links = { mode, link: vi.fn(() => ({ info: remoteInfo })), basic: vi.fn(() => ({ detect: basicDetect })) };
+    links = { mode, link: vi.fn(() => ({ info: remoteInfo })), detect: basicDetect };
   });
 
   afterEach(async () => {
@@ -212,7 +212,7 @@ describe('HealthService', () => {
       const status = await makeService().probe('api-linux');
 
       expect(remoteInfo).not.toHaveBeenCalled();
-      expect(basicDetect).toHaveBeenCalledWith({ force: true });
+      expect(basicDetect).toHaveBeenCalledWith('api-linux');
       expect(status).toMatchObject({
         state: ServerState.ONLINE,
         facts: { hostname: 'bare', platform: 'linux' },

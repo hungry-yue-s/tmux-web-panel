@@ -155,6 +155,24 @@ describe('BasicHost', () => {
     expect(connection.uploads[0].content).toBe(attachScript('%3', false));
   });
 
+  it('serves the layout picker through remote tmux, and refuses it for hosted shells', async () => {
+    const { host, connection } = makeHost();
+    await host.setWindowLayout('@2', { layout: 'tiled' });
+    expect(connection.scripts.at(-1)).toContain('select-layout');
+    await expect(host.setWindowLayout('@2', { layout: 'spiral' })).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR });
+
+    const bare = makeHost({ detect: 'kernel=Linux\narch=x86_64\nhostname=box\n' }).host;
+    for (const call of [
+      () => bare.getWindowLayout('@2'),
+      () => bare.setWindowLayout('@2', { layout: 'tiled' }),
+      () => bare.capturePane('%3'),
+      () => bare.resizePane('%3', { direction: 'left', amount: 1 }),
+      () => bare.swapPanes('%3', { target: '%4' }),
+    ]) {
+      await expect(call()).rejects.toMatchObject({ code: ErrorCode.UNSUPPORTED });
+    }
+  });
+
   it('bumps the revision once per mutation', async () => {
     const changes = [];
     const connection = fakeConnection();

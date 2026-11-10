@@ -39,7 +39,7 @@ export async function apply(ctx, config) {
   // The plugins this installation runs, so a hub's pages only call what is there.
   const plugins = () => {
     const loader = ctx.get('loader');
-    return loader ? loader.status().filter((entry) => entry.state === 'active').map((entry) => entry.id) : null;
+    return loader ? loader.activeIds() : null;
   };
   const info = async () => ({
     ...await collectNodeInfo({

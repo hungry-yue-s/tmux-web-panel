@@ -114,6 +114,32 @@ describe('LinkPool', () => {
     expect(host.destroy).toHaveBeenCalledWith('server_reconfigured');
   });
 
+  it('detects the machine without basic mode, through a basic host when there is one', async () => {
+    const bare = new LinkPool({
+      registry,
+      configDir: dir,
+      createConnection: (server) => ({ id: server.id, server, runScript: vi.fn(async () => ({ stdout: 'kernel=Linux\narch=x86_64\nhostname=api\ntmux=tmux 3.4\n' })) }),
+      createLink: (connection) => ({ connection, close: vi.fn(), ready: false, ensure }),
+    });
+    expect(await bare.detect('api-linux')).toMatchObject({ posix: true, platform: 'linux', tmux: { available: true, version: '3.4' } });
+    expect(() => bare.basic('api-linux')).toThrow('Basic mode is not available');
+
+    const host = pool.basic('api-linux');
+    host.detect = vi.fn(async () => ({ platform: 'darwin' }));
+    expect(await pool.detect('api-linux')).toEqual({ platform: 'darwin' });
+    expect(host.detect).toHaveBeenCalledWith({ force: true });
+  });
+
+  it('ends only the basic hosts when basic mode goes away, keeping the links', () => {
+    const link = pool.link('api-linux');
+    const host = pool.basic('api-linux');
+    pool.closeBasic();
+    expect(host.destroy).toHaveBeenCalledWith('basic_unavailable');
+    expect(link.close).not.toHaveBeenCalled();
+    expect(pool.link('api-linux')).toBe(link);
+    expect(pool.basic('api-linux')).not.toBe(host);
+  });
+
   it('closes links on invalidate and on shutdown', () => {
     const first = pool.link('api-linux');
     pool.invalidate('api-linux');

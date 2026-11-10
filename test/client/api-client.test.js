@@ -286,6 +286,27 @@ describe('legacy API authentication', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('/api/auth/check');
   });
 
+  it('asks the server in view for pins only when that server runs the pins plugin', () => {
+    const app = fs.readFileSync(new URL('../../plugins/ui/client/js/app.js', import.meta.url), 'utf8');
+    const from = app.indexOf('function _startApp() {');
+    const source = app.slice(from, app.indexOf('\n}\n', from) + 3);
+    const startWith = (serverId, plugins) => {
+      const api = { get: vi.fn(async () => ({ data: { pins: [] } })) };
+      const slots = { hasPlugin: vi.fn((id, server) => (plugins[server] || []).includes(id)) };
+      const start = new Function('PanelSlots', 'Api', 'api', 'state', 'statusSocket', source + '; return _startApp;')(
+        slots, { activeServerId: () => serverId }, api, {}, { connect() {} },
+      );
+      start();
+      return { api, slots };
+    };
+    // The hub runs pins, the node in view does not: no request to it.
+    let run = startWith('box', { local: ['pins'], box: [] });
+    expect(run.slots.hasPlugin).toHaveBeenCalledWith('pins', 'box');
+    expect(run.api.get).not.toHaveBeenCalled();
+    run = startWith('box', { local: [], box: ['pins'] });
+    expect(run.api.get).toHaveBeenCalledWith('/api/pins');
+  });
+
   it.each(['get', 'post', 'put', 'delete'])('checks the rejected %s request through the shared hub guard', async (method) => {
     const { Api, win, fetchMock } = loadApi();
     const app = fs.readFileSync(new URL('../../plugins/ui/client/js/app.js', import.meta.url), 'utf8');

@@ -81,7 +81,7 @@ describe('NodeInstaller', () => {
     };
     const links = {
       connection: vi.fn(() => connection),
-      basic: vi.fn(() => ({ detect: vi.fn(async () => ({ posix, platform })) })),
+      detect: vi.fn(async () => ({ posix, platform })),
       recheck: vi.fn(),
     };
     const pack = vi.fn(async (_dir, target) => writeFileSync(target, 'archive'));

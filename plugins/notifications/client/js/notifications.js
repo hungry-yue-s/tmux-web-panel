@@ -91,12 +91,6 @@ var NotificationPanel = (function () {
     if (_isOpen) _rerenderPanel();
   }
 
-  function add(notification) {
-    // Legacy path: called from app.js _applyCompletedWindows.
-    // With server-side persistence, notifications are added via monitor.js → WebSocket push.
-    // This is now a no-op — the server push path (handleServerPush) handles it.
-  }
-
   function markRead(id) {
     var n = _notifications.find(function (n) { return n.id === id; });
     if (n && !n.read) {
@@ -371,7 +365,6 @@ var NotificationPanel = (function () {
   }
 
   return {
-    add: add,
     markRead: markRead,
     _markReadByWindow: markReadByWindow,
     clearAll: clearAll,

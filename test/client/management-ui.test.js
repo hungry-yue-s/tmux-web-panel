@@ -19,6 +19,9 @@ it('offers individual and all-agent presentation skill installation and refreshe
   const root = win.document.getElementById('root');
   await win.ManagementPage.mount(root);
   expect(root.querySelectorAll('[data-name="panel-presentation"][data-managed="skill-install"]')).toHaveLength(3);
+  // The tmux and the skills panels share one read.
+  const reads = () => win.Api.get.mock.calls.filter(([path]) => path === '/api/managed-resources').length;
+  expect(reads()).toBe(1);
   root.querySelector('[data-target="all"]').click();
   await vi.waitFor(() => expect(root.querySelector('[data-target="all"]').textContent).toBe('从全部 Agent 移除'));
   expect(win.Api.post).toHaveBeenCalledWith('/api/managed-resources/skills/panel-presentation/all/install');

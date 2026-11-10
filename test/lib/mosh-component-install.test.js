@@ -25,7 +25,7 @@ function fixture({ platform = 'linux', output = '>> check\nTWP_COMPONENT_RESULT=
   writeFileSync(join(dir, 'vendor/tmux/tmux.c'), '');
   const stream = vi.fn(async (_words, options) => { options.onOutput(output); return code; });
   const connection = { stream, uploadFile: vi.fn() };
-  const links = { connection: vi.fn(() => connection), basic: vi.fn(() => ({ detect: vi.fn(async () => ({ platform, posix: platform !== 'windows' })) })), recheck: vi.fn() };
+  const links = { connection: vi.fn(() => connection), detect: vi.fn(async () => ({ platform, posix: platform !== 'windows' })), recheck: vi.fn() };
   const registry = { require: vi.fn(() => ({ id: 'local', kind: 'local' })) };
   const localStream = vi.fn(async (_words, options) => { options.onOutput(output); return code; });
   const pack = vi.fn();

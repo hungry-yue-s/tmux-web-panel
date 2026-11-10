@@ -140,7 +140,7 @@ npm test
 | `notifications` | `notifications` | launch, http | 通知存储，`/api/notifications` |
 | `agent-events` | `agentEvents` | http | Agent 钩子事件 `/api/agent-events`；有 notifications 时变成通知 |
 | `files` | `fileAccess` | http | 文件浏览与预览 `/api/files`；文件根与路径守卫 |
-| `upload` | — | launch, http | 上传 `/api/upload` |
+| `upload` | — | launch, http | 上传 `/api/upload`；目录是它的 `dir`（原来的 `files.uploadDir` 不再读，设了会警告） |
 | `git` | — | http, fileAccess | Git block 的 `/api/git` |
 | `sqlite` | — | http, fileAccess | SQLite 预览 `/api/sqlite` |
 | `notebook` | — | http, fileAccess | `/api/notebook` |
@@ -156,12 +156,12 @@ npm test
 | `session-protection` | `sessionProtection` | launch, http, tmux, managedResources | 自动保存与恢复（私有 server 时不启动） |
 | `mosh` | `mosh` | http, node, workspace, terminals | Node 侧 Mosh 会话（`/api/mosh` 只认 node token 加 hub 标记）；卸载时结束其进程 |
 | `server-registry` | `serverRegistry` | launch | Hub：服务器列表 `servers.json` |
-| `hub-links` | `hubLinks` | launch, serverRegistry | Hub：每台一条 SSH 链路；基础模式的主机按调用找 `basicMode` |
+| `hub-links` | `hubLinks` | launch, serverRegistry | Hub：每台一条 SSH 链路，经它识别机器（`detect`，不需要基础模式）；基础模式的主机按调用找 `basicMode` |
 | `server-health` | `serverHealth` | node, serverRegistry, hubLinks | Hub：探测与传输选择，发 `status/server-status` |
 | `hub-relay` | — | http, auth, serverRegistry, hubLinks | Hub：`/n/:serverId` 转发（-50）；基础模式、Mosh 终端按请求查 |
 | `servers` | `servers` | http, serverRegistry, hubLinks, serverHealth | Hub：`/api/servers` |
 | `node-installer` | `nodeInstaller` | http, serverRegistry, hubLinks, serverHealth | Hub：安装 Node 与 Mosh 组件 |
-| `basic-mode` | `basicMode` | http, hubLinks, terminals, timer | Hub：没装面板的机器的工作区与终端；卸载时结束这些 shell |
+| `basic-mode` | `basicMode` | http, hubLinks, terminals, timer | Hub：没装面板的机器的工作区与终端；卸载时只结束这些 shell，链路照旧 |
 | `mosh-hub` | `moshHub` | http, node, serverRegistry, hubLinks | Hub：Mosh 终端；卸载时先经链路结束 Node 会话 |
 | `client` | `client` | http | 浏览器端 Cordis 内核、import map、客户端条目清单（`/client/manifest.json`） |
 | `ui` | `ui` | launch, http | 主页面的组装、各插件前端的静态目录（内容哈希）、桌面版的中继配置 |
