@@ -117,7 +117,7 @@ describe('animated relay and client theme continuity', () => {
         const panel = new JSDOM('', { url: target.href, runScripts: 'outside-only' }).window;
         pages.push(panel);
         if (entry === 'legacy Android handoff') Object.defineProperty(panel.navigator, 'userAgent', {
-          value: 'Mozilla/5.0 Android TmuxPanelAndroid/1.0', configurable: true,
+          value: 'Mozilla/5.0 Android AnymuxAndroid/1.0', configurable: true,
         });
         panel.eval(authSource);
         expect(panel.Auth.getToken()).toBe(oldToken);
@@ -178,7 +178,7 @@ describe('animated relay and client theme continuity', () => {
     },
   );
 
-  it.each(['Mozilla/5.0 browser', 'Mozilla/5.0 TmuxPanelMac/1.0'])(
+  it.each(['Mozilla/5.0 browser', 'Mozilla/5.0 AnymuxMac/1.0'])(
     'does not mistake a plain handoff for relay entry in %s', (userAgent) => {
       win = new JSDOM('', { url: 'https://panel.example/#handoff=fixture-session', runScripts: 'outside-only' }).window;
       Object.defineProperty(win.navigator, 'userAgent', { value: userAgent, configurable: true });
@@ -191,7 +191,7 @@ describe('animated relay and client theme continuity', () => {
 
   it('does not mark a legacy Android page without a handoff as relay entry', () => {
     win = new JSDOM('', { url: 'https://panel.example/', runScripts: 'outside-only' }).window;
-    Object.defineProperty(win.navigator, 'userAgent', { value: 'TmuxPanelAndroid/1.0', configurable: true });
+    Object.defineProperty(win.navigator, 'userAgent', { value: 'AnymuxAndroid/1.0', configurable: true });
     win.eval(authSource);
     expect(win.localStorage.getItem('tmux_relay_login')).toBeNull();
   });

@@ -35,7 +35,7 @@ describe('process and window names on Windows', () => {
 
   it('simplifies a window auto-named after a path, never a name someone chose', () => {
     expect(windowName(REPORTED)).toBe('claude');
-    for (const name of ['Tmux-panel', '环境部署', 'a/b', 'build\\logs', 'http://x']) {
+    for (const name of ['Anymux', '环境部署', 'a/b', 'build\\logs', 'http://x']) {
       expect(windowName(name)).toBe(name);
     }
   });
@@ -44,7 +44,7 @@ describe('process and window names on Windows', () => {
     expect(parsePanes(['%1', '0', '0', '80', '24', '1', REPORTED, ''].join(SEP))[0].command).toBe('claude');
     expect(parsePaneCommands(['1', '%1', REPORTED, '/c/work', '42'].join(SEP))[0].command).toBe('claude');
     expect(parseWindows(['@1', '1', REPORTED, '1', '80', '24', '0', '0'].join(SEP))[0].name).toBe('claude');
-    expect(parseWindows(['@1', '1', 'Tmux-panel', '1', '80', '24', '0', '0'].join(SEP))[0].name).toBe('Tmux-panel');
+    expect(parseWindows(['@1', '1', 'Anymux', '1', '80', '24', '0', '0'].join(SEP))[0].name).toBe('Anymux');
   });
 
   it('draws the same reduced name on tmux pane borders', () => {

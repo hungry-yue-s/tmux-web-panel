@@ -79,7 +79,7 @@ describe('GET /api/codex-usage', () => {
     const response = await get(app, '/api/codex-usage');
     expect(response.body).toEqual({ success: true, data: cached });
     expect(mockReadFile).toHaveBeenCalledWith('/desktop-data/codex-usage.json', 'utf8');
-    expect(mockReadFile).not.toHaveBeenCalledWith('/home/tester/.config/tmux-web-panel/codex-usage.json', 'utf8');
+    expect(mockReadFile).not.toHaveBeenCalledWith('/home/tester/.config/anymux/codex-usage.json', 'utf8');
   });
 
   it('returns aggregated Codex usage from session JSONL files', async () => {
@@ -151,15 +151,15 @@ describe('GET /api/codex-usage', () => {
     expect(res.body.data.modelUsage['gpt-5.5'].inputTokens).toBe(1000);
     expect(res.body.data.aggregatedTools.exec_command).toBe(1);
     expect(res.body.data.recentSessions[0].first_prompt).toBe('build a panel');
-    expect(mockMkdir).toHaveBeenCalledWith('/home/tester/.config/tmux-web-panel', { recursive: true, mode: 0o700 });
+    expect(mockMkdir).toHaveBeenCalledWith('/home/tester/.config/anymux', { recursive: true, mode: 0o700 });
     expect(mockWriteFile).toHaveBeenCalledWith(
-      '/home/tester/.config/tmux-web-panel/codex-usage.json.tmp',
+      '/home/tester/.config/anymux/codex-usage.json.tmp',
       expect.stringContaining('"used_percent":42'),
       { encoding: 'utf8', mode: 0o600 },
     );
     expect(mockRename).toHaveBeenCalledWith(
-      '/home/tester/.config/tmux-web-panel/codex-usage.json.tmp',
-      '/home/tester/.config/tmux-web-panel/codex-usage.json',
+      '/home/tester/.config/anymux/codex-usage.json.tmp',
+      '/home/tester/.config/anymux/codex-usage.json',
     );
   });
 
@@ -174,7 +174,7 @@ describe('GET /api/codex-usage', () => {
       aggregate: {},
     };
     mockReadFile.mockImplementation((path) => {
-      if (path === '/home/tester/.config/tmux-web-panel/codex-usage.json') return Promise.resolve(JSON.stringify(cached));
+      if (path === '/home/tester/.config/anymux/codex-usage.json') return Promise.resolve(JSON.stringify(cached));
       return Promise.reject(new Error('missing'));
     });
     mockReaddir.mockResolvedValue([]);

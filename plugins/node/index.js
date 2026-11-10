@@ -2,7 +2,7 @@
 // SFTP, the node token that only opens this machine's own API, and
 // GET /api/node/info (docs/architecture.md, "Hub 与 Node").
 //
-// `home` (the directory holding ~/.config/tmux-web-panel/node.json) exists so
+// `home` (the directory holding ~/.config/anymux/node.json) exists so
 // tests and smoke runs never overwrite the real pairing file.
 //
 // Optional components report themselves in the info through

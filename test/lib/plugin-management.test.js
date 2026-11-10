@@ -116,7 +116,7 @@ describe('project-managed resources', () => {
     const personal = join(home, 'personal.conf');
     await writeFile(personal, 'set -g status off\n'); await symlink(personal, join(home, '.tmux.conf'));
     // A fragment someone edited by hand before it stopped being editable.
-    const content = '# Managed by Tmux Web Panel\nset -g exit-empty off\nset -g mouse on\nset -g history-limit 50000\nset -g status-interval 10\n';
+    const content = '# Managed by Anymux\nset -g exit-empty off\nset -g mouse on\nset -g history-limit 50000\nset -g status-interval 10\n';
     await mkdir(configDir, { recursive: true }); await writeFile(resources.config, content);
     expect((await resources.status()).tmuxConfig.extraLines).toBe(1);
     const linked = await resources.linkConfig(true);
@@ -179,5 +179,38 @@ describe('project-managed resources', () => {
     expect(await resources.relinkMovedSkills()).toEqual([]);
     expect(await status('claude')).toBe('conflict');
     expect(await readlink(claude)).toBe(elsewhere);
+  });
+
+  it('takes over the tmux.conf block written under the old name instead of adding a second one', async () => {
+    const home = await temp();
+    const resources = new ManagedResources({ userHome: home, configDir: join(home, '.config/anymux'), projectDir: REPO_ROOT });
+    await resources.load();
+    await writeFile(join(home, '.tmux.conf'), 'set -g status off\n# >>> tmux-web-panel managed config >>>\n'
+      + 'source-file "/old/tmux.conf"\n# <<< tmux-web-panel managed config <<<\n');
+    expect((await resources.status()).tmuxConfig.linked).toBe(true);
+    await resources.linkConfig(true);
+    const text = await readFile(join(home, '.tmux.conf'), 'utf8');
+    expect(text).not.toContain('tmux-web-panel');
+    expect(text.match(/source-file/g)).toHaveLength(1);
+    expect(text).toContain('# >>> anymux managed config >>>');
+    await resources.linkConfig(false);
+    expect(await readFile(join(home, '.tmux.conf'), 'utf8')).toBe('set -g status off\n');
+  });
+
+  it('replaces its link to the skill installed as tmux-panel with one named anymux', async () => {
+    const home = await temp();
+    const resources = new ManagedResources({ userHome: home, configDir: join(home, 'config'), projectDir: REPO_ROOT });
+    await resources.load();
+    const old = join(home, '.claude', 'skills', 'tmux-panel');
+    const foreign = join(home, '.codex', 'skills', 'tmux-panel');
+    await mkdir(join(old, '..'), { recursive: true }); await symlink(join(REPO_ROOT, 'skills', 'tmux-panel'), old, 'dir');
+    await mkdir(join(foreign, '..'), { recursive: true }); await symlink(join(home, 'elsewhere', 'tmux-panel'), foreign, 'dir');
+    const path = resources.skillPath('anymux', 'claude');
+    expect(await resources.relinkMovedSkills()).toEqual([path]);
+    await expect(lstat(old)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readlink(path)).toBe(repoPath('skills', 'anymux'));
+    // Someone else's link under the old name stays, and nothing is installed for it.
+    expect(await readlink(foreign)).toBe(join(home, 'elsewhere', 'tmux-panel'));
+    await expect(lstat(resources.skillPath('anymux', 'codex'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

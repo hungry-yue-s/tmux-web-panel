@@ -10,7 +10,7 @@ const helperSource = terminalSource.slice(
 );
 const standaloneSource = readFileSync('plugins/terminal/client/terminal.html', 'utf8');
 const webViewSource = readFileSync(
-  repoPath('macos/TmuxPanel/Sources/TmuxPanel/PanelWebView.swift'),
+  repoPath('macos/Anymux/Sources/Anymux/PanelWebView.swift'),
   'utf8',
 );
 
@@ -37,7 +37,7 @@ describe('macOS native clipboard bridge', () => {
     const writeText = vi.fn();
     window.webkit = {
       messageHandlers: {
-        tmuxPanelClipboard: { postMessage },
+        anymuxClipboard: { postMessage },
       },
     };
     Object.defineProperty(window.navigator, 'clipboard', {
@@ -50,6 +50,14 @@ describe('macOS native clipboard bridge', () => {
     expect(postMessage).toHaveBeenCalledWith({ text: 'selected text' });
     expect(writeText).not.toHaveBeenCalled();
     expect(window._showToast).toHaveBeenCalledWith('已复制 13 字符');
+  });
+
+  it('uses the bridge of a macOS app from before the rename', () => {
+    const window = setup();
+    const postMessage = vi.fn();
+    window.webkit = { messageHandlers: { tmuxPanelClipboard: { postMessage } } };
+    window._copyToClipboard('old app');
+    expect(postMessage).toHaveBeenCalledWith({ text: 'old app' });
   });
 
   it('keeps the standard browser clipboard path unchanged', async () => {
@@ -71,9 +79,9 @@ describe('macOS native clipboard bridge', () => {
   });
 
   it('registers the same bridge in both terminal entry points and WKWebView', () => {
-    expect(standaloneSource).toContain('tmuxPanelClipboard');
+    expect(standaloneSource).toContain('anymuxClipboard');
     expect(standaloneSource).toContain("nativeHandler.postMessage({ text: String(text) })");
-    expect(webViewSource).toContain('clipboardHandlerName = "tmuxPanelClipboard"');
+    expect(webViewSource).toContain('clipboardHandlerName = "anymuxClipboard"');
     expect(webViewSource).toContain('NSPasteboard.general');
     expect(webViewSource).toContain('text.utf8.count <= Self.maximumClipboardBytes');
   });

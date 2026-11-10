@@ -28,7 +28,7 @@ async function fixture() {
   const runtime = createEnterpriseRuntime({ home, port: 0, client, fetchImpl });
   runtimes.push(runtime);
   const base = await runtime.start();
-  const config = JSON.parse(await readFile(join(home, '.config/tmux-web-panel/enterprise-relay.json'), 'utf8'));
+  const config = JSON.parse(await readFile(join(home, '.config/anymux/enterprise-relay.json'), 'utf8'));
   const post = (path, body, headers = {}) => fetch(base + path, { method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': config.key, ...headers }, body: JSON.stringify(body) });
   return { home, database, client, fetchImpl, runtime, base, config, post };
@@ -70,7 +70,7 @@ describe('embedded enterprise runtime', () => {
     expect(rows.map((row) => row.is_current)).toEqual([0, 0]);
     expect(JSON.parse(rows.find((row) => row.app_type === 'claude').meta).apiFormat).toBe('anthropic');
     expect(JSON.parse(rows.find((row) => row.app_type === 'claude').settings_config).env.ANTHROPIC_AUTH_TOKEN).toBe(config.key);
-    if (POSIX_MODES) expect((await stat(join(home, '.config/tmux-web-panel/enterprise-relay.json'))).mode & 0o777).toBe(0o600);
+    if (POSIX_MODES) expect((await stat(join(home, '.config/anymux/enterprise-relay.json'))).mode & 0o777).toBe(0o600);
     await expect(stat(join(home, '.codex/auth.json'))).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(runtime.prepare('qoder', MODEL.id)).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
     client.checkQuota.mockResolvedValue({ available: false });

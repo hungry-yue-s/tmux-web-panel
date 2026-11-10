@@ -507,7 +507,7 @@ describe('file preview dock tabs', () => {
 
     const postMessage = vi.fn();
     dom.window.webkit = {
-      messageHandlers: { tmuxPanelClipboard: { postMessage } },
+      messageHandlers: { anymuxClipboard: { postMessage } },
     };
     const getContext = vi.spyOn(dom.window.HTMLCanvasElement.prototype, 'getContext')
       .mockReturnValue({ drawImage: vi.fn(), fillRect: vi.fn(), fillStyle: '' });
@@ -1232,13 +1232,13 @@ describe('file preview dock tabs', () => {
     const state = dom.window.localStorage.getItem(dead);
     dom.window.localStorage.setItem(live, state);
     dom.window.localStorage.setItem(remote, state);
-    dom.window.localStorage.setItem('twp_blocks_v1:local', 'tool-state');
+    dom.window.localStorage.setItem('anymux_blocks_v1:local', 'tool-state');
     preview.reconcileWorkspace('local', { provider: 'tmux', instanceId: INSTANCE, complete: true,
       sessions: [{ id: '$other', windows: [{ id: '@7' }] }] });
     expect(dom.window.localStorage.getItem(dead)).toBeNull();
     expect(dom.window.localStorage.getItem(live)).toBe(state);
     expect(dom.window.localStorage.getItem(remote)).toBe(state);
-    expect(dom.window.localStorage.getItem('twp_blocks_v1:local')).toBe('tool-state');
+    expect(dom.window.localStorage.getItem('anymux_blocks_v1:local')).toBe('tool-state');
     expect(dom.window.document.querySelector('.fp-dock')).toBeNull();
     await preview.switchDockContext('local', '@8', INSTANCE);
     expect(dom.window.localStorage.getItem(dead)).toBeNull(); // switching cannot recreate it

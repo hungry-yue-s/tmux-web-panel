@@ -119,7 +119,7 @@ ccstatusline 中的当前上下文比例、Token 速度、当前模型和压缩�
 5. 数据源失败必须局部降级，并保留最后一次成功快照及采集时间。
 6. 切换始终由用户确认，影响范围明确为“新会话”；历史会话身份不随当前选择变化。
 
-建议的面板自有注册表为 `~/.config/tmux-web-panel/agent-profiles.json`。账号和 Provider 数量很少，使用带文件锁和原子替换的 JSON 足够；用量历史增长到需要索引后，再单独使用 SQLite。兼容导入应保留 `source` 和外部 ID，避免重复导入，但外部数据库结构不成为内部模型。
+建议的面板自有注册表为 `~/.config/anymux/agent-profiles.json`。账号和 Provider 数量很少，使用带文件锁和原子替换的 JSON 足够；用量历史增长到需要索引后，再单独使用 SQLite。兼容导入应保留 `source` 和外部 ID，避免重复导入，但外部数据库结构不成为内部模型。
 
 ## 可迁移功能清单
 
@@ -194,7 +194,7 @@ CC Switch 支持自定义 JavaScript 查询，但本项目首版只允许声明�
 
 ## 数据源边界
 
-- Codex：账号仓库来自 `~/.codex-switcher/accounts.json`，当前认证来自 `~/.codex/auth.json`；账号与智谱 Provider 的暖号开关、成功时间、来源和最后成功窗口键分区保存在 `~/.config/tmux-web-panel/agent-warmups.json`，不含 Token、API Key 或响应内容。
+- Codex：账号仓库来自 `~/.codex-switcher/accounts.json`，当前认证来自 `~/.codex/auth.json`；账号与智谱 Provider 的暖号开关、成功时间、来源和最后成功窗口键分区保存在 `~/.config/anymux/agent-warmups.json`，不含 Token、API Key 或响应内容。
 - CC Switch 兼容数据：读取 `~/.cc-switch/cc-switch.db` 和 `settings.json`，但不要求 CC Switch 安装或运行。Provider 切换由面板内置逻辑完成。代理接管模式下会拒绝直接写入，避免与代理的 live config 所有权冲突。
 - Qoder：统计 `~/.qoder/tasks`，并解析 `~/.qoder/projects/*/*.jsonl` 的会话、模型及日志中确实存在的 Token；当前 Qoder 日志没有 Token 字段时显示 `—`，不以 `0` 冒充真实消耗。macOS 拒绝读取日志时降级为文件元数据。实时 Credits 由用户在面板显式配置网页 Cookie；不扫描浏览器、钥匙串或其他进程。
 - ChatGPT 账号额度请求失败时保留账号和本地使用数据，不阻断整个面板。

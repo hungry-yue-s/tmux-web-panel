@@ -10,9 +10,9 @@
 
 **严禁使用 systemd 以外的方式启停服务。**
 
-- 重启：`systemctl --user restart tmux-web-panel`
-- 状态：`systemctl --user status tmux-web-panel`
-- 日志：`journalctl --user -u tmux-web-panel -f`
+- 重启：`systemctl --user restart anymux`
+- 状态：`systemctl --user status anymux`
+- 日志：`journalctl --user -u anymux -f`
 
 禁止的操作：
 - `kill` / `pkill` 进程后手动 `node bin/panel.js`（或旧的 `node server/index.js`）
@@ -23,9 +23,9 @@
 
 **静态文件改动不需要重启。** `ui` 插件挂载各插件的 `client/` 目录并组装主页面：HTML 每次都校验（`no-cache` + ETag），并在渲染时把本地 JS/CSS/字体 URL 改写成带内容哈希的 `?h=...`，这些 URL 可缓存一年。所以改 `plugins/*/client/` 下的文件后用户刷新浏览器即生效，不再需要手动改 `?v=`——只有改服务端代码（`plugins/*/index.js`、`lib/`、`kernel/`）或 `page.json`/`profiles/` 才需要 `systemctl --user restart`。动态加载的本地资源不经过改写，只走 `no-cache` 校验。
 
-**终端字体按 unicode-range 切片。** 完整字体每个字重约 6 MB，页面不得预载或引用 `TmuxPanelMono-*.woff2`（它们只是 `scripts/build-font-subsets.mjs` 的输入）。首屏只预载核心片。字体和渲染器都在打开终端 socket 之前定好，attach 带的就是最终网格（`_mountTerminal` 的 `rendererReady`），不要改回首个输出之后再换字体：那会改变网格，在 Windows 上等于再 attach 一次并清屏。终端最多等核心片 `CORE_FONT_WAIT_MS`，超时后这次挂载保持系统等宽字体，核心片晚到也不自动切换（`_applyLateCoreFont`），要等下一次真实尺寸变化或下一次挂载才用上。中文和 Nerd 图标片由 `plugins/terminal/client/js/terminal-fonts.js` 按需加载：xterm 画在 canvas 上不会触发 unicode-range 加载，必须经 `TerminalFonts.ensure()`，切片到达后调用 `term.clearTextureAtlas()`。切片和 `plugins/terminal/client/css/terminal-fonts.css`、`plugins/terminal/client/js/terminal-fonts-data.js` 都是生成文件，只有源字体变化时才重新生成并提交。
+**终端字体按 unicode-range 切片。** 完整字体每个字重约 6 MB，页面不得预载或引用 `AnymuxMono-*.woff2`（它们只是 `scripts/build-font-subsets.mjs` 的输入）。首屏只预载核心片。字体和渲染器都在打开终端 socket 之前定好，attach 带的就是最终网格（`_mountTerminal` 的 `rendererReady`），不要改回首个输出之后再换字体：那会改变网格，在 Windows 上等于再 attach 一次并清屏。终端最多等核心片 `CORE_FONT_WAIT_MS`，超时后这次挂载保持系统等宽字体，核心片晚到也不自动切换（`_applyLateCoreFont`），要等下一次真实尺寸变化或下一次挂载才用上。中文和 Nerd 图标片由 `plugins/terminal/client/js/terminal-fonts.js` 按需加载：xterm 画在 canvas 上不会触发 unicode-range 加载，必须经 `TerminalFonts.ensure()`，切片到达后调用 `term.clearTextureAtlas()`。切片和 `plugins/terminal/client/css/terminal-fonts.css`、`plugins/terminal/client/js/terminal-fonts-data.js` 都是生成文件，只有源字体变化时才重新生成并提交。
 
-**Windows** 上服务管理器是计划任务（`\tmux-web-panel\tmux-web-panel` 与 `\tmux-web-panel\tmux-server`），统一经 `scripts/install-service.ps1` 操作：`restart` / `status` / `logs`（加 `-Tmux` 针对 tmux server）。同样禁止手动 `node bin/panel.js` 或直接 `Stop-Process` 后自行启动——AUTH/TLS/端口配置在 `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`，只由 `scripts/windows/run-panel.ps1` 注入。`restart -Tmux` 会结束 tmux server 和所有会话；只更新包装脚本 `run-tmux-server.ps1` 时用 `reload`，它不碰 tmux。
+**Windows** 上服务管理器是计划任务（`\anymux\anymux` 与 `\anymux\tmux-server`），统一经 `scripts/install-service.ps1` 操作：`restart` / `status` / `logs`（加 `-Tmux` 针对 tmux server）。同样禁止手动 `node bin/panel.js` 或直接 `Stop-Process` 后自行启动——AUTH/TLS/端口配置在 `%USERPROFILE%\.config\anymux\windows-service.json`，只由 `scripts/windows/run-panel.ps1` 注入。`restart -Tmux` 会结束 tmux server 和所有会话；只更新包装脚本 `run-tmux-server.ps1` 时用 `reload`，它不碰 tmux。
 
 ## 多服务器：Hub 与 Node
 
@@ -34,29 +34,38 @@
 不变量：
 
 - **Node 的 API 不带 serverId**（`/api/workspace`、`/api/metrics/*`、`/api/files/*`、`/ws/terminal/:paneId` 等）。要访问其它机器，一律走 Hub 的 `/n/:serverId`（`lib/hub/proxy.js`）；前端统一用 `Api.nodeUrl` / `Api.activeUrl` 拼路径，不要再写死 `/api/servers/:id/...` 这种按服务器分的机器接口。
-- **对已装 Node 的机器，日常功能由 Node 本地执行**。SSH 用于 sftp 读取配对文件 `~/.config/tmux-web-panel/node.json`，以及维持一条 `ssh -N -L` 端口转发（`lib/transport/ssh-connection.js`、`lib/hub/node-link.js`）。唯一的安装维护例外是用户显式触发的 `NodeInstaller`：完整 Node 安装，或固定的 Mosh 组件准备脚本；组件补装不打包替换应用、不重启服务。不得把此例外用于 Git、文件、监控或任意远程命令入口。
+- **对已装 Node 的机器，日常功能由 Node 本地执行**。SSH 用于 sftp 读取配对文件 `~/.config/anymux/node.json`，以及维持一条 `ssh -N -L` 端口转发（`lib/transport/ssh-connection.js`、`lib/hub/node-link.js`）。唯一的安装维护例外是用户显式触发的 `NodeInstaller`：完整 Node 安装，或固定的 Mosh 组件准备脚本；组件补装不打包替换应用、不重启服务。不得把此例外用于 Git、文件、监控或任意远程命令入口。
 - **基础模式**（能 SSH 登录、没装面板，`lib/hub/basic/`）只提供工作区和终端。发往远端的只能是 `sh -s`（脚本走 stdin），或单个单词的 pty 命令（经 sftp 上传的脚本路径）；不要拼接带参数的远程命令行，因为 Windows OpenSSH 在 pty 模式下会把它拆碎。文件、监控等功能不要在基础模式里另写远程实现，那些功能的入口是“安装 Node”（`lib/hub/node-installer.js`、`scripts/remote/install-node.*`）。
 - **只在 Hub 上处理、不转发的接口**：`/api/auth`、`/api/servers`、`/api/plugins`、`/api/managed-resources`、`/api/share`（`isRelayable` / `Api.isHubPath` 两处须一致）。
 - **node token**（配对文件里的令牌）只能用来访问那台 Node 自己的 API。`/n/` 转发入口只接受登录令牌，防止一个 Hub 经另一个 Hub 链式转发。
 - HTTPS Node 按配对文件里的证书指纹固定，升级请求（WebSocket）也走同样的固定证书 agent（`pinnedAgent`）；不要退回 `rejectUnauthorized: false` 却不校验指纹。Node 在恢复的 TLS 会话上报告空证书：`pinnedAgent` 只缓存通过指纹的连接的会话，恢复成功即视为同一证书；不要换成 https.Agent 自带的会话缓存（它会缓存未校验的会话，恢复时又过不了指纹检查，进而重置整条链路）。
 - **直连是可选的**（`transport.api` / `transport.terminal` = `direct`，默认 `ssh`）：只在 TLS + 指纹固定下进行，令牌不离开 Hub，检查通过才用，失败回到转发；直连失败不得重置 SSH 链路。配对和健康检查始终走 SSH。
-- **Mosh 终端是可选实验**（`transport.terminal = 'mosh'`，见 docs/architecture.md）：`/api/mosh` 只认 node token 加 `x-twp-hub-call`，转发时剥掉该头且不转发该路径，密钥不进浏览器和日志。Windows 上必须看到 `list-clients` 里出现该 mosh-server 的子进程才释放客户端启动队列，不得改回“CONNECT 后等固定时间”。结束进程前核对记录的身份（`lib/mosh/processes.js`），不凭历史 PID；Node 没确认清理干净时 Hub 不得回退到另一个 attach。由 Node 拉起的 tmux（mosh-server 的命令）必须删掉继承的 `TMUX`/`TMUX_PANE`。Windows 不作 Mosh 客户端（ENV-6）。
+- **Mosh 终端是可选实验**（`transport.terminal = 'mosh'`，见 docs/architecture.md）：`/api/mosh` 只认 node token 加 `x-anymux-hub-call`，转发时剥掉该头且不转发该路径，密钥不进浏览器和日志。Windows 上必须看到 `list-clients` 里出现该 mosh-server 的子进程才释放客户端启动队列，不得改回“CONNECT 后等固定时间”。结束进程前核对记录的身份（`lib/mosh/processes.js`），不凭历史 PID；Node 没确认清理干净时 Hub 不得回退到另一个 attach。由 Node 拉起的 tmux（mosh-server 的命令）必须删掉继承的 `TMUX`/`TMUX_PANE`。Windows 不作 Mosh 客户端（ENV-6）。
+
+## 旧名兼容（tmux-web-panel → Anymux）
+
+项目原名 tmux-web-panel（缩写 twp，原生 App 叫 Tmux Panel）。旧安装、未升级的 Hub/Node 和旧版原生 App 还带着旧名字，所以新代码**读两套名字、只写新名字**，对照表见 [docs/architecture.md](docs/architecture.md)「改名兼容」。不变量：
+
+- 不得删除读旧名的兼容代码：`lib/legacy-names.js`（环境变量、目录）、`scripts/legacy-env.sh`、`x-twp-*` 请求头、`@twp-*` tmux 选项、`legacy-storage.js`、旧的托管标记和原生桥名。
+- 应用目录一律经 `appDir()` / `anymux_dir` 取，不要再写死 `~/.config/anymux`：迁移没完成时旧目录才是真的。
+- Windows 上旧目录只由 `install-service.ps1` 迁移（`Move-LegacyInstallation`），面板进程不碰：计划任务按路径引用设置文件，tmux 也占着旧目录里的日志。迁移只停旧 tmux 的包装脚本，不得结束 tmux。
+- macOS 桌面版的旧安装继续用旧标签和 `/tmp/tmux-panel-*` socket 目录，不得替它改名。
 
 ## tmux server 守护与会话持久化
 
-Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.tmux-server.plist`；它们都由 `install-service.sh` 生成在用户服务目录中。这是为了让重启电脑后网页面板立刻能看到上次保存的会话。
+Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.anymux.tmux-server.plist`；它们都由 `install-service.sh` 生成在用户服务目录中。这是为了让重启电脑后网页面板立刻能看到上次保存的会话。
 
 工作链路：
 1. 开机 → tmux companion service 跑 `tmux start-server`（macOS 为前台模式 `tmux -D`，Windows 为 `setsid -w tmux -D`）→ 加载 `~/.tmux.conf`
-2. 面板服务启动，“会话保护”（`lib/session-protection/`）每 20 秒看一次 tmux：第一次看到某个 server 实例时，如果它没有会话或刚启动（2 分钟内），就用 `last` 快照自动恢复它还缺的 sessions/windows/panes，并在该 server 上记下 `@twp-restored-at`（页面据此提示“已自动恢复”）
+2. 面板服务启动，“会话保护”（`lib/session-protection/`）每 20 秒看一次 tmux：第一次看到某个 server 实例时，如果它没有会话或刚启动（2 分钟内），就用 `last` 快照自动恢复它还缺的 sessions/windows/panes，并在该 server 上记下 `@anymux-restored-at`（页面据此提示“已自动恢复”）
 3. 面板每 5 分钟调用项目自带的 tmux-resurrect（`vendor/tmux-plugins/tmux-resurrect`）的 `save.sh` 保存；快照仍是 resurrect 标准格式，在 `~/.local/share/tmux/resurrect/`
 4. 网页打开 → `lib/tmux.js` 的 `listSessions()` 跑 `tmux list-sessions`，看到所有 restored 会话
 
-设置在每台服务器的“会话”页面（`/api/session-protection`，经 `/n/:serverId` 远程同样可用），存于 `~/.config/tmux-web-panel/session-protection.json`。不用 tmux-continuum，也不需要往 `~/.tmux.conf` 加插件配置。
+设置在每台服务器的“会话”页面（`/api/session-protection`，经 `/n/:serverId` 远程同样可用），存于 `~/.config/anymux/session-protection.json`。不用 tmux-continuum，也不需要往 `~/.tmux.conf` 加插件配置。
 
 不变量：
 
-- **部署必须使用 `vendor/tmux` 子模块构建的 tmux**：`install-service.sh install` 会调用 `scripts/build-tmux.sh`，原子部署到 `~/.local/share/tmux-web-panel/bin/tmux`，不得退回系统 `PATH` 中的 tmux
+- **部署必须使用 `vendor/tmux` 子模块构建的 tmux**：`install-service.sh install` 会调用 `scripts/build-tmux.sh`，原子部署到 `~/.local/share/anymux/bin/tmux`，不得退回系统 `PATH` 中的 tmux
   - 唯一例外是 Windows：使用 MSYS2 打包的 tmux（`C:\msys64\usr\bin\tmux.exe`，带 MSYS 运行时补丁），由 `lib/msys.js` 解析；tmux 进程必须带 `MSYS=noglob`，否则 MSYS 会把 `#{session_id}` 这类参数做花括号展开。pane 路径是 MSYS 路径（`/home/me`、`/c/...`），读写文件前经 `toNativePath` 转换
 - **`~/.tmux.conf` 必须保留 `set -g exit-empty off`**：否则开机启动的空 server 等不到面板来恢复就自己退出了
 - **不要在 `tmux-server.service` 里预创建会话**（如 `tmux new-session -d -s main`）：同名会话不会被恢复，启动超过 2 分钟后才看到的 server 也不再恢复

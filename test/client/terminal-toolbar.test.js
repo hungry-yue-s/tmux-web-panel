@@ -42,7 +42,7 @@ describe('terminal pop-out routing', () => {
       location: { href: 'https://panel.example/?theme=ivory&standalone=status#/terminal/local' },
       Router: { current: () => route, serialize: vi.fn(actualRouter.serialize) },
       open: vi.fn(),
-      webkit: native ? { messageHandlers: { tmuxPanelOpenWindow: { postMessage: nativePost } } } : null,
+      webkit: native ? { messageHandlers: { anymuxOpenWindow: { postMessage: nativePost } } } : null,
     };
     const toast = vi.fn();
     const code = terminalSource.slice(terminalSource.indexOf('  // Pop-out button'), terminalSource.indexOf('  // Fullscreen button'));

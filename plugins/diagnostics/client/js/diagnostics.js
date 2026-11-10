@@ -95,8 +95,9 @@
         if (response.headers && response.headers.get) {
           var size = response.headers.get('Content-Length');
           if (size !== null && /^\d+$/.test(size)) data.responseBytes = Number(size);
-          data.requestId = safeId(response.headers.get('X-TWP-Diagnostic-Id'));
-          data.parentRequestId = safeId(response.headers.get('X-TWP-Hub-Diagnostic-Id'));
+          // A Node installed before the rename answers with X-TWP-Diagnostic-Id; the Hub's own id is in the other header.
+          data.requestId = safeId(response.headers.get('X-TWP-Diagnostic-Id') || response.headers.get('X-Anymux-Diagnostic-Id'));
+          data.parentRequestId = safeId(response.headers.get('X-Anymux-Hub-Diagnostic-Id'));
         }
       },
       finish: function (error) {

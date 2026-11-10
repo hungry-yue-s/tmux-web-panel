@@ -19,7 +19,7 @@ function setup(state) {
   dom.window.state = state;
   dom.window.webkit = {
     messageHandlers: {
-      tmuxPanelNotification: { postMessage },
+      anymuxNotification: { postMessage },
     },
   };
   dom.window.eval(source);

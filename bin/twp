@@ -1,4 +1,4 @@
 #!/bin/sh
-# Wrapper so `twp` works from PATH; see twp.mjs.
+# The pre-rename name of `anymux`; kept so an existing ~/.local/bin/twp link still works.
 here=$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")
-exec node "$here/twp.mjs" "$@"
+exec node "$here/anymux.mjs" "$@"

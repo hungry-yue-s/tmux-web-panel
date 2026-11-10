@@ -4,12 +4,12 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const source = readFileSync(
-  repoPath('macos/TmuxPanel/Sources/TmuxPanel/PanelWebView.swift'),
+  repoPath('macos/Anymux/Sources/Anymux/PanelWebView.swift'),
   'utf8',
 );
-const endpointSource = readFileSync(repoPath('macos/TmuxPanel/Sources/TmuxPanel/PanelEndpoint.swift'), 'utf8');
-const modelSource = readFileSync(repoPath('macos/TmuxPanel/Sources/TmuxPanel/AppModel.swift'), 'utf8');
-const appSource = readFileSync(repoPath('macos/TmuxPanel/Sources/TmuxPanel/TmuxPanelApp.swift'), 'utf8');
+const endpointSource = readFileSync(repoPath('macos/Anymux/Sources/Anymux/PanelEndpoint.swift'), 'utf8');
+const modelSource = readFileSync(repoPath('macos/Anymux/Sources/Anymux/AppModel.swift'), 'utf8');
+const appSource = readFileSync(repoPath('macos/Anymux/Sources/Anymux/AnymuxApp.swift'), 'utf8');
 const previewSource = readFileSync('plugins/files/client/js/file-preview.js', 'utf8');
 const terminalSource = readFileSync('plugins/terminal/client/js/terminal.js', 'utf8');
 const indexSource = composedIndex();
@@ -56,11 +56,11 @@ describe('macOS native WebView navigation', () => {
   });
 
   it('uses the native window bridge for previews and terminal pop-outs', () => {
-    expect(source).toContain('openWindowHandlerName = "tmuxPanelOpenWindow"');
+    expect(source).toContain('openWindowHandlerName = "anymuxOpenWindow"');
     expect(source).toContain('html.utf8.count <= Self.maximumWindowHTMLBytes');
-    expect(previewSource).toContain('handlers.tmuxPanelOpenWindow');
+    expect(previewSource).toContain('handlers.anymuxOpenWindow');
     expect(previewSource).toContain('html: out.html');
-    expect(terminalSource).toContain('messageHandlers.tmuxPanelOpenWindow');
+    expect(terminalSource).toContain('messageHandlers.anymuxOpenWindow');
     expect(indexSource).toMatch(/src="\/js\/file-preview\.js\?v=\d+"/);
     expect(indexSource).toMatch(/src="\/js\/terminal\.js\?v=\d+"/);
   });
@@ -69,6 +69,6 @@ describe('macOS native WebView navigation', () => {
     expect(source).toContain('maximumClipboardImageBytes = 16_777_216');
     expect(source).toContain('body["pngBase64"] as? String');
     expect(source).toContain('pasteboard.setData(data, forType: .png)');
-    expect(previewSource).toContain('handlers.tmuxPanelClipboard.postMessage');
+    expect(previewSource).toContain('clipboard.postMessage({ pngBase64');
   });
 });

@@ -21,7 +21,7 @@ let app;
 let events;
 
 beforeAll(async () => {
-  dir = await realpath(await mkdtemp(join(tmpdir(), 'twp-blocks-')));
+  dir = await realpath(await mkdtemp(join(tmpdir(), 'anymux-blocks-')));
   const roots = [apiPath(dir)];
   const pathGuard = createPathGuard(roots);
   events = [];
@@ -349,7 +349,7 @@ describe('file save', () => {
   });
 });
 
-describe('twp open and notebooks', () => {
+describe('anymux open and notebooks', () => {
   it('broadcasts files and urls to the browsers', async () => {
     const native = join(dir, 'open.txt');
     await writeFile(native, 'x');

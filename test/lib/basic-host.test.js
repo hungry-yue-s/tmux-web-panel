@@ -85,7 +85,7 @@ describe('attach script', () => {
     expect(script).toContain("exec tmux -u select-pane -t '%12' \\; if-shell -F -t '%12' '#{window_zoomed_flag}' '' 'resize-pane -Z -t %12' \\; attach-session -d -t '%12'");
     expect(attachScript('%12', true)).toContain("'#{window_zoomed_flag}' 'resize-pane -Z -t %12' ''");
     // One remote word: survives Windows OpenSSH pasting it unquoted.
-    expect(attachScriptName('%12', true)).toBe('.cache/tmux-web-panel/attach-12-1');
+    expect(attachScriptName('%12', true)).toBe('.cache/anymux/attach-12-1');
   });
 
   it('refuses anything but a numeric tmux pane id', () => {
@@ -149,9 +149,9 @@ describe('BasicHost', () => {
     const first = await host.attachArgs('%3', false);
     await host.attachArgs('%3', false);
 
-    expect(first).toEqual(['-tt', 'box', '.cache/tmux-web-panel/attach-3-0']);
+    expect(first).toEqual(['-tt', 'box', '.cache/anymux/attach-3-0']);
     expect(connection.uploads).toHaveLength(1);
-    expect(connection.uploads[0]).toMatchObject({ remote: '.cache/tmux-web-panel/attach-3-0', options: { mode: '755' } });
+    expect(connection.uploads[0]).toMatchObject({ remote: '.cache/anymux/attach-3-0', options: { mode: '755' } });
     expect(connection.uploads[0].content).toBe(attachScript('%3', false));
   });
 

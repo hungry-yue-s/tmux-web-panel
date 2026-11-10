@@ -3,32 +3,53 @@ set -euo pipefail
 
 # Keep an optional sudo password out of build and service child environments.
 unset mosh_sudo_password
-mosh_sudo_password="${TWP_SUDO_PASSWORD:-}"
-unset TWP_SUDO_PASSWORD
+mosh_sudo_password="${ANYMUX_SUDO_PASSWORD:-${TWP_SUDO_PASSWORD:-}}"
+unset ANYMUX_SUDO_PASSWORD TWP_SUDO_PASSWORD
 
-# tmux-web-panel service installer
+# anymux service installer
 # Supports: Linux (systemd user service) and macOS (launchd user agent)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# TMUX_PANEL_* and other pre-rename variable names still apply.
+. "$SCRIPT_DIR/legacy-env.sh"
+
+# Anymux was installed as tmux-web-panel before the rename: same directories
+# and service names with that word. `install` moves the directories (leaving a
+# link at the old path) and replaces the old services.
+LEGACY_NAME="tmux-web-panel"
+
+# Moves ~/.config, ~/.cache, ~/.local/share (and ~/Library/Logs) /tmux-web-panel
+# to .../anymux unless that exists, and links the old path to it: a Hub of the
+# old version still reads ~/.config/tmux-web-panel/node.json over SFTP.
+migrate_legacy_dirs() {
+  local base
+  for base in "$HOME/.config" "$HOME/.cache" "$HOME/.local/share" "$HOME/Library/Logs"; do
+    if [[ -d "$base/$LEGACY_NAME" && ! -L "$base/$LEGACY_NAME" && ! -e "$base/anymux" ]]; then
+      mv "$base/$LEGACY_NAME" "$base/anymux"
+      ln -s anymux "$base/$LEGACY_NAME"
+      echo "✓ Moved $base/$LEGACY_NAME to $base/anymux (the old path links to it)"
+    fi
+  done
+}
 
 # --- Defaults (override via env) ---
-SERVICE_NAME="tmux-web-panel"
+SERVICE_NAME="anymux"
 TMUX_SERVER_SERVICE="tmux-server"
 PORT="${PORT:-7681}"
 HOST="${HOST:-0.0.0.0}"
 NODE_BIN="${NODE_BIN:-$(command -v node)}"
-TMUX_INSTALL_PREFIX="${TMUX_INSTALL_PREFIX:-$HOME/.local/share/tmux-web-panel}"
+TMUX_INSTALL_PREFIX="${TMUX_INSTALL_PREFIX:-$HOME/.local/share/anymux}"
 TMUX_BIN="$TMUX_INSTALL_PREFIX/bin/tmux"
 TLS_AUTO="${TLS_AUTO:-0}"
-TLS_DIR="${TLS_DIR:-$HOME/.config/tmux-web-panel/tls}"
+TLS_DIR="${TLS_DIR:-$HOME/.config/anymux/tls}"
 TLS_DAYS="${TLS_DAYS:-825}"
 
 usage() {
   cat <<EOF
 Usage: $0 <install|uninstall|status|logs>
 
-Installs tmux-web-panel as a user-level auto-start service.
+Installs anymux as a user-level auto-start service.
   Linux : systemd user service (~/.config/systemd/user/)
   macOS : launchd user agent   (~/Library/LaunchAgents/)
 
@@ -41,14 +62,14 @@ Environment variables:
   TLS_CERT  Path to TLS certificate     (default: none — plain HTTP)
   TLS_KEY   Path to TLS private key     (default: none — plain HTTP)
   TLS_AUTO  Generate/reuse a local certificate (1/true/yes; default: 0)
-  TLS_DIR   Auto-generated certificate directory (default: ~/.config/tmux-web-panel/tls)
+  TLS_DIR   Auto-generated certificate directory (default: ~/.config/anymux/tls)
   TLS_DAYS  Auto-generated certificate lifetime (default: 825)
   HTTP_PORT HTTP->HTTPS redirect port   (default: 7680, only when TLS set)
   NODE_BIN  Path to node                (default: auto-detect)
   TMUX_INSTALL_PREFIX Project-managed tmux install prefix
-                                      (default: ~/.local/share/tmux-web-panel)
+                                      (default: ~/.local/share/anymux)
   TMUX_BUILD_JOBS Parallel tmux build jobs (default: detected CPU count)
-  TMUX_PANEL_SKIP_MOSH 1 = skip optional Mosh component preparation
+  ANYMUX_SKIP_MOSH 1 = skip optional Mosh component preparation
 
 Examples:
   $0 install
@@ -90,9 +111,9 @@ build_project_tmux() {
 }
 
 prepare_mosh() {
-  local role="${TWP_MOSH_ROLE:-both}"
+  local role="${ANYMUX_MOSH_ROLE:-both}"
   if [[ "${NODE_ONLY:-0}" == 1 ]]; then role=server; fi
-  if ! TWP_MOSH_ROLE="$role" TWP_SUDO_PASSWORD="$mosh_sudo_password" sh "$SCRIPT_DIR/install-mosh.sh"; then
+  if ! ANYMUX_MOSH_ROLE="$role" ANYMUX_SUDO_PASSWORD="$mosh_sudo_password" sh "$SCRIPT_DIR/install-mosh.sh"; then
     echo 'Warning: optional Mosh components are not ready; continuing with SSH.' >&2
   fi
   unset mosh_sudo_password
@@ -138,7 +159,7 @@ generate_local_certificate() {
   if certificate_covers "$cert" "$key" "$hostname_value" "$lan_ip"; then
     echo "✓ Reusing TLS certificate: $cert"
   else
-    config="$(mktemp "${TMPDIR:-/tmp}/tmux-web-panel-openssl.XXXXXX")"
+    config="$(mktemp "${TMPDIR:-/tmp}/anymux-openssl.XXXXXX")"
     {
       printf '%s\n' '[req]' 'distinguished_name = dn' 'x509_extensions = v3_req' 'prompt = no'
       printf '%s\n' '[dn]' "CN = ${hostname_value}"
@@ -185,22 +206,38 @@ prepare_tls() {
 
 systemd_dir="$HOME/.config/systemd/user"
 systemd_unit="$systemd_dir/${SERVICE_NAME}.service"
+legacy_systemd_unit="$systemd_dir/${LEGACY_NAME}.service"
 tmux_server_unit="$systemd_dir/${TMUX_SERVER_SERVICE}.service"
 tmux_conf="$HOME/.tmux.conf"
+
+# The panel unit installed before the rename. tmux-server.service keeps its
+# name, so tmux and its sessions are not touched.
+retire_legacy_systemd() {
+  [[ -f "$legacy_systemd_unit" ]] || return 0
+  systemctl --user disable --now "${LEGACY_NAME}.service" 2>/dev/null || true
+  rm -f "$legacy_systemd_unit"
+  systemctl --user daemon-reload
+  echo "✓ Replaced ${LEGACY_NAME}.service with ${SERVICE_NAME}.service"
+}
+
+# status/logs before `install` has replaced the old unit.
+systemd_service_name() {
+  if [[ ! -f "$systemd_unit" && -f "$legacy_systemd_unit" ]]; then echo "$LEGACY_NAME"; else echo "$SERVICE_NAME"; fi
+}
 
 # Idempotently ensure ~/.tmux.conf has `set -g exit-empty off`.
 # Without this, the empty tmux server started by tmux-server.service exits
 # before the panel's session protection can restore into it.
 ensure_tmux_exit_empty() {
   if [[ ! -f "$tmux_conf" ]]; then
-    printf '# Added by tmux-web-panel install-service.sh: keep server alive without sessions\nset -g exit-empty off\n' > "$tmux_conf"
+    printf '# Added by anymux install-service.sh: keep server alive without sessions\nset -g exit-empty off\n' > "$tmux_conf"
     echo "✓ Created $tmux_conf with 'set -g exit-empty off'"
     return 0
   fi
   if grep -qE '^[[:space:]]*set[[:space:]]+-g[[:space:]]+exit-empty[[:space:]]+off' "$tmux_conf"; then
     return 0
   fi
-  printf '\n# Added by tmux-web-panel install-service.sh: keep server alive without sessions\nset -g exit-empty off\n' >> "$tmux_conf"
+  printf '\n# Added by anymux install-service.sh: keep server alive without sessions\nset -g exit-empty off\n' >> "$tmux_conf"
   echo "✓ Appended 'set -g exit-empty off' to $tmux_conf"
 }
 
@@ -216,12 +253,12 @@ install_tmux_server_systemd() {
 
   cat > "$tmux_server_unit" <<UNIT
 [Unit]
-Description=tmux server (keep-alive for tmux-web-panel)
+Description=tmux server (keep-alive for anymux)
 Documentation=https://github.com/tmux-plugins/tmux-resurrect
-# Do NOT add After=default.target here. tmux-web-panel is WantedBy=default.target and
+# Do NOT add After=default.target here. anymux is WantedBy=default.target and
 # After=tmux-server.service, so ordering this unit after default.target forms a cycle
 # (web-panel -> tmux-server -> default.target -> web-panel) that systemd breaks at boot
-# by DROPPING tmux-web-panel's start job. tmux-server must be ready BEFORE default.target.
+# by DROPPING anymux's start job. tmux-server must be ready BEFORE default.target.
 
 [Service]
 Type=oneshot
@@ -252,6 +289,7 @@ uninstall_tmux_server_systemd() {
 install_systemd() {
   mkdir -p "$systemd_dir"
 
+  retire_legacy_systemd
   install_tmux_server_systemd
 
   # systemd user services do not inherit the interactive shell PATH. Include
@@ -282,7 +320,7 @@ install_systemd() {
 
   cat > "$systemd_unit" <<UNIT
 [Unit]
-Description=tmux web panel
+Description=Anymux
 After=network.target ${TMUX_SERVER_SERVICE}.service
 Wants=${TMUX_SERVER_SERVICE}.service
 
@@ -318,17 +356,18 @@ uninstall_systemd() {
   systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
   systemctl --user disable "$SERVICE_NAME" 2>/dev/null || true
   rm -f "$systemd_unit"
+  retire_legacy_systemd
   uninstall_tmux_server_systemd
   systemctl --user daemon-reload
   echo "✓ Removed systemd user service"
 }
 
 status_systemd() {
-  systemctl --user status "$SERVICE_NAME" --no-pager || true
+  systemctl --user status "$(systemd_service_name)" --no-pager || true
 }
 
 logs_systemd() {
-  journalctl --user -u "$SERVICE_NAME" --no-pager -n 50 -f
+  journalctl --user -u "$(systemd_service_name)" --no-pager -n 50 -f
 }
 
 # ---- macOS (launchd) ----
@@ -339,6 +378,26 @@ launchd_label="com.${SERVICE_NAME}"
 launchd_log_dir="$HOME/Library/Logs/${SERVICE_NAME}"
 tmux_launchd_plist="$launchd_dir/com.${SERVICE_NAME}.tmux-server.plist"
 tmux_launchd_label="com.${SERVICE_NAME}.tmux-server"
+legacy_launchd_plist="$launchd_dir/com.${LEGACY_NAME}.plist"
+legacy_tmux_launchd_plist="$launchd_dir/com.${LEGACY_NAME}.tmux-server.plist"
+
+# The agents installed before the rename. Unloading the old tmux agent ends its
+# server, exactly as reinstalling the tmux agent always has; the new agent
+# starts a server and session protection restores the saved sessions into it.
+retire_legacy_launchd() {
+  local plist
+  for plist in "$legacy_launchd_plist" "$legacy_tmux_launchd_plist"; do
+    [[ -f "$plist" ]] || continue
+    launchctl unload "$plist" 2>/dev/null || true
+    rm -f "$plist"
+    echo "✓ Removed the pre-rename agent $(basename "$plist")"
+  done
+}
+
+# status before `install` has replaced the old agent.
+launchd_service_label() {
+  if [[ ! -f "$launchd_plist" && -f "$legacy_launchd_plist" ]]; then echo "com.${LEGACY_NAME}"; else echo "$launchd_label"; fi
+}
 
 install_tmux_server_launchd() {
   if [[ -z "$TMUX_BIN" ]]; then
@@ -395,6 +454,8 @@ uninstall_tmux_server_launchd() {
 
 install_launchd() {
   mkdir -p "$launchd_dir" "$launchd_log_dir"
+
+  retire_legacy_launchd
 
   # Load the tmux server before the panel. The panel then restores the saved
   # sessions into it as it starts, instead of the first API request
@@ -479,12 +540,13 @@ PLIST
 uninstall_launchd() {
   launchctl unload "$launchd_plist" 2>/dev/null || true
   rm -f "$launchd_plist"
+  retire_legacy_launchd
   uninstall_tmux_server_launchd
   echo "✓ Removed launchd user agent"
 }
 
 status_launchd() {
-  launchctl list | grep "$launchd_label" || echo "Service not loaded"
+  launchctl list | grep "$(launchd_service_label)" || echo "Service not loaded"
 }
 
 logs_launchd() {
@@ -513,6 +575,7 @@ fi
 
 case "$action" in
   install)
+    migrate_legacy_dirs
     check_dependencies
     build_project_tmux
     prepare_tls
@@ -522,6 +585,7 @@ case "$action" in
     echo "Service will auto-start on login. Listening on ${HOST}:${PORT}"
     ;;
   cert)
+    migrate_legacy_dirs
     TLS_AUTO=1
     generate_local_certificate
     ;;

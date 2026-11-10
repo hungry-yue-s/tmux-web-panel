@@ -5,7 +5,7 @@
 //   status/workspace-changed (revision)   a workspace mutation
 //   status/server-status (status)         a server's health changed
 //   status/notifications (notifications)  new notices from agent events
-//   status/event (event)                  anything else for open pages (`twp open`)
+//   status/event (event)                  anything else for open pages (`anymux open`)
 
 import { StatusMonitor } from '../../lib/monitor.js';
 

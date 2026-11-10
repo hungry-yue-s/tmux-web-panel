@@ -32,7 +32,7 @@ describe('install-agent-hooks', () => {
       for (const [agent, config] of [['qoder', qoder], ['codex', codex]]) {
         for (const event of EVENTS) {
           const found = (config.hooks[event] || []).some((entry) =>
-            (entry.hooks || []).some((hook) => hook.name === `tmux-web-panel-${agent}-${event}`),
+            (entry.hooks || []).some((hook) => hook.name === `anymux-${agent}-${event}`),
           );
           expect(found).toBe(true);
         }
@@ -67,13 +67,43 @@ describe('install-agent-hooks', () => {
       const qoderDir = join(home, '.qoder');
       await mkdir(qoderDir, { recursive: true });
       await writeFile(join(qoderDir, 'settings.json'),
-        '{"hooks":{"Stop":[{"matcher":"*","hooks":[{"name":"tmux-web-panel-Stop","type":"command","command":"old"}]}]}}\n');
+        '{"hooks":{"Stop":[{"matcher":"*","hooks":[{"name":"anymux-Stop","type":"command","command":"old"}]}]}}\n');
 
       await runInstaller(home, 'qoder');
       const qoder = await readJson(join(home, '.qoder', 'settings.json'));
       const stopHooks = (qoder.hooks.Stop || []).flatMap((entry) => entry.hooks || [])
-        .filter((hook) => /^tmux-web-panel-(qoder-)?Stop$/.test(hook.name));
+        .filter((hook) => /^anymux-(qoder-)?Stop$/.test(hook.name));
       expect(stopHooks).toHaveLength(1);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('replaces hooks installed under the old tmux-web-panel names, and removes them on uninstall', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'agent-hooks-'));
+    try {
+      const legacy = (name) => ({ matcher: '*', hooks: [{ name, type: 'command', command: 'old' }] });
+      const codexDir = join(home, '.codex');
+      await mkdir(codexDir, { recursive: true });
+      await writeFile(join(codexDir, 'hooks.json'), JSON.stringify({ hooks: {
+        Stop: [legacy('tmux-web-panel-codex-Stop'), legacy('someone-else')],
+      } }));
+      const qoderDir = join(home, '.qoder');
+      await mkdir(qoderDir, { recursive: true });
+      await writeFile(join(qoderDir, 'settings.json'), JSON.stringify({ hooks: { Stop: [legacy('tmux-web-panel-Stop')] } }));
+
+      await runInstaller(home, 'all');
+      for (const [file, agent] of [[join(codexDir, 'hooks.json'), 'codex'], [join(qoderDir, 'settings.json'), 'qoder']]) {
+        const text = await readFile(file, 'utf8');
+        expect(text).not.toContain('tmux-web-panel-');
+        const names = ((await readJson(file)).hooks.Stop || []).flatMap((entry) => entry.hooks.map((hook) => hook.name));
+        expect(names.filter((name) => name === `anymux-${agent}-Stop`)).toHaveLength(1);
+      }
+      expect(JSON.stringify(await readJson(join(codexDir, 'hooks.json')))).toContain('someone-else');
+
+      await writeFile(join(codexDir, 'hooks.json'), JSON.stringify({ hooks: { Stop: [legacy('tmux-web-panel-codex-Stop')] } }));
+      await runInstaller(home, 'codex', '--uninstall');
+      expect((await readJson(join(codexDir, 'hooks.json'))).hooks).toEqual({});
     } finally {
       await rm(home, { recursive: true, force: true });
     }

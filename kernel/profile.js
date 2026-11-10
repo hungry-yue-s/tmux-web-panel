@@ -2,7 +2,7 @@
 //
 // A profile is an ordered list of plugin entries. Patches are applied on top of
 // it, in order: the home patch (<home>/patch.yml), then each --patch file. The
-// result is the whole application — `twp --dump-config` prints it, and any
+// result is the whole application — `bin/panel.js --dump-config` prints it, and any
 // entry it prints can be replaced by a patch. Nothing is assembled anywhere
 // else: no plugin is mounted that this list does not name.
 

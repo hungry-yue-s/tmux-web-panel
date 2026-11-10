@@ -176,7 +176,7 @@ describe('AppShell sidebar tree', () => {
       id: '$8', name: '环境部署', active: true,
       windows: [
         // A node not yet updated still sends the path MSYS2 tmux reports.
-        { id: '@1', index: 1, name: 'Tmux-panel', active: true, panes: [{ id: '%1', command: 'C:\\\\Users\\\\me\\\\.local\\\\bin\\\\claude.exe' }] },
+        { id: '@1', index: 1, name: 'Anymux', active: true, panes: [{ id: '%1', command: 'C:\\\\Users\\\\me\\\\.local\\\\bin\\\\claude.exe' }] },
         { id: '@0', index: 0, name: 'bash', panes: [{ id: '%0', command: 'bash' }] },
       ],
     }] });
@@ -184,7 +184,7 @@ describe('AppShell sidebar tree', () => {
     ctx.Shell.render();
     const rows = [...ctx.document.querySelectorAll('.tree-window-row')];
     const named = rows.find((row) => row.dataset.window === '@1');
-    expect(named.querySelector('.tree-item-name').textContent).toBe('Tmux-panel');
+    expect(named.querySelector('.tree-item-name').textContent).toBe('Anymux');
     expect(named.querySelector('.cmd').textContent).toBe('claude');
     expect(named.textContent).not.toContain('Users');
     const auto = rows.find((row) => row.dataset.window === '@0');
@@ -1395,7 +1395,7 @@ describe('native titlebar drag regions', () => {
     win.document.getElementById('ms-window-context').getBoundingClientRect = () => ({ left: 200, top: 8, width: 150, height: 28 });
     win.document.querySelector('button').getBoundingClientRect = () => ({ left: 360, top: 8, width: 100, height: 28 });
     const messages = [];
-    win.webkit = { messageHandlers: { tmuxPanelAction: { postMessage: message => messages.push(message) } } };
+    win.webkit = { messageHandlers: { anymuxAction: { postMessage: message => messages.push(message) } } };
     win.requestAnimationFrame = callback => { callback(); return 1; };
     win.eval(SHELL);
     win.AppShell._setHeaderCopy('本机 / 会话 / 窗口');
@@ -1418,7 +1418,7 @@ describe('native titlebar drag regions', () => {
     button.getBoundingClientRect = () => ({ left: 900, top: 8, width: 28, height: 28 });
     summary.getBoundingClientRect = () => ({ left: 940, top: 8, width: 28, height: 28 });
     const messages = [];
-    win.webkit = { messageHandlers: { tmuxPanelAction: { postMessage: (message) => messages.push(message) } } };
+    win.webkit = { messageHandlers: { anymuxAction: { postMessage: (message) => messages.push(message) } } };
     win.requestAnimationFrame = (callback) => { callback(); return 1; };
     win.eval(SHELL);
     expect(messages[0]).toMatchObject({ action: 'titlebarDragRegions', height: 44, viewportWidth: 1024,

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
-      <title id="title">电脑、手机和 macOS App 通过 tmux-web-panel 打开同一个仍在运行的 tmux 现场</title>
+      <title id="title">电脑、手机和 macOS App 通过 anymux 打开同一个仍在运行的 tmux 现场</title>
       <desc id="desc">小黑手绘概念图</desc>
       <rect width="1200" height="675" fill="#fff" />
       <defs>

@@ -16,7 +16,7 @@ afterEach(async () => {
 
 describe('files info API', () => {
   it('returns size and mtimeMs for lightweight preview change detection', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'tmux-panel-files-'));
+    const root = await mkdtemp(join(tmpdir(), 'anymux-files-'));
     tempDirs.push(root);
     const file = join(root, 'live.md');
     await writeFile(file, '# live\n');
@@ -36,7 +36,7 @@ describe('files info API', () => {
 
 describe('video streaming API', () => {
   async function setup(filename = 'clip.mp4') {
-    const root = await mkdtemp(join(tmpdir(), 'tmux-panel-video-'));
+    const root = await mkdtemp(join(tmpdir(), 'anymux-video-'));
     tempDirs.push(root);
     const file = join(root, filename);
     await writeFile(file, '0123456789');
@@ -109,7 +109,7 @@ describe('video streaming API', () => {
     const secret = join(root, 'secret.key');
     await writeFile(secret, 'secret');
     expect((await request(app).get('/api/files/raw').query({ path: secret }).set('Range', 'bytes=0-1')).status).toBe(403);
-    const outside = await mkdtemp(join(tmpdir(), 'tmux-panel-video-outside-'));
+    const outside = await mkdtemp(join(tmpdir(), 'anymux-video-outside-'));
     tempDirs.push(outside);
     await writeFile(join(outside, 'clip.mp4'), 'outside');
     const escape = join(root, 'escape.mp4');
@@ -125,7 +125,7 @@ describe('video streaming API', () => {
 
 describe('Markdown task API', () => {
   async function setup(content, filename = 'tasks.md') {
-    const root = await mkdtemp(join(tmpdir(), 'tmux-panel-tasks-'));
+    const root = await mkdtemp(join(tmpdir(), 'anymux-tasks-'));
     tempDirs.push(root);
     const file = join(root, filename);
     await writeFile(file, content);
@@ -211,7 +211,7 @@ describe('Markdown task API', () => {
     expect(nonMarkdown.status).toBe(400);
     expect(nonMarkdown.body.error).toBe('not_markdown');
 
-    const outside = await mkdtemp(join(tmpdir(), 'tmux-panel-outside-'));
+    const outside = await mkdtemp(join(tmpdir(), 'anymux-outside-'));
     tempDirs.push(outside);
     const outsideFile = join(outside, 'outside.md');
     await writeFile(outsideFile, '- [ ] outside\n');
@@ -310,7 +310,7 @@ function writeTarBuffer(entries) {
 
 describe('files archive API', () => {
   async function setup() {
-    const root = await mkdtemp(join(tmpdir(), 'tmux-panel-arch-'));
+    const root = await mkdtemp(join(tmpdir(), 'anymux-arch-'));
     tempDirs.push(root);
     const app = express();
     app.use(express.json());

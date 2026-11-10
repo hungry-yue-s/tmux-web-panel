@@ -8,7 +8,7 @@ import { POSIX_MODES } from '../helpers/permissions.js';
 const script = resolve(import.meta.dirname, '../../scripts/install-service.sh');
 const tmuxServerScript = resolve(import.meta.dirname, '../../scripts/run-tmux-server.sh');
 const tmuxBuildScript = resolve(import.meta.dirname, '../../scripts/build-tmux.sh');
-const workDir = mkdtempSync(join(tmpdir(), 'tmux-web-panel-cert-test-'));
+const workDir = mkdtempSync(join(tmpdir(), 'anymux-cert-test-'));
 
 afterAll(() => rmSync(workDir, { recursive: true, force: true }));
 

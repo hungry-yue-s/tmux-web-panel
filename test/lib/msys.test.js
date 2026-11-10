@@ -88,7 +88,7 @@ describe('MSYS path translation', () => {
   });
 
   it('round-trips pane paths', () => {
-    for (const path of ['/home/me/src', '/c/Users/me', '/tmp/tmux-web-panel-uploads/1_a.png']) {
+    for (const path of ['/home/me/src', '/c/Users/me', '/tmp/anymux-uploads/1_a.png']) {
       expect(toPosixPath(toNativePath(path, ROOT), ROOT)).toBe(path);
     }
   });

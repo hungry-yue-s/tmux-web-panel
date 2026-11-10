@@ -20,8 +20,8 @@ ctx.logger.exporter({
 
 ctx.plugin(Timer);
 
-// For the browser console: twp.registry, twp.get('api'), …
-globalThis.twp = ctx;
+// For the browser console: anymux.registry, anymux.get('api'), …
+globalThis.anymux = ctx;
 
 async function start() {
   const response = await fetch('/client/manifest.json', { headers: { Accept: 'application/json' } });

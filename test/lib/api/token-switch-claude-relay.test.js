@@ -93,7 +93,7 @@ describe('Token Switch Claude relay preview', () => {
 
   it('can preview its own existing provider without rewriting it', async () => {
     const { home } = await fixture();
-    const runSQLite = database({ existing: [{ id: 'token-switch-claude-relay', is_current: 0, meta: '{"tmuxPanelRelay":"token-switch-claude-relay-v1"}' }] });
+    const runSQLite = database({ existing: [{ id: 'token-switch-claude-relay', is_current: 0, meta: '{"anymuxRelay":"token-switch-claude-relay-v1"}' }] });
     await expect(createTokenSwitchClaudeRelay({ home, runSQLite, now: () => NOW }).preview())
       .resolves.toMatchObject({ prepared: false, dryRun: true });
     expect(runSQLite.mock.calls.every(([_path, query]) => /^select /i.test(query))).toBe(true);
@@ -167,7 +167,7 @@ describe('Token Switch Claude relay preview', () => {
   it('does not update an owned relay while it is current', async () => {
     const { home } = await fixture();
     const mutateSQLite = vi.fn();
-    const runSQLite = database({ existing: [{ id: 'token-switch-claude-relay', is_current: 1, meta: '{"tmuxPanelRelay":"token-switch-claude-relay-v1"}' }] });
+    const runSQLite = database({ existing: [{ id: 'token-switch-claude-relay', is_current: 1, meta: '{"anymuxRelay":"token-switch-claude-relay-v1"}' }] });
     await expect(createTokenSwitchClaudeRelay({ home, runSQLite, mutateSQLite, now: () => NOW }).prepare())
       .rejects.toMatchObject({ code: 'PROVIDER_CHANGED' });
     expect(mutateSQLite).not.toHaveBeenCalled();

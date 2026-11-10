@@ -191,7 +191,7 @@
     }
 
     var diagnostic = global.Diagnostics && global.Diagnostics.beginApi(init.method, path, init.body);
-    if (diagnostic) headers['X-TWP-Diagnostic-Id'] = diagnostic.id;
+    if (diagnostic) headers['X-Anymux-Diagnostic-Id'] = diagnostic.id;
     return doFetch(path, init).then(function (res) {
       if (diagnostic) diagnostic.headers(res);
       return readBody(res, diagnostic).then(function (payload) {

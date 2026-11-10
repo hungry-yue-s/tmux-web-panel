@@ -2048,8 +2048,8 @@ describe('MsApp settings interactions', () => {
     await ctx.MsApp._onRoute({ name: 'settings', params: {} });
 
     const text = ctx.document.getElementById('ms-view').textContent;
-    const repository = ctx.document.querySelector('a[href="https://github.com/hungry-yue-s/tmux-web-panel"]');
-    expect(text).toContain('Tmux Web Panel');
+    const repository = ctx.document.querySelector('a[href="https://github.com/hungry-yue-s/anymux"]');
+    expect(text).toContain('Anymux');
     expect(text).toContain('v1.0.0');
     expect(repository).toBeTruthy();
     expect(repository.textContent).toContain('GitHub');

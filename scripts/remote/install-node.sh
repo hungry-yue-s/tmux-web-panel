@@ -1,22 +1,22 @@
-# Installs tmux-web-panel on a machine another panel manages over SSH.
+# Installs anymux on a machine another panel manages over SSH.
 #
 # Not run directly: the managing panel uploads the source archive over SFTP,
 # then streams this script to `sh -s` with these variables prepended:
-#   TWP_ARCHIVE        archive path relative to $HOME (.cache/tmux-web-panel/panel.tgz)
-#   TWP_PORT_CANDIDATES ports to try for the panel, first free wins
-#   TWP_SUDO_PASSWORD  optional; only used for `sudo -S` when packages are missing
+#   ANYMUX_ARCHIVE        archive path relative to $HOME (.cache/anymux/panel.tgz)
+#   ANYMUX_PORT_CANDIDATES ports to try for the panel, first free wins
+#   ANYMUX_SUDO_PASSWORD  optional; only used for `sudo -S` when packages are missing
 #
 # Result: the panel runs as a user service bound to 127.0.0.1 in node-only
 # mode, reachable only through the managing panel's SSH tunnel. Output lines
-# starting with ">> " are progress steps; "TWP_RESULT=" is the final status.
+# starting with ">> " are progress steps; "ANYMUX_RESULT=" is the final status.
 
 set -eu
 
 log() { printf '>> %s\n' "$*"; }
-result() { printf 'TWP_RESULT=%s\n' "$1"; }
+result() { printf 'ANYMUX_RESULT=%s\n' "$1"; }
 fail() { printf '!! %s\n' "$*" >&2; result failed; exit 1; }
 
-PREFIX="$HOME/.local/share/tmux-web-panel"
+PREFIX="$HOME/.local/share/anymux"
 APP="$PREFIX/app"
 NODE_VERSION="22.12.0"
 OS="$(uname -s)"
@@ -29,8 +29,8 @@ as_root() {
   if [ "$(id -u)" = 0 ]; then "$@"; return; fi
   if ! command -v sudo >/dev/null 2>&1; then return 1; fi
   if sudo -n true 2>/dev/null; then sudo -n "$@"; return; fi
-  if [ -n "${TWP_SUDO_PASSWORD:-}" ]; then
-    printf '%s\n' "$TWP_SUDO_PASSWORD" | sudo -S -p '' "$@"
+  if [ -n "${ANYMUX_SUDO_PASSWORD:-}" ]; then
+    printf '%s\n' "$ANYMUX_SUDO_PASSWORD" | sudo -S -p '' "$@"
     return
   fi
   result needs_password
@@ -115,7 +115,7 @@ port_in_use() {
 }
 
 # --- Steps ------------------------------------------------------------------
-[ -f "$HOME/$TWP_ARCHIVE" ] || fail "archive missing: $TWP_ARCHIVE"
+[ -f "$HOME/$ANYMUX_ARCHIVE" ] || fail "archive missing: $ANYMUX_ARCHIVE"
 
 need="$(missing_tools)"
 if [ -n "$need" ]; then
@@ -125,6 +125,16 @@ if [ -n "$need" ]; then
   [ -z "$need" ] || fail "still missing after install: $need"
 fi
 
+# A Node installed before the rename lives in ~/.local/share/tmux-web-panel. Move
+# it, with its Node.js download and tmux build, and leave a link behind, as
+# install-service.sh does for the other directories.
+LEGACY_PREFIX="$HOME/.local/share/tmux-web-panel"
+if [ -d "$LEGACY_PREFIX" ] && [ ! -L "$LEGACY_PREFIX" ] && [ ! -e "$PREFIX" ]; then
+  log "move $LEGACY_PREFIX to $PREFIX"
+  mv "$LEGACY_PREFIX" "$PREFIX"
+  ln -s anymux "$LEGACY_PREFIX"
+fi
+
 ensure_node
 log "node $("$NODE_BIN" -v)"
 
@@ -132,7 +142,7 @@ log "unpack panel"
 mkdir -p "$PREFIX"
 rm -rf "$APP.new"
 mkdir -p "$APP.new"
-tar -xzf "$HOME/$TWP_ARCHIVE" -C "$APP.new"
+tar -xzf "$HOME/$ANYMUX_ARCHIVE" -C "$APP.new"
 [ -f "$APP.new/vendor/tmux/tmux.c" ] || fail "the archive has no tmux source (vendor/tmux)"
 if [ -d "$APP" ]; then rm -rf "$APP.old"; mv "$APP" "$APP.old"; fi
 mv "$APP.new" "$APP"
@@ -142,17 +152,17 @@ log "npm ci"
 (cd "$APP" && $NPM ci --omit=dev --no-audit --no-fund)
 
 PORT=""
-for candidate in $TWP_PORT_CANDIDATES; do
+for candidate in $ANYMUX_PORT_CANDIDATES; do
   if ! port_in_use "$candidate"; then PORT="$candidate"; break; fi
 done
-[ -n "$PORT" ] || fail "no free port among: $TWP_PORT_CANDIDATES"
+[ -n "$PORT" ] || fail "no free port among: $ANYMUX_PORT_CANDIDATES"
 
 log "install service on 127.0.0.1:$PORT (builds tmux; this takes a few minutes)"
-(cd "$APP" && HOST=127.0.0.1 PORT="$PORT" NODE_BIN="$NODE_BIN" TWP_SKIP_MOSH="${TWP_SKIP_MOSH:-${TMUX_PANEL_SKIP_MOSH:-0}}" TWP_SUDO_PASSWORD="${TWP_SUDO_PASSWORD:-}" NODE_ONLY=1 bash scripts/install-service.sh install)
+(cd "$APP" && HOST=127.0.0.1 PORT="$PORT" NODE_BIN="$NODE_BIN" ANYMUX_SKIP_MOSH="${ANYMUX_SKIP_MOSH:-${TMUX_PANEL_SKIP_MOSH:-0}}" ANYMUX_SUDO_PASSWORD="${ANYMUX_SUDO_PASSWORD:-}" NODE_ONLY=1 bash scripts/install-service.sh install)
 
 log "wait for the pairing file"
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-  [ -f "$HOME/.config/tmux-web-panel/node.json" ] && { result succeeded; exit 0; }
+  [ -f "$HOME/.config/anymux/node.json" ] && { result succeeded; exit 0; }
   sleep 1
 done
 fail "the panel service did not start (no pairing file)"

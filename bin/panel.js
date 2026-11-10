@@ -32,6 +32,9 @@ async function main() {
     console.error(`[panel] ${missingDependenciesMessage(missing)}`);
     return 1;
   }
+  // Before anything reads ANYMUX_* or the config directory (lib/legacy-names.js).
+  const { adoptLegacyEnv, migrateLegacyDirs } = await import('../lib/legacy-names.js');
+  adoptLegacyEnv();
   const { createApp, defaultHome, defaultProfile } = await import('../kernel/app.js');
   const { dumpEntries, resolveEntries } = await import('../kernel/profile.js');
 
@@ -64,6 +67,8 @@ async function main() {
     console.error(usage());
     return 2;
   }
+  // Only a starting service moves the old directories, never a --dump-config.
+  if (!values['dump-config']) migrateLegacyDirs();
   const options = {
     profile: values.profile ?? positionals[0] ?? defaultProfile(),
     patches: values.patch,

@@ -2,8 +2,8 @@
   "serve": ["."],
   "head": [
     { "order": 10, "style": "/vendor/xterm/xterm.css?v=6.0.0" },
-    { "order": 20, "preload": "/fonts/tpm/tpm-400-core.c21636df8e.woff2" },
-    { "order": 21, "preload": "/fonts/tpm/tpm-700-core.540225bef8.woff2" },
+    { "order": 20, "preload": "/fonts/amm/amm-400-core.c21636df8e.woff2" },
+    { "order": 21, "preload": "/fonts/amm/amm-700-core.540225bef8.woff2" },
     { "order": 30, "style": "/css/terminal-fonts.css" },
     { "order": 40, "script": "/vendor/xterm/xterm.js?v=6.0.0" },
     { "order": 41, "script": "/vendor/xterm/addon-fit.js?v=0.11.0" },

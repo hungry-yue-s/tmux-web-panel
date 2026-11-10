@@ -1,7 +1,7 @@
 /* global Blocks, FilePreview, CommandPalette, PanelSlots */
 
 // File commands (the palette and Alt+Shift shortcuts: browse, quick open, the
-// TODO.md board), the file index quick open searches, and `twp open <file>`
+// TODO.md board), the file index quick open searches, and `anymux open <file>`
 // from a pane. Loaded only with the files plugin.
 
 (function () {

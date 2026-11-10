@@ -8,7 +8,7 @@
 | Git | 命令面板 / 文件预览“更多” | Alt+Shift+G | 状态、差异、按块/按行暂存与取消暂存、丢弃、提交（含 amend）、撤销上次提交、生成提交说明、提交图 |
 | 文件 | 命令面板 | Alt+Shift+O | 打开当前 pane 的目录 |
 | 看板 | 命令面板 / 打开 `TODO.md` | Alt+Shift+K | `## 标题` 为列，顶层列表项为卡片，拖动排序后写回文件 |
-| 浏览器 | 命令面板 / `twp open <url>` | Alt+Shift+B | 右侧 iframe 浏览本地开发页面 |
+| 浏览器 | 命令面板 / `anymux open <url>` | Alt+Shift+B | 右侧 iframe 浏览本地开发页面 |
 | 任务管理器 | 命令面板 | Alt+Shift+M | 跳到当前服务器的性能页（进程、CPU、内存） |
 | 快速打开文件 | 命令面板输入 `/` | Alt+Shift+P | 在当前 pane 目录里模糊查找文件 |
 | 切换主机 | 命令面板输入 `@` | Alt+Shift+H | 主机面板：连接状态、会话数、延迟，可添加远程主机 |
@@ -32,23 +32,23 @@ Git、浏览器（`git`、`browser` 插件）由 `plugins/ui/client/js/block-hos
 
 Git 的“生成说明”优先调用该机器上的 `claude -p`，找不到时按改动文件生成一行摘要。
 
-## `twp` 命令行
+## `anymux` 命令行
 
-`bin/twp`（Node 脚本 `bin/twp.mjs`）在 pane 里控制面板和 tmux，相当于 Tern 的 `tern open/split/run/capture/events`。可以链接到 PATH：
+`bin/anymux`（Node 脚本 `bin/anymux.mjs`）在 pane 里控制面板和 tmux，相当于 Tern 的 `tern open/split/run/capture/events`。可以链接到 PATH：
 
 ```sh
-ln -s "$PWD/bin/twp" ~/.local/bin/twp
+ln -s "$PWD/bin/anymux" ~/.local/bin/anymux
 ```
 
 | 命令 | 作用 |
 | --- | --- |
-| `twp open [--preview] <file\|url>` | 在所有正在看这台机器的浏览器里预览文件，或在浏览器 block 打开网址 |
-| `twp split [-h] [-c dir] [-t pane] [cmd...]` | 拆分当前 pane，输出新 pane id |
-| `twp run [-t pane] <cmd...>` | 向 pane 输入一条命令并回车 |
-| `twp capture [-t pane] [-n lines]` | 输出 pane 文本，可含滚动历史 |
-| `twp events [--filter a,b]` | 以 JSON Lines 输出 `pane_spawned`、`pane_closed`、`layout_changed`、`window_added`、`window_closed`、`window_renamed`、`pane_focused` 等事件 |
+| `anymux open [--preview] <file\|url>` | 在所有正在看这台机器的浏览器里预览文件，或在浏览器 block 打开网址 |
+| `anymux split [-h] [-c dir] [-t pane] [cmd...]` | 拆分当前 pane，输出新 pane id |
+| `anymux run [-t pane] <cmd...>` | 向 pane 输入一条命令并回车 |
+| `anymux capture [-t pane] [-n lines]` | 输出 pane 文本，可含滚动历史 |
+| `anymux events [--filter a,b]` | 以 JSON Lines 输出 `pane_spawned`、`pane_closed`、`layout_changed`、`window_added`、`window_closed`、`window_renamed`、`pane_focused` 等事件 |
 
-`open` 读取配对文件 `~/.config/tmux-web-panel/node.json` 中的 node token 调用本机 `/api/open`（HTTPS 时按配对文件里的证书指纹固定），服务端经 `/ws/status` 推送给浏览器；只有可见的标签页会响应。其余命令直接调用 tmux；`events` 是一个只读、忽略尺寸、不接收输出的 tmux control-mode 客户端（`tmux -C attach -f read-only,ignore-size,no-output`）。
+`open` 读取配对文件 `~/.config/anymux/node.json` 中的 node token 调用本机 `/api/open`（HTTPS 时按配对文件里的证书指纹固定），服务端经 `/ws/status` 推送给浏览器；只有可见的标签页会响应。其余命令直接调用 tmux；`events` 是一个只读、忽略尺寸、不接收输出的 tmux control-mode 客户端（`tmux -C attach -f read-only,ignore-size,no-output`）。
 
 ## 没有照搬的部分
 

@@ -14,9 +14,9 @@ async function fixture() {
   const codexAuthPath = join(root, '.codex', 'auth.json');
   const qoderTasksPath = join(root, '.qoder', 'tasks');
   const qoderProjectsPath = join(root, '.qoder', 'projects');
-  const qoderSessionPath = join(root, '.config', 'tmux-web-panel', 'qoder-session.json');
-  const profileEventsPath = join(root, '.config', 'tmux-web-panel', 'agent-profile-events.json');
-  const warmupHistoryPath = join(root, '.config', 'tmux-web-panel', 'agent-warmups.json');
+  const qoderSessionPath = join(root, '.config', 'anymux', 'qoder-session.json');
+  const profileEventsPath = join(root, '.config', 'anymux', 'agent-profile-events.json');
+  const warmupHistoryPath = join(root, '.config', 'anymux', 'agent-warmups.json');
   await mkdir(join(qoderTasksPath, 'task-one'), { recursive: true });
   await mkdir(join(qoderProjectsPath, '-Users-test-work'), { recursive: true });
   await writeFile(join(qoderProjectsPath, '-Users-test-work', 'session-one.jsonl'), [
@@ -283,7 +283,7 @@ describe('Agent hub service', () => {
 
   it('reads Qoder credits and Zhipu quota/balance without exposing credentials', async () => {
     const paths = await fixture();
-    await mkdir(join(paths.root, '.config', 'tmux-web-panel'), { recursive: true });
+    await mkdir(join(paths.root, '.config', 'anymux'), { recursive: true });
     await writeFile(paths.qoderSessionPath, JSON.stringify({ site: 'international', cookieHeader: 'session=private-cookie' }));
     const fetchImpl = vi.fn(async (url) => {
       if (url.includes('qoder.com')) return { ok: true, json: async () => ({

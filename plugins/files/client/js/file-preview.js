@@ -64,13 +64,13 @@ var FilePreview = (function () {
   // The order this window's tabs were saved in, until they are all back.
   var _savedTabOrder = null;
   var _draggedTabId = null;
-  var TAB_DRAG_TYPE = 'application/x-tmux-panel-tab';
+  var TAB_DRAG_TYPE = 'application/x-anymux-tab';
   var _blockWindowsGoneListener = null;
   var _switchingDockContext = false;
   var _pendingBlockKey = null;
   var _sideSetWidth = null;
   var BLOCK_SIDE_WIDTH = 560;
-  var BLOCK_WIDTH_KEY = 'twp_block_side_width';
+  var BLOCK_WIDTH_KEY = 'anymux_block_side_width';
 
   /**
    * Identifies one window's dock state.
@@ -2014,7 +2014,9 @@ var FilePreview = (function () {
     }
     function copyPng(blobPromise) {
       var handlers = win.webkit && win.webkit.messageHandlers;
-      if (handlers && handlers.tmuxPanelClipboard) {
+      // tmuxPanelClipboard: a native app from before the rename.
+      var clipboard = handlers && (handlers.anymuxClipboard || handlers.tmuxPanelClipboard);
+      if (clipboard) {
         return blobPromise.then(function (blob) {
           if (blob.size > 16 * 1024 * 1024) throw new Error('图片超过 16 MB');
           return new Promise(function (resolve, reject) {
@@ -2024,7 +2026,7 @@ var FilePreview = (function () {
               var result = String(reader.result || '');
               var comma = result.indexOf(',');
               if (comma < 0) { reject(new Error('PNG 编码失败')); return; }
-              handlers.tmuxPanelClipboard.postMessage({ pngBase64: result.slice(comma + 1) });
+              clipboard.postMessage({ pngBase64: result.slice(comma + 1) });
               resolve();
             };
             reader.readAsDataURL(blob);
@@ -2580,7 +2582,7 @@ var FilePreview = (function () {
     var nativeWindow = null;
     try {
       var handlers = window.webkit && window.webkit.messageHandlers;
-      nativeWindow = handlers && handlers.tmuxPanelOpenWindow;
+      nativeWindow = handlers && (handlers.anymuxOpenWindow || handlers.tmuxPanelOpenWindow);
     } catch (_) { /* browser path below */ }
     if (_currentFile.isText || _currentFile.isMarkdown || _currentFile.isXlsx) {
       // Open the tab synchronously (popup blockers require a user-gesture-time

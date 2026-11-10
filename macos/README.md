@@ -1,10 +1,10 @@
-# Tmux Panel for macOS
+# Anymux for macOS
 
 完整桌面包内置服务端、Node 运行时、`node-pty`、项目维护的 tmux 与所需运行库。第一次打开可在原生界面完成初始化；已经有手工安装环境的用户默认继续使用原服务，不会被自动迁移。
 
 ## 下载与第一次打开
 
-1. 从 [GitHub Releases 的 Assets](https://github.com/hungry-yue-s/tmux-web-panel/releases) 下载与 Mac 芯片匹配的完整包，并把 App 放入“应用程序”。**Source code (zip)** 是源码，不是客户端安装包。
+1. 从 [GitHub Releases 的 Assets](https://github.com/hungry-yue-s/anymux/releases) 下载与 Mac 芯片匹配的完整包，并把 App 放入“应用程序”。**Source code (zip)** 是源码，不是客户端安装包。
 2. 按首次引导创建账号密码。默认服务地址为 `127.0.0.1:17681`，只接受本机连接；内置组件、运行时安装、服务注册与连接检查分步显示。
 3. 进入工作台后，从“设置与运行状态”检查组件、后台服务、日志和统一设置。退出或关闭客户端窗口不会结束 tmux 会话；电脑关机、注销和停止 tmux 则可能结束正在运行的任务。
 4. 想用手机时，再到可选远程访问设置中开启局域网访问。先验证当前地址可达，再按指引创建自己的 Duck DNS 名称和 GitHub Pages 引导网页。它们帮助收藏固定入口，不是内网穿透。
@@ -15,9 +15,9 @@
 
 ## 托管模式与原有环境
 
-托管数据统一保存在 `~/Library/Application Support/Tmux Panel/`：`settings.json` 为设置来源，`runtime/` 保存运行时版本，`logs/` 保存日志，`tls/` 保存证书，`relay-site/` 保存导出的引导网站。凭据以密码哈希保存，不需要放在命令行或手工编辑配置文件中。
+托管数据统一保存在 `~/Library/Application Support/Anymux/`：`settings.json` 为设置来源，`runtime/` 保存运行时版本，`logs/` 保存日志，`tls/` 保存证书，`relay-site/` 保存导出的引导网站。凭据以密码哈希保存，不需要放在命令行或手工编辑配置文件中。
 
-托管服务使用单独的 `com.tmux-web-panel.desktop` 与 `com.tmux-web-panel.desktop.tmux` 标签，以及独立的 tmux socket 和配置；不会改写 `~/.tmux.conf`，也不会替换源码安装的旧服务。检测到已有 LaunchAgent 时，客户端默认沿用它；原安装的配置和运维仍由原安装管理。
+托管服务使用单独的 `com.anymux.desktop` 与 `com.anymux.desktop.tmux` 标签，以及独立的 tmux socket 和配置；不会改写 `~/.tmux.conf`，也不会替换源码安装的旧服务。检测到已有 LaunchAgent 时，客户端默认沿用它；原安装的配置和运维仍由原安装管理。
 
 引导页文件可以从客户端导出，由用户在自己的 GitHub 账号下创建仓库并上传。客户端的可选设置保存域名和公开引导页 URL，不会自动代替用户发布仓库。密码、Duck DNS token、CA 私钥和整个个人数据目录都不应上传。
 
@@ -30,7 +30,7 @@
 工作台包含：
 
 - 使用 `WKWebView` 打开本机面板
-- 托管模式从统一设置识别地址；已有安装从 `~/Library/LaunchAgents/com.tmux-web-panel.plist` 识别 HTTP/HTTPS 和端口
+- 托管模式从统一设置识别地址；已有安装从 `~/Library/LaunchAgents/com.anymux.plist` 识别 HTTP/HTTPS 和端口
 - 对回环地址上的自签名 TLS 证书做证书数据匹配，不进行无条件信任
 - 菜单栏显示网页、面板 LaunchAgent 和 tmux companion 状态
 - 顶栏按钮和菜单命令均可触发原生全屏，并提供刷新、浏览器打开及日志入口
@@ -55,12 +55,12 @@
 ```bash
 npm run test:macos
 bash scripts/build-macos-app.sh
-open "dist/macos/Tmux Panel.app"
+open "dist/macos/Anymux.app"
 ```
 
-默认构建包含完整运行时。用 `TMUX_PANEL_ARCH=arm64` 或 `TMUX_PANEL_ARCH=x64` 选择架构；对应原生 macOS runner 是正式构建路径，Apple Silicon 上已安装 Rosetta 时也可构建 x64，但仍需 Intel 真机单独验收。`TMUX_PANEL_BUNDLE_RUNTIME=0` 仅生成开发薄壳，不能用于首次安装后台环境。
+默认构建包含完整运行时。用 `ANYMUX_ARCH=arm64` 或 `ANYMUX_ARCH=x64` 选择架构；对应原生 macOS runner 是正式构建路径，Apple Silicon 上已安装 Rosetta 时也可构建 x64，但仍需 Intel 真机单独验收。`ANYMUX_BUNDLE_RUNTIME=0` 仅生成开发薄壳，不能用于首次安装后台环境。
 
-无签名材料时，输出为 `dist/macos/Tmux-Panel-macOS-<arch>-development.zip` 及其 `.sha256` 校验文件。开发构建使用 ad-hoc 签名，不能宣称通过 Gatekeeper 正式分发验证。
+无签名材料时，输出为 `dist/macos/Anymux-macOS-<arch>-development.zip` 及其 `.sha256` 校验文件。开发构建使用 ad-hoc 签名，不能宣称通过 Gatekeeper 正式分发验证。
 
 ### GitHub Actions 与正式发布
 
@@ -79,12 +79,12 @@ open "dist/macos/Tmux Panel.app"
 
 推送严格格式 `vMAJOR.MINOR.PATCH` 的 tag 会触发发布构建。缺少签名材料时 tag 构建会失败；成功路径要求完整运行时、Developer ID 签名、Apple 公证、票据装订和评估。两种架构均构建成功后，工作流上传 `*-notarized.zip` 和校验文件，并创建 **GitHub Release 草稿**；维护者仍需检查附件与真实验收范围后再手工公开。工作流存在不代表这些签名、公证或跨系统验收已经完成。
 
-本地正式构建使用 `TMUX_PANEL_CODESIGN_IDENTITY`、`TMUX_PANEL_NOTARY_PROFILE` 和 `TMUX_PANEL_DISTRIBUTION=1`；profile 应预先保存于 `notarytool` 钥匙串。可用 `TMUX_PANEL_NOTARY_KEYCHAIN` 指定该钥匙串；应用版本和构建号分别由 `TMUX_PANEL_APP_VERSION`、`TMUX_PANEL_BUILD_NUMBER` 提供。
+本地正式构建使用 `ANYMUX_CODESIGN_IDENTITY`、`ANYMUX_NOTARY_PROFILE` 和 `ANYMUX_DISTRIBUTION=1`；profile 应预先保存于 `notarytool` 钥匙串。可用 `ANYMUX_NOTARY_KEYCHAIN` 指定该钥匙串；应用版本和构建号分别由 `ANYMUX_APP_VERSION`、`ANYMUX_BUILD_NUMBER` 提供。
 
-托管模式加载自己的本机地址；沿用旧环境时加载原 LaunchAgent 声明的地址。临时调试其他地址时，可以在启动 App 前设置 `TMUX_PANEL_URL`，例如：
+托管模式加载自己的本机地址；沿用旧环境时加载原 LaunchAgent 声明的地址。临时调试其他地址时，可以在启动 App 前设置 `ANYMUX_URL`，例如：
 
 ```bash
-TMUX_PANEL_URL=http://127.0.0.1:7681 "dist/macos/Tmux Panel.app/Contents/MacOS/TmuxPanel"
+ANYMUX_URL=http://127.0.0.1:7681 "dist/macos/Anymux.app/Contents/MacOS/Anymux"
 ```
 
 原生通知不会自动弹权限框；请从菜单栏选择“启用原生通知”。

@@ -13,8 +13,9 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONFIG="${DUCKDNS_CONFIG:-$HOME/.config/tmux-web-panel/duckdns.env}"
-STATE_DIR="${DUCKDNS_STATE_DIR:-$HOME/.cache/tmux-web-panel}"
+. "$SCRIPT_DIR/legacy-env.sh"
+CONFIG="${DUCKDNS_CONFIG:-$(anymux_dir .config)/duckdns.env}"
+STATE_DIR="${DUCKDNS_STATE_DIR:-$(anymux_dir .cache)}"
 STATE_FILE="$STATE_DIR/duckdns-ip"
 
 if [[ ! -r "$CONFIG" ]]; then

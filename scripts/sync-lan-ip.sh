@@ -10,8 +10,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PANEL_LABEL="${PANEL_LABEL:-com.tmux-web-panel}"
-APP_BUNDLE_ID="${PANEL_APP_BUNDLE_ID:-com.tmux-web-panel.app}"
+PANEL_LABEL="${PANEL_LABEL:-com.anymux}"
+APP_BUNDLE_ID="${PANEL_APP_BUNDLE_ID:-com.anymux.app}"
 
 app_is_running() {
   [[ "$(osascript -e "application id \"$APP_BUNDLE_ID\" is running" 2>/dev/null)" == "true" ]]

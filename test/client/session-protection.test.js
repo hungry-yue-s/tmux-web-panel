@@ -66,7 +66,7 @@ describe('program choices', () => {
   });
 
   it('gives resurrect the same choices, replacing its built-in list', () => {
-    expect(resurrectProcessOptions([])).toEqual({ defaultProcesses: '_twp_none_', processes: 'false' });
+    expect(resurrectProcessOptions([])).toEqual({ defaultProcesses: '_anymux_none_', processes: 'false' });
     const { processes } = resurrectProcessOptions(['ai', 'monitors', 'cmd:npm']);
     expect(processes).toContain('"~claude->claude --continue"');
     expect(processes).toContain('htop');
@@ -254,9 +254,11 @@ function fakeTmux({ running = true, sessions = [], options = {} } = {}) {
     state.commands.push(args);
     switch (command) {
       case 'display-message':
-        return ['4242', '1700000000', '/bin/bash', state.options['@twp-protect-seen'] || '',
-          state.options['@twp-restored-at'] || '', state.options['@twp-restored-from'] || '', state.options['@twp-restored-sessions'] || '',
+        return ['4242', '1700000000', '/bin/bash', state.options['@anymux-protect-seen'] || '',
+          state.options['@anymux-restored-at'] || '', state.options['@anymux-restored-from'] || '', state.options['@anymux-restored-sessions'] || '',
           state.options['@resurrect-save-script-path'] || '', state.options['@resurrect-dir'] || '', state.options['@continuum-restore'] || '',
+          state.options['@twp-protect-seen'] || '', state.options['@twp-restored-at'] || '',
+          state.options['@twp-restored-from'] || '', state.options['@twp-restored-sessions'] || '',
         ].join('=:=') + '\n';
       case 'show-environment': return `HOME=${state.home}\n`;
       case 'show-options': return (state.options['status-right'] || '') + '\n';
@@ -311,8 +313,8 @@ describe('SessionProtection', () => {
     const { protection } = setup({ tmux });
     await protection.tick();
     expect(tmux.state.sessions).toEqual(['环境 部署', 'ops']);
-    expect(tmux.state.options['@twp-protect-seen']).toBe('4242');
-    expect(tmux.state.options['@twp-restored-sessions']).toBe('2');
+    expect(tmux.state.options['@anymux-protect-seen']).toBe('4242');
+    expect(tmux.state.options['@anymux-restored-sessions']).toBe('2');
     expect(tmux.state.options['@resurrect-processes']).toContain('claude');
     // Reopened programs may still be starting: no save straight away.
     expect(tmux.state.commands.some((args) => args[0] === 'run-shell' && args[1].includes('save.sh'))).toBe(false);
@@ -347,7 +349,7 @@ describe('SessionProtection', () => {
     const { protection, clock } = setup({ tmux, now: 1_700_000_030_000 });
     await protection.tick();
     expect(tmux.state.sessions).toEqual(['0', 'ops', '环境 部署']);
-    expect(tmux.state.options['@twp-restored-sessions']).toBe('1');
+    expect(tmux.state.options['@anymux-restored-sessions']).toBe('1');
     const saves = () => tmux.state.commands.filter((args) => args[0] === 'run-shell' && args[1].includes('save.sh'));
     expect(saves()).toHaveLength(0);
     clock.now += 300_000;
@@ -405,8 +407,22 @@ describe('SessionProtection', () => {
     expect(tmux.state.sessions).toHaveLength(2);
   });
 
+  it('treats a server the panel saw under its old name as seen, and still reports that restore', async () => {
+    const tmux = fakeTmux({ options: {
+      '@twp-protect-seen': '4242', '@twp-restored-at': '2026-11-01T00:00:00.000Z',
+      '@twp-restored-from': '2026-10-31T23:55:00.000Z', '@twp-restored-sessions': '3',
+    } });
+    const { protection } = setup({ tmux });
+    await protection.tick();
+    // Seen before the rename: an empty server stays empty rather than being restored again.
+    expect(tmux.state.sessions).toEqual([]);
+    expect((await protection.status()).autoRestore).toEqual({
+      at: '2026-11-01T00:00:00.000Z', from: '2026-10-31T23:55:00.000Z', sessions: 3,
+    });
+  });
+
   it('never saves while tmux has no sessions, so the last save survives', async () => {
-    const tmux = fakeTmux({ options: { '@twp-protect-seen': '1' } });
+    const tmux = fakeTmux({ options: { '@anymux-protect-seen': '1' } });
     const { protection } = setup({ tmux, snapshot: null });
     await protection.tick();
     expect(tmux.state.commands.some((args) => args[0] === 'run-shell' && args[1].includes('save.sh'))).toBe(false);
@@ -414,7 +430,7 @@ describe('SessionProtection', () => {
   });
 
   it('keeps the previous save when tmux stops answering during one', async () => {
-    const tmux = fakeTmux({ sessions: ['main'], options: { '@twp-protect-seen': '4242' } });
+    const tmux = fakeTmux({ sessions: ['main'], options: { '@anymux-protect-seen': '4242' } });
     const { protection, dir } = setup({ tmux });
     utimesSync(join(dir, 'tmux_resurrect_20261027T120000.txt'), new Date(1000e3), new Date(1000e3));
     const real = tmux.exec.getMockImplementation();
@@ -442,7 +458,7 @@ describe('SessionProtection', () => {
     writeFileSync(join(dir, 'last'), '');
     await protection.tick();
     expect(tmux.state.sessions).toEqual(['环境 部署', 'ops']);
-    expect(tmux.state.options['@twp-restored-from']).toBe(new Date(1000e3).toISOString());
+    expect(tmux.state.options['@anymux-restored-from']).toBe(new Date(1000e3).toISOString());
     // resurrect's own restore key reads `last` too.
     expect(readFileSync(join(dir, 'last'), 'utf8')).toBe(SNAPSHOT);
   });
@@ -481,7 +497,7 @@ describe('SessionProtection', () => {
   });
 
   it('brings back one session from history under a free name', async () => {
-    const tmux = fakeTmux({ sessions: ['ops'], options: { '@twp-protect-seen': '1' } });
+    const tmux = fakeTmux({ sessions: ['ops'], options: { '@anymux-protect-seen': '1' } });
     const { protection } = setup({ tmux });
     const restored = await protection.restore('tmux_resurrect_20261027T120000.txt', 'ops');
     expect(restored.name).toBe('ops 恢复');

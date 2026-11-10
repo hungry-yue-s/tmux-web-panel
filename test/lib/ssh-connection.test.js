@@ -352,17 +352,29 @@ describe('SshConnection', () => {
     expect(calls[0].argv.slice(-4, -2)).toEqual(['-b', '-']);
     expect(calls[0].argv.at(-1)).toBe('deploy@10.0.0.21');
     // The relative path resolves against the login directory on any shell or OS.
-    expect(calls[0].input).toMatch(/^get "\.config\/tmux-web-panel\/node\.json" "[^"]+"\n$/);
+    expect(calls[0].input).toMatch(/^get "\.config\/anymux\/node\.json" "[^"]+"\n$/);
   });
 
   it('reports a host without the pairing file as not installed', async () => {
     const missing = Object.assign(new Error('exit 1'), { code: 1 });
     const { connection } = makeWithStdin(REMOTE, () => ({
       error: missing,
-      stderr: 'File "/home/deploy/.config/tmux-web-panel/node.json" not found.',
+      stderr: 'File "/home/deploy/.config/anymux/node.json" not found.',
     }));
 
     await expect(connection.fetchPairing()).rejects.toMatchObject({ code: ErrorCode.NODE_NOT_INSTALLED });
+  });
+
+  it('reads the old path of a Node installed as tmux-web-panel when the new one is missing', async () => {
+    const missing = Object.assign(new Error('exit 1'), { code: 1 });
+    const serve = sftpServing(JSON.stringify(PAIRING));
+    const { connection, calls } = makeWithStdin(REMOTE, (argv, input) => (input.includes('.config/anymux/')
+      ? { error: missing, stderr: 'File "/home/deploy/.config/anymux/node.json" not found.' }
+      : serve(argv, input)));
+
+    await expect(connection.fetchPairing()).resolves.toEqual(PAIRING);
+    expect(calls.map((call) => call.input.split('"')[1]))
+      .toEqual(['.config/anymux/node.json', '.config/tmux-web-panel/node.json']);
   });
 
   it('classifies an ssh failure during pairing', async () => {
@@ -401,13 +413,13 @@ describe('SshConnection', () => {
 
   it('uploads a file with parent directories and a mode in one sftp batch', async () => {
     const { connection, calls } = makeWithStdin(REMOTE, () => ({}));
-    await connection.uploadFile('C:\\tmp\\a.sh', '.cache/tmux-web-panel/attach-3-0', { mode: '755' });
+    await connection.uploadFile('C:\\tmp\\a.sh', '.cache/anymux/attach-3-0', { mode: '755' });
     expect(calls[0].bin).toBe('sftp');
     expect(calls[0].input.split('\n')).toEqual([
       '-mkdir ".cache"',
-      '-mkdir ".cache/tmux-web-panel"',
-      'put "C:/tmp/a.sh" ".cache/tmux-web-panel/attach-3-0"',
-      'chmod 755 ".cache/tmux-web-panel/attach-3-0"',
+      '-mkdir ".cache/anymux"',
+      'put "C:/tmp/a.sh" ".cache/anymux/attach-3-0"',
+      'chmod 755 ".cache/anymux/attach-3-0"',
       '',
     ]);
   });
@@ -416,7 +428,7 @@ describe('SshConnection', () => {
     const connection = new SshConnection({ server: REMOTE, configDir: dir });
     expect(connection.ptyArgs()[0]).toBe('-tt');
     expect(connection.ptyArgs().at(-1)).toBe('deploy@10.0.0.21');
-    expect(connection.ptyArgs('.cache/tmux-web-panel/attach-3-0').at(-1)).toBe('.cache/tmux-web-panel/attach-3-0');
+    expect(connection.ptyArgs('.cache/anymux/attach-3-0').at(-1)).toBe('.cache/anymux/attach-3-0');
     for (const bad of ['sh -c x', 'a;b', "x'y", 'a"b']) expect(() => connection.ptyArgs(bad)).toThrow();
   });
 
@@ -593,7 +605,7 @@ describe('SshConnection', () => {
         'PreferredAuthentications=none', 'PasswordAuthentication=no', 'PubkeyAuthentication=no',
         'KbdInteractiveAuthentication=no', 'StrictHostKeyChecking=accept-new', 'ControlPath=none', 'ClearAllForwardings=yes']));
       expect(fallback.argv.at(-1)).toBe('deploy@10.0.0.21'); // no remote command
-      expect(fallback.options.env?.TMUX_PANEL_SSH_SERVER_ID).toBeUndefined();
+      expect(fallback.options.env?.ANYMUX_SSH_SERVER_ID).toBeUndefined();
       expect(JSON.stringify(fallback)).not.toContain('unused-password');
       await expect(fs.access(candidatePath)).rejects.toThrow();
       await expect(fs.access(path.join(dir, 'known_hosts'))).rejects.toThrow();

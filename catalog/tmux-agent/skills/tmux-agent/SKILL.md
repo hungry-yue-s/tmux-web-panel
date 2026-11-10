@@ -1,6 +1,6 @@
 ---
 name: tmux-agent
-description: Use Tmux Web Panel to manage tmux sessions and panes, run persistent commands, or dispatch work to another terminal agent. Use the panel's tmux-agent MCP tools when available.
+description: Use Anymux to manage tmux sessions and panes, run persistent commands, or dispatch work to another terminal agent. Use the panel's tmux-agent MCP tools when available.
 ---
 
 # Tmux Agent
@@ -24,7 +24,7 @@ Use `start_command` for noninteractive long-running shell commands. It creates
 a dedicated tmux window and immediately returns a job ID. Use `get_job` or
 bounded `wait_job` later. `completed` with exit code 0 is shell success. Jobs
 and logs remain on the execution host under
-`~/.local/share/tmux-web-panel/agent-jobs/`; disconnecting the agent or panel
+`~/.local/share/anymux/agent-jobs/`; disconnecting the agent or panel
 does not terminate the tmux process. Host reboot does not preserve the process.
 These commands run in `sh`; invoke `bash` explicitly if its syntax is required.
 Output returned by the tool is a bounded tail; full logs remain in the job folder.

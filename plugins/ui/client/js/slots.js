@@ -64,7 +64,7 @@
      */
     commands: slot(),
     /**
-     * What `twp open` from a pane does on the page, by event type (the id):
+     * What `anymux open` from a pane does on the page, by event type (the id):
      *   { id: 'open-file' | 'open-url', run(event) }
      */
     openers: slot(),

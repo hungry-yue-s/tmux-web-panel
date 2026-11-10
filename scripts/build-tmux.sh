@@ -2,9 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/legacy-env.sh"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TMUX_SOURCE_DIR="${TMUX_SOURCE_DIR:-$PROJECT_DIR/vendor/tmux}"
-TMUX_INSTALL_PREFIX="${TMUX_INSTALL_PREFIX:-$HOME/.local/share/tmux-web-panel}"
+TMUX_INSTALL_PREFIX="${TMUX_INSTALL_PREFIX:-$(anymux_dir .local/share)}"
 TMUX_INSTALL_BIN="$TMUX_INSTALL_PREFIX/bin/tmux"
 
 if [[ ! -f "$TMUX_SOURCE_DIR/tmux.c" ]]; then
@@ -76,7 +77,7 @@ else
   build_jobs=4
 fi
 
-build_root="$(mktemp -d "${TMPDIR:-/tmp}/tmux-web-panel-build.XXXXXX")"
+build_root="$(mktemp -d "${TMPDIR:-/tmp}/anymux-build.XXXXXX")"
 cleanup() {
   rm -rf "$build_root"
 }

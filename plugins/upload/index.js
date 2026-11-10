@@ -14,10 +14,10 @@ export const inject = ['launch', 'http'];
 export function apply(ctx, config) {
   const launch = ctx.launch;
   if (IS_WINDOWS) {
-    const dir = config?.dir ?? toNativePath('/tmp/tmux-web-panel-uploads');
+    const dir = config?.dir ?? toNativePath('/tmp/anymux-uploads');
     ctx.http.mount('/api/upload', createUploadRouter(dir, { displayPath: toPosixPath }), { json: false });
   } else {
-    const dir = config?.dir ?? (launch.managedRuntime ? join(launch.configDir, 'uploads') : '/tmp/tmux-web-panel-uploads');
+    const dir = config?.dir ?? (launch.managedRuntime ? join(launch.configDir, 'uploads') : '/tmp/anymux-uploads');
     ctx.http.mount('/api/upload', createUploadRouter(dir), { json: false });
   }
 }

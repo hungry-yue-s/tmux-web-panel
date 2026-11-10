@@ -23,7 +23,7 @@ Format is `username:password`, split on the *first* `:` — the password itself 
 ## How it works
 
 - The server stores a salted hash of the password and issues opaque tokens with a 24h TTL.
-- Tokens survive restarts in `~/.config/tmux-web-panel/tokens.json` (mode `0600`).
+- Tokens survive restarts in `~/.config/anymux/tokens.json` (mode `0600`).
 - Clients send the token as `Authorization: Bearer` on HTTP and as `?token=` on the WebSocket upgrade.
 - On expiry or logout the client is redirected to the login page.
 
@@ -31,8 +31,8 @@ Format is `username:password`, split on the *first* `:` — the password itself 
 
 When another panel manages this machine (see [architecture](architecture.md)),
 it does not log in. On startup this panel writes a random 64-hex-digit node
-token to `~/.config/tmux-web-panel/node-token` and the pairing file
-`~/.config/tmux-web-panel/node.json` (both owner-only; on Windows inheritance is
+token to `~/.config/anymux/node-token` and the pairing file
+`~/.config/anymux/node.json` (both owner-only; on Windows inheritance is
 removed with `icacls`). The other panel reads the pairing file over SFTP — which
 already proves it can log in to this machine as you — and sends the token as
 `Authorization: Bearer` on HTTP and on the WebSocket upgrade.

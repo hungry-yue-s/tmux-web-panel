@@ -223,7 +223,7 @@ describe('finding mosh-server', () => {
     const exists = (path) => path.endsWith('mosh-server.exe');
     expect(findMoshServer({ platform: 'win32', env: {}, exists, msysRoot: 'D:\\msys64' })).toBe('D:\\msys64\\usr\\bin\\mosh-server.exe');
     expect(findMoshServer({ platform: 'darwin', env: { PATH: '/x' }, exists: (p) => p === '/opt/homebrew/bin/mosh-server' })).toBe('/opt/homebrew/bin/mosh-server');
-    expect(findMoshServer({ platform: 'linux', env: { TMUX_PANEL_MOSH_SERVER: '/a/mosh-server' }, exists: () => false })).toBeNull();
+    expect(findMoshServer({ platform: 'linux', env: { ANYMUX_MOSH_SERVER: '/a/mosh-server' }, exists: () => false })).toBeNull();
   });
 
   it('reports what it found without a path, and why not when it did not', async () => {
@@ -236,7 +236,7 @@ describe('finding mosh-server', () => {
 
   it('checks an external Windows server with the injected environment and the same MSYS runtime path as its launch', async () => {
     const external = 'D:\\Mosh tools\\mosh-server.exe';
-    const env = { PATH: 'C:\\Windows\\System32', TMUX_PANEL_MOSH_SERVER: external, FIXTURE_SETTING: 'kept' };
+    const env = { PATH: 'C:\\Windows\\System32', ANYMUX_MOSH_SERVER: external, FIXTURE_SETTING: 'kept' };
     const before = { ...env };
     const execFileImpl = vi.fn((_file, _args, options, done) => {
       const ready = options.env?.PATH === `${win32.join(MSYS_ROOT, 'usr', 'bin')};${before.PATH}`
@@ -244,7 +244,7 @@ describe('finding mosh-server', () => {
       done(ready ? null : new Error('fixture runtime unavailable'), ready ? 'mosh-server (mosh 1.4.0)' : '');
     });
     const mosh = new MoshService({ platform: 'win32', env, workspace: {}, terminalManager: {},
-      find: ({ env: actual }) => actual.TMUX_PANEL_MOSH_SERVER, execFileImpl });
+      find: ({ env: actual }) => actual.ANYMUX_MOSH_SERVER, execFileImpl });
     expect(await mosh.capability()).toMatchObject({ available: true, version: '1.4.0' });
     expect(execFileImpl).toHaveBeenCalledWith(external, ['--version'], expect.objectContaining({
       timeout: 5000, windowsHide: true, env: expect.objectContaining({ FIXTURE_SETTING: 'kept' }),
@@ -317,10 +317,10 @@ describe('starting a session', () => {
   });
 
   it('honours a port range and a bind address only when they are one', async () => {
-    const good = service({ env: { TMUX_PANEL_MOSH_PORTS: '60100:60110', TMUX_PANEL_MOSH_BIND: '127.0.0.1' } });
+    const good = service({ env: { ANYMUX_MOSH_PORTS: '60100:60110', ANYMUX_MOSH_BIND: '127.0.0.1' } });
     await good.mosh.start({ id: id(), paneId: '%1' });
     expect(good.spawn.calls[0].args.slice(5, 9)).toEqual(['-p', '60100:60110', '-i', '127.0.0.1']);
-    const bad = service({ env: { TMUX_PANEL_MOSH_PORTS: '1; rm -rf', TMUX_PANEL_MOSH_BIND: 'example.com -- sh' } });
+    const bad = service({ env: { ANYMUX_MOSH_PORTS: '1; rm -rf', ANYMUX_MOSH_BIND: 'example.com -- sh' } });
     await bad.mosh.start({ id: id(), paneId: '%1' });
     expect(bad.spawn.calls[0].args).toContain('60000:61000');
     expect(bad.spawn.calls[0].args).not.toContain('-i');
@@ -636,6 +636,16 @@ describe('who may open a mosh session', () => {
     expect(del.body.data).toEqual({ stopped: true, clean: true });
   });
 
+  it('answers a hub installed before the rename, which sends only the old mark', async () => {
+    const { server } = app();
+    const res = await request(server).post('/api/mosh/sessions')
+      .set({ authorization: `Bearer ${NODE_TOKEN}`, 'x-twp-hub-call': '1' }).send({ id: SESSION, paneId: '%3' });
+    expect(res.status).toBe(201);
+    const browser = await request(server).post('/api/mosh/sessions')
+      .set({ authorization: `Bearer ${NODE_TOKEN}` }).send({ id: SESSION, paneId: '%3' });
+    expect(browser.status).toBe(403);
+  });
+
   it('ends the session when the hub gave up before the answer', async () => {
     let release;
     const { server, mosh } = app({ start: () => new Promise((resolve) => { release = resolve; }) });
@@ -676,6 +686,8 @@ describe('who may open a mosh session', () => {
       expect(isRelayable(path)).toBe(false);
     }
     expect(isRelayable('/api/mosher')).toBe(true);
-    expect(forwardRequestHeaders({ [HUB_CALL_HEADER]: '1', 'X-TWP-Hub-Call': '1', accept: '*/*' }, 't'.repeat(64))).toEqual({ accept: '*/*', authorization: `Bearer ${'t'.repeat(64)}` });
+    expect(forwardRequestHeaders({ [HUB_CALL_HEADER]: '1', 'X-Anymux-Hub-Call': '1', accept: '*/*' }, 't'.repeat(64))).toEqual({ accept: '*/*', authorization: `Bearer ${'t'.repeat(64)}` });
+    // Nor the mark a Node installed before the rename checks.
+    expect(forwardRequestHeaders({ 'x-twp-hub-call': '1', 'X-TWP-Hub-Call': '1', accept: '*/*' }, 't'.repeat(64))).toEqual({ accept: '*/*', authorization: `Bearer ${'t'.repeat(64)}` });
   });
 });

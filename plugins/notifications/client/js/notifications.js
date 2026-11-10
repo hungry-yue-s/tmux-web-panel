@@ -39,7 +39,7 @@ var NotificationPanel = (function () {
     try {
       var webkit = window.webkit;
       var handlers = webkit && webkit.messageHandlers;
-      var handler = handlers && handlers.tmuxPanelNotification;
+      var handler = handlers && (handlers.anymuxNotification || handlers.tmuxPanelNotification);
       if (!handler || typeof handler.postMessage !== 'function') return;
 
       handler.postMessage({

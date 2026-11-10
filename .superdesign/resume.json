@@ -36,7 +36,7 @@
       ],
       "drafts": {
         "b0ab4875-7894-4135-a01a-e7386eb8f10e": {
-          "title": "Tmux Panel - Crafted Graphite Workspace",
+          "title": "Anymux - Crafted Graphite Workspace",
           "visualDirection": "Deep Current / 深海仪表台, bold user-selected composition: shared titlebar, continuous teal navigation, edge-to-edge terminal/document, copper selection, Lucide static icons, strictly isolated live xterm/tmux bridge; v7 design, v8-v9 live metadata and menu refinements; design/deep-current-workspace branch; production unchanged",
           "currentVersion": 9
         }

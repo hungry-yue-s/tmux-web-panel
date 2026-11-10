@@ -2,7 +2,7 @@
 import fs from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import https from 'node:https';
-import os from 'node:os';
+import { appDir } from '../lib/legacy-names.js';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
@@ -15,7 +15,7 @@ if (!['start', 'status', 'stop', 'download'].includes(action) || !outputDir
   console.error('       node scripts/capture-diagnostics.mjs status|stop|download OUTPUT_DIR [REMOTE_SERVER_ID]');
   process.exit(1);
 }
-const configDir = path.join(os.homedir(), '.config/tmux-web-panel');
+const configDir = appDir('config');
 const ca = await fs.readFile(path.join(configDir, 'ca/ca.crt'));
 const tokens = JSON.parse(await fs.readFile(path.join(configDir, 'tokens.json'), 'utf8'));
 const token = tokens.find(([, entry]) => entry.expiresAt == null || entry.expiresAt > Date.now())?.[0];

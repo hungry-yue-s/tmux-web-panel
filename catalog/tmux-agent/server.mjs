@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 
 const quote = (value) => "'" + String(value).replace(/'/g, "'\\''") + "'";
 const idPattern = /^[0-9a-f-]{36}$/;
-const rootScript = 'base="$HOME/.local/share/tmux-web-panel/agent-jobs"; ';
+// Jobs started before the rename live under tmux-web-panel until the panel moves that directory.
+const rootScript = 'base="$HOME/.local/share/anymux/agent-jobs"; '
+  + '[ -e "$HOME/.local/share/anymux" ] || [ ! -e "$HOME/.local/share/tmux-web-panel" ] || base="$HOME/.local/share/tmux-web-panel/agent-jobs"; ';
 const keys = ['Enter', 'C-c', 'Escape', 'Tab', 'Up', 'Down', 'Left', 'Right', 'BSpace'];
 
 /**

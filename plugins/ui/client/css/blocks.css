@@ -3,7 +3,7 @@
    derived from the workspace theme, so every block follows light and dark. */
 
 :root {
-  --b-font-mono: "Tmux Panel Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --b-font-mono: "Anymux Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --b-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 .blk-frame, .fp-dock-actions, .blk-picker-overlay, .blk-dialog-overlay, .blk-db, .blk-board, .blk-editor, .blk-nb,

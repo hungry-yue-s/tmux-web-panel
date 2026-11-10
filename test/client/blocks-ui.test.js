@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import fs from 'node:fs';
-import { layoutPanes, controlEvents } from '../../bin/twp.mjs';
+import { layoutPanes, controlEvents } from '../../bin/anymux.mjs';
 import { BLOCKS } from '../helpers/blocks.js';
 
 let B;
@@ -88,7 +88,7 @@ describe('TODO.md board', () => {
   });
 });
 
-describe('twp events', () => {
+describe('anymux events', () => {
   it('reads pane ids from layout leaves', () => {
     expect([...layoutPanes('b25f,80x24,0,0{40x24,0,0,1,39x24,41,0[39x12,41,0,2,39x11,41,13,5]}')]).toEqual(['%1', '%2', '%5']);
   });

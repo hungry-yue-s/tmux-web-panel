@@ -16,7 +16,7 @@ flowchart LR
 
 ## 协议 v1
 
-网页在 head 声明 `<meta name="tmux-panel-presentation" content="1">` 即表示愿意接收主题。
+网页在 head 声明 `<meta name="anymux-presentation" content="1">` 即表示愿意接收主题。
 未声明的 HTML 按原样预览，不尝试猜测或替换其颜色。
 
 引擎 `plugins/files/client/js/panel-presentation.js` 将现有 `--workspace-*` 和状态颜色映射为稳定的 `--pp-*` 语义变量；映射详见源码和 [skill](../skills/panel-presentation/SKILL.md)。这复用主题模块已有的对比度处理，不维护第二份调色板。引擎只设置变量、`color-scheme`、`data-panel-theme` 和 `data-panel-material`，不注入布局、组件、字体、reset CSS 或动画。

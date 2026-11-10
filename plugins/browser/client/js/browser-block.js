@@ -2,7 +2,7 @@
 
 // The browser block (hosted by BlockHost, plugins/ui): a page of this
 // machine's localhost or any URL beside the terminal, its command
-// (Alt+Shift+B, the palette), and `twp open <url>` from a pane.
+// (Alt+Shift+B, the palette), and `anymux open <url>` from a pane.
 
 (function () {
   'use strict';
@@ -17,7 +17,7 @@
   // ===========================================================================
 
   function detectedPorts() {
-    var data = window.__twpStatus;
+    var data = window.__anymuxStatus;
     var seen = {};
     var out = [];
     ((data && data.sessions) || []).forEach(function (session) {

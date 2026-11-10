@@ -27,7 +27,7 @@ describe('unified desktop runtime settings', () => {
   it('keeps source installations on their legacy defaults and honors existing CLI/environment precedence', () => {
     const config = resolveRuntimeConfig({ argv: ['node', 'index'], env: {}, home: '/legacy-user' });
     expect(config).toMatchObject({ port: 7681, host: '0.0.0.0', auth: null, httpPort: 80,
-      configDir: resolve('/legacy-user', '.config', 'tmux-web-panel'), managedRuntime: false, tokenFileName: 'tokens.json' });
+      configDir: resolve('/legacy-user', '.config', 'anymux'), managedRuntime: false, tokenFileName: 'tokens.json' });
     const overridden = resolveRuntimeConfig({ argv: ['node', 'index', '--port', '9002', '--auth', 'cli:password:with:colon'],
       env: { PORT: '9001', AUTH: 'env:other', HOST: '127.0.0.1' } });
     expect(overridden.port).toBe(9002);
@@ -89,7 +89,7 @@ describe('unified desktop runtime settings', () => {
 
   it('retains explicit operator overrides and selects HTTPS without a privileged redirect listener', () => {
     const { path, directory } = stored({ listenOnLAN: true, tls: { cert: 'tls/cert.pem', key: 'tls/key.pem' } });
-    const config = load(path, { PORT: '20000', TMUX_PANEL_CONFIG_DIR: '/explicit-data' }, ['--port', '21000']);
+    const config = load(path, { PORT: '20000', ANYMUX_CONFIG_DIR: '/explicit-data' }, ['--port', '21000']);
     expect(config.port).toBe(21000);
     expect(config.configDir).toBe(resolve('/explicit-data'));
     expect(config.host).toBe('0.0.0.0');
@@ -117,12 +117,12 @@ describe('unified desktop runtime settings', () => {
 
   it('resolves panel-owned state and MFA independently of the legacy home', () => {
     const directory = temp();
-    expect(configDirectory({ home: '/legacy-user', env: { TMUX_PANEL_CONFIG_DIR: directory } })).toBe(directory);
+    expect(configDirectory({ home: '/legacy-user', env: { ANYMUX_CONFIG_DIR: directory } })).toBe(directory);
     const path = totpFilePath(directory);
     const secret = enrollTotp(path);
     expect(loadTotpSecret(path)).toBe(secret);
     expect(loadTotpSecret(totpFilePath(join(directory, 'other')))).toBeNull();
-    expect(() => resolveRuntimeConfig({ argv: ['node', 'index'], env: { TMUX_PANEL_MANAGED_RUNTIME: '1' } })).toThrow('--config');
+    expect(() => resolveRuntimeConfig({ argv: ['node', 'index'], env: { ANYMUX_MANAGED_RUNTIME: '1' } })).toThrow('--config');
     expect(() => load(stored().path, { PORT: 'invalid' })).toThrow('port');
   });
 });

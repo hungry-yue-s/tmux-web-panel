@@ -1,10 +1,12 @@
 <div align="center">
 
-<img src="plugins/ui/client/app-icon.png" width="76" alt="Tmux Web Panel logo">
+<img src="plugins/ui/client/app-icon.png" width="76" alt="Anymux logo">
 
 English | [中文版](README.zh-CN.md)
 
-# Tmux Web Panel
+# Anymux
+
+<sub>Formerly tmux-web-panel. Existing installations keep working and move to the new names when their service is reinstalled or restarted; see <a href="docs/architecture.md#改名兼容tmux-web-panel--anymux">the rename notes</a>.</sub>
 
 Native clients: [macOS](macos/README.md) · [Android](android/README.md) (`npm run build:android`).
 
@@ -19,7 +21,7 @@ of every machine you own, plus rendered docs, live perf dashboards and
 
 <img src="docs/assets/readme/hero.png" alt="Desktop: terminal beside a docked Mermaid diagram preview" width="100%">
 
-<img src="docs/assets/readme/illustrations/xiaohei-viewers.svg" alt="Hand-drawn concept: desktop browser, mobile browser, and macOS app all view the same running tmux workspace through tmux-web-panel" width="88%">
+<img src="docs/assets/readme/illustrations/xiaohei-viewers.svg" alt="Hand-drawn concept: desktop browser, mobile browser, and macOS app all view the same running tmux workspace through anymux" width="88%">
 
 <sub>Concept illustration in the hand-drawn <a href="https://github.com/helloianneo/ian-xiaohei-illustrations">Ian Xiaohei Illustrations</a> style.</sub>
 
@@ -29,7 +31,7 @@ of every machine you own, plus rendered docs, live perf dashboards and
 
 ## Download the desktop client
 
-For a ready-to-run Mac app, choose the complete package for your Mac's architecture under [GitHub Releases → Assets](https://github.com/hungry-yue-s/tmux-web-panel/releases), rather than **Source code (zip)**. Complete packages include the server, Node runtime and project-managed tmux. The first-run guide creates a local account; **Settings and Runtime Status** shows setup progress, service state and logs.
+For a ready-to-run Mac app, choose the complete package for your Mac's architecture under [GitHub Releases → Assets](https://github.com/hungry-yue-s/anymux/releases), rather than **Source code (zip)**. Complete packages include the server, Node runtime and project-managed tmux. The first-run guide creates a local account; **Settings and Runtime Status** shows setup progress, service state and logs.
 
 Local use comes first. Phone access, dynamic DNS and a relay website are optional and can be configured later. See the [desktop onboarding guide](docs/desktop-onboarding.md) and [macOS build and signing notes](macos/README.md). Source checkout users can continue with the source deployment instructions below.
 
@@ -138,7 +140,7 @@ tmux has three useful layers: a **session** is one project, a **window** is one 
 
 <img src="docs/assets/readme/illustrations/xiaohei-tmux-layers.svg" alt="Hand-drawn hierarchy: one tmux session contains windows; each window contains panes where Codex, Claude, lazygit, and bash run" width="90%">
 
-Clients never connect to tmux directly. They connect to `tmux-web-panel`; the panel authenticates them, serves the UI, and attaches to tmux. That is why closing a browser tab does not stop a build, and the same pane can be reopened from another device.
+Clients never connect to tmux directly. They connect to `anymux`; the panel authenticates them, serves the UI, and attaches to tmux. That is why closing a browser tab does not stop a build, and the same pane can be reopened from another device.
 
 Inside, the panel is a set of plugins on the [Cordis](https://github.com/cordiverse/cordis) kernel (the same kernel as DeepSeek Harness): `profiles/panel.yml` lists them, each feature is one plugin with its server side and its front end, and whatever a plugin registers goes away with it. `node bin/panel.js --dump-config` prints the assembly. See [docs/plugins.md](docs/plugins.md).
 
@@ -151,7 +153,7 @@ flowchart LR
     end
 
     subgraph deployment["Deployment computer"]
-        panel["tmux-web-panel<br/>login · web UI · REST API · terminal WebSocket"]
+        panel["anymux<br/>login · web UI · REST API · terminal WebSocket"]
 
         subgraph localTmux["Local tmux server — keeps jobs running when clients disconnect"]
             direction TB
@@ -222,8 +224,8 @@ menu-bar status, native notifications and a real clipboard bridge.
 
 Windows runs native Node.js against the [MSYS2](https://www.msys2.org/) tmux
 package: panes are MSYS2 login shells (UCRT64 by default) and node-pty attaches
-through ConPTY. Two scheduled tasks under `\tmux-web-panel\` replace
-systemd/launchd: `tmux-server` keeps `tmux -D` alive and `tmux-web-panel`
+through ConPTY. Two scheduled tasks under `\anymux\` replace
+systemd/launchd: `tmux-server` keeps `tmux -D` alive and `anymux`
 restarts node 3 seconds after any exit.
 
 ```powershell
@@ -236,7 +238,7 @@ npm ci
 
 From an elevated PowerShell the tasks start at boot without a logon (S4U);
 otherwise they start when you sign in (`-Trigger Logon`). Settings live in the
-owner-only `%USERPROFILE%\.config\tmux-web-panel\windows-service.json`, logs
+owner-only `%USERPROFILE%\.config\anymux\windows-service.json`, logs
 next to it in `logs\`. Paths in the file preview are the MSYS paths panes show
 (`/home/me`, `/c/Users/me`); `C:\...` paths printed by native programs work too.
 Per-process CPU/memory/IO and pane port detection are not available on Windows.
@@ -266,7 +268,7 @@ Optional components fix that:
   stays in a local 0600 file).
 
 Duck DNS and GitHub Pages are free services; accounts and tokens live only
-under `~/.config/tmux-web-panel/` and never enter the repository.
+under `~/.config/anymux/` and never enter the repository.
 
 ---
 

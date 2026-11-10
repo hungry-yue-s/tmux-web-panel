@@ -12,7 +12,7 @@ describe('terminal font configuration', () => {
     ];
 
     for (const source of sources) {
-      expect(source).toContain("'Tmux Panel Mono', 'Maple Mono NF CN'");
+      expect(source).toContain("'Anymux Mono', 'Maple Mono NF CN'");
       expect(source).toContain("fontFamily: 'monospace'");
       // Only the core slice is awaited, and only briefly.
       expect(source).toContain('TerminalFonts.coreReady(');
@@ -31,20 +31,20 @@ describe('terminal font configuration', () => {
     for (const html of [composedIndex(), readFileSync(resolve(publicDir, 'terminal.html'), 'utf8')]) {
       for (const weight of ['400', '700']) {
         const core = slices.core[weight];
-        expect(html).toContain(`rel="preload" href="/fonts/tpm/${core}"`);
-        const file = readFileSync(resolve(publicDir, 'fonts/tpm', core));
+        expect(html).toContain(`rel="preload" href="/fonts/amm/${core}"`);
+        const file = readFileSync(resolve(publicDir, 'fonts/amm', core));
         expect(file.subarray(0, 4).toString('ascii')).toBe('wOF2');
         expect(file.length).toBeLessThan(120_000);
-        expect(fontCss).toContain(`/fonts/tpm/${core}`);
+        expect(fontCss).toContain(`/fonts/amm/${core}`);
       }
       // The full multi-megabyte faces are never preloaded again.
-      expect(html).not.toContain('TmuxPanelMono-Regular.woff2');
-      expect(html).not.toContain('TmuxPanelMono-Bold.woff2');
+      expect(html).not.toContain('AnymuxMono-Regular.woff2');
+      expect(html).not.toContain('AnymuxMono-Bold.woff2');
     }
-    expect(fontCss).toMatch(/font-family: 'Tmux Panel Mono'[\s\S]*unicode-range: U\+/);
+    expect(fontCss).toMatch(/font-family: 'Anymux Mono'[\s\S]*unicode-range: U\+/);
     for (const slice of slices.slices) {
       for (const name of Object.values(slice.files)) {
-        expect(readFileSync(resolve(publicDir, 'fonts/tpm', name)).subarray(0, 4).toString('ascii')).toBe('wOF2');
+        expect(readFileSync(resolve(publicDir, 'fonts/amm', name)).subarray(0, 4).toString('ascii')).toBe('wOF2');
       }
     }
     // The 3755 common hanzi are spread over the han-a slices, declared last so they win.
@@ -60,7 +60,7 @@ describe('terminal font configuration', () => {
       'utf8',
     );
     const webViewSource = readFileSync(
-      repoPath('macos/TmuxPanel/Sources/TmuxPanel/PanelWebView.swift'),
+      repoPath('macos/Anymux/Sources/Anymux/PanelWebView.swift'),
       'utf8',
     );
 

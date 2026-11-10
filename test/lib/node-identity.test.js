@@ -51,6 +51,20 @@ describe('node identity', () => {
     expect(parsePairing(JSON.stringify(pairing))).toEqual(pairing);
   });
 
+  it('also writes the pairing file where a Hub of the old name looks, while that is a real directory', async () => {
+    const legacy = path.join(home, '.config', 'tmux-web-panel');
+    await fs.mkdir(path.join(home, '.config', 'anymux'), { recursive: true });
+    await fs.mkdir(legacy, { recursive: true });
+    const identity = await initNodeIdentity({ configDir, port: 7681, listenHost: '127.0.0.1', home });
+    expect(identity.pairingPath).toBe(path.join(home, '.config', 'anymux', 'node.json'));
+    expect(await fs.readFile(path.join(legacy, 'node.json'), 'utf8')).toBe(await fs.readFile(identity.pairingPath, 'utf8'));
+  });
+
+  it('writes the pairing file only once when the old directory is absent', async () => {
+    await initNodeIdentity({ configDir, port: 7681, listenHost: '127.0.0.1', home });
+    await expect(fs.stat(path.join(home, '.config', 'tmux-web-panel'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it.skipIf(process.platform === 'win32')('keeps the pairing file owner-only', async () => {
     const identity = await initNodeIdentity({ configDir, port: 7681, listenHost: '127.0.0.1', home });
     expect((await fs.stat(identity.pairingPath)).mode & 0o777).toBe(0o600);

@@ -393,7 +393,7 @@ class StatusSocket {
           return;
         }
         if (data && (data.type === 'open-file' || data.type === 'open-url')) {
-          // `twp open` from a pane, handled by whichever plugin opens that kind
+          // `anymux open` from a pane, handled by whichever plugin opens that kind
           // (PanelSlots.openers); only a visible tab acts so background tabs stay quiet.
           var opener = typeof PanelSlots !== 'undefined' ? PanelSlots.openers.get(data.type) : null;
           if (opener && document.visibilityState === 'visible') opener.run(data);
@@ -453,7 +453,7 @@ class StatusSocket {
       }
 
       // Blocks read pane commands and listening ports from the latest snapshot.
-      window.__twpStatus = data;
+      window.__anymuxStatus = data;
     }
   }
 

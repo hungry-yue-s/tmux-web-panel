@@ -46,7 +46,7 @@ describe('client service', () => {
     const { imports } = importMapOf(html);
     expect(imports.cordis).toMatch(/^\/client\/vendor\/cordis\/index\.js\?h=[0-9a-f]{12}$/);
     expect(imports.cosmokit).toMatch(/^\/client\/vendor\/cosmokit\/index\.mjs\?h=/);
-    expect(imports['@twp/client']).toMatch(/^\/client\/lib\/index\.js\?h=/);
+    expect(imports['@anymux/client']).toMatch(/^\/client\/lib\/index\.js\?h=/);
     expect(imports['/client/core/api.js']).toMatch(/^\/client\/core\/api\.js\?h=/);
     expect(html).toMatch(/<script type="module" src="\/client\/boot\.js\?h=[0-9a-f]{12}"><\/script>/);
     // Before any module script of the page itself.

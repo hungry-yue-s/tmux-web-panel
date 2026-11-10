@@ -81,7 +81,7 @@
 
   async function loadAssets() {
     const style = document.createElement('style');
-    style.textContent = "@font-face{font-family:ReviewMono;src:url('/fonts/TmuxPanelMono-Regular.woff2') format('woff2');font-weight:400;font-display:swap}@font-face{font-family:ReviewMono;src:url('/fonts/TmuxPanelMono-Bold.woff2') format('woff2');font-weight:700;font-display:swap}.terminal-scroll{position:relative}.review-xterm-host{position:absolute;inset:18px 16px;visibility:hidden;min-width:0;min-height:0}.review-xterm-host .xterm{height:100%}.review-xterm-host .xterm .xterm-viewport{background:var(--terminal);overflow:hidden}.review-terminal-live{overflow:hidden!important}";
+    style.textContent = "@font-face{font-family:ReviewMono;src:url('/fonts/AnymuxMono-Regular.woff2') format('woff2');font-weight:400;font-display:swap}@font-face{font-family:ReviewMono;src:url('/fonts/AnymuxMono-Bold.woff2') format('woff2');font-weight:700;font-display:swap}.terminal-scroll{position:relative}.review-xterm-host{position:absolute;inset:18px 16px;visibility:hidden;min-width:0;min-height:0}.review-xterm-host .xterm{height:100%}.review-xterm-host .xterm .xterm-viewport{background:var(--terminal);overflow:hidden}.review-terminal-live{overflow:hidden!important}";
     document.head.append(style);
     const cssReady = new Promise((resolve, reject) => {
       const link = document.createElement('link');
@@ -144,7 +144,7 @@
     term = new Terminal({
       fontFamily: "ReviewMono, 'Maple Mono NF CN', monospace", fontSize: 14,
       lineHeight: 1.35, theme: palette(), cursorBlink: !matchMedia('(prefers-reduced-motion: reduce)').matches, scrollback: 5000,
-      allowTransparency: window.__tmuxPanelTransparency === true,
+      allowTransparency: window.__anymuxTransparency === true,
       macOptionClickForcesSelection: true, rescaleOverlappingGlyphs: true,
     });
     fitAddon = new FitAddon.FitAddon();

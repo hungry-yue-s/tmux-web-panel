@@ -5,7 +5,8 @@
 function _postNativeClipboard(text) {
   try {
     var handlers = window.webkit && window.webkit.messageHandlers;
-    var handler = handlers && handlers.tmuxPanelClipboard;
+    // tmuxPanelClipboard: a native app from before the rename.
+    var handler = handlers && (handlers.anymuxClipboard || handlers.tmuxPanelClipboard);
     if (!handler || typeof handler.postMessage !== 'function') return false;
     handler.postMessage({ text: String(text) });
     return true;
@@ -647,7 +648,7 @@ var _terminalMode = (function () {
 var MOBILE_BASE_FONT_SIZE = 13;
 var MOBILE_MIN_FONT_SIZE = 11;
 var DESKTOP_BASE_FONT_SIZE = 14;
-var TERMINAL_FONT_FAMILY = "'Tmux Panel Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
+var TERMINAL_FONT_FAMILY = "'Anymux Mono', 'Maple Mono NF CN', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Symbols Nerd Font Mono', monospace";
 /** How long a new terminal waits for the core font slice before drawing with the fallback. */
 var CORE_FONT_WAIT_MS = 1500;
 /** How long a socket may take to bring up its attach client before it counts as dropped. */
@@ -660,8 +661,8 @@ function _coreFontWait() {
   if (typeof TerminalFonts !== 'undefined') return TerminalFonts.coreReady(CORE_FONT_WAIT_MS);
   if (!document.fonts || !document.fonts.load) return Promise.resolve(false);
   var load = Promise.all([
-    document.fonts.load("400 14px 'Tmux Panel Mono'"),
-    document.fonts.load("700 14px 'Tmux Panel Mono'"),
+    document.fonts.load("400 14px 'Anymux Mono'"),
+    document.fonts.load("700 14px 'Anymux Mono'"),
   ]).then(function () { return true; }, function () { return false; });
   return Promise.race([load, new Promise(function (resolve) {
     setTimeout(function () { resolve(false); }, CORE_FONT_WAIT_MS);
@@ -1192,7 +1193,7 @@ function renderTerminal(container, known) {
     if (state.currentPane) {
       var url = '/terminal.html?pane=' + encodeURIComponent(state.currentPane);
       var nativeWindow = window.webkit && window.webkit.messageHandlers
-        && window.webkit.messageHandlers.tmuxPanelOpenWindow;
+        && (window.webkit.messageHandlers.anymuxOpenWindow || window.webkit.messageHandlers.tmuxPanelOpenWindow);
       if (nativeWindow && typeof nativeWindow.postMessage === 'function') {
         nativeWindow.postMessage({ url: url, title: 'Tmux Terminal', width: 800, height: 600 });
       } else {

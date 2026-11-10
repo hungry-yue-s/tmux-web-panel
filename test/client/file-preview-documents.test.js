@@ -28,8 +28,8 @@ function setup(width = 1440, native = false) {
   });
   window.Api = { activeServerId: () => 'remote', nodeUrl: (_serverId, path) => '/n/remote' + path };
   if (native) {
-    window.__tmuxPanelTransparency = true;
-    window.webkit = { messageHandlers: { tmuxPanelAppearance: { postMessage: vi.fn() } } };
+    window.__anymuxTransparency = true;
+    window.webkit = { messageHandlers: { anymuxAppearance: { postMessage: vi.fn() } } };
   }
   window.eval(readFileSync('plugins/ui/client/js/theme.js', 'utf8'));
   window.eval(readFileSync('plugins/files/client/js/panel-presentation.js', 'utf8'));
@@ -43,7 +43,7 @@ function setup(width = 1440, native = false) {
 describe('HTML and PDF previews', () => {
   it('syncs both native sliders into docked pages without changing srcdoc and exports an opaque snapshot', async () => {
     const { window, preview, setContent } = setup(1440, true);
-    setContent('<meta name="tmux-panel-presentation" content="1"><h1>Native report</h1>');
+    setContent('<meta name="anymux-presentation" content="1"><h1>Native report</h1>');
     await preview.openFile('/tmp/native.html');
     window.document.querySelector('.fp-btn-placement').click();
     const frame = window.document.querySelector('.fp-html-wrap iframe');
@@ -67,7 +67,7 @@ describe('HTML and PDF previews', () => {
 
   it('syncs opt-in modal and detached dock tabs and exports the current palette while preserving raw source', async () => {
     const { window, preview, setContent } = setup();
-    const content = '<meta name="tmux-panel-presentation" content="1"><h1>Themed report</h1>';
+    const content = '<meta name="anymux-presentation" content="1"><h1>Themed report</h1>';
     setContent(content);
     await preview.openFile('/tmp/one.html');
     const first = window.document.querySelector('.fp-html-wrap iframe');

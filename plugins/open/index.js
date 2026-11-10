@@ -1,4 +1,4 @@
-// `twp open <path>` from a pane (/api/open, lib/api/open.js): the open pages
+// `anymux open <path>` from a pane (/api/open, lib/api/open.js): the open pages
 // show that file, announced over the status socket (status/event).
 
 import { createOpenRouter } from '../../lib/api/open.js';

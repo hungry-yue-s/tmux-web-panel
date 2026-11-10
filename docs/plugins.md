@@ -1,6 +1,6 @@
 # 一切皆插件
 
-tmux-web-panel 跑在 [Cordis](https://github.com/cordiverse/cordis) 插件内核上，思路来自 DeepSeek Harness（同一个内核）：没有特权内核，产品的每一部分都是插件，插件注册的一切都是可逆的副作用，整个应用由一份可打印、可覆盖的配置组装出来。内核以发布版 vendor 在 `vendor/`（来源和补丁见 [vendor/README.md](../vendor/README.md)）。
+anymux 跑在 [Cordis](https://github.com/cordiverse/cordis) 插件内核上，思路来自 DeepSeek Harness（同一个内核）：没有特权内核，产品的每一部分都是插件，插件注册的一切都是可逆的副作用，整个应用由一份可打印、可覆盖的配置组装出来。内核以发布版 vendor 在 `vendor/`（来源和补丁见 [vendor/README.md](../vendor/README.md)）。
 
 根目录 `CLAUDE.md` 的契约（Windows 上的 tmux 客户端、会话保护、终端首屏、Hub/Node……）都落在这些插件和 `lib/` 里。
 
@@ -14,7 +14,7 @@ plugins/     每个功能一个插件：服务端接线（index.js）和它的�
 lib/         业务模块（路由、TerminalManager、会话保护、Hub 链路……），由插件接线
 client/      浏览器端的 Cordis 内核：boot、核心服务 api、共享 DOM 工具
 profiles/    panel.yml：整个产品
-bin/         panel.js（启动面板）、twp（窗格里用的命令行）
+bin/         panel.js（启动面板）、anymux（窗格里用的命令行）
 catalog/     经过审核的面板插件（tmux-agent），由 panel-plugins 插件安装
 vendor/      Cordis、cosmokit、timer 的发布版；tmux 子模块、tmux-resurrect
 test/        kernel/plugins 的测试在 test/ 根下；test/lib/ 对应 lib/，test/client/ 对应各插件的前端，test/repo/ 对应安装脚本与原生客户端
@@ -23,7 +23,7 @@ server/      只剩 index.js：给旧服务单元留的兼容入口，启动的�
 
 **`lib/` 与 `plugins/` 的分工。** 插件负责“什么时候、以什么依赖、向哪里注册”，`lib/` 负责“怎么做”。原来的 `server/index.js` 用 657 行手工接线、手工排启动顺序、手工列关机步骤；现在这些都是插件的 `inject`、`ctx.effect` 和 profile。`lib/` 里的模块可以在不动组装的前提下逐个重构。
 
-**仓库路径。** 不是 JavaScript 模块的共享资源——`scripts/`（服务安装、远程安装、Windows 采样）、`vendor/tmux-plugins/`、`catalog/`、`skills/`、版本号所在的 `package.json`——统一经 `lib/paths.js` 的 `repoPath()` 取得（`TWP_REPO_ROOT` 可覆盖，打包的运行时用得上）。不要在代码里写相对于当前目录的路径。
+**仓库路径。** 不是 JavaScript 模块的共享资源——`scripts/`（服务安装、远程安装、Windows 采样）、`vendor/tmux-plugins/`、`catalog/`、`skills/`、版本号所在的 `package.json`——统一经 `lib/paths.js` 的 `repoPath()` 取得（`ANYMUX_REPO_ROOT` 可覆盖，打包的运行时用得上）。不要在代码里写相对于当前目录的路径。
 
 ## 运行
 
@@ -35,9 +35,9 @@ node bin/panel.js --patch my.yml     # 叠加一层补丁
 npm test
 ```
 
-正式运行由服务管理器启动（见 `CLAUDE.md`）。`bin/panel.js` 接受原服务端的全部命令行选项（`--config`、`--port`、`--host`、`--auth`、`--tls-cert`、`--tls-key`、`--http-port`、`--poll-interval`、`--max-connections`），由 `launch` 插件读取；服务管理器注入的环境变量（`PORT`、`HOST`、`AUTH`、`NODE_ONLY`、`TLS_*`、`HTTP_PORT`、`TMUX_PANEL_CONFIG_DIR`）也照旧。`install-service.sh` / `.ps1` 生成的单元启动 `bin/panel.js`；还指向 `server/index.js` 的旧单元经兼容入口照常启动，重新运行安装脚本即改过来。从旧结构更新的安装还有两处遗留，由面板启动时自动处理：面板以前装的 tmux-agent 技能链接指向已不存在的 `plugins/tmux-agent/`，`managed-resources` 把它改指 `catalog/`（只认指向本仓库的链接，私有 tmux server 下不做）；`setup-relay.sh` 以前写在 `public/js/relay-config.js` 的中继配置，`ui` 把它挪到 `plugins/ui/client/js/`。
+正式运行由服务管理器启动（见 `CLAUDE.md`）。`bin/panel.js` 接受原服务端的全部命令行选项（`--config`、`--port`、`--host`、`--auth`、`--tls-cert`、`--tls-key`、`--http-port`、`--poll-interval`、`--max-connections`），由 `launch` 插件读取；服务管理器注入的环境变量（`PORT`、`HOST`、`AUTH`、`NODE_ONLY`、`TLS_*`、`HTTP_PORT`、`ANYMUX_CONFIG_DIR`）也照旧。`install-service.sh` / `.ps1` 生成的单元启动 `bin/panel.js`；还指向 `server/index.js` 的旧单元经兼容入口照常启动，重新运行安装脚本即改过来。从旧结构更新的安装还有两处遗留，由面板启动时自动处理：面板以前装的 tmux-agent 技能链接指向已不存在的 `plugins/tmux-agent/`，`managed-resources` 把它改指 `catalog/`（只认指向本仓库的链接，私有 tmux server 下不做）；`setup-relay.sh` 以前写在 `public/js/relay-config.js` 的中继配置，`ui` 把它挪到 `plugins/ui/client/js/`。
 
-**不要用 `bin/panel.js` 直接跑在生产状态上做实验。** 默认配置目录就是正式面板的 `~/.config/tmux-web-panel`（令牌、通知、服务器列表、会话保护设置），`node` 插件还会改写 `~/.config/tmux-web-panel/node.json`（Hub 读的配对文件）。实验和冒烟一律用补丁把这些指走，并选私有 tmux server，见“测试”。
+**不要用 `bin/panel.js` 直接跑在生产状态上做实验。** 默认配置目录就是正式面板的 `~/.config/anymux`（令牌、通知、服务器列表、会话保护设置），`node` 插件还会改写 `~/.config/anymux/node.json`（Hub 读的配对文件）。实验和冒烟一律用补丁把这些指走，并选私有 tmux server，见“测试”。
 
 ## 内核：五个概念
 
@@ -61,7 +61,7 @@ npm test
 运行中的面板是一份插件条目列表，按顺序由这些层叠出来：
 
 1. profile：`profiles/<name>.yml`（或 `--profile <path>`），默认 `panel`；
-2. 用户补丁：配置目录下的 `patch.yml`，即 `~/.config/tmux-web-panel/patch.yml`（`TMUX_PANEL_CONFIG_DIR` 或 `TWP_HOME` 可改）；
+2. 用户补丁：配置目录下的 `patch.yml`，即 `~/.config/anymux/patch.yml`（`ANYMUX_CONFIG_DIR` 或 `ANYMUX_HOME` 可改）；
 3. 每个 `--patch <file>`，按命令行顺序。
 
 `panel --dump-config` 打印叠完的结果和参与的每一层。打印出的任何条目都能被补丁替换；除此之外没有别的地方会挂载插件。
@@ -144,8 +144,8 @@ npm test
 | `git` | — | http, fileAccess | Git block 的 `/api/git` |
 | `sqlite` | — | http, fileAccess | SQLite 预览 `/api/sqlite` |
 | `notebook` | — | http, fileAccess | `/api/notebook` |
-| `open` | — | http, fileAccess | `twp open` 的 `/api/open`，经 `status/event` 通知页面 |
-| `browser` | — | — | 浏览器 block 与 `twp open <url>`，只有前端（只在 Hub） |
+| `open` | — | http, fileAccess | `anymux open` 的 `/api/open`，经 `status/event` 通知页面 |
+| `browser` | — | — | 浏览器 block 与 `anymux open <url>`，只有前端（只在 Hub） |
 | `share` | `shares` | launch, http, timer | 预览快照分享，公开的 `/s/:id`（只在 Hub） |
 | `metrics` | `metrics` | http | 系统与进程监控、历史、窗口资源 |
 | `agent-usage` | — | launch, http | Claude / Codex 用量 `/api/claude-usage`、`/api/codex-usage` |
@@ -180,7 +180,7 @@ npm test
 | `status/workspace-changed (revision)` | workspace | status |
 | `status/server-status (status)` | server-health | status |
 | `status/notifications (notifications)` | agent-events | status |
-| `status/event (event)` | open（`twp open`） | status |
+| `status/event (event)` | open（`anymux open`） | status |
 | `mosh/refresh-components` | node-installer（本机装完 Mosh 组件后，`parallel` 等它完成） | mosh |
 
 可选组件的能力（`mosh`、`moshClient`）由提供方经 `ctx.node.setCapability(name, probe)` 报进 `/api/node/info`，包在 `ctx.effect` 里随插件撤销。
@@ -189,7 +189,7 @@ npm test
 
 **前端也归插件所有。** 前端按功能放在各插件的 `client/` 目录：外壳、路由、侧栏、设置页、命令面板、block 框架（`blocks-kit.js`、`block-host.js`）在 `ui`；终端、xterm、字体切片、窗格条（`panes.js`）、终端里的链接识别（`link-detect.js`）在 `terminal`；移动端工具盘在 `keypad`；文件预览和分窗在 `files`；Git、浏览器、SQLite、notebook 的 block 或渲染器各在自己的插件；布局选择器在 `layouts`；登录页在 `auth`；监控在 `metrics`；Agent 控制台在 `agent-hub`；通知、诊断、托管资源、面板插件、会话保护各在自己的插件。URL 一个没变（`/js/terminal.js` 还是 `/js/terminal.js`）：每个插件把自己的 `client/` 挂在 `/`，按注册顺序查找，所以文件名在所有插件里不能重复。
 
-**插件往外壳里加东西靠插槽，不靠外壳认识它。** `ui/client/js/slots.js` 最先加载，提供 `PanelSlots`：服务器页的分区（`serverSections`）、设置页的分区（`settingsSections`，`available()` 决定显示与否）、管理中心的面板（`managementPanels`）、命令面板的命令（`commands`）、`twp open` 的处理者（`openers`）。block 工具包另有 `Blocks.registerRenderer`（文件预览的渲染器）和 `Blocks.registerPreviewActions`（预览菜单里的动作）。插件关掉，它的脚本不加载，注册的东西也就不在。
+**插件往外壳里加东西靠插槽，不靠外壳认识它。** `ui/client/js/slots.js` 最先加载，提供 `PanelSlots`：服务器页的分区（`serverSections`）、设置页的分区（`settingsSections`，`available()` 决定显示与否）、管理中心的面板（`managementPanels`）、命令面板的命令（`commands`）、`anymux open` 的处理者（`openers`）。block 工具包另有 `Blocks.registerRenderer`（文件预览的渲染器）和 `Blocks.registerPreviewActions`（预览菜单里的动作）。插件关掉，它的脚本不加载，注册的东西也就不在。
 
 **页面只调用在运行的插件的接口。** 页面带着本机在运行的插件清单（`window.PANEL_PLUGINS`，由 `ui` 渲染页面时写入）；别的服务器的清单在它的健康信息里（`node.plugins`，来自它的 `/api/node/info`）。外壳调用可选插件的接口前用 `PanelSlots.hasPlugin(id, serverId)` 判断；还不知道、或 Node 太旧报不出清单时当作有。
 
@@ -198,7 +198,7 @@ npm test
 ```json
 {
   "serve": ["."],
-  "head": [{ "order": 10, "style": "/vendor/xterm/xterm.css?v=6.0.0" }, { "order": 20, "preload": "/fonts/tpm/…woff2" },
+  "head": [{ "order": 10, "style": "/vendor/xterm/xterm.css?v=6.0.0" }, { "order": 20, "preload": "/fonts/amm/…woff2" },
            { "order": 50.8, "style": "/css/terminal.css" }],
   "body": [{ "order": 110, "script": "/js/panes.js" }, { "order": 210, "script": "/js/terminal.js?v=25" }]
 }
@@ -211,13 +211,13 @@ npm test
 - `?v=` 只是标记，渲染时替换成内容哈希 `?h=`；页面每次校验，资源缓存一年，改了文件刷新即生效，不用重启。
 - 字体切片由 `scripts/build-font-subsets.mjs` 生成，写进 `terminal` 的 `client/`，核心片的预载就是它 `page.json` 里的 `preload` 项。
 
-**浏览器端内核。** `client` 插件把 import map（`cordis`、`cosmokit`、`@cordisjs/plugin-timer`、`@twp/client` 和每个模块 URL → 带内容哈希的 URL）和 `/client/boot.js` 放进组装出的页面。boot 只建根上下文，按公开的 `/client/manifest.json`（登录前就要能读）挂载核心服务 `api` 和各功能用 `ctx.client.entry()` 注册的客户端插件，与旧脚本并存、不碰它们的 DOM。浏览器控制台里 `twp` 就是根上下文。旧脚本以后可以逐个改写成这样的客户端插件。
+**浏览器端内核。** `client` 插件把 import map（`cordis`、`cosmokit`、`@cordisjs/plugin-timer`、`@anymux/client` 和每个模块 URL → 带内容哈希的 URL）和 `/client/boot.js` 放进组装出的页面。boot 只建根上下文，按公开的 `/client/manifest.json`（登录前就要能读）挂载核心服务 `api` 和各功能用 `ctx.client.entry()` 注册的客户端插件，与旧脚本并存、不碰它们的 DOM。浏览器控制台里 `anymux` 就是根上下文。旧脚本以后可以逐个改写成这样的客户端插件。
 
 ## 测试
 
 - `npm test`。`test/*.test.js` 是内核与插件的测试；`test/lib/` 对应 `lib/` 的模块；`test/client/` 对应各插件的前端，读主页面的用 `test/helpers/pages.js` 的组装结果，按文件名找脚本的用 `clientPath()`；`test/repo/` 对应安装脚本、桌面运行时和原生客户端。全部一次跑可能内存不够，可以按目录分开跑（`npx vitest run test/lib` 等）。
 - `test/panel.test.js` 用真实输入启动整个 `panel` profile：`AUTH`、临时配置目录与家目录、私有 tmux server，覆盖登录、`/api` 守卫、工作区、WebSocket 鉴权、终端接入和运行时关闭插件。
-- **隔离规则**（来自“不在用户 tmux 上做实验”）：每个用到 tmux 的测试和冒烟都经 `tmux` 插件选私有 server（`-L`），`kill-server` 之前先 `display -p '#{socket_path}'` 断言是私有路径；配置目录（`launch` 的 `env.TMUX_PANEL_CONFIG_DIR`）和配对文件所在的家目录（`node` 的 `home`）指向临时目录；会读 `~/.claude`、`~/.codex`、CC Switch 数据库或起模型中继的 `agent-usage`、`agent-hub`、`enterprise-ai` 关掉。
+- **隔离规则**（来自“不在用户 tmux 上做实验”）：每个用到 tmux 的测试和冒烟都经 `tmux` 插件选私有 server（`-L`），`kill-server` 之前先 `display -p '#{socket_path}'` 断言是私有路径；配置目录（`launch` 的 `env.ANYMUX_CONFIG_DIR`）和配对文件所在的家目录（`node` 的 `home`）指向临时目录；会读 `~/.claude`、`~/.codex`、CC Switch 数据库或起模型中继的 `agent-usage`、`agent-hub`、`enterprise-ai` 关掉。
 - 冒烟时像服务脚本一样带上 `LANG=C.UTF-8 LC_CTYPE=C.UTF-8`（`run-panel.ps1`、systemd 单元都设置了）。没有 UTF-8 locale 时 tmux 命令客户端把中文会话名输出成 `____`，再拿它去查就找不到。
 - 在同一个进程里启动面板做实验时，`app.stop()` 卸载 `tmux` 插件会撤销私有 server 的选择，之后这个进程里的 tmux 命令回到默认 server：核对 `socket_path` 和清理都要在 stop 之前做，而且显式带 `-t <会话>`（没有客户端附着时不带目标会失败）。私有 server 在 Windows 上可能卡住不应答（`docs/known-issues.md` ENV-1），这时只能按命令行里的私有 socket 名核对进程归属再结束。
 - **MSYS2 的 tmux 退出后不删除 socket 文件**，测试要自己删。在 Git Bash 里直接运行 MSYS2 的 tmux 去启动 server 会挂住（server 继承了 shell 的输出管道），准备会话请用 Node 的 `execFile`。
@@ -236,6 +236,6 @@ npm test
 4. 合并改造期间 master 的改动（Mosh 传输、直连、修复），`server/` 的补丁改写到 `lib/` 后三方应用，接线改动翻译成 `servers` / `mosh` 插件。
 5. 切换：代码移到仓库根，服务安装、Windows 计划任务、桌面运行时、macOS 打包、远程安装 Node 的打包清单、中继与 Android 构建脚本都改用新位置；`server/` 只留兼容入口。
 
-6. 再拆细：面板现在是 42 个条目（Hub 的链路、转发、健康、安装、基础模式、Mosh 各自独立，文件之上的 Git、SQLite、notebook、上传、`twp open` 各自独立）；前端按插槽把功能脚本和样式归到各自的插件，删掉按名字/序号的旧 tmux 接口、隐藏的旧外壳和它们带着的死代码与死样式。
+6. 再拆细：面板现在是 42 个条目（Hub 的链路、转发、健康、安装、基础模式、Mosh 各自独立，文件之上的 Git、SQLite、notebook、上传、`anymux open` 各自独立）；前端按插槽把功能脚本和样式归到各自的插件，删掉按名字/序号的旧 tmux 接口、隐藏的旧外壳和它们带着的死代码与死样式。
 
 还可以继续做的：把前端的全局脚本逐个改写成 ES 模块的客户端插件（`ctx.client.entry()`），全局对象换成浏览器端的服务；把分窗从 `file-preview.js` 移进 `ui`，让 block 不依赖 `files` 也能停靠；把 `lib/` 里体量大的模块（`terminal.js`、`api/files.js`、`api/agent-hub.js`）按接缝拆成更小的插件。都可以随功能迭代逐步做。

@@ -20,7 +20,7 @@ function fixture() {
     const ps = [...state.entries.values()].map((p) => `  ${p.pid} ${p.ppid} ${p.pid} ${p.winpid} ? 197108 ${state.stime} ${p.command}`).join('\n');
     const births = [...state.entries.values()].filter((p) => !state.omit.has(p.pid))
       .map((p) => `${p.pid}\t${state.births.get(p.pid) || BIRTH}\t${state.winpids.get(p.pid) || p.winpid}`).join('\n');
-    return `${HEADER}\n${ps}\n__TWP_PROCESS_BIRTHS__\n${births}\n${state.truncate ? '' : '__TWP_PROCESS_END__\n'}`;
+    return `${HEADER}\n${ps}\n__ANYMUX_PROCESS_BIRTHS__\n${births}\n${state.truncate ? '' : '__ANYMUX_PROCESS_END__\n'}`;
   };
   const execFileImpl = vi.fn((file, args, options, callback) => {
     const call = { file, args, options, script: null };

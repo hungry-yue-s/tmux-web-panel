@@ -10,7 +10,7 @@ import { defaultProfile } from '../kernel/app.js';
 let dir;
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'twp-profile-'));
+  dir = await mkdtemp(join(tmpdir(), 'anymux-profile-'));
 });
 
 afterEach(async () => {

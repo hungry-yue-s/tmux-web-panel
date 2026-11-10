@@ -19,9 +19,9 @@ describe('install scripts', () => {
     const script = posixInstallScript('echo body', { sudoPassword: "pa'ss $(x)" });
     expect(script.split('\n').slice(0, 5)).toEqual([
       'set +x',
-      `TWP_ARCHIVE=${REMOTE_ARCHIVE}`,
-      `TWP_PORT_CANDIDATES='${PORT_CANDIDATES}'`,
-      `TWP_SUDO_PASSWORD='pa'\\''ss $(x)'`,
+      `ANYMUX_ARCHIVE=${REMOTE_ARCHIVE}`,
+      `ANYMUX_PORT_CANDIDATES='${PORT_CANDIDATES}'`,
+      `ANYMUX_SUDO_PASSWORD='pa'\\''ss $(x)'`,
       'echo body',
     ]);
   });
@@ -31,7 +31,7 @@ describe('install scripts', () => {
     expect(words.slice(0, 6)).toEqual(['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand']);
     for (const word of words) expect(word).toMatch(/^[A-Za-z0-9_./=+-]+$/);
     const decoded = Buffer.from(words.at(-1), 'base64').toString('utf16le');
-    expect(decoded).toContain(`$TwpArchive = '${REMOTE_ARCHIVE}'`);
+    expect(decoded).toContain(`$AnymuxArchive = '${REMOTE_ARCHIVE}'`);
     expect(decoded.endsWith('Write-Output hi')).toBe(true);
   });
 
@@ -46,7 +46,7 @@ describe('InstallLog', () => {
     const log = new InstallLog(5);
     log.write('>> unpack pa');
     log.write('nel\r\nnpm warn x\n>> npm ci\n');
-    log.write('TWP_RESULT=succeeded\n');
+    log.write('ANYMUX_RESULT=succeeded\n');
     log.end();
     expect(log.lines).toEqual(['>> unpack panel', 'npm warn x', '>> npm ci']);
     expect(log.step).toBe('npm ci');
@@ -74,7 +74,7 @@ describe('NodeInstaller', () => {
     return dir;
   }
 
-  function setup({ platform = 'linux', posix = true, output = '>> done\nTWP_RESULT=succeeded\n', code = 0, tmux = true } = {}) {
+  function setup({ platform = 'linux', posix = true, output = '>> done\nANYMUX_RESULT=succeeded\n', code = 0, tmux = true } = {}) {
     const connection = {
       uploadFile: vi.fn(async () => {}),
       stream: vi.fn(async (_words, { onOutput }) => { onOutput(output); return code; }),
@@ -105,13 +105,13 @@ describe('NodeInstaller', () => {
     expect(connection.uploadFile).toHaveBeenCalledWith(expect.any(String), REMOTE_ARCHIVE, { mode: '600' });
     const [words, options] = connection.stream.mock.calls[0];
     expect(words).toEqual(['sh', '-s']);
-    expect(options.input).toContain("TWP_SUDO_PASSWORD=pw");
+    expect(options.input).toContain("ANYMUX_SUDO_PASSWORD=pw");
     expect(options.input.endsWith('echo posix\n')).toBe(true);
     expect(options.input).not.toContain('\r');
     expect(links.recheck).toHaveBeenCalledWith('box');
     expect(onInstalled).toHaveBeenCalledWith('box');
     // The password never reaches the status the browser reads.
-    expect(JSON.stringify(status)).not.toContain('TWP_SUDO_PASSWORD');
+    expect(JSON.stringify(status)).not.toContain('ANYMUX_SUDO_PASSWORD');
   });
 
   it('installs Windows through PowerShell without the tmux source', async () => {
@@ -123,14 +123,14 @@ describe('NodeInstaller', () => {
   });
 
   it('asks for a sudo password when the remote side needs one', async () => {
-    const { installer, onInstalled } = setup({ output: '!! needs sudo\nTWP_RESULT=needs_password\n', code: 3 });
+    const { installer, onInstalled } = setup({ output: '!! needs sudo\nANYMUX_RESULT=needs_password\n', code: 3 });
     installer.start('box');
     expect((await finish(installer)).state).toBe('needs_password');
     expect(onInstalled).not.toHaveBeenCalled();
   });
 
   it('reports a failed run with its log', async () => {
-    const { installer } = setup({ output: '>> npm ci\n!! npm ci failed\nTWP_RESULT=failed\n', code: 1 });
+    const { installer } = setup({ output: '>> npm ci\n!! npm ci failed\nANYMUX_RESULT=failed\n', code: 1 });
     installer.start('box');
     const status = await finish(installer);
     expect(status.state).toBe('failed');

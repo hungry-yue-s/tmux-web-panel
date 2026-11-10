@@ -17,8 +17,8 @@
 var BlockHost = (function () {
   'use strict';
 
-  var STORAGE_PREFIX = 'twp_blocks_v1:';
-  var WINDOW_STORAGE_PREFIX = 'twp_window_blocks_v1:';
+  var STORAGE_PREFIX = 'anymux_blocks_v1:';
+  var WINDOW_STORAGE_PREFIX = 'anymux_window_blocks_v1:';
   var FLOAT_MIN_W = 360;
   var FLOAT_MIN_H = 240;
   var COMPACT_WIDTH = 900;

@@ -392,7 +392,7 @@ describe('one sidebar for files and tool blocks', () => {
 
 describe('blocks bound to a window', () => {
   const windowStoreKey = (windowId, instance = INSTANCE) =>
-    'twp_window_blocks_v1:' + encodeURIComponent('local\u0000' + instance + '\u0000' + windowId);
+    'anymux_window_blocks_v1:' + encodeURIComponent('local\u0000' + instance + '\u0000' + windowId);
   const saved = (win, windowId) => JSON.parse(win.localStorage.getItem(windowStoreKey(windowId)));
   const workspace = (windowIds, instanceId = INSTANCE) => ({
     provider: 'tmux', complete: true, instanceId,
@@ -672,7 +672,7 @@ describe('blocks bound to a window', () => {
     first.host.open('repo', { name: 'one' });
     expect(saved(first.win, '@0').blocks).toEqual([{ kind: 'repo', params: { name: 'one' }, mode: 'dock', geom: null }]);
     expect(saved(first.win, '@0').active).toBe(0);
-    expect(first.win.localStorage.getItem('twp_blocks_v1:local')).toBeNull();
+    expect(first.win.localStorage.getItem('anymux_blocks_v1:local')).toBeNull();
     const storage = { [windowStoreKey('@0')]: first.win.localStorage.getItem(windowStoreKey('@0')) };
     first.win.close();
 
@@ -692,7 +692,7 @@ describe('blocks bound to a window', () => {
     host.open('repo', { name: 'one' });
     expect(tabNames(doc)).toEqual(['Repo']);
     expect([...Array(win.localStorage.length).keys()].map((i) => win.localStorage.key(i))
-      .filter((key) => key.startsWith('twp_'))).toEqual([]);
+      .filter((key) => key.startsWith('anymux_'))).toEqual([]);
     await preview.switchDockContext('local', '@1', '');
     expect(tabNames(doc)).toEqual([]);
     await preview.switchDockContext('local', '@0', '');
@@ -728,7 +728,7 @@ describe('blocks bound to a window', () => {
 
   it('forgets windows only on a complete snapshot, on that server', async () => {
     const stale = windowStoreKey('@7', '1:1');
-    const otherServer = 'twp_window_blocks_v1:' + encodeURIComponent('box\u0000' + INSTANCE + '\u0000@0');
+    const otherServer = 'anymux_window_blocks_v1:' + encodeURIComponent('box\u0000' + INSTANCE + '\u0000@0');
     const { win, doc, host, preview, disposed } = setup({ storage: { [stale]: '{}', [otherServer]: '{}' } });
     host.open('repo', { name: 'zero' });
     await preview.switchDockContext('local', '@1', INSTANCE);
@@ -748,7 +748,7 @@ describe('blocks bound to a window', () => {
 
   it('gives a block saved before this to the first window it is seen in', async () => {
     const storage = {
-      'twp_blocks_v1:local': JSON.stringify({
+      'anymux_blocks_v1:local': JSON.stringify({
         version: 1,
         active: 0,
         blocks: [
@@ -763,7 +763,7 @@ describe('blocks bound to a window', () => {
 
     expect(saved(win, '@3').blocks.map((block) => block.kind)).toEqual(['repo']);
     expect(saved(win, '@3').active).toBe(0);
-    expect(JSON.parse(win.localStorage.getItem('twp_blocks_v1:local')).blocks.map((block) => block.kind)).toEqual(['tool']);
+    expect(JSON.parse(win.localStorage.getItem('anymux_blocks_v1:local')).blocks.map((block) => block.kind)).toEqual(['tool']);
 
     await preview.switchDockContext('local', '@4', INSTANCE);
     expect(tabNames(doc)).toEqual(['Tool']);
@@ -800,7 +800,7 @@ describe('blocks bound to a window', () => {
 describe('tabs in the order the user puts them', () => {
   const dockKey = (preview) => preview._test.dockStateKey('local', '@0', INSTANCE);
   const windowBlocks = (win) => JSON.parse(win.localStorage.getItem(
-    'twp_window_blocks_v1:' + encodeURIComponent('local\u0000' + INSTANCE + '\u0000@0'),
+    'anymux_window_blocks_v1:' + encodeURIComponent('local\u0000' + INSTANCE + '\u0000@0'),
   ));
   const item = (doc, name) => [...doc.querySelectorAll('.fp-dock-tab-item')]
     .find((node) => node.querySelector('.fp-dock-tab-label').textContent === name);
@@ -844,7 +844,7 @@ describe('tabs in the order the user puts them', () => {
     expect(saved.tabs.map((tab) => tab.path)).toEqual(['/tmp/a.md', '/tmp/b.md', '/tmp/c.md']);
     expect(saved.order).toEqual(['file:/tmp/a.md', 'file:/tmp/b.md', 'file:/tmp/c.md']);
     // Its own type, never text: dropped on the terminal, a tab is not typed into it.
-    expect(data.types).toEqual(['application/x-tmux-panel-tab']);
+    expect(data.types).toEqual(['application/x-anymux-tab']);
   });
 
   it('moves with Alt+Shift and the arrow keys, keeping focus on the tab', async () => {

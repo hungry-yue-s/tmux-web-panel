@@ -12,7 +12,7 @@ import { createDiagnosticsRouter } from '../../lib/api/diagnostics.js';
 
 const folders = [], captures = [];
 async function capture(options = {}) {
-  const directory = await mkdtemp(join(tmpdir(), 'twp-diagnostics-'));
+  const directory = await mkdtemp(join(tmpdir(), 'anymux-diagnostics-'));
   folders.push(directory);
   const diagnostics = new DiagnosticsCapture(options).configure({ configDir: directory });
   captures.push(diagnostics);
@@ -154,10 +154,10 @@ describe('HTTP and client boundaries', () => {
       res.json({ content: 'SECRET_RESPONSE'.repeat(10000) });
     });
     const response = await request(app).get('/api/git/status?path=SECRET_FILE')
-      .set('X-TWP-Diagnostic-Id', 'client_request_123').set('Accept-Encoding', 'gzip');
+      .set('X-Anymux-Diagnostic-Id', 'client_request_123').set('Accept-Encoding', 'gzip');
     expect(response.status).toBe(200);
     expect(response.headers['content-encoding']).toBe('gzip');
-    expect(response.headers['x-twp-diagnostic-id']).toBe(context.requestId);
+    expect(response.headers['x-anymux-diagnostic-id']).toBe(context.requestId);
     expect(context.requestId).not.toBe('client_request_123');
     expect(context.parentRequestId).toBe('client_request_123');
     await diagnostics.stop();
@@ -202,7 +202,7 @@ describe('HTTP and client boundaries', () => {
 
   it('rejects oversized client batches, uses strict download ids and keeps control endpoints uncached', async () => {
     const { diagnostics, directory } = await capture();
-    diagnostics.configure({ configDir: join(directory, '.config', 'tmux-web-panel') });
+    diagnostics.configure({ configDir: join(directory, '.config', 'anymux') });
     const app = express();
     app.use(express.json({ limit: '200kb' }));
     app.use('/api/diagnostics', createDiagnosticsRouter({ diagnostics }));

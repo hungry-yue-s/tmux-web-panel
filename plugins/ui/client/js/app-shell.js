@@ -900,7 +900,9 @@
   };
 
   // Native hit-test regions let AppKit drag blank chrome without stealing web controls.
-  var nativeActions = global.webkit && global.webkit.messageHandlers && global.webkit.messageHandlers.tmuxPanelAction;
+  var nativeHandlers = global.webkit && global.webkit.messageHandlers;
+  // tmuxPanelAction: a native app from before the rename.
+  var nativeActions = nativeHandlers && (nativeHandlers.anymuxAction || nativeHandlers.tmuxPanelAction);
   var chrome = global.document.querySelector('.workspace-chrome');
   if (nativeActions && chrome) {
     var pendingTitlebar = false;

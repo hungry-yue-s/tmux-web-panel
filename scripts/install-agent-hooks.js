@@ -11,7 +11,9 @@ const __dirname = dirname(__filename);
 const PROJECT_ROOT = resolve(__dirname, '..');
 const ROUTER = join(PROJECT_ROOT, 'scripts', 'agent-event-router.js');
 const PANEL_URL = 'https://127.0.0.1:7681/api/agent-events';
-const MARKER_PREFIX = 'tmux-web-panel-';
+const MARKER_PREFIX = 'anymux-';
+// Hooks installed before the rename; installing replaces them, uninstalling removes them.
+const LEGACY_MARKER_PREFIX = 'tmux-web-panel-';
 
 const AGENTS = {
   qoder: {
@@ -78,15 +80,16 @@ function hookFor(agent, hookEvent, eventName, bell) {
   };
 }
 
-function installedNames(agent, hookEvent) {
-  const names = [`${MARKER_PREFIX}${agent}-${hookEvent}`];
-  if (agent === 'qoder') names.push(`${MARKER_PREFIX}${hookEvent}`);
+function installedNames(agent, hookEvent, prefix = MARKER_PREFIX) {
+  const names = [`${prefix}${agent}-${hookEvent}`];
+  if (agent === 'qoder') names.push(`${prefix}${hookEvent}`);
   return names;
 }
 
 function installHooks(agent, root) {
+  const { removed: replaced } = uninstallHooks(agent, root, [LEGACY_MARKER_PREFIX]);
   const hooks = AGENTS[agent].hooks(root);
-  let added = 0;
+  let added = replaced;
   for (const [hookEvent, eventName, bell] of EVENT_SPECS) {
     const list = Array.isArray(hooks[hookEvent]) ? hooks[hookEvent] : [];
     const names = installedNames(agent, hookEvent);
@@ -100,7 +103,7 @@ function installHooks(agent, root) {
   return { added };
 }
 
-function uninstallHooks(agent, root) {
+function uninstallHooks(agent, root, prefixes = [MARKER_PREFIX, LEGACY_MARKER_PREFIX]) {
   const hooks = AGENTS[agent].hooks(root);
   let removed = 0;
   for (const hookEvent of Object.keys(hooks)) {
@@ -114,8 +117,8 @@ function uninstallHooks(agent, root) {
       const before = entry.hooks.length;
       entry.hooks = entry.hooks.filter((h) => {
         if (!(h && typeof h.name === 'string')) return true;
-        if (h.name.startsWith(`${MARKER_PREFIX}${agent}-`)) return false;
-        return !(agent === 'qoder' && installedNames(agent, hookEvent).includes(h.name));
+        return !prefixes.some((prefix) => h.name.startsWith(`${prefix}${agent}-`)
+          || (agent === 'qoder' && installedNames(agent, hookEvent, prefix).includes(h.name)));
       });
       removed += before - entry.hooks.length;
       if (entry.hooks.length > 0) next.push(entry);
@@ -150,4 +153,4 @@ const targets = target === 'all' ? ['qoder', 'codex'] : [target];
 const results = [];
 for (const agent of targets) results.push(await update(agent, uninstall));
 console.log(JSON.stringify({ ok: true, uninstall, results }, null, 2));
-console.log('No bearer token was written to agent configuration. The router uses TMUX_WEB_PANEL_TOKEN or the local tmux-web-panel token store.');
+console.log('No bearer token was written to agent configuration. The router uses ANYMUX_TOKEN or the local anymux token store.');

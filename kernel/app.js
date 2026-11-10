@@ -1,17 +1,16 @@
 // One running panel: a root context, and the loader that mounts the profile.
 
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { Context } from 'cordis';
 import { Loader } from './loader.js';
 import { resolveEntries } from './profile.js';
+import { appDir } from '../lib/legacy-names.js';
 
 /**
  * Where the user's own layer lives: <home>/patch.yml, next to the panel's
- * other settings (TMUX_PANEL_CONFIG_DIR moves both; TWP_HOME only the patch).
+ * other settings (ANYMUX_CONFIG_DIR moves both; ANYMUX_HOME only the patch).
  */
 export function defaultHome(env = process.env) {
-  return env.TWP_HOME || env.TMUX_PANEL_CONFIG_DIR || join(homedir(), '.config', 'tmux-web-panel');
+  return env.ANYMUX_HOME || env.ANYMUX_CONFIG_DIR || appDir('config');
 }
 
 /**

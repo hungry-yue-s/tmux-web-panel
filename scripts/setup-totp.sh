@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Enrol (or re-enrol) TOTP two-factor for the panel login and print a QR code.
 #
-# The secret is written owner-only to ~/.config/tmux-web-panel/totp.json. The
+# The secret is written owner-only to ~/.config/anymux/totp.json. The
 # panel reads it on every login attempt, so enabling or disabling MFA needs no
 # restart. To disable MFA, delete that file.
 set -euo pipefail

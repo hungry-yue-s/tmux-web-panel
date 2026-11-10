@@ -17,7 +17,7 @@ let temporary, seed, seedTLS;
 
 beforeAll(async () => {
   if (!HAS_OPENSSL) return;
-  temporary = await mkdtemp(join(tmpdir(), 'tmux-panel-certificates-'));
+  temporary = await mkdtemp(join(tmpdir(), 'anymux-certificates-'));
   seed = join(temporary, 'seed');
   seedTLS = await ensureDesktopCertificates(seed, { run, ips });
 }, 30000);

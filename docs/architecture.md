@@ -1,6 +1,6 @@
 # 架构：Hub 与 Node
 
-一台机器装一份 tmux-web-panel，它就是一个 **Node**：只管自己这台机器的 tmux、文件、PTY、监控、通知和 Agent 配置。浏览器打开的那份面板同时是 **Hub**：负责登录和服务器列表，把发给其它机器的请求原样转给那台机器上的 Node。
+一台机器装一份 anymux，它就是一个 **Node**：只管自己这台机器的 tmux、文件、PTY、监控、通知和 Agent 配置。浏览器打开的那份面板同时是 **Hub**：负责登录和服务器列表，把发给其它机器的请求原样转给那台机器上的 Node。
 
 ```
 浏览器 ──登录 / 服务器列表──► Hub（你打开的那份面板）
@@ -29,7 +29,7 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 
 `lib/hub/node-link.js` 中的 `NodeLink` 对应一台服务器，`lib/hub/link-pool.js` 按 serverId 缓存这些链路。
 
-1. **配对。** Node 启动时写出仅本人可读的 `~/.config/tmux-web-panel/node.json`，内容为 `{ protocol, host, port, tls, tlsFingerprint, token }`（`lib/node/identity.js`）。Hub 用 `sftp -b -` 读取这个文件。sftp 是 SSH 的子系统，不经过登录 shell，所以对端是 cmd.exe、PowerShell、fish 还是 bash 都没有影响。
+1. **配对。** Node 启动时写出仅本人可读的 `~/.config/anymux/node.json`，内容为 `{ protocol, host, port, tls, tlsFingerprint, token }`（`lib/node/identity.js`）。Hub 用 `sftp -b -` 读取这个文件。sftp 是 SSH 的子系统，不经过登录 shell，所以对端是 cmd.exe、PowerShell、fish 还是 bash 都没有影响。
 2. **转发。** 起一个常驻的 `ssh -N -L 127.0.0.1:<本地随机端口>:<host>:<port>`，带 `ExitOnForwardFailure=yes`。SSH 只当加密管道用，**从不在远端执行命令**。
 3. **请求。** 所有 HTTP 请求和 WebSocket 都走这一个转发（使用 keep-alive agent）。Hub 会去掉浏览器带来的 Authorization、Cookie、Origin、Referer 以及 `?token=`，换成 `Authorization: Bearer <node token>`。
 4. **TLS。** 如果 Node 用 HTTPS，Hub 只接受与配对文件中指纹一致的证书。校验发生在 `secureConnect` 阶段，早于任何请求字节，所以证书不对时令牌不会被发出去。
@@ -55,7 +55,7 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 
 `transport.terminal = 'mosh'` 时，浏览器仍只连本机 Hub 的 WebSocket；Hub 在本机 PTY 里运行 `mosh-client`，经 UDP 连到 Node 上的 `mosh-server`，后者运行与普通终端相同的 tmux attach。预测回显发生在 Hub 这台机器的 mosh-client 里，所以只在 Hub 靠近浏览器时有意义（桌面客户端自带的面板）；手机连远端 Hub 时，预测发生在那台 Hub，不在手机上。Git、文件、监控照旧走 `transport.api`。
 
-- **只有 Hub 自己能开会话。** `POST/GET/DELETE /api/mosh/sessions[/:id]`（`lib/api/mosh.js`）要求 node token 加上只有 Hub 自己的调用才带的 `x-twp-hub-call`；`/n/` 转发会剥掉这个头，`isRelayable` 也拒绝任何拼法的 `/api/mosh`。会话密钥只在 Hub 进程和 mosh-client 的环境里，不进浏览器、日志和诊断。
+- **只有 Hub 自己能开会话。** `POST/GET/DELETE /api/mosh/sessions[/:id]`（`lib/api/mosh.js`）要求 node token 加上只有 Hub 自己的调用才带的 `x-anymux-hub-call`；`/n/` 转发会剥掉这个头，`isRelayable` 也拒绝任何拼法的 `/api/mosh`。会话密钥只在 Hub 进程和 mosh-client 的环境里，不进浏览器、日志和诊断。
 - **会话 id 由 Hub 生成。** 应答没到也能按 id 结束；结束过的 id 记住 10 分钟，迟到的创建请求被拒；创建请求在应答前断开，Node 立即取消。启动中的会话计入上限。
 - **Windows 的 attach 证明。** mosh-server 打印 CONNECT 后才 fork 命令子进程，子进程要等第一个客户端包才 exec tmux。Node 在 CONNECT 时就把端口和密钥交给 Hub，但**客户端启动队列一直持有到** `tmux list-clients` 里出现父进程是这个 mosh-server 的客户端，再等 `CLIENT_SETTLE_MS`；期间按 `holdStart` 计为“启动中”，面板自己的客户端不离开（ENV-3）。20 秒内没有就结束会话并释放队列。面板的新客户端在同一会话上启动前，经 `addClientOwner` 先结束该会话上的 Mosh 客户端，结果不明则 `TERMINAL_BUSY`。
 - **结束只针对确认的进程。** `lib/mosh/processes.js` 记录 pid、启动时间、可执行文件和（MSYS2 的）Windows pid；命令子进程 exec 后可执行文件和 Windows pid 会变，只按 pid+启动时间认。先结束 tmux 客户端，让 mosh-server 通知客户端后自行退出，再结束 mosh-server，最后才 KILL；仍有残留时报告 `clean: false`。自然退出的会话由定期清扫回收。关机时 `stopAll` 和 Hub 的 `closeAll` 完成后进程才退出。
@@ -95,7 +95,7 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 
 | 远端情况 | 方式 | 持久性 |
 |---|---|---|
-| 有 POSIX `sh` 且有 tmux | **远端 tmux**：Hub 用 `sh -s` 执行 tmux 命令，整棵会话树一次读完（`readTree`，用 `;` 串联）；挂接终端时运行一个经 sftp 上传的单词脚本 `.cache/tmux-web-panel/attach-<N>-<zoom>` | 会话在远端 tmux 里，Hub 重启后还在 |
+| 有 POSIX `sh` 且有 tmux | **远端 tmux**：Hub 用 `sh -s` 执行 tmux 命令，整棵会话树一次读完（`readTree`，用 `;` 串联）；挂接终端时运行一个经 sftp 上传的单词脚本 `.cache/anymux/attach-<N>-<zoom>` | 会话在远端 tmux 里，Hub 重启后还在 |
 | 没有 tmux，或没有 POSIX shell（cmd/PowerShell） | **Hub 托管的 SSH 终端**（`SshProvider` + `PaneRuntime`）：`ssh -tt host`，不带任何远程命令，直接得到对方的登录 shell | 浏览器刷新不丢；Hub（客户端）退出后结束 |
 
 为什么这样做：Windows OpenSSH 在 pty 模式下会把远程命令不加引号地拼进 shell 命令行，而 cmd、PowerShell、fish、bash 的解析规则又各不相同。所以基础模式只向远端发送两种形式的命令：
@@ -109,10 +109,10 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 
 在基础模式服务器的页面上点“安装面板服务”，由 Hub 发起安装（`lib/hub/node-installer.js`，接口为 `POST/GET /api/servers/:id/node/install`）。安装与下述固定组件维护是 Hub 主动运行远端程序的唯一入口，必须由用户明确触发。
 
-1. **打包。** 把 Hub 自己的面板代码打包（Linux/macOS 目标还会带上 `vendor/tmux` 源码），经 sftp 上传到 `.cache/tmux-web-panel/panel.tgz`。版本一定与 Hub 一致，远端也不需要能访问 GitHub。
+1. **打包。** 把 Hub 自己的面板代码打包（Linux/macOS 目标还会带上 `vendor/tmux` 源码），经 sftp 上传到 `.cache/anymux/panel.tgz`。版本一定与 Hub 一致，远端也不需要能访问 GitHub。
 2. **Linux / macOS：** 把 `scripts/remote/install-node.sh` 经 stdin 交给 `sh -s` 执行。
    - 缺少的编译依赖用包管理器安装（apt / dnf / yum / pacman / apk / zypper / brew）。需要 sudo 且没有免密时，返回 `needs_password`，界面向用户索要 sudo 密码。密码只随本次脚本经 stdin 传过去，不写日志也不保存。
-   - Node.js 不满 20 时，下载官方二进制包到 `~/.local/share/tmux-web-panel/`，不需要 sudo。
+   - Node.js 不满 20 时，下载官方二进制包到 `~/.local/share/anymux/`，不需要 sudo。
    - 执行 `npm ci --omit=dev`，然后 `NODE_ONLY=1 HOST=127.0.0.1 scripts/install-service.sh install`（会编译项目自带的 tmux）。
 3. **Windows：** 用固定且简短的 `powershell -EncodedCommand` 入口从 stdin 读取 UTF-8 的 `scripts/remote/install-node.ps1`，避免默认 cmd shell 的命令长度限制。
    - 用 winget 补装 Node.js 和 MSYS2；
@@ -124,7 +124,7 @@ Node 自己的 API 里不出现 serverId：`/api/workspace`、`/api/metrics/*`�
 
 ### 可选 Mosh 组件
 
-Linux、macOS 与 Windows 的新安装在核心服务就绪后默认尝试准备 Mosh，失败仅报告组件警告，保留已安装的面板与 SSH。Windows 使用 `scripts/install-mosh.ps1`，Linux/macOS 使用可独立执行或经 stdin 运行的 `scripts/install-mosh.sh`；远程安装和本机安装调用同一实现，不重复安装。`TMUX_PANEL_SKIP_MOSH=1` 或 `TWP_SKIP_MOSH=1` 可跳过，Windows 另支持 `-SkipMosh`；面板首次安装选项也可取消勾选。已就绪的二进制先验证版本，随后直接完成，不执行包操作。
+Linux、macOS 与 Windows 的新安装在核心服务就绪后默认尝试准备 Mosh，失败仅报告组件警告，保留已安装的面板与 SSH。Windows 使用 `scripts/install-mosh.ps1`，Linux/macOS 使用可独立执行或经 stdin 运行的 `scripts/install-mosh.sh`；远程安装和本机安装调用同一实现，不重复安装。`ANYMUX_SKIP_MOSH=1` 或 `ANYMUX_SKIP_MOSH=1` 可跳过，Windows 另支持 `-SkipMosh`；面板首次安装选项也可取消勾选。已就绪的二进制先验证版本，随后直接完成，不执行包操作。
 
 角色分别检查：Node 需要 `mosh-server`，Linux/macOS Hub 需要 `mosh-client`，同机兼任时检查两者。Windows Hub 的客户端能力保持 `client_platform`，但可作为 Node 准备服务端。Swift 内置工作台的独立初始化路径同样有默认可选准备和显式重试；上次准备结果与实时 Node 能力分开显示。安装组件不修改通道偏好，也不宣称 UDP 已连通。
 
@@ -150,6 +150,28 @@ Linux、macOS 与 Windows 的新安装在核心服务就绪后默认尝试准备
 - 转发入口只认登录令牌。node token 只能用来访问那台 Node 自己的 API，不能用它让一个 Hub 再链式转发到下一台机器。
 - 配对文件和 node token 只对本人可读。在 Windows 上用 `icacls` 去掉继承的访问权限。
 - 没装面板的机器以基础模式接入。远端 tmux 的会话持久；由 Hub 托管的 shell 只活在 Hub 进程里。
+
+## 改名兼容：tmux-web-panel → Anymux
+
+项目原名 tmux-web-panel（缩写 twp，原生 App 叫 Tmux Panel）。一个 Hub 管着的 Node 不会同时升级，原生 App 也可能比服务端新或旧，所以新代码同时认旧名字，写入时只用新名字。下面每一项都要保留，直到确认不再有旧安装：
+
+| 旧名字 | 新名字 | 兼容方式 |
+|---|---|---|
+| 环境变量 `TMUX_PANEL_*`、`TMUX_WEB_PANEL_*`、`TWP_*` | `ANYMUX_*`（后缀不变） | 入口先调用 `adoptLegacyEnv`（`lib/legacy-names.js`），shell 脚本 source `scripts/legacy-env.sh`；新名字已设置时不覆盖 |
+| `~/.config`、`~/.cache`、`~/.local/share` 下的 `tmux-web-panel` | 同一位置的 `anymux` | 面板启动时 `migrateLegacyDirs` 整体移过去，旧路径留一个链接（Windows 上是 junction）；整体移不动就逐项移，被占用或两边都有的项留在原处，下次再试。只要新目录存在，`appDir()` 就用新目录 |
+| Windows 计划任务 `\tmux-web-panel\*` | `\anymux\anymux`、`\anymux\tmux-server` | `install-service.ps1` 除 status/logs/cert 外的每个动作先做 `Move-LegacyInstallation`：停旧面板，只停旧 tmux 的包装脚本（tmux 本身和会话不动，同 `reload`），迁目录，改写设置里的路径，用原来的触发方式注册新任务。tmux 开着的日志移不走，留在旧目录 |
+| systemd `tmux-web-panel.service`；launchd `com.tmux-web-panel*` | `anymux.service`；`com.anymux*` | `install-service.sh install` 停掉并删除旧单元。Linux 的 `tmux-server.service` 不改名，tmux 不受影响；macOS 卸载旧的 tmux agent 会结束 tmux，和以往重装一样，由会话保护恢复 |
+| 配对文件 `.config/tmux-web-panel/node.json` | `.config/anymux/node.json` | Hub 先读新路径，没有再读旧路径；旧目录还是实目录时（见上一行），Node 两处都写，旧版 Hub 也能配对 |
+| 请求头 `x-twp-hub-call`、`x-twp-diagnostic-id` | `x-anymux-*` | Hub 新旧两个都发、转发时两个都剥掉；Node 任一个都认 |
+| tmux 选项 `@twp-protect-seen`、`@twp-restored-*` | `@anymux-*` | 会话保护先读新的，没有再读旧的，只写新的。旧面板看过的 server 仍算看过，不会再恢复一次 |
+| 浏览器存储 `twp_*` | `anymux_*` | `plugins/ui/client/js/legacy-storage.js` 在其他脚本之前改名一次 |
+| `~/.tmux.conf` 的 `tmux-web-panel managed config` 块；agent hooks 名 `tmux-web-panel-*`；技能链接 `tmux-panel` | `anymux` | 再次链接 / 安装时替换旧的；启动时把指向本仓库的旧技能链接换成 `anymux` |
+| CC Switch 行的 `tmuxPanelEnterprise`、`tmuxPanelRelay` | `anymuxEnterprise`、`anymuxRelay` | `lib/agent-providers/ownership.js`：两种都算面板自己写的，下次写入换成新标记 |
+| 原生桥 `tmuxPanel*`、`__tmuxPanelTransparency`；UA `TmuxPanelAndroid` | `anymux*`、`AnymuxAndroid` | 页面先找新名字再找旧名字；新 App 两套都注册，以便连到旧服务端 |
+| 展示页 `<meta name="tmux-panel-presentation">`；客户端导入名 `@twp/client`；命令 `twp` | `anymux-presentation`；`@anymux/client`；`anymux` | 两个都认；`bin/twp` 只是转到 `anymux.mjs` |
+| macOS 桌面数据 `Application Support/Tmux Panel`、标签 `com.tmux-web-panel.desktop*`、socket 目录 `/tmp/tmux-panel-*` | `Anymux`、`com.anymux.desktop*`、`/tmp/anymux-*` | 已有的旧安装继续用旧名字：tmux socket 路径由数据目录推算，改了会让正在运行的 tmux 和全部会话脱钩 |
+
+Android 的 applicationId 从 `com.tmuxpanel.app` 改成了 `com.anymux.app`，是另一个应用：旧版不能覆盖升级，需要卸载后安装并重新填写连接设置。macOS App 的 bundle ID 改为 `com.anymux.app`，系统会把它当作新应用，通知等权限需要重新授予。
 
 ## 和旧方案的区别
 

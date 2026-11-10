@@ -13,7 +13,7 @@ import { createApp } from '../kernel/app.js';
 import { IS_WINDOWS, MSYS_ROOT, TMUX_BIN, toNativePath } from '../lib/msys.js';
 import { localTmux } from '../lib/tmux.js';
 
-const SOCKET = `twp-next-panel-${process.pid}`;
+const SOCKET = `anymux-next-panel-${process.pid}`;
 const haveTmux = IS_WINDOWS ? existsSync(TMUX_BIN) : true;
 
 let app;
@@ -53,10 +53,10 @@ function socketStatus(path) {
 
 describe.skipIf(!haveTmux)('the panel profile', () => {
   beforeAll(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'twp-panel-'));
+    dir = await mkdtemp(join(tmpdir(), 'anymux-panel-'));
     const patch = join(dir, 'patch.yml');
     await writeFile(patch, YAML.stringify([
-      { id: 'launch', config: { argv: [], env: { AUTH: 'admin:correct horse', PORT: '0', HOST: '127.0.0.1', TMUX_PANEL_CONFIG_DIR: join(dir, 'config') } } },
+      { id: 'launch', config: { argv: [], env: { AUTH: 'admin:correct horse', PORT: '0', HOST: '127.0.0.1', ANYMUX_CONFIG_DIR: join(dir, 'config') } } },
       { id: 'node', config: { home: join(dir, 'home') } },
       { id: 'tmux', config: { socket: SOCKET } },
       { id: 'logger', config: { level: 'warn' } },
@@ -65,7 +65,7 @@ describe.skipIf(!haveTmux)('the panel profile', () => {
       { id: 'agent-hub', disabled: true },
       { id: 'enterprise-ai', disabled: true },
     ]));
-    app = await createApp({ patches: [patch], home: join(dir, 'twp-home') });
+    app = await createApp({ patches: [patch], home: join(dir, 'anymux-home') });
     base = `http://127.0.0.1:${app.ctx.get('http').port}`;
     // A session on the private server only; every call carries -L.
     await localTmux.run(['-f', '/dev/null', 'new-session', '-d', '-s', 'alpha', '-x', '100', '-y', '30'], { timeout: 15000 });

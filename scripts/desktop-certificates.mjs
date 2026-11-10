@@ -78,7 +78,7 @@ async function authorityPair(tlsRoot, run) {
     await mkdir(stage, { mode: 0o700 });
     try {
       const config = join(stage, 'ca.cnf');
-      await writeFile(config, '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=Tmux Panel local CA\n[ext]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n', { mode: 0o600 });
+      await writeFile(config, '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=Anymux local CA\n[ext]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n', { mode: 0o600 });
       await openssl(run, ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256', '-days', '3650', '-keyout', join(stage, 'ca.key'), '-out', join(stage, 'ca.crt'), '-config', config]);
       await chmod(join(stage, 'ca.key'), 0o600);
       await chmod(join(stage, 'ca.crt'), 0o600);

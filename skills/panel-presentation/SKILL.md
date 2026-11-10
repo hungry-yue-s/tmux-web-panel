@@ -1,6 +1,6 @@
 ---
 name: panel-presentation
-description: 为用户个人阅读的报告、说明、对比或可视化 HTML 接入 Tmux Web Panel 的主题配色。适用于临时信息呈现网页；产品页面、品牌设计、视觉复刻及用户明确指定配色的作品遵循其自身要求。
+description: 为用户个人阅读的报告、说明、对比或可视化 HTML 接入 Anymux 的主题配色。适用于临时信息呈现网页；产品页面、品牌设计、视觉复刻及用户明确指定配色的作品遵循其自身要求。
 ---
 
 # 个人信息网页的主题适配
@@ -12,7 +12,7 @@ description: 为用户个人阅读的报告、说明、对比或可视化 HTML �
 在自包含 HTML 的 `<head>` 中加入：
 
 ```html
-<meta name="tmux-panel-presentation" content="1">
+<meta name="anymux-presentation" content="1">
 ```
 
 在需要与面板协调的地方使用下面的 CSS 变量。预览引擎会在首屏提供当前配色，并在用户切换主题时更新变量；不需要请求服务、指定端口、引用 CDN 或安装框架。

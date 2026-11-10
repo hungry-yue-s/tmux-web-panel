@@ -314,7 +314,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
 
 <div class="wrap">
   <header class="hero">
-    <div class="eyebrow">tmux-web-panel · 插件架构</div>
+    <div class="eyebrow">anymux · 插件架构</div>
     <h1>整个面板现在由<span class="hl">插件</span>组装</h1>
     <p class="lede">参照 DeepSeek Harness 的做法，面板改跑在 Cordis 插件内核上。原来一个入口文件里的手工接线，拆成了 42 个各自声明依赖的插件；原来手写的主页面，改由各插件声明的脚本组装。业务代码原样保留。</p>
     <div class="facts">
@@ -470,7 +470,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
     <ol class="steps">
       <li><div><b>服务管理器启动 <code>bin/panel.js</code></b><small>systemd、launchd 或 Windows 计划任务，环境变量（PORT、AUTH、TLS_*…）和以前一样注入。旧服务单元还写着 server/index.js 的，经那一行兼容入口转进来。</small></div></li>
       <li><div><b>读清单 <code>profiles/panel.yml</code></b><small>得到 42 个条目，每条是 id、use（用哪个实现）、config、disabled。</small></div></li>
-      <li><div><b>叠补丁</b><small>先叠配置目录里的 <code>patch.yml</code>（默认 ~/.config/tmux-web-panel/patch.yml），再叠命令行上的每个 <code>--patch</code>。没有补丁就是原样。</small></div></li>
+      <li><div><b>叠补丁</b><small>先叠配置目录里的 <code>patch.yml</code>（默认 ~/.config/anymux/patch.yml），再叠命令行上的每个 <code>--patch</code>。没有补丁就是原样。</small></div></li>
       <li><div><b>Loader 挂载每个条目</b><small>按清单顺序交给 Cordis；Cordis 按 inject 等依赖就绪再调用各插件的 apply。某个插件启动失败只影响它和依赖它的插件，进程最后以失败码退出，让服务管理器看得到。</small></div></li>
       <li><div><b>http 开始监听，ui 组装主页面</b><small>此时所有路由、WebSocket 升级、页面脚本都已登记。</small></div></li>
       <li><div><b>关机：反向撤销</b><small>收到停止信号后按依赖反向撤销所有插件，比如先结束 Mosh 会话，再结束 Hub 的 Mosh 终端，最后断开到各 Node 的链路。最多等 15 秒。</small></div></li>
@@ -530,7 +530,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
     <h2><span class="win">8:</span>用补丁改组装</h2>
     <p class="sub">补丁是一个操作列表，按顺序作用在清单上。不需要改仓库里的任何文件。</p>
     <div class="patch">
-      <pre><code><span class="c"># ~/.config/tmux-web-panel/patch.yml</span>
+      <pre><code><span class="c"># ~/.config/anymux/patch.yml</span>
 
 <span class="c"># 这台机器不需要 Agent 控制台</span>
 - id: <span class="s">agent-hub</span>
@@ -539,7 +539,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
 <span class="c"># 测试：整个面板用私有 tmux server</span>
 - id: <span class="s">tmux</span>
   config:
-    socket: <span class="s">twp-test</span>
+    socket: <span class="s">anymux-test</span>
 
 <span class="c"># 加一个自己写的插件，放在 files 后面</span>
 - insert:
@@ -563,8 +563,8 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
     <div class="same">
       <div><h3>业务逻辑</h3><p>原 server/ 的模块整体搬进 lib/，逻辑不变。Windows 上 tmux 客户端那批契约（一次只换一个客户端、输入暂存、控制台回收）都还在 TerminalManager 里。</p></div>
       <div><h3>页面外观和行为</h3><p>组装出来的主页面与原来手写的 index.html 一致，前端脚本没有改写。</p></div>
-      <div><h3>启动参数</h3><p>环境变量（PORT、HOST、AUTH、NODE_ONLY、TLS_*、HTTP_PORT、TMUX_PANEL_CONFIG_DIR）和命令行参数照旧。</p></div>
-      <div><h3>数据和配置</h3><p>配置目录还是 ~/.config/tmux-web-panel，令牌、通知、服务器列表、会话保护设置原地读取。</p></div>
+      <div><h3>启动参数</h3><p>环境变量（PORT、HOST、AUTH、NODE_ONLY、TLS_*、HTTP_PORT、ANYMUX_CONFIG_DIR）和命令行参数照旧。</p></div>
+      <div><h3>数据和配置</h3><p>配置目录还是 ~/.config/anymux，令牌、通知、服务器列表、会话保护设置原地读取。</p></div>
       <div><h3>服务管理</h3><p>仍然只经 systemd、launchd 或 install-service.ps1 启停。安装脚本已改成直接启动 bin/panel.js。</p></div>
       <div><h3>Hub 与 Node</h3><p>/n/:serverId 转发、node token、证书指纹固定、直连和 Mosh 的规则都没变，只是分别落在 node、hub-links、server-health、hub-relay、mosh、mosh-hub 等插件里。</p></div>
     </div>
@@ -588,7 +588,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
         <ol>
           <li>拉取代码后运行 <code>npm install</code>（新增了 vendor/ 下的本地依赖）</li>
           <li>Linux、macOS 重新运行 <code>scripts/install-service.sh install</code>，服务单元改为直接启动 bin/panel.js。不重装也能启动：旧单元经 server/index.js 兼容入口进来。Windows 的计划任务经 run-panel.ps1 启动，脚本已经改好，不用重装</li>
-          <li>经服务管理器重启面板：<code>systemctl --user restart tmux-web-panel</code>，Windows 用 <code>scripts/install-service.ps1 restart</code>。浏览器里的终端会断开重连，tmux 会话不受影响</li>
+          <li>经服务管理器重启面板：<code>systemctl --user restart anymux</code>，Windows 用 <code>scripts/install-service.ps1 restart</code>。浏览器里的终端会断开重连，tmux 会话不受影响</li>
         </ol>
         <p style="margin:10px 0 0;font-size:14px;color:var(--muted)">旧结构留下的两处路径由面板启动时自动修好：指向旧位置的 tmux-agent 技能链接，和 public/js/ 下的中继配置。</p>
       </div>
@@ -604,7 +604,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
     </div>
   </section>
 
-  <footer>tmux-web-panel 插件化重写图解 · 详细约定见 <a href="plugins.md">docs/plugins.md</a></footer>
+  <footer>anymux 插件化重写图解 · 详细约定见 <a href="plugins.md">docs/plugins.md</a></footer>
 </div>
 
 <script>
@@ -631,7 +631,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
     git: { d: "Git block：状态、diff、历史、提交，大提交按文件分批加载。", deps: ['http','files'] },
     sqlite: { d: "SQLite 预览：表、查询、分页，用 Node 内置的 node:sqlite，不需要 sqlite3 命令。", deps: ['http','files'] },
     notebook: { d: "Jupyter notebook 的只读预览。", deps: ['http','files'] },
-    open: { d: "窗格里的 twp open：把文件或网址交给页面打开。", deps: ['http','files'] },
+    open: { d: "窗格里的 anymux open：把文件或网址交给页面打开。", deps: ['http','files'] },
     browser: { d: "浏览器 block：在终端旁边打开本机端口或任意网址。只有前端。", deps: ['ui'] },
     share: { d: "把渲染好的预览存成 /s/:id 快照。这个地址不需要登录，只读快照，不读文件系统。", deps: ['launch','http','timer'] },
     metrics: { d: "CPU、内存、IO 及其历史，占用资源的进程，每个窗口的占用；服务器页的“性能”。", deps: ['http'] },

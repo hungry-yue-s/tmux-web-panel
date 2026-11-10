@@ -10,7 +10,7 @@ afterEach(() => {
 });
 
 function checkout() {
-  const root = mkdtempSync(join(tmpdir(), 'twp-relay-'));
+  const root = mkdtempSync(join(tmpdir(), 'anymux-relay-'));
   dirs.push(root);
   mkdirSync(join(root, 'plugins', 'ui', 'client', 'js'), { recursive: true });
   return { root, target: join(root, 'plugins', 'ui', 'client', 'js', 'relay-config.js') };

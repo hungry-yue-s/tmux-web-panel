@@ -324,7 +324,7 @@
       var errorCode = health.error && health.error.code;
       // The node link has failure modes of its own beyond SSH reachability.
       var nodeHint = ({
-        NODE_NOT_INSTALLED: '该主机上还没有运行 tmux-web-panel。在那台机器上安装并启动面板服务后会自动接入（scripts/install-service.sh install 或 Windows 上的 install-service.ps1 install）。',
+        NODE_NOT_INSTALLED: '该主机上还没有运行 anymux。在那台机器上安装并启动面板服务后会自动接入（scripts/install-service.sh install 或 Windows 上的 install-service.ps1 install）。',
         NODE_NOT_RUNNING: '已通过 SSH 连上，但面板服务没有在运行。请在那台机器上启动面板服务。',
         NODE_INCOMPATIBLE: '该主机上的面板版本与本机不兼容，请把两边更新到同一版本。',
         NODE_AUTH_FAILED: '该主机上的面板拒绝了本机的访问令牌，通常是重装后令牌已更换；稍后会自动重新配对。',
@@ -493,11 +493,11 @@
         : '';
       return '<div class="intro"><h2>GitHub</h2><p>项目源码与版本信息。</p></div>'
         + '<div class="ms-card detail-list">'
-        + detail('名称', 'Tmux Web Panel')
+        + detail('名称', 'Anymux')
         + detail('版本', 'v1.0.0')
         + detail('说明', '面向移动端友好的 tmux 会话管理界面')
         + '</div>'
-        + '<div class="section"><a class="ms-btn" href="https://github.com/hungry-yue-s/tmux-web-panel"'
+        + '<div class="section"><a class="ms-btn" href="https://github.com/hungry-yue-s/anymux"'
         + ' target="_blank" rel="noopener">查看 GitHub 仓库 →</a></div>'
         + signOut;
     },

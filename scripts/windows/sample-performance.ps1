@@ -14,7 +14,7 @@ $mutex = $null
 $ownsLock = $false
 try {
   $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-  $mutex = New-Object Threading.Mutex($false, "Global\TmuxPanelWindowsSampler-$sid")
+  $mutex = New-Object Threading.Mutex($false, "Global\AnymuxWindowsSampler-$sid")
   try { $ownsLock = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $ownsLock = $true }
   if (-not $ownsLock) {
     [Console]::Error.WriteLine('windows_sampler_already_running')

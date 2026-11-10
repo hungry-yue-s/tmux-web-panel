@@ -22,9 +22,9 @@
 
 ### 设置和运行状态放在哪里
 
-从客户端的“设置与运行状态”进入初始化、服务状态、日志和可选网络设置。托管模式以 `~/Library/Application Support/Tmux Panel/settings.json` 作为统一设置入口，包含服务、身份哈希、访问范围和引导页配置，文件权限为仅当前用户可读写。不要手工把密码填进该文件，也不要把它发给他人。
+从客户端的“设置与运行状态”进入初始化、服务状态、日志和可选网络设置。托管模式以 `~/Library/Application Support/Anymux/settings.json` 作为统一设置入口，包含服务、身份哈希、访问范围和引导页配置，文件权限为仅当前用户可读写。不要手工把密码填进该文件，也不要把它发给他人。
 
-同一个目录下的 `runtime/` 放置内置运行时的安装版本，`logs/` 保存诊断日志，`tls/` 保存证书材料，`relay-site/` 保存导出的引导网站。托管服务的标签为 `com.tmux-web-panel.desktop` 和 `com.tmux-web-panel.desktop.tmux`，使用自己的 tmux socket 与配置；不会把用户的 `~/.tmux.conf` 当成初始化目标。
+同一个目录下的 `runtime/` 放置内置运行时的安装版本，`logs/` 保存诊断日志，`tls/` 保存证书材料，`relay-site/` 保存导出的引导网站。托管服务的标签为 `com.anymux.desktop` 和 `com.anymux.desktop.tmux`，使用自己的 tmux socket 与配置；不会把用户的 `~/.tmux.conf` 当成初始化目标。
 
 修改账号、密码、端口、访问范围或引导入口后，先点击“保存设置”，再点击“应用并重启面板”。保存只更新配置，应用后后台服务才使用新值；现有 tmux 会话保持运行。开启局域网、更新 DNS、导出引导站点或生成手机二维码前，也要先完成应用。
 

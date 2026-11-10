@@ -11,7 +11,7 @@ afterEach(() => {
 });
 
 function app(dependencies) {
-  const root = mkdtempSync(join(tmpdir(), 'twp-deps-'));
+  const root = mkdtempSync(join(tmpdir(), 'anymux-deps-'));
   dirs.push(root);
   writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies }));
   return root;

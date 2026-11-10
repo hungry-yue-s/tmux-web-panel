@@ -12,7 +12,7 @@ import https from 'node:https';
 
 const exec = promisify(execFile);
 const pause = ms => new Promise(done => setTimeout(done, ms));
-const productionLabels = ['com.tmux-web-panel', 'com.tmux-web-panel.tmux-server'];
+const productionLabels = ['com.anymux', 'com.anymux.tmux-server'];
 let phase = 'preflight', dataDir, socketRoot, labels, runtime, productionBefore;
 let cleanupAllowed = false, primaryError;
 const cleanupErrors = [];
@@ -52,7 +52,7 @@ async function freePort() {
 function helperEnvironment() {
   const env = { ...process.env, PATH: join(runtime, 'bin') + ':/usr/bin:/bin:/usr/sbin:/sbin', TMUX: '' };
   for (const key of Object.keys(env)) {
-    if (key.startsWith('TMUX_PANEL_') || ['AUTH', 'PORT', 'HOST', 'HTTP_PORT', 'TLS_CERT', 'TLS_KEY', 'TLS_AUTO', 'TMUX_TMPDIR'].includes(key)) delete env[key];
+    if (key.startsWith('ANYMUX_') || ['AUTH', 'PORT', 'HOST', 'HTTP_PORT', 'TLS_CERT', 'TLS_KEY', 'TLS_AUTO', 'TMUX_TMPDIR'].includes(key)) delete env[key];
   }
   return env;
 }
@@ -140,8 +140,8 @@ try {
   productionBefore = await productionSnapshot();
   dataDir = resolve(await mkdtemp(join(tmpdir(), 'tmux-desktop-用户 & data-')));
   const suffix = createHash('sha256').update(dataDir).digest('hex').slice(0, 10);
-  labels = { panel: 'com.tmux-web-panel.desktop.' + suffix, tmux: 'com.tmux-web-panel.desktop.' + suffix + '.tmux' };
-  socketRoot = join('/tmp', 'tmux-panel-' + process.getuid() + '-' + suffix);
+  labels = { panel: 'com.anymux.desktop.' + suffix, tmux: 'com.anymux.desktop.' + suffix + '.tmux' };
+  socketRoot = join('/tmp', 'anymux-' + process.getuid() + '-' + suffix);
   check(!(await job(labels.panel)).loaded && !(await job(labels.tmux)).loaded, 'TEST_LABEL_ALREADY_EXISTS');
   // Reserve only a new socket directory; never reuse a leftover server socket.
   await mkdir(socketRoot, { mode: 0o700 });

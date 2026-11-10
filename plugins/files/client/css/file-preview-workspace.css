@@ -112,7 +112,7 @@ body.fp-side-resizing .fp-side-resizer::after { width: 1px; background: var(--fp
 .fp-md-wrap pre { background: color-mix(in srgb, var(--fp-bg) 80%, var(--fp-panel)); box-shadow: inset 0 0 0 1px var(--fp-line); }
 .fp-md-wrap :not(pre) > code { background: color-mix(in srgb, var(--fp-bg) 65%, var(--fp-panel)); color: var(--fp-text); box-shadow: inset 0 0 0 1px var(--fp-line); }
 .fp-md-wrap code,
-.fp-code-wrap pre { font-family: 'Tmux Panel Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+.fp-code-wrap pre { font-family: 'Anymux Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
 .fp-md-wrap th,
 .fp-md-wrap td { border-color: var(--fp-line); padding: 8px 10px; }
 .fp-md-wrap th { background: color-mix(in srgb, var(--fp-bg) 72%, var(--fp-panel)); color: var(--fp-text); font-weight: 500; }

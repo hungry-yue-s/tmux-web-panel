@@ -34,11 +34,11 @@ connects to the IP directly.
 The repository carries only generic code and the template. Per-deployment secrets and
 rendered artifacts stay on the deployer's machine or in their own Pages repo:
 
-- `~/.config/tmux-web-panel/duckdns.env` (0600) — Duck DNS subdomain and token
-- `~/.config/tmux-web-panel/totp.json` (0600) — TOTP secret; delete it to disable MFA
-- `~/.config/tmux-web-panel/ca/` (0700) — CA key and cert; the cert is also copied into the relay site for download
-- `~/.config/tmux-web-panel/tokens.json` (0600) — session tokens, survive restarts
-- `~/.config/tmux-web-panel/relay-site/` — rendered relay page
+- `~/.config/anymux/duckdns.env` (0600) — Duck DNS subdomain and token
+- `~/.config/anymux/totp.json` (0600) — TOTP secret; delete it to disable MFA
+- `~/.config/anymux/ca/` (0700) — CA key and cert; the cert is also copied into the relay site for download
+- `~/.config/anymux/tokens.json` (0600) — session tokens, survive restarts
+- `~/.config/anymux/relay-site/` — rendered relay page
 - your GitHub Pages repo — rendered `index.html`, `robots.txt`, `ca.crt`
 
 ## Deploy your own
@@ -51,10 +51,10 @@ TLS_AUTO=1 AUTH=user:password ./scripts/install-service.sh install
 # 2. Duck DNS: create a subdomain at duckdns.org, then store the credentials
 umask 077
 printf 'DUCKDNS_DOMAIN=mybox\nDUCKDNS_TOKEN=your-token\n' \
-  > ~/.config/tmux-web-panel/duckdns.env
+  > ~/.config/anymux/duckdns.env
 
 # 3. relay page (needs `gh` logged in for --publish; without it, render only and
-#    push ~/.config/tmux-web-panel/relay-site/ to your Pages repo yourself)
+#    push ~/.config/anymux/relay-site/ to your Pages repo yourself)
 DUCKDNS_DOMAIN=mybox PAGES_URL=https://you.github.io/mybox-relay/ \
   ./scripts/setup-relay.sh --publish
 

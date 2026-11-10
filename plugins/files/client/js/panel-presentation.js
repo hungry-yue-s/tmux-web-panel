@@ -1,7 +1,7 @@
 // Theme transport for opt-in, sandboxed information pages. No layout or reset CSS.
 (function (global) {
   'use strict';
-  var MESSAGE = 'tmux-panel:presentation-theme';
+  var MESSAGE = 'anymux:presentation-theme';
   var COLORS = {
     '--pp-bg': '--workspace-bg',
     '--pp-surface': '--workspace-panel',
@@ -84,7 +84,8 @@
 
   function prepare(content, frame) {
     var doc = new global.DOMParser().parseFromString(content, 'text/html');
-    if (!doc.head.querySelector('meta[name="tmux-panel-presentation"][content="1"]')) return content;
+    // tmux-panel-presentation: pages written before the rename.
+    if (!doc.head.querySelector('meta[name="anymux-presentation"][content="1"], meta[name="tmux-panel-presentation"][content="1"]')) return content;
     var script = doc.createElement('script');
     // Only public appearance data goes into the frame, never URLs or credentials.
     var args = JSON.stringify([getTheme(frame), global.location.origin]).replace(/</g, '\\u003c');

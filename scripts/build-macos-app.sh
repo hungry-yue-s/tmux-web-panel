@@ -3,14 +3,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PACKAGE_DIR="$PROJECT_DIR/macos/TmuxPanel"
-DIST_DIR="${TMUX_PANEL_DIST_DIR:-$PROJECT_DIR/dist/macos}"
-CONFIGURATION="${TMUX_PANEL_CONFIGURATION:-release}"
-BUNDLE_RUNTIME="${TMUX_PANEL_BUNDLE_RUNTIME:-1}"
-IDENTITY="${TMUX_PANEL_CODESIGN_IDENTITY:--}"
-NOTARY_PROFILE="${TMUX_PANEL_NOTARY_PROFILE:-}"
-DISTRIBUTION="${TMUX_PANEL_DISTRIBUTION:-0}"
-ARCH="${TMUX_PANEL_ARCH:-$(uname -m)}"
+. "$SCRIPT_DIR/legacy-env.sh"
+PACKAGE_DIR="$PROJECT_DIR/macos/Anymux"
+DIST_DIR="${ANYMUX_DIST_DIR:-$PROJECT_DIR/dist/macos}"
+CONFIGURATION="${ANYMUX_CONFIGURATION:-release}"
+BUNDLE_RUNTIME="${ANYMUX_BUNDLE_RUNTIME:-1}"
+IDENTITY="${ANYMUX_CODESIGN_IDENTITY:--}"
+NOTARY_PROFILE="${ANYMUX_NOTARY_PROFILE:-}"
+DISTRIBUTION="${ANYMUX_DISTRIBUTION:-0}"
+ARCH="${ANYMUX_ARCH:-$(uname -m)}"
 [[ "$ARCH" == x86_64 ]] && ARCH=x64
 case "$ARCH" in arm64) MACHINE=arm64;; x64) MACHINE=x86_64;; *) echo "Unsupported architecture: $ARCH" >&2; exit 1;; esac
 if [[ "$(uname -m)" == arm64 && "$MACHINE" == x86_64 ]]; then
@@ -23,30 +24,30 @@ if [[ "$DISTRIBUTION" == 1 ]]; then
     echo 'Public distribution requires the full runtime, a Developer ID Application identity and a notarytool keychain profile.' >&2; exit 1;
   }
 fi
-MINIMUM_MACOS="${TMUX_PANEL_MINIMUM_MACOS:-13.5}"
+MINIMUM_MACOS="${ANYMUX_MINIMUM_MACOS:-13.5}"
 export MACOSX_DEPLOYMENT_TARGET="$MINIMUM_MACOS"
 mkdir -p "$DIST_DIR"
 DIST_DIR="$(cd "$DIST_DIR" && pwd)"
 WORK="$(mktemp -d "$DIST_DIR/.app-build.XXXXXX")"
-APP_PATH="$WORK/Tmux Panel.app"
+APP_PATH="$WORK/Anymux.app"
 trap 'rm -rf "$WORK"' EXIT
 
 swift build --package-path "$PACKAGE_DIR" --configuration "$CONFIGURATION" --triple "$MACHINE-apple-macosx$MINIMUM_MACOS"
 BIN_DIR="$(swift build --package-path "$PACKAGE_DIR" --configuration "$CONFIGURATION" --triple "$MACHINE-apple-macosx$MINIMUM_MACOS" --show-bin-path)"
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
-cp "$BIN_DIR/TmuxPanel" "$APP_PATH/Contents/MacOS/TmuxPanel"
-/usr/bin/lipo "$APP_PATH/Contents/MacOS/TmuxPanel" -verify_arch "$MACHINE"
+cp "$BIN_DIR/Anymux" "$APP_PATH/Contents/MacOS/Anymux"
+/usr/bin/lipo "$APP_PATH/Contents/MacOS/Anymux" -verify_arch "$MACHINE"
 cp "$PACKAGE_DIR/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
 plutil -replace LSMinimumSystemVersion -string "$MINIMUM_MACOS" "$APP_PATH/Contents/Info.plist"
-if [[ -n "${TMUX_PANEL_APP_VERSION:-}" ]]; then plutil -replace CFBundleShortVersionString -string "$TMUX_PANEL_APP_VERSION" "$APP_PATH/Contents/Info.plist"; fi
-if [[ -n "${TMUX_PANEL_BUILD_NUMBER:-}" ]]; then plutil -replace CFBundleVersion -string "$TMUX_PANEL_BUILD_NUMBER" "$APP_PATH/Contents/Info.plist"; fi
+if [[ -n "${ANYMUX_APP_VERSION:-}" ]]; then plutil -replace CFBundleShortVersionString -string "$ANYMUX_APP_VERSION" "$APP_PATH/Contents/Info.plist"; fi
+if [[ -n "${ANYMUX_BUILD_NUMBER:-}" ]]; then plutil -replace CFBundleVersion -string "$ANYMUX_BUILD_NUMBER" "$APP_PATH/Contents/Info.plist"; fi
 ICON_FILE="$(plutil -extract CFBundleIconFile raw "$APP_PATH/Contents/Info.plist")"
 swift "$SCRIPT_DIR/generate-macos-icon.swift" "$WORK/AppIcon.iconset" "$PROJECT_DIR/plugins/ui/client/app-icon.png"
 iconutil --convert icns --output "$APP_PATH/Contents/Resources/$ICON_FILE" "$WORK/AppIcon.iconset"
 plutil -lint "$APP_PATH/Contents/Info.plist" >/dev/null
 
 if [[ "$BUNDLE_RUNTIME" == 1 ]]; then
-  TMUX_PANEL_ARCH="$ARCH" TMUX_PANEL_MINIMUM_MACOS="$MINIMUM_MACOS" \
+  ANYMUX_ARCH="$ARCH" ANYMUX_MINIMUM_MACOS="$MINIMUM_MACOS" \
     "$SCRIPT_DIR/bundle-macos-runtime.sh" "$APP_PATH/Contents/Resources/runtime"
 fi
 
@@ -87,7 +88,7 @@ for(const name of manifest.machO) if(name!=='bin/node') console.log(path.join(ro
 JS
   while IFS= read -r binary; do sign_runtime_binary "$binary"; done < "$WORK/macho-paths.txt"
   sign_runtime_binary "$RUNTIME/bin/node" --entitlements "$WORK/node-entitlements.plist"
-  TMUX_PANEL_ARCH="$ARCH" TMUX_PANEL_MINIMUM_MACOS="$MINIMUM_MACOS" \
+  ANYMUX_ARCH="$ARCH" ANYMUX_MINIMUM_MACOS="$MINIMUM_MACOS" \
     "$RUNTIME/bin/node" "$SCRIPT_DIR/verify-macos-runtime.mjs" "$RUNTIME" --write-manifest
 fi
 codesign "${SIGN_FLAGS[@]}" "$APP_PATH"
@@ -98,7 +99,7 @@ if [[ -n "$NOTARY_PROFILE" ]]; then
   [[ "$IDENTITY" != - ]] || { echo 'Notarization requires a Developer ID signature.' >&2; exit 1; }
   ditto -c -k --keepParent "$APP_PATH" "$WORK/notarize.zip"
   NOTARY_ARGS=(--keychain-profile "$NOTARY_PROFILE")
-  if [[ -n "${TMUX_PANEL_NOTARY_KEYCHAIN:-}" ]]; then NOTARY_ARGS+=(--keychain "$TMUX_PANEL_NOTARY_KEYCHAIN"); fi
+  if [[ -n "${ANYMUX_NOTARY_KEYCHAIN:-}" ]]; then NOTARY_ARGS+=(--keychain "$ANYMUX_NOTARY_KEYCHAIN"); fi
   xcrun notarytool submit "$WORK/notarize.zip" "${NOTARY_ARGS[@]}" --wait --output-format json > "$WORK/notary-result.json"
   /usr/bin/plutil -extract status raw "$WORK/notary-result.json" | /usr/bin/grep -qx Accepted || { echo 'Apple notarization was not accepted.' >&2; exit 1; }
   xcrun stapler staple "$APP_PATH"
@@ -106,10 +107,10 @@ if [[ -n "$NOTARY_PROFILE" ]]; then
   spctl --assess --type execute "$APP_PATH"
   LABEL=notarized
 fi
-FINAL_APP="$DIST_DIR/Tmux Panel.app"
+FINAL_APP="$DIST_DIR/Anymux.app"
 rm -rf "$FINAL_APP"
 mv "$APP_PATH" "$FINAL_APP"
-ARCHIVE="$DIST_DIR/Tmux-Panel-macOS-$ARCH-$LABEL.zip"
+ARCHIVE="$DIST_DIR/Anymux-macOS-$ARCH-$LABEL.zip"
 rm -f "$ARCHIVE"
 ditto -c -k --sequesterRsrc --keepParent "$FINAL_APP" "$ARCHIVE"
 (cd "$DIST_DIR" && shasum -a 256 "$(basename "$ARCHIVE")" > "$(basename "$ARCHIVE").sha256")
