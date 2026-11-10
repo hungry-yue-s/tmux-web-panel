@@ -267,6 +267,25 @@ node-pty 报告退出比进程消失晚约 1 秒（中位 1.0 到 1.4 秒），�
 
 **防止重现。** 测试要隔离家目录时同时设置 `HOME` 和 `USERPROFILE`，或者把家目录作为参数传给被测模块；安装脚本没有改动时不再备份和重写文件。
 
+**清理。** 2026-11-10 核对这 101 个备份与现用文件逐字节相同后删除。
+
+### ENV-13 Windows：tmux 在保存中途不应答，空快照成了 `last`（2026-11-10）
+
+**现象与证据。** 部署时发现本机默认 tmux server（11-06 23:52 起）没有任何子进程，也就是一个会话都没有。快照目录（MSYS 家目录下的 `.local/share/tmux/resurrect/`）里，`last` 和 `tmux_resurrect_20261106T133507.txt` 都是 0 字节，前一份 13:28:51 的有 1960 字节。`tmux-server.log` 在一分钟后（13:36:21）记录 server “stopped answering” 并结束重启，23:48:27 又以退出码 -1 退出一次。两次新 server 都没有恢复任何会话。
+
+**原因。** tmux-resurrect 的 `save.sh` 先写新快照，只要它和上一份不同就让 `last` 指向它（MSYS2 上 `ln -s` 是复制）。保存时 tmux 不应答，里面每条 tmux 命令都拿不到输出，于是写出空文件并成了 `last`。会话保护只在有会话时才保存，却没有检查保存的结果；新 server 恢复时读到的 `last` 没有会话，就什么也没恢复，resurrect 自带的恢复键同样如此。
+
+**处理。** `lib/session-protection/snapshot.js`：
+
+- `repairLast` 在 `last` 没有会话时，把它指回最近一份有会话的快照：Linux/macOS 上仍是链接，MSYS2 上是带原快照时间的副本。比那份更新的空快照一并删除，免得被 resurrect 算进保留的备份。
+- 会话保护每次保存后调用 `repairLast`。修正过就把这次保存记为失败，页面上能看到。
+- 每个 server 实例第一次处理时也调用一次，已经坏掉的机器部署后即自愈。
+- `readLatest` 遇到空的 `last` 同样回退到最近一份有会话的快照，用户自己加载 resurrect 时（不改他的文件）也是如此。
+
+“找回会话”列表本来就跳过空快照，所以 11-06 13:28 那份一直可以手动找回。
+
+**另一件同期的事，原因未查清。** 11-06 18:48 到 11-10 11:01 这一次面板进程，从第一次检查起所有 tmux 命令都失败：会话保护 6623 次、perf-history 21019 次，stderr 都为空，不是 `no server running`。同期包装脚本每 10 秒探测都得到应答，没有结束过 23:52 起的 server，所以 server 本身在应答。11-10 经计划任务重启面板后不再失败。进程已经结束，现场无法还原。如果再出现“面板日志里 tmux 命令持续失败、`tmux-server.log` 却安静”，先在结束面板前抓下当时 tmux 客户端进程的状态和面板进程环境。
+
 ## 捕获环境备注
 
 两条和产物无关但值得记下来的事。CDP 的 `Page.startScreencast` 在这台共享 Chrome 上返回的帧偶发无样式，所以所有动画改成定时 `page.screenshot` 静帧合成，脚本在 `.playwright-mcp/readme-shot/shot.mjs`。截图里的主机名、内网和公网 IP、服务器名、进程名都在捕获期做了 DOM 文本替换脱敏，tmux 状态栏的主机名用 session 级 `status-right` 覆盖掉，规则见同目录 `shot.mjs` 的 `SANITIZE_RULES`。

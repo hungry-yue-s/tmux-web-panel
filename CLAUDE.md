@@ -68,6 +68,7 @@ Linux 使用用户级 `tmux-server.service`，macOS 使用 `com.tmux-web-panel.t
 - **Windows 上结束终端控制台要能证明没人在用**：`conhost.exe` 只能按 `pty.spawn` 的精确时间窗认领，不加余量（实测 30 个全部落在窗内）。进程里每个 `pty.spawn` 都必须经 `trackConsoleSpawn`（`lib/terminal/console-reaper.js`），它把时间窗记到 pty 退出；一个控制台还可能属于活着的 pty、或一个窗里不止一个控制台，就不结束。宁可漏清，不扩大窗口，也不要批量清理来历不明的 `conhost.exe`
 - **环境问题要记录并由服务管理**：现象、证据和结论写进 `docs/known-issues.md`，检测和恢复做进服务，不靠人工救场。不要在默认 tmux server 上做接入、resize、断开实验。每条实验命令显式带 `tmux -S <私有 socket>` 或 `-L <唯一名称>`，并从实验及全部子进程环境移除 `TMUX` / `TMUX_PANE`；仅设置 `TMUX_TMPDIR` 不能隔离继承了 `TMUX` 的进程。清理前用同一组参数核对 `socket_path` 和 server PID 确实属于本次实验，无法确认归属就不结束。Windows 的绝对 tmux 路径会绕过 PATH 中的 shell 包装，不能把 POSIX 包装当作 Windows 隔离证明。
 - **没有会话时绝不保存**：那次空快照会成为 `last`，下次重启就什么也恢复不了。`save.sh` 只能由 `SessionProtection` 在有会话时调用
+- **`last` 不得停在空快照上**：保存时 tmux 不应答，`save.sh` 会写出空文件并让 `last` 指向它（`docs/known-issues.md` ENV-13）。每次保存后和每个 server 实例第一次处理时，`repairLast` 把空的 `last` 指回最近一份有会话的快照；`readLatest` 遇到空的 `last` 同样回退。不要去掉这两处，也不要改 vendored 的 `save.sh`
 - **用户自己在 `~/.tmux.conf` 里加载了 tmux-resurrect（常见于 TPM + continuum）时，面板不自动保存和恢复**（`mode: 'external'`），只提供立即保存和找回会话，避免两套机制互相覆盖或重复恢复
 - **从 Windows 的 Node 调 MSYS2 程序（tmux）必须用 `msysExecArgs`**（`lib/msys.js`）：Node 默认把 `"` 转义成 `\"`，MSYS 不认，布局字符串、带引号的命令或名字会被拆碎
 - **`lib/tmux.js` 的 `listSessions()` 是只读**：不会自动创建/启动 tmux server。如果 server 不存在，网页就是空——这是设计意图，恢复责任在 companion service + 会话保护
