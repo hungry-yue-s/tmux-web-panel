@@ -19,10 +19,17 @@
 
   // --- .diff / .patch files (diff2html) -----------------------------------------
 
-  function renderDiffFile(body, content) {
+  function largeText(content) {
+    return content.length > 65536 || content.split('\n').some(function (line, i) { return i >= 1000 || line.length > 4000; });
+  }
+
+  function renderDiffFile(body, content, info, options) {
+    options = options || {};
+    var isCurrent = options.isCurrent || function () { return true; };
     var wrap = el('div', 'blk-difffile');
     var bar = el('div', 'blk-toolbar');
     var files = parseUnifiedDiff(content);
+    var limited = largeText(content);
     var added = files.reduce(function (n, f) { return n + f.added; }, 0);
     var removed = files.reduce(function (n, f) { return n + f.removed; }, 0);
     var title = el('div', 'blk-toolbar-title');
@@ -47,10 +54,16 @@
       draw();
     }
     function draw() {
-      if (!window.Diff2Html) { renderDiffInto(view, content); return; }
+      if (!isCurrent()) return;
+      if (limited || !window.Diff2Html) { renderDiffInto(view, content); return; }
       view.innerHTML = window.Diff2Html.html(content, {
         drawFileList: files.length > 1, matching: 'lines', outputFormat: mode, colorScheme: isDark() ? 'dark' : 'light',
       });
+    }
+    if (limited) {
+      draw();
+      segmented.hidden = true;
+      return true;
     }
     return Promise.all([loadScript(CDN.diff2html), loadCss(CDN.diff2htmlCss)])
       .catch(function () { /* fall back to the built-in renderer */ })
@@ -457,14 +470,14 @@
       items.push({ label: '编辑', hint: file.isMarkdown ? '所见即所得的文档编辑' : '直接修改并保存（' + keysText('Mod+S') + '）', icon: svgPaths('edit'),
         run: function () { openEditor(ctx.body, file, ctx.refresh); } });
     }
-    if (!file.isDirectory && file.isMarkdown && file.rawContent != null) {
+    if (!file.isDirectory && file.isMarkdown && file.rawContent != null && !largeText(file.rawContent)) {
       items.push({ label: '看板视图', hint: '## 标题作列、列表项作卡片', icon: svgPaths('board'),
         run: function () { renderBoard(ctx.body, file, ctx.refresh); } });
     }
     return items;
   }
 
-  Blocks.registerRenderer({ id: 'patch', order: 20, test: function (path) { return /\.(diff|patch)$/i.test(path); }, render: function (body, content) { return renderDiffFile(body, content); } });
+  Blocks.registerRenderer({ id: 'patch', order: 20, test: function (path) { return /\.(diff|patch)$/i.test(path); }, render: renderDiffFile });
   Blocks.registerRenderer({ id: 'board', order: 30, test: function (path, readOnly) { return !readOnly && isBoardFile(path) && !_boardOff[path]; }, render: renderBoardFile });
   Blocks.registerPreviewActions({ id: 'file', order: 10, items: fileActions });
   Object.assign(Blocks._test, { parseBoard: parseBoard, serializeBoard: serializeBoard, setCardText: setCardText });

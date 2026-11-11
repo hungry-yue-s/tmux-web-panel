@@ -2335,6 +2335,12 @@ var FilePreview = (function () {
   function _disposePreview(root) {
     _disposeMermaid(root);
     if (!root) return;
+    root.__fpRender = null;
+    root.__fpMarkdownLive = false;
+    root.__fpCodeLive = false;
+    root.querySelectorAll('.fp-embedded').forEach(function (box) { box.__fpRender = null; });
+    root.querySelectorAll('.fp-md-wrap').forEach(function (wrap) { wrap.__fpMarkdownLive = false; });
+    root.querySelectorAll('.fp-code-wrap').forEach(function (wrap) { wrap.__fpCodeLive = false; });
     root.querySelectorAll('iframe[data-fp-blob-url]').forEach(function (frame) {
       window.URL.revokeObjectURL(frame.getAttribute('data-fp-blob-url'));
       frame.removeAttribute('data-fp-blob-url');
@@ -2592,6 +2598,13 @@ var FilePreview = (function () {
     // Always clone: we strip interactive bits and inline images without
     // mutating what's on screen.
     var capture = rendered.cloneNode(true);
+    var sheetCopies = capture.querySelectorAll('.fp-xlsx-pane');
+    rendered.querySelectorAll('.fp-xlsx-pane').forEach(function (pane, i) {
+      if (!sheetCopies[i].hasChildNodes() && pane.__fpRenderSheetInto) pane.__fpRenderSheetInto(sheetCopies[i]);
+    });
+    capture.querySelectorAll('.fp-error-download').forEach(function (control) {
+      control.replaceWith(document.createTextNode('请在文件预览中下载完整文件。'));
+    });
     var pages = capture.querySelector('.fp-code-pages');
     if (pages && _currentFile.rawContent != null) {
       // Snapshots and rich copy need the whole file, not the visible segment.
@@ -3244,7 +3257,7 @@ var FilePreview = (function () {
 
   // Build a lookup of merged ranges so we emit rowspan/colspan on the
   // top-left cell and skip the cells it covers.
-  function _xlsxMerges(ws) {
+  function _xlsxMerges(ws, rowCount, colCount) {
     var masters = {}; // "r,c" -> {rowspan, colspan}
     var covered = {}; // "r,c" -> true (non-master cells inside a merge)
     var ranges = (ws.model && ws.model.merges) || [];
@@ -3252,6 +3265,9 @@ var FilePreview = (function () {
       var m = /^([A-Z]+)(\d+):([A-Z]+)(\d+)$/.exec(range);
       if (!m) return;
       var c1 = _colToNum(m[1]), r1 = +m[2], c2 = _colToNum(m[3]), r2 = +m[4];
+      if (r1 > rowCount || c1 > colCount) return;
+      r2 = Math.min(r2, rowCount);
+      c2 = Math.min(c2, colCount);
       masters[r1 + ',' + c1] = { rowspan: r2 - r1 + 1, colspan: c2 - c1 + 1 };
       for (var r = r1; r <= r2; r++) {
         for (var c = c1; c <= c2; c++) {
@@ -3272,15 +3288,17 @@ var FilePreview = (function () {
   }
 
   function _xlsxSheetTable(ws) {
-    var merges = _xlsxMerges(ws);
     var colCount = ws.actualColumnCount || ws.columnCount || 0;
+    var rowCount = ws.actualRowCount || ws.rowCount || 0;
+    if (Math.max(1, rowCount) * Math.max(1, colCount) > 5000) return null;
+    var merges = _xlsxMerges(ws, rowCount, colCount);
+    var chars = 0;
     var html = '<table class="fp-xlsx-table"><colgroup>';
     for (var c = 1; c <= colCount; c++) {
       var col = ws.getColumn(c);
       html += '<col' + _xlsxColStyle(col && col.width) + '>';
     }
     html += '</colgroup><tbody>';
-    var rowCount = ws.actualRowCount || ws.rowCount || 0;
     for (var r = 1; r <= rowCount; r++) {
       var row = ws.getRow(r);
       html += '<tr>';
@@ -3295,6 +3313,8 @@ var FilePreview = (function () {
           if (span.colspan > 1) attrs += ' colspan="' + span.colspan + '"';
         }
         var text = cell.text != null ? String(cell.text) : '';
+        chars += text.length;
+        if (text.length > 4000 || chars > 65536) return null;
         html += '<td' + attrs + '>' + _escapeHtml(text) + '</td>';
       }
       html += '</tr>';
@@ -3302,7 +3322,8 @@ var FilePreview = (function () {
     return html + '</tbody></table>';
   }
 
-  function _renderXlsx(body, rawUrl) {
+  function _renderXlsx(body, rawUrl, filename, isCurrent) {
+    isCurrent = isCurrent || function () { return true; };
     body.innerHTML = '<div class="fp-loading" role="status">正在读取表格…</div>';
     var headers = typeof Auth !== 'undefined' ? Auth.headers() : {};
     return Promise.all([
@@ -3313,11 +3334,13 @@ var FilePreview = (function () {
       }),
     ])
       .then(function (results) {
+        if (!isCurrent()) return null;
         var buf = results[1];
         var wb = new window.ExcelJS.Workbook();
         return wb.xlsx.load(buf);
       })
       .then(function (wb) {
+        if (!wb || !isCurrent()) return false;
         var sheets = [];
         wb.eachSheet(function (ws) { sheets.push(ws); });
         if (!sheets.length) throw new Error('空工作簿');
@@ -3337,21 +3360,36 @@ var FilePreview = (function () {
           tab.textContent = ws.name || ('Sheet' + (i + 1));
           var pane = document.createElement('div');
           pane.className = 'fp-xlsx-pane' + (i === 0 ? ' active' : '');
-          pane.innerHTML = _xlsxSheetTable(ws);
+          var drawn = false;
+          pane.__fpRenderSheetInto = function (target) {
+            var html = _xlsxSheetTable(ws);
+            if (html === null) {
+              _renderUnavailable(target, '工作表较大，已暂停表格渲染。请下载完整文件查看。', rawUrl, filename);
+            } else {
+              target.innerHTML = html;
+              if (target === pane) _attachColumnFilters(target.querySelector('.fp-xlsx-table'));
+            }
+          };
+          function drawSheet() {
+            if (drawn) return;
+            drawn = true;
+            pane.__fpRenderSheetInto(pane);
+          }
           tab.addEventListener('click', function () {
             tabs.querySelectorAll('.fp-xlsx-tab').forEach(function (t) { t.classList.remove('active'); });
             panes.querySelectorAll('.fp-xlsx-pane').forEach(function (p) { p.classList.remove('active'); });
             tab.classList.add('active');
             pane.classList.add('active');
+            drawSheet();
           });
           tabs.appendChild(tab);
           panes.appendChild(pane);
+          if (i === 0) drawSheet();
         });
 
         if (sheets.length > 1) wrap.appendChild(tabs);
         wrap.appendChild(panes);
         body.appendChild(wrap);
-        wrap.querySelectorAll('.fp-xlsx-table').forEach(_attachColumnFilters);
       });
   }
 
@@ -3396,6 +3434,11 @@ var FilePreview = (function () {
 
   function _renderCsv(body, content, absPath) {
     var rows = _parseCsv(content, _csvDelim(absPath, content));
+    var cells = 0;
+    if (rows.some(function (row) { cells += row.length; return cells > 5000; })) {
+      _renderCode(body, content, 'plaintext', null, true);
+      return;
+    }
     // Drop a trailing blank row from a final newline.
     if (rows.length && rows[rows.length - 1].length === 1 && rows[rows.length - 1][0] === '') rows.pop();
     if (!rows.length) { _renderCode(body, content, 'plaintext'); return; }
@@ -3648,12 +3691,19 @@ var FilePreview = (function () {
     showPage();
   }
 
-  function _renderCode(body, content, language, targetLine) {
+  function _needsTextPaging(content) {
+    if (content.length > 65536) return true;
+    var lines = content.split('\n');
+    return lines.length > 1000 || lines.some(function (line) { return line.length > 4000; });
+  }
+
+  function _renderCode(body, content, language, targetLine, forcePaging) {
+    _disposePreview(body);
     body.innerHTML = '';
     var wrap = document.createElement('div');
     wrap.className = 'fp-code-wrap';
+    wrap.__fpCodeLive = true;
 
-    var lines = content.split('\n');
     var lineNums = document.createElement('div');
     lineNums.className = 'fp-line-numbers';
 
@@ -3663,15 +3713,17 @@ var FilePreview = (function () {
     pre.appendChild(code);
     wrap.appendChild(pre);
     body.appendChild(wrap);
-    if (content.length > 65536 || lines.length > 1000 || lines.some(function (line) { return line.length > 4000; })) {
+    if (forcePaging || _needsTextPaging(content)) {
       _renderPagedCode(wrap, pre, code, lineNums, content, targetLine);
       return;
     }
+    var lines = content.split('\n');
     lineNums.textContent = lines.map(function (_, i) { return i + 1; }).join('\n');
     code.textContent = content;
 
     Promise.all([_loadScript(CDN.hljs), _loadCSS(CDN.hljsCss)])
       .then(function () {
+        if (!wrap.__fpCodeLive) return;
         // highlight.js logs an error for a language it lacks before throwing: ask first.
         if (window.hljs && language && window.hljs.getLanguage(language)) {
           try {
@@ -4205,7 +4257,8 @@ var FilePreview = (function () {
     });
   }
 
-  function _renderMarkdown(body, content, filePath, paneId, readOnly) {
+  function _renderMarkdown(body, content, filePath, paneId, readOnly, isCurrent) {
+    isCurrent = isCurrent || function () { return true; };
     body.innerHTML = '<div class="fp-loading" role="status">正在排版文档\u2026</div>';
 
     return Promise.all([
@@ -4214,6 +4267,7 @@ var FilePreview = (function () {
       _loadCSS(CDN.hljsCss),
     ])
       .then(function () {
+        if (!isCurrent()) return null;
         var md = window.markdownit({
           html: false,
           linkify: true,
@@ -4245,6 +4299,7 @@ var FilePreview = (function () {
         return katexLoaded.then(function () { return md; });
       })
       .then(function (md) {
+        if (!md || !isCurrent()) return false;
         var fmExtract = _extractFrontmatter(content);
         var fmHtml = fmExtract.fm ? _renderFrontmatter(fmExtract.fm) : '';
         var env = {
@@ -4256,6 +4311,7 @@ var FilePreview = (function () {
         body.innerHTML = '';
         var wrap = document.createElement('div');
         wrap.className = 'fp-md-wrap';
+        wrap.__fpMarkdownLive = true;
         wrap.innerHTML = fmHtml + html;
         _prepareMarkdownMedia(wrap, filePath);
         body.appendChild(wrap);
@@ -4273,6 +4329,7 @@ var FilePreview = (function () {
         if (mermaidBlocks.length > 0) {
           _loadScript(CDN.mermaid)
             .then(function () {
+              if (!wrap.__fpMarkdownLive) return;
               // Pin a system font so mermaid measures text with the SAME
               // always-available font it renders with. Otherwise a late-loading
               // webfont reflows the text after layout is computed, pushing it
@@ -4282,6 +4339,7 @@ var FilePreview = (function () {
               var fontsReady = (document.fonts && document.fonts.ready)
                 ? document.fonts.ready : Promise.resolve();
               return fontsReady.then(function () {
+                if (!wrap.__fpMarkdownLive) return;
                 var jobs = Array.prototype.map.call(mermaidBlocks, function (block, i) {
                   var code = block.textContent;
                   var container = document.createElement('div');
@@ -4294,10 +4352,12 @@ var FilePreview = (function () {
                   var id = 'fp-mmd-' + Date.now() + '-' + i;
                   return window.mermaid.render(id, code)
                     .then(function (res) {
+                      if (!wrap.__fpMarkdownLive) return;
                       container.innerHTML = res.svg;
                       _prepareMermaid(container);
                     })
                     .catch(function (err) {
+                      if (!wrap.__fpMarkdownLive) return;
                       // Render failed (usually a syntax error) — surface the
                       // reason above the raw source so it's clear it's not a
                       // "type unsupported" issue.
@@ -4315,7 +4375,7 @@ var FilePreview = (function () {
                     });
                 });
                 return Promise.all(jobs).then(function () {
-                  _installMermaidInteractions(wrap);
+                  if (wrap.__fpMarkdownLive) _installMermaidInteractions(wrap);
                 });
               });
             })
@@ -4323,7 +4383,8 @@ var FilePreview = (function () {
         }
       })
       .catch(function () {
-        _renderCode(body, content, 'markdown');
+        if (isCurrent()) _renderCode(body, content, 'markdown');
+        else return false;
       });
   }
 
@@ -4710,7 +4771,7 @@ var FilePreview = (function () {
       return Promise.resolve();
     }
     if (info.isPdf) return _renderPdf(body, source.rawUrl, filename);
-    if (info.isXlsx) return _renderXlsx(body, source.rawUrl);
+    if (info.isXlsx) return _renderXlsx(body, source.rawUrl, filename, isCurrent);
     if ((info.isArchive || info.isSqlite) && source.versioned) {
       _renderUnavailable(body, (info.isSqlite ? 'SQLite 数据库' : '压缩包') + '只能按磁盘上的文件预览。', source.rawUrl, filename);
       return Promise.resolve();
@@ -4725,13 +4786,21 @@ var FilePreview = (function () {
     return source.loadContent().then(function (data) {
       if (!isCurrent()) return false;
       if (options.onContent) options.onContent(data.content);
+      var html = info.language === 'html' || /\.html?$/i.test(filename);
+      if (!html && !/\.(diff|patch)$/i.test(filename) && _needsTextPaging(data.content)) {
+        _renderCode(body, data.content, data.language, options.targetLine);
+        return true;
+      }
       // Notebooks, patches and TODO.md boards have their own blocks.
       var block = window.Blocks && window.Blocks.rendererFor(name, options.readOnly);
-      if (block) return block(body, data.content, info);
+      if (block) return block(body, data.content, info, {
+        isCurrent: isCurrent, readOnly: options.readOnly,
+        renderText: function () { _renderCode(body, data.content, data.language, options.targetLine, true); return true; },
+      });
       if (info.isMarkdown) {
-        return _renderMarkdown(body, data.content, name, options.paneId, options.readOnly);
+        return _renderMarkdown(body, data.content, name, options.paneId, options.readOnly, isCurrent);
       }
-      if (info.language === 'html' || /\.html?$/i.test(filename)) {
+      if (html) {
         _renderHtml(body, data.content, options.targetLine, options.htmlSource);
       } else if (_isCsvPath(name)) {
         _renderCsv(body, data.content, name);
@@ -4751,10 +4820,10 @@ var FilePreview = (function () {
    * versioned } for anything else; `machine` is the server's URL prefix.
    */
   function renderInto(container, source) {
+    _disposePreview(container);
     var token = {};
     container.__fpRender = token;
     var isCurrent = function () { return container.__fpRender === token; };
-    _disposePreview(container);
     container.classList.add('fp-embedded');
     var body = document.createElement('div');
     body.className = 'fp-embedded-body';

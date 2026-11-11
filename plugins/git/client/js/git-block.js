@@ -39,8 +39,10 @@
   }
 
   function disposePreviews(node) {
-    if (!window.FilePreview || !FilePreview.disposeRendered) return;
-    node.querySelectorAll('.fp-embedded').forEach(function (box) { FilePreview.disposeRendered(box); });
+    node.querySelectorAll('.git-preview, .fp-embedded').forEach(function (box) {
+      box.__gitVersion = null;
+      if (window.FilePreview && FilePreview.disposeRendered) FilePreview.disposeRendered(box);
+    });
   }
 
   // ===========================================================================
@@ -236,6 +238,7 @@
     commitBox.append(messageWrap, commitTools, commitFoot);
 
     var status = null;
+    var disposed = false;
     var statusJson = '';
     var selection = null; // { path, staged }
     var lastDiffKey = '';
@@ -273,11 +276,11 @@
     // Binary files have no diff worth reading and open as the file, unless asked.
     var diffAskedFor = null;
     // A large commit's per-file diffs, loaded as they come near the screen.
-    var lazyObserver = null;
+    var cancelLazyDiffs = null;
 
     function stopLazyDiffs() {
-      if (lazyObserver) lazyObserver.disconnect();
-      lazyObserver = null;
+      if (cancelLazyDiffs) cancelLazyDiffs();
+      cancelLazyDiffs = null;
     }
 
     function rootPath(rel) { return status.root.replace(/\/$/, '') + '/' + rel; }
@@ -409,6 +412,7 @@
      * began, in which case a new read follows it.
      */
     function load(force) {
+      if (disposed) return Promise.resolve();
       if (loading && loading.writes === writes) {
         if (force) loading.force = true;
         return loading.promise;
@@ -419,6 +423,7 @@
       var diagnostic = window.Diagnostics && window.Diagnostics.beginGit(api.serverId);
       var rendering = false, renderAt = 0;
       entry.promise = c.get('/api/git/status', target).then(function (data) {
+        if (disposed) return;
         force = entry.force;
         rendering = true;
         if (diagnostic) renderAt = performance.now();
@@ -454,6 +459,7 @@
         if (!historyView.hidden && (force || changed)) loadHistory();
         if (diagnostic) diagnostic({ code: 'GIT_LOAD_OK', renderMs: performance.now() - renderAt, count: data.files.length });
       }).catch(function (err) {
+        if (disposed) return;
         var notRepo = err.message === 'not_a_git_repository';
         if (diagnostic) diagnostic({ code: rendering ? 'GIT_RENDER_ERROR' : (notRepo ? 'GIT_NOT_REPO' : 'GIT_API_ERROR'), status: err.status });
         // Something is already on screen: it stays, and the bar says the refresh failed.
@@ -502,6 +508,8 @@
       if (staged.length) list.appendChild(group('已暂存', staged, true));
       if (unstaged.length) list.appendChild(group('更改', unstaged, false));
       list.scrollTop = scroll;
+      var active = list.querySelector('.git-file.is-active');
+      if (active && active.closest('.git-group').querySelector('.git-more-before')) active.scrollIntoView({ block: 'nearest' });
       if (focusInList) list.focus({ preventScroll: true });
     }
 
@@ -515,7 +523,35 @@
       }, { className: 'blk-btn-ghost blk-btn-small' });
       head.appendChild(all);
       box.appendChild(head);
-      files.forEach(function (f) { box.appendChild(fileRow(f, staged)); });
+      var body = el('div', 'git-group-files');
+      box.appendChild(body);
+      var selectedAt = files.findIndex(function (f) { return selection && selection.staged === staged && selection.path === f.path; });
+      // Keep a distant selection visible without drawing every file before it.
+      var start = selectedAt < 0 ? 0 : Math.floor(selectedAt / FILE_LIST_SHOWN) * FILE_LIST_SHOWN;
+      var end = start, before = null, more = null;
+      function drawRows(from, to) {
+        var fragment = document.createDocumentFragment();
+        files.slice(from, to).forEach(function (f) { fragment.appendChild(fileRow(f, staged)); });
+        if (to === start) body.insertBefore(fragment, body.firstChild);
+        else body.appendChild(fragment);
+        start = Math.min(start, from);
+        end = Math.max(end, to);
+        if (before) before.remove();
+        if (more) more.remove();
+        if (start) {
+          before = button('显示前面 ' + Math.min(FILE_LIST_SHOWN, start) + ' 个文件', function () {
+            drawRows(Math.max(0, start - FILE_LIST_SHOWN), start);
+          }, { className: 'blk-btn-ghost blk-btn-small git-more git-more-before' });
+          box.insertBefore(before, body);
+        }
+        if (end < files.length) {
+          more = button('显示更多 ' + Math.min(FILE_LIST_SHOWN, files.length - end) + ' 个文件', function () {
+            drawRows(end, Math.min(files.length, end + FILE_LIST_SHOWN));
+          }, { className: 'blk-btn-ghost blk-btn-small git-more' });
+          box.appendChild(more);
+        }
+      }
+      drawRows(start, Math.min(files.length, start + FILE_LIST_SHOWN));
       return box;
     }
 
@@ -608,6 +644,7 @@
 
     // --- diff ---
     function showDiff(force) {
+      if (disposed) return;
       if (!selection) {
         disposePreviews(main);
         main.replaceChildren(ui.emptyState('changes', status && status.files.length ? '选择一个文件查看差异' : '没有改动', status && status.files.length ? '点击行可以选中，按块或按行暂存。' : ''));
@@ -912,6 +949,7 @@
      * refresh leaves it on screen.
      */
     function loadHistory(limit) {
+      if (disposed) return Promise.resolve();
       historyLoaded = true;
       limit = limit || 300;
       if (historyLoading && historyLoading.limit === limit && historyLoading.writes === writes) return historyLoading.promise;
@@ -938,7 +976,14 @@
         var listTop = previousLog ? previousLog.scrollTop : 0;
         var openHash = previousDetail && previousDetail.__openCommit;
         if (openHash && data.rows.some(function (row) { return row.commit && row.commit.hash === openHash; })) detail = previousDetail;
-        else openHash = null;
+        else {
+          openHash = null;
+          if (previousDetail) {
+            previousDetail.__commit = null;
+            stopLazyDiffs();
+            disposePreviews(previousDetail);
+          }
+        }
         var commitRows = [];
         var commits = data.rows.filter(function (row) { return row.commit; }).map(function (row) { return row.commit; });
         var graph = commits.every(function (commit) { return Array.isArray(commit.parents); }) ? commitGraph(commits) : null;
@@ -1053,9 +1098,10 @@
           var asked = {};
           detail.__commit = asked;
           detail.__openCommit = commit.hash;
+          disposePreviews(detail);
           detail.replaceChildren(ui.spinnerLine('读取提交'));
           c.get('/api/git/show', Object.assign({ commit: commit.hash }, target)).then(function (res) {
-            if (detail.__commit !== asked) return;
+            if (disposed || detail.__commit !== asked) return;
             var at = res.diff.indexOf('\ndiff --git ');
             var headText = at === -1 ? res.diff : res.diff.slice(0, at);
             var lines = headText.split('\n');
@@ -1083,6 +1129,11 @@
             var files = res.files || [];
             var fileRows = [];
             var diffs = el('div', 'git-commit-diffs');
+
+            function diffIsCurrent(node) {
+              return !disposed && detail.__commit === asked && detail.parentNode === historyView
+                && diffs.parentNode === detail && diffs.contains(node);
+            }
 
             function markFile(picked) {
               fileRows.forEach(function (r) {
@@ -1134,13 +1185,15 @@
               diffs.replaceChildren();
               var waiting = [];
               var running = 0;
+              var active = true;
               var pump = function () {
-                while (running < LAZY_DIFFS_AT_ONCE && waiting.length) {
+                while (active && running < LAZY_DIFFS_AT_ONCE && waiting.length) {
                   running += 1;
-                  waiting.shift()().then(function () { running -= 1; pump(); });
+                  var done = function () { running -= 1; pump(); };
+                  waiting.shift()().then(done, done);
                 }
               };
-              var want = function (load) { waiting.push(load); pump(); };
+              var want = function (load) { if (active) { waiting.push(load); pump(); } };
               var observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(function (entries) {
                 entries.forEach(function (entry) {
                   if (!entry.isIntersecting) return;
@@ -1148,8 +1201,12 @@
                   want(entry.target.__loadDiff);
                 });
               }, { root: detail, rootMargin: '800px 0px' }) : null;
-              lazyObserver = observer;
-              files.forEach(function (file) {
+              cancelLazyDiffs = function () {
+                active = false;
+                waiting = [];
+                if (observer) observer.disconnect();
+              };
+              var addSection = function (file) {
                 var section = el('section', 'blk-diff-filebox git-lazy-file');
                 var head = el('button', 'blk-diff-filehead');
                 head.type = 'button';
@@ -1166,14 +1223,14 @@
                 var load = function () {
                   body.replaceChildren(ui.spinnerLine('读取差异'));
                   return loadFileDiff(file).then(function (text) {
-                    if (!body.isConnected) return;
+                    if (!active || !diffIsCurrent(body)) return;
                     body.style.minHeight = '';
                     ui.renderDiffInto(body, text, {
                       fileHeaders: false, maxLines: LAZY_DIFF_LINES,
                       emptyTitle: '没有文本差异', emptyText: '只改了文件名或权限。',
                     });
                   }, function (err) {
-                    if (body.isConnected) body.replaceChildren(ui.errorBox(err));
+                    if (active && diffIsCurrent(body)) body.replaceChildren(ui.errorBox(err));
                   });
                 };
                 if (file.binary) {
@@ -1189,7 +1246,19 @@
                 } else {
                   want(load);
                 }
-              });
+              };
+              var shown = 0, more = null;
+              function addSections() {
+                if (!active) return;
+                if (more) more.remove();
+                files.slice(shown, shown + FILE_LIST_SHOWN).forEach(addSection);
+                shown = Math.min(shown + FILE_LIST_SHOWN, files.length);
+                if (shown < files.length) {
+                  more = button('显示更多 ' + Math.min(FILE_LIST_SHOWN, files.length - shown) + ' 个文件', addSections, { className: 'blk-btn-ghost blk-btn-small git-more' });
+                  diffs.appendChild(more);
+                }
+              }
+              addSections();
             }
 
             function showFile(file) {
@@ -1240,9 +1309,9 @@
               bringUp(bar, null);
               if (!res.diffOmitted) return;
               loadFileDiff(file).then(function (text) {
-                if (one.isConnected) draw(text);
+                if (diffIsCurrent(one)) draw(text);
               }, function (err) {
-                if (one.isConnected) one.replaceChildren(ui.errorBox(err));
+                if (diffIsCurrent(one)) one.replaceChildren(ui.errorBox(err));
               });
             }
 
@@ -1278,20 +1347,24 @@
                 rowsBox.appendChild(row);
               };
               // Thousands of rows cost as much as a diff: the rest come when asked for.
-              files.slice(0, FILE_LIST_SHOWN).forEach(addRow);
               list.appendChild(rowsBox);
-              if (files.length > FILE_LIST_SHOWN) {
-                var restOfFiles = button('显示其余 ' + (files.length - FILE_LIST_SHOWN) + ' 个文件', function () {
-                  restOfFiles.remove();
-                  files.slice(FILE_LIST_SHOWN).forEach(addRow);
-                }, { className: 'blk-btn-ghost blk-btn-small git-more' });
-                list.appendChild(restOfFiles);
+              var restOfFiles = null;
+              function addRows() {
+                if (restOfFiles) restOfFiles.remove();
+                files.slice(fileRows.length, fileRows.length + FILE_LIST_SHOWN).forEach(addRow);
+                if (fileRows.length < files.length) {
+                  restOfFiles = button('显示更多 ' + Math.min(FILE_LIST_SHOWN, files.length - fileRows.length) + ' 个文件', addRows, { className: 'blk-btn-ghost blk-btn-small git-more' });
+                  list.appendChild(restOfFiles);
+                }
               }
+              addRows();
             }
             detail.replaceChildren(card, list, diffs);
             showAll();
             detail.scrollTop = 0;
-          }).catch(function (err) { detail.replaceChildren(ui.errorBox(err)); });
+          }).catch(function (err) {
+            if (!disposed && detail.__commit === asked) detail.replaceChildren(ui.errorBox(err));
+          });
         }
       }).catch(function (err) {
         if (historyLoading !== entry) return;
@@ -1349,6 +1422,9 @@
         }
       },
       dispose: function () {
+        disposed = true;
+        diffAsked = null;
+        historyLoading = null;
         clearInterval(pollTimer);
         clearTimeout(firstLoad);
         if (graphFrame !== null) cancelAnimationFrame(graphFrame);

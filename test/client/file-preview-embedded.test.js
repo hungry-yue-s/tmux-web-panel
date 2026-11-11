@@ -141,6 +141,19 @@ describe('rendering a file outside the modal', () => {
     window.close();
   });
 
+  it('does not highlight disposed code after the lazy scripts finish loading', async () => {
+    const { window, preview, box } = setup();
+    const highlight = vi.fn(() => ({ value: 'old code' }));
+    window.hljs = { getLanguage: () => true, highlight };
+    await preview.renderInto(box, { name: '/repo/old.js', info: { isText: true, language: 'javascript' }, content: 'const old = 1;' });
+    preview.disposeRendered(box);
+    window.document.querySelector('script[src*="highlight"]').dispatchEvent(new window.Event('load'));
+    window.document.querySelector('link[href*="highlight"]').dispatchEvent(new window.Event('load'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(highlight).not.toHaveBeenCalled();
+    window.close();
+  });
+
   it('shows an image as the version it is given, with no modal', async () => {
     const { window, preview, fetch, box } = setup();
     const rawUrl = '/api/git/raw?rev=abc1234&file=logo.png&path=%2Frepo&token=t';

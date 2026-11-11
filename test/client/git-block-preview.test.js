@@ -69,7 +69,8 @@ function setup(answers = {}) {
     if (path === '/api/git/file') return { isText: query.file !== 'logo.png', isImage: query.file === 'logo.png', content: 'text of ' + query.rev, size: 3, tooLarge: false };
     throw new Error('Unexpected ' + path);
   });
-  win.Blocks.ui.client = () => ({ get, send: vi.fn(async () => ({})), url: (path) => '/n/x' + path });
+  const send = vi.fn(async () => ({}));
+  win.Blocks.ui.client = () => ({ get, send, url: (path) => '/n/x' + path });
   win.eval(WORKSPACE_BLOCKS);
   const renderInto = vi.fn(async (box, source) => {
     box.textContent = 'rendered ' + (source.name || source.path);
@@ -86,10 +87,79 @@ function setup(answers = {}) {
   };
   const buttonFor = (label, scope = frame()) => [...scope.querySelectorAll('button')].find((b) => b.textContent.trim() === label);
   const fileQueries = () => get.mock.calls.filter(([path]) => path === '/api/git/file').map(([, query]) => query);
-  return { win, doc, get, frame, press, buttonFor, renderInto, fileQueries, status, fail };
+  return { win, doc, get, send, frame, press, buttonFor, renderInto, fileQueries, status, fail };
 }
 
 const settled = async () => { for (let i = 0; i < 6; i += 1) await new Promise((resolve) => { setTimeout(resolve, 0); }); };
+
+describe('large worktree file groups', () => {
+  const file = (path, kind) => ({ path, staged: kind === 'staged', unstaged: kind !== 'staged',
+    untracked: kind === 'untracked', index: kind === 'staged' ? 'M' : kind === 'untracked' ? '?' : ' ',
+    worktree: kind === 'staged' ? ' ' : kind === 'untracked' ? '?' : 'M' });
+  function worktree(files) {
+    return setup({
+      '/api/git/status': () => ({ root: '/repo', branch: 'main', upstream: null, ahead: 0, behind: 0, detached: false, head: { hash: 'h', subject: 's' }, files }),
+      '/api/git/diff': () => ({ diff: '' }),
+    });
+  }
+
+  it.each(['staged', 'modified', 'untracked'])('pages %s files while bulk actions include the hidden files', async (kind) => {
+    const files = Array.from({ length: 950 }, (_, i) => file(`f${i}.txt`, kind));
+    const context = worktree(files);
+    await settled();
+    const group = () => context.frame().querySelector('.git-list .git-group');
+    const count = () => group().querySelectorAll('.git-file').length;
+    expect(count()).toBe(300);
+    context.press(kind === 'staged' ? '全部取消暂存' : '全部暂存', group());
+    await settled();
+    expect(context.send).toHaveBeenCalledWith('POST', kind === 'staged' ? '/api/git/unstage' : '/api/git/stage', {
+      path: '/repo', files: files.map((f) => f.path),
+    });
+    expect(count()).toBe(300);
+    context.press('显示更多 300 个文件', group());
+    expect(count()).toBe(600);
+    context.press('显示更多 300 个文件', group());
+    expect(count()).toBe(900);
+    context.press('显示更多 50 个文件', group());
+    expect(count()).toBe(950);
+    expect(group().querySelector('button.git-more')).toBeNull();
+  });
+
+  it('shows the selected batch after new files shift its position and keeps keyboard movement within drawn rows', async () => {
+    const files = Array.from({ length: 950 }, (_, i) => file(`f${i}.txt`, 'modified'));
+    const context = worktree(files);
+    await settled();
+    const list = context.frame().querySelector('.git-list');
+    context.press('显示更多 300 个文件', list);
+    context.press('显示更多 300 个文件', list);
+    list.querySelector('[data-path="f800.txt"]').click();
+    await settled();
+    const scroll = vi.spyOn(context.win.HTMLElement.prototype, 'scrollIntoView');
+    files.unshift(...Array.from({ length: 600 }, (_, i) => file(`new${i}.txt`, 'modified')));
+    context.win.dispatchEvent(new context.win.Event('focus'));
+    await settled();
+    expect(list.querySelectorAll('.git-file')).toHaveLength(300);
+    const active = list.querySelector('.git-file.is-active');
+    expect(active?.dataset.path).toBe('f800.txt');
+    expect(scroll.mock.contexts).toContain(active);
+    list.dispatchEvent(new context.win.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(list.querySelector('.git-file.is-active').dataset.path).toBe('f801.txt');
+    list.dispatchEvent(new context.win.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(list.querySelector('.git-file.is-active').dataset.path).toBe('f800.txt');
+    list.querySelector('[data-path="f899.txt"]').click();
+    list.dispatchEvent(new context.win.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(list.querySelector('.git-file.is-active').dataset.path).toBe('f899.txt');
+    list.querySelector('[data-path="f600.txt"]').click();
+    list.dispatchEvent(new context.win.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(list.querySelector('.git-file.is-active').dataset.path).toBe('f600.txt');
+    expect(list.querySelectorAll('.git-file')).toHaveLength(300);
+    context.press('显示前面 300 个文件', list);
+    expect(list.querySelectorAll('.git-file')).toHaveLength(600);
+    expect(list.querySelector('.git-file').dataset.path).toBe('f300.txt');
+    context.press('显示更多 50 个文件', list);
+    expect(list.querySelectorAll('.git-file')).toHaveLength(650);
+  });
+});
 
 describe('Git history presentation', () => {
   const commit = (hash, parents, refs = []) => ({ graph: '* ', commit: { hash, short: hash, parents, refs, subject: 'Commit ' + hash, author: 'T', date: 'now' } });
@@ -447,6 +517,59 @@ describe('a large commit in the Git history', () => {
     expect(asked()).toEqual(['a.js', 'huge.js']);
   });
 
+  it.each(['file', 'commit', 'dispose'])('stops the old lazy queue after switching to %s', async (next) => {
+    const files = heldFiles();
+    const many = Array.from({ length: 8 }, (_, i) => file(`f${i}.txt`, 1, 1));
+    const context = setup({
+      '/api/git/log': () => ({ rows: [COMMIT, 'ab1cdef0'].map((hash) => ({ graph: '* ', commit: { hash, short: hash, refs: [], subject: hash, author: 'T', date: 'now' } })) }),
+      '/api/git/show': (query) => ({ diff: HEADER, diffOmitted: true, files: query.commit === COMMIT ? many : [] }),
+      '/api/git/show-file': files.answer,
+    });
+    await openCommit(context);
+    expect(files.held.map((h) => h.file)).toEqual(['f0.txt', 'f1.txt', 'f2.txt']);
+    if (next === 'file') detail(context).querySelector('.git-commit-file-list .git-file').click();
+    else if (next === 'commit') context.frame().querySelectorAll('.git-log-row.has-commit')[1].click();
+    else context.win.BlockHost._test.instances()[0].impl.dispose();
+    await files.releaseAll();
+    expect(files.held.map((h) => h.file)).toEqual(['f0.txt', 'f1.txt', 'f2.txt']);
+  });
+
+  it.each(['all', 'single'])('finishes the %s file diff while its window is temporarily detached', async (mode) => {
+    const files = heldFiles();
+    const context = setup({
+      '/api/git/show': () => ({ diff: HEADER, diffOmitted: true, files: [file('a.js', 2, 2)] }),
+      '/api/git/show-file': files.answer,
+    });
+    await openCommit(context);
+    if (mode === 'single') detail(context).querySelector('.git-commit-file-list .git-file').click();
+    const frame = context.frame();
+    const parent = frame.parentNode;
+    frame.remove();
+    await files.releaseAll();
+    parent.appendChild(frame);
+    context.win.BlockHost._test.instances()[0].impl.onShow();
+    await settled();
+    expect(detail(context).textContent).toContain('new a.js 0');
+  });
+
+  it.each(['all', 'single'])('shows a %s file error that arrived while its window was detached', async (mode) => {
+    let fail;
+    const context = setup({
+      '/api/git/show': () => ({ diff: HEADER, diffOmitted: true, files: [file('a.js', 2, 2)] }),
+      '/api/git/show-file': () => new Promise((_resolve, reject) => { fail = reject; }),
+    });
+    await openCommit(context);
+    if (mode === 'single') detail(context).querySelector('.git-commit-file-list .git-file').click();
+    const frame = context.frame();
+    const parent = frame.parentNode;
+    frame.remove();
+    fail(new Error('could not read a.js'));
+    await settled();
+    parent.appendChild(frame);
+    expect(detail(context).textContent).toContain('could not read a.js');
+    expect(detail(context).textContent).not.toContain('读取差异');
+  });
+
   it('shows the commit picked last, whatever order the answers come in', async () => {
     const answers = {};
     const context = setup({
@@ -466,14 +589,101 @@ describe('a large commit in the Git history', () => {
     expect(detail(context).querySelector('.git-commit-card h3').textContent).toBe('second');
   });
 
+  it('keeps the latest commit when an older request fails later', async () => {
+    const answers = {};
+    const context = setup({
+      '/api/git/log': () => ({ rows: ['first', 'second'].map((subject, i) => ({ graph: '* ', commit: { hash: 'ab' + i + 'cdef0', short: 'ab' + i, refs: [], subject, author: 'T', date: 'now' } })) }),
+      '/api/git/show': (query) => new Promise((resolve, reject) => { answers[query.commit] = { resolve, reject }; }),
+    });
+    await settled(); context.press('历史'); await settled();
+    const commits = context.frame().querySelectorAll('.git-log-row.has-commit');
+    commits[0].click();
+    commits[1].click();
+    answers.ab1cdef0.resolve({ diff: 'ab1cdef0\nT <t@e>\nnow\n\nsecond\n', files: [] });
+    await settled();
+    answers.ab0cdef0.reject(new Error('the old request failed'));
+    await settled();
+    expect(detail(context).textContent).toContain('second');
+    expect(detail(context).textContent).not.toContain('the old request failed');
+  });
+
   it('lists the first 300 files, and the rest when asked', async () => {
     const many = Array.from({ length: 350 }, (_, i) => file(`f${i}.txt`, 1, 0));
     const context = setup({ '/api/git/show': () => ({ diff: HEADER, diffOmitted: true, files: many }) });
     await openCommit(context);
     const rows = () => detail(context).querySelectorAll('.git-commit-file-list .git-file').length;
     expect(rows()).toBe(300);
-    context.press('显示其余 50 个文件', detail(context));
+    context.press('显示更多 50 个文件', detail(context));
     expect(rows()).toBe(350);
+  });
+
+  it.each(['list', 'diffs'])('adds at most 300 more files per click in the %s', async (mode) => {
+    const many = Array.from({ length: 950 }, (_, i) => file(`f${i}.png`, 0, 0, { binary: true }));
+    const context = setup({ '/api/git/show': () => ({ diff: HEADER, diffOmitted: true, files: many }) });
+    await openCommit(context);
+    const scope = detail(context).querySelector(mode === 'list' ? '.git-commit-files' : '.git-commit-diffs');
+    const count = () => scope.querySelectorAll(mode === 'list' ? '.git-commit-file-list .git-file' : '.git-lazy-file').length;
+    expect(count()).toBe(300);
+    scope.querySelector('button.git-more').click();
+    expect(count()).toBe(600);
+    scope.querySelector('button.git-more').click();
+    expect(count()).toBe(900);
+    context.press('显示更多 50 个文件', scope);
+    expect(count()).toBe(950);
+    expect(scope.querySelector('button.git-more')).toBeNull();
+  });
+});
+
+describe('pending Git version previews', () => {
+  it.each(['file', 'dispose'])('invalidates a pending version preview on %s', async (next) => {
+    let answer;
+    const context = setup({ '/api/git/file': () => new Promise((resolve) => { answer = resolve; }) });
+    await settled();
+    const preview = context.frame().querySelector('.git-preview');
+    const dispose = vi.spyOn(context.win.FilePreview, 'disposeRendered');
+    if (next === 'file') context.frame().querySelector('.git-list [data-path="notes.md"]').click();
+    else context.win.BlockHost._test.instances()[0].impl.dispose();
+    await settled();
+    answer({ isImage: true, size: 3, tooLarge: false });
+    await settled();
+    expect(context.renderInto).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledWith(preview);
+  });
+
+  it('retains a pending version preview while its window is temporarily detached', async () => {
+    let answer;
+    const context = setup({ '/api/git/file': () => new Promise((resolve) => { answer = resolve; }) });
+    await settled();
+    const frame = context.frame();
+    const preview = frame.querySelector('.git-preview');
+    const parent = frame.parentNode;
+    frame.remove();
+    answer({ isImage: true, size: 3, tooLarge: false });
+    await settled();
+    parent.appendChild(frame);
+    expect(preview.textContent).toContain('rendered /repo/logo.png');
+  });
+
+  it('invalidates the pending version preview when another commit is opened', async () => {
+    let answer;
+    const context = setup({
+      '/api/git/log': () => ({ rows: [COMMIT, 'ab1cdef0'].map((hash) => ({ graph: '* ', commit: { hash, short: hash, refs: [], subject: hash, author: 'T', date: 'now' } })) }),
+      '/api/git/file': (query) => query.rev === 'INDEX' ? { isImage: true, size: 3, tooLarge: false }
+        : new Promise((resolve) => { answer = resolve; }),
+    });
+    await settled(); context.press('历史'); await settled();
+    const commits = context.frame().querySelectorAll('.git-log-row.has-commit');
+    commits[0].click(); await settled();
+    const detail = context.frame().querySelector('.git-log-detail');
+    detail.querySelector('.git-commit-file-list .git-file').click();
+    context.press('预览', detail); await settled();
+    const preview = detail.querySelector('.git-preview');
+    context.renderInto.mockClear();
+    commits[1].click(); await settled();
+    answer({ isText: true, content: '# previous version', size: 18, tooLarge: false });
+    await settled();
+    expect(context.renderInto).not.toHaveBeenCalled();
+    expect(preview.textContent).not.toContain('rendered');
   });
 });
 

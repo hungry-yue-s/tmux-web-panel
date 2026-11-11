@@ -21,33 +21,77 @@
   var ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
   function joinSource(src) { return Array.isArray(src) ? src.join('') : String(src || ''); }
 
-  function renderNotebook(body, content, info) {
+  function notebookFits(cells) {
+    if (!Array.isArray(cells) || cells.length > 200) return false;
+    var chars = 0, lines = 0, outputCount = 0, richCount = 0;
+    function textFits(text) {
+      if (!text) return true;
+      chars += text.length;
+      if (chars > 65536) return false;
+      var rows = text.split('\n');
+      lines += rows.length;
+      return lines <= 1000 && rows.every(function (line) { return line.length <= 4000; });
+    }
+    for (var i = 0; i < cells.length; i++) {
+      var cell = cells[i];
+      if (!textFits(joinSource(cell.source))) return false;
+      var outputs = cell.outputs || [];
+      outputCount += outputs.length;
+      if (outputCount > 100) return false;
+      for (var j = 0; j < outputs.length; j++) {
+        var output = outputs[j], data = output.data || {};
+        if (!textFits(joinSource(output.text))
+          || !textFits((output.traceback || []).join('\n').replace(ANSI_RE, ''))) return false;
+        var types = ['text/plain', 'text/html', 'image/svg+xml'];
+        for (var k = 0; k < types.length; k++) {
+          if (!textFits(joinSource(data[types[k]]))) return false;
+        }
+        if (!data['image/png'] && !data['image/jpeg'] && (data['text/html'] || data['image/svg+xml'])) richCount++;
+        if (richCount > 20) return false;
+      }
+    }
+    return true;
+  }
+
+  function renderNotebook(body, content, info, options) {
+    options = options || {};
+    var isCurrent = options.isCurrent || function () { return true; };
+    if (!isCurrent()) return false;
     var nb;
     try { nb = JSON.parse(content); } catch (err) {
       body.appendChild(el('div', 'blk-error', 'Notebook JSON 解析失败：' + err.message));
       return true;
     }
+    var cells = nb.cells || [];
+    if (!notebookFits(cells)) {
+      if (options.renderText) return options.renderText();
+      body.replaceChildren(el('div', 'blk-muted', 'Notebook 内容较多，已暂停富文本渲染。请在文件预览中查看分段原文。'));
+      return true;
+    }
     var meta = nb.metadata || {};
     var lang = (meta.language_info && meta.language_info.name) || (meta.kernelspec && meta.kernelspec.language) || 'python';
-    var cells = nb.cells || [];
     var wrap = el('div', 'blk-nb fp-md-wrap');
     var bar = el('div', 'blk-toolbar blk-nb-bar');
     var label = el('div', 'blk-toolbar-title');
     label.innerHTML = icon('notebook');
     label.appendChild(el('strong', '', (meta.kernelspec && meta.kernelspec.display_name) || lang));
     label.appendChild(el('span', 'blk-muted', cells.length + ' 个单元 · ' + cells.filter(function (c) { return c.cell_type === 'code'; }).length + ' 段代码'));
-    var run = button('运行全部', function () {
-      var done = busy(run, '运行中');
-      client().send('POST', '/api/notebook/execute', { path: info.absPath })
-        .then(function () { toast('执行完成，输出已写回 Notebook'); })
-        .catch(function (err) { toast(errorText(err), { error: true }); })
-        .finally(done);
-    }, { icon: 'play', className: 'blk-btn-small', title: '用 jupyter nbconvert --execute 运行并写回输出' });
-    bar.append(label, run);
+    bar.appendChild(label);
+    if (!options.readOnly) {
+      var run = button('运行全部', function () {
+        var done = busy(run, '运行中');
+        client().send('POST', '/api/notebook/execute', { path: info.absPath })
+          .then(function () { toast('执行完成，输出已写回 Notebook'); })
+          .catch(function (err) { toast(errorText(err), { error: true }); })
+          .finally(done);
+      }, { icon: 'play', className: 'blk-btn-small', title: '用 jupyter nbconvert --execute 运行并写回输出' });
+      bar.appendChild(run);
+    }
     wrap.appendChild(bar);
     body.appendChild(wrap);
 
     return Promise.all([loadScript(CDN.markdownIt), loadScript(CDN.hljs)]).catch(function () {}).then(function () {
+      if (!isCurrent()) return false;
       var md = window.markdownit ? window.markdownit({ html: false, linkify: true }) : null;
       cells.forEach(function (cell) {
         var source = joinSource(cell.source);

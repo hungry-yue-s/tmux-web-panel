@@ -28,6 +28,49 @@ const lines = (box) => box.querySelectorAll('.blk-line').length;
 const more = (box) => box.querySelector('.blk-diff-more');
 
 describe('drawing a large diff a part at a time', () => {
+  it('budgets files without text hunks instead of drawing all metadata at once', () => {
+    const { ui, box } = setup();
+    const modes = Array.from({ length: 300 }, (_, i) => `diff --git a/m${i} b/m${i}\nold mode 100644\nnew mode 100755\n`).join('');
+    const files = ui.renderDiffInto(box, modes + fileDiff('text', [2]));
+    expect(files).toHaveLength(301);
+    expect(box.querySelectorAll('.blk-diff-filebox').length).toBeLessThanOrEqual(100);
+    expect(more(box)).not.toBeNull();
+    while (more(box)) more(box).click();
+    expect(box.querySelectorAll('.blk-diff-filebox')).toHaveLength(301);
+    expect(lines(box)).toBe(2);
+  });
+
+  it('budgets empty hunks and trailing metadata after the last text line', () => {
+    const { ui, box } = setup();
+    const empty = 'diff --git a/empty b/empty\n--- a/empty\n+++ b/empty\n' + '@@ -0,0 +0,0 @@\n'.repeat(250);
+    ui.renderDiffInto(box, empty + fileDiff('text', [2]));
+    expect(box.querySelectorAll('.blk-hunk').length).toBeLessThanOrEqual(100);
+    expect(more(box)).not.toBeNull();
+    const trailing = Array.from({ length: 300 }, (_, i) => `diff --git a/m${i} b/m${i}\nold mode 100644\nnew mode 100755\n`).join('');
+    ui.renderDiffInto(box, fileDiff('text', [2]) + trailing, { maxLines: 2 });
+    expect(box.querySelectorAll('.blk-diff-filebox').length).toBeLessThanOrEqual(100);
+    expect(more(box)).not.toBeNull();
+    while (more(box)) more(box).click();
+    expect(box.querySelectorAll('.blk-diff-filebox')).toHaveLength(301);
+  });
+
+  it('skips whole-hunk word matching when the hunk exceeds the character budget', () => {
+    const { ui, box } = setup();
+    const pair = '-' + 'a'.repeat(2999) + 'x\n+' + 'a'.repeat(2999) + 'y\n';
+    const header = 'diff --git a/large b/large\n--- a/large\n+++ b/large\n';
+    ui.renderDiffInto(box, header + '@@ -1,20 +1,20 @@\n' + pair.repeat(20), { maxLines: 2 });
+    expect(lines(box)).toBe(2);
+    expect(box.querySelector('.blk-wd')).toBeNull();
+    ui.renderDiffInto(box, header + '@@ -1 +1 @@\n' + pair);
+    expect(box.querySelector('.blk-wd')).not.toBeNull();
+  });
+
+  it('skips empty hunks and continues to a populated one', () => {
+    const { ui, box } = setup();
+    ui.renderDiffInto(box, 'diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -0,0 +0,0 @@\n@@ -0,0 +1 @@\n+hello\n');
+    expect(lines(box)).toBe(1);
+  });
+
   it('pages through long lines without truncating the patch or selecting a line through its controls', () => {
     const { ui, box } = setup();
     const old = 'a'.repeat(3999) + '😀' + 'b'.repeat(5000);

@@ -23,6 +23,8 @@
 
 **静态文件改动不需要重启。** `ui` 插件挂载各插件的 `client/` 目录并组装主页面：HTML 每次都校验（`no-cache` + ETag），并在渲染时把本地 JS/CSS/字体 URL 改写成带内容哈希的 `?h=...`，这些 URL 可缓存一年。所以改 `plugins/*/client/` 下的文件后用户刷新浏览器即生效，不再需要手动改 `?v=`——只有改服务端代码（`plugins/*/index.js`、`lib/`、`kernel/`）或 `page.json`/`profiles/` 才需要 `systemctl --user restart`。动态加载的本地资源不经过改写，只走 `no-cache` 校验。
 
+源码提交与运行版更新分别验证。服务可能从 `~/.local/share/anymux/releases/<版本>/` 等安装目录运行；先核对服务的工作目录，再验证实际页面加载的资源内容与哈希。只更新、提交或推送源码，不能据此宣称运行中的面板已生效。旧安装版的合并脚本与当前插件文件可能不同，应只移植所需静态补丁并保留可核对的备份，不为静态更新重启 tmux。
+
 **终端字体按 unicode-range 切片。** 完整字体每个字重约 6 MB，页面不得预载或引用 `AnymuxMono-*.woff2`（它们只是 `scripts/build-font-subsets.mjs` 的输入）。首屏只预载核心片。字体和渲染器都在打开终端 socket 之前定好，attach 带的就是最终网格（`_mountTerminal` 的 `rendererReady`），不要改回首个输出之后再换字体：那会改变网格，在 Windows 上等于再 attach 一次并清屏。终端最多等核心片 `CORE_FONT_WAIT_MS`，超时后这次挂载保持系统等宽字体，核心片晚到也不自动切换（`_applyLateCoreFont`），要等下一次真实尺寸变化或下一次挂载才用上。中文和 Nerd 图标片由 `plugins/terminal/client/js/terminal-fonts.js` 按需加载：xterm 画在 canvas 上不会触发 unicode-range 加载，必须经 `TerminalFonts.ensure()`，切片到达后调用 `term.clearTextureAtlas()`。切片和 `plugins/terminal/client/css/terminal-fonts.css`、`plugins/terminal/client/js/terminal-fonts-data.js` 都是生成文件，只有源字体变化时才重新生成并提交。
 
 **Windows** 上服务管理器是计划任务（`\anymux\anymux` 与 `\anymux\tmux-server`），统一经 `scripts/install-service.ps1` 操作：`restart` / `status` / `logs`（加 `-Tmux` 针对 tmux server）。同样禁止手动 `node bin/panel.js` 或直接 `Stop-Process` 后自行启动——AUTH/TLS/端口配置在 `%USERPROFILE%\.config\anymux\windows-service.json`，只由 `scripts/windows/run-panel.ps1` 注入。`restart -Tmux` 会结束 tmux server 和所有会话；只更新包装脚本 `run-tmux-server.ps1` 时用 `reload`，它不碰 tmux。
@@ -162,6 +164,7 @@ Git、浏览器等工具 block 与文件共用这个分窗（同一个标签条�
 - 默认 Git 入口（顶栏 chip、快捷键、命令面板）跟随实际聚焦的窗格，每次都现查：原生分屏看 tmux active pane，Tab 和移动端看 `state.currentPane`，不看路由和 attach 用的窗格（`Blocks.ui.selectedContext` / `focusedContext`）。tmux 答不出就报错，不得回退到 attach 窗格；终端还没跟上路由时没有答案，不得拿旧窗格去问新服务器。查询期间换了服务器、窗口、窗格或模式，结果不得落地。先查到仓库根再按根打开或激活标签：已绑定仓库的标签不会改投别的仓库，草稿和写操作都留在原仓库；不在仓库里就开一个说明情况的标签，不沿用旧仓库。文件预览里的 Git 是显式路径，不跟随焦点。
 - Git block 预览文件用的就是文件预览的渲染器，经 `FilePreview.renderInto` 只读渲染，不另写一套：不出 TODO 看板，任务勾选框禁用，不加 git gutter。磁盘上的版本照常走 `/api/files`，暂存区和提交里的版本走 `/api/git/file` 与 `/api/git/raw`（`rev` 只接受 `INDEX`、`HEAD` 或提交号，可带 `^`）。SQLite 和压缩包只能按磁盘上的文件预览，其它版本只给下载。
 - 大提交不能一次取完、一次画完：`/api/git/show` 并行取文件列表和整份 diff，整份超过 `SHOW_INLINE_BYTES` 就中止（`runGit` 的 `outputLimit`），返回 `diffOmitted`。页面按文件经 `/api/git/show-file` 在区块接近可视区时加载，同时最多 3 个，改动特别多的文件和二进制文件不自动加载。`renderDiffInto` 一次最多画 `maxLines` 行，其余点“显示剩余”接着画。不要改回整份 diff 一次渲染，那样两万行的提交会卡住页面好几秒。
+- 预览预算必须覆盖所有文本入口：大 Markdown、Notebook 和 CSV 在解析前转为分段纯文本；大补丁使用内置限流 diff，不能交给 Diff2Html 整份匹配。CSV/XLSX 还限制总单元格与字符量，XLSX 只在激活工作表时绘制，合并区域不得展开到预览范围之外。Git 文件列表及懒加载区块都分批创建；切走时取消后续队列和过时渲染，窗口暂时脱离 DOM 的合法结果则保留。
 - Git 刷新失败时，已经显示的改动、diff、历史和打开着的提交都不清掉，工具栏出现“刷新失败”（悬停看原因，点击重试），下一次成功后自动消失。只有第一次加载失败才显示错误。顶栏 chip 只在确认不是仓库、或 tmux 说不清焦点在哪个窗格时隐藏，其它失败保留并变暗。
 - 重复查询要合并：`Blocks.ui.client` 合并进行中的相同 GET（结果是共享的，调用方不得修改），同一服务器上有写操作完成后，新的读不再搭旧的读。Git block 的 `load` / `loadHistory` 各自单航，同样以写操作为界；`showDiff` 只让最后选中的文件落地。历史重绘时，仍在列表里的那个打开着的提交，连同它的详情和列表滚动位置一起保留。
 - 关闭最后一个文件 Tab 时，只要还有 block 标签，分窗就保留；所有标签都没了才销毁。

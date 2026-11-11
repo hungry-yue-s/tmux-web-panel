@@ -87,6 +87,18 @@ describe('PanelSlots on the composed page', () => {
     dom.window.close();
   });
 
+  it('does not offer a board action that bypasses the large-text preview budget', () => {
+    const dom = new JSDOM('<body></body>', { url: 'http://localhost/', runScripts: 'outside-only' });
+    const win = dom.window;
+    win.eval(readFileSync('plugins/ui/client/js/blocks-kit.js', 'utf8'));
+    win.eval(readFileSync('plugins/files/client/js/file-blocks.js', 'utf8'));
+    const file = { isText: true, isMarkdown: true, rawContent: '# Todo\n' + 'x'.repeat(70000), absPath: '/r/TODO.md' };
+    expect(win.Blocks.previewActions(file, {}).some((item) => item.label === '看板视图')).toBe(false);
+    file.rawContent = '# Todo\n- small task';
+    expect(win.Blocks.previewActions(file, {}).some((item) => item.label === '看板视图')).toBe(true);
+    dom.window.close();
+  });
+
   it('loads the block kit before every script that registers with it', () => {
     const kit = at('/js/blocks-kit.js');
     expect(kit).toBeGreaterThan(-1);

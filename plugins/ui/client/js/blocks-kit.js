@@ -628,8 +628,13 @@ var Blocks = (function () {
       box.appendChild(rows);
       fileBox.querySelector('.blk-diff-filebody').appendChild(box);
       var m = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(hunk.header);
+      var chars = 0;
+      var large = hunk.lines.length > DIFF_RENDER_LINES || hunk.lines.some(function (line) {
+        chars += line.length;
+        return chars > DIFF_RENDER_CHARS;
+      });
       return {
-        hunk: hunk, box: box, rows: rows, selected: selected, pairs: pairChanges(hunk.lines),
+        hunk: hunk, box: box, rows: rows, selected: selected, pairs: large ? {} : pairChanges(hunk.lines),
         oldNo: m ? Number(m[1]) : 0, newNo: m ? Number(m[2]) : 0,
       };
     }
@@ -684,17 +689,27 @@ var Blocks = (function () {
     var fileBox = null, current = null, more = null;
     function draw(limit) {
       if (more) { more.remove(); more = null; }
-      var used = 0, chars = 0;
-      while (fileIndex < files.length && used < limit && chars < DIFF_RENDER_CHARS) {
+      var used = 0, chars = 0, blocks = 0;
+      while (fileIndex < files.length && used < limit && chars < DIFF_RENDER_CHARS && blocks < 100) {
         var file = files[fileIndex];
-        if (!fileBox) fileBox = openFile(file);
+        if (!fileBox) { fileBox = openFile(file); blocks++; }
         if (hunkIndex >= file.hunks.length) {
           fileIndex++;
           hunkIndex = 0;
           fileBox = null;
           continue;
         }
-        if (!current) current = openHunk(fileBox, file, file.hunks[hunkIndex]);
+        if (!current) {
+          if (blocks >= 100) break;
+          current = openHunk(fileBox, file, file.hunks[hunkIndex]);
+          blocks++;
+        }
+        if (lineIndex >= current.hunk.lines.length) {
+          hunkIndex++;
+          lineIndex = 0;
+          current = null;
+          continue;
+        }
         var cost = Math.min(current.hunk.lines[lineIndex].length, DIFF_LINE_CHARS + 1);
         if (used && chars + cost > DIFF_RENDER_CHARS) break;
         addRow(current, lineIndex++);
@@ -707,14 +722,13 @@ var Blocks = (function () {
           current = null;
         }
       }
-      // Files after the last line drawn that have nothing to draw still get their box.
-      while (fileIndex < files.length && drawn >= total) {
-        if (!fileBox) openFile(files[fileIndex]);
+      if (!current && fileBox && hunkIndex >= files[fileIndex].hunks.length) {
         fileIndex++;
+        hunkIndex = 0;
         fileBox = null;
       }
       if (fileIndex < files.length) {
-        more = button('显示剩余 ' + (total - drawn) + ' 行', function () { draw(budget); }, { className: 'blk-btn-ghost blk-btn-small blk-diff-more' });
+        more = button(total > drawn ? '显示剩余 ' + (total - drawn) + ' 行' : '显示更多文件', function () { draw(budget); }, { className: 'blk-btn-ghost blk-btn-small blk-diff-more' });
         container.appendChild(more);
       }
     }
