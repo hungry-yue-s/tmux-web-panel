@@ -7,12 +7,14 @@ node_modules/
 docs/superpowers/
 /dist/
 /macos/Anymux/.build/
+/macos/TmuxPanel/.build/
 
 # Root-level temp screenshots (project screenshots live in plugins/ui/client/screenshots/)
 /*.png
 
 # Per-deployment generated config (scripts/setup-relay.sh); see relay-config.example.js
 /plugins/ui/client/js/relay-config.js
+/public/js/relay-config.js
 
 # Android local configuration, signing material and build outputs
 /android/.gradle/
