@@ -291,6 +291,10 @@ body.fp-side-resizing { cursor: col-resize; user-select: none; }
    (A float gutter breaks once hljs makes the <code> a taller block.) */
 
 .fp-code-wrap { height: 100%; overflow: auto; }
+.fp-code-pages { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 12px; background: var(--fp-panel, var(--bg-secondary)); border-bottom: 1px solid var(--fp-line, var(--border-color)); font: 12px/1.5 var(--font-sans, sans-serif); }
+.fp-code-pages span { flex: 1 1 180px; color: var(--fp-muted, var(--text-secondary)); }
+.fp-code-pages button { border: 1px solid var(--fp-line, var(--border-color)); border-radius: 6px; padding: 4px 8px; background: var(--fp-panel, var(--bg-secondary)); color: var(--fp-text, var(--text-primary)); font: inherit; cursor: pointer; }
+.fp-code-pages button:disabled { opacity: .45; cursor: default; }
 
 /* Image preview */
 

@@ -43,6 +43,104 @@ describe('what a read-only render leaves out', () => {
 });
 
 describe('rendering a file outside the modal', () => {
+  it('pages large code as plain text, with bounded DOM and no highlighter download', async () => {
+    const { window, preview, box } = setup();
+    const content = 'a'.repeat(3999) + '😀' + '\nsecond line\n' + 'b'.repeat(70000);
+    await preview.renderInto(box, { info: { isText: true, language: 'json' }, name: '/repo/data.json', content, versioned: true });
+    expect(window.document.querySelector('script[src*="highlight"]')).toBeNull();
+    expect(box.textContent).toContain('分段纯文本');
+    const code = () => box.querySelector('pre > code').textContent;
+    const first = code();
+    const chunks = [first];
+    while (!box.querySelector('[aria-label="下一段"]').disabled) {
+      box.querySelector('[aria-label="下一段"]').click();
+      expect(code().length).toBeLessThanOrEqual(4000);
+      expect(code().charCodeAt(0)).not.toBeGreaterThanOrEqual(0xdc00);
+      chunks.push(code());
+    }
+    expect(chunks.join('')).toBe(content);
+    while (!box.querySelector('[aria-label="上一段"]').disabled) box.querySelector('[aria-label="上一段"]').click();
+    expect(code()).toBe(first);
+    expect(box.querySelector('.fp-line-numbers').textContent).toBe('1');
+    window.close();
+  });
+
+  it('also pages a long line in a small file, while normal code keeps syntax highlighting', async () => {
+    const { window, preview, box } = setup();
+    await preview.renderInto(box, { info: { isText: true }, name: '/repo/long.txt', content: 'x'.repeat(5000) });
+    expect(box.querySelector('pre > code').textContent).toHaveLength(4000);
+    expect(window.document.querySelector('script[src*="highlight"]')).toBeNull();
+    await preview.renderInto(box, { info: { isText: true }, name: '/repo/small.js', content: 'const n = 1;' });
+    expect(box.querySelector('.fp-code-pages')).toBeNull();
+    expect(box.querySelector('pre > code').textContent).toBe('const n = 1;');
+    expect(window.document.querySelector('script[src*="highlight"]')).not.toBeNull();
+    window.close();
+  });
+
+  it('opens the segment containing a target line without applying a misleading Git gutter', async () => {
+    const content = Array.from({ length: 1500 }, (_, i) => 'line ' + (i + 1)).join('\n');
+    const { window, preview } = setup({ fetchImpl: async (url) => ({
+      status: 200,
+      json: async () => ({ success: true, data: url.includes('/info?')
+        ? { absPath: '/repo/large.txt', isText: true, size: content.length }
+        : { content } }),
+    }) });
+    const decorateGitGutter = vi.fn();
+    window.Blocks = { rendererFor: () => null, decorateGitGutter };
+    await preview.openFile('/repo/large.txt', null, { lineRef: 1000 });
+    const body = window.document.querySelector('.fp-body');
+    expect(body.querySelector('pre > code').textContent).toContain('line 1000\n');
+    const numbers = body.querySelector('.fp-line-numbers').textContent.split('\n').map(Number);
+    expect(numbers).toContain(1000);
+    expect(decorateGitGutter).not.toHaveBeenCalled();
+    const exported = new JSDOM((await preview._test.buildStandaloneDoc()).html);
+    expect(exported.window.document.querySelector('pre > code').textContent).toBe(content);
+    expect(exported.window.document.querySelector('.fp-code-pages')).toBeNull();
+    exported.window.close();
+    window.close();
+  });
+
+  it('keeps the segment being read across a content refresh', async () => {
+    let content = 'a'.repeat(4000) + 'SECOND' + 'b'.repeat(5000);
+    const { window, preview } = setup({ fetchImpl: async (url) => ({
+      status: 200,
+      json: async () => ({ success: true, data: url.includes('/info?')
+        ? { absPath: '/repo/large.txt', isText: true, size: content.length }
+        : { content } }),
+    }) });
+    await preview.openFile('/repo/large.txt');
+    window.document.querySelector('[aria-label="下一段"]').click();
+    content += 'tail';
+    await preview._test.refreshCurrent(true);
+    expect(window.document.querySelector('.fp-body pre > code').textContent.startsWith('SECOND')).toBe(true);
+    // If the file shrinks, stay at its last available segment.
+    content = 'c'.repeat(4500);
+    await preview._test.refreshCurrent(true);
+    expect(window.document.querySelector('.fp-body pre > code').textContent).toHaveLength(500);
+    expect(window.document.querySelector('[aria-label="下一段"]').disabled).toBe(true);
+    preview.close();
+    window.close();
+  });
+
+  it('still highlights an ordinary modal after the lazy scripts finish loading', async () => {
+    const { window, preview } = setup({ fetchImpl: async (url) => ({
+      status: 200,
+      json: async () => ({ success: true, data: url.includes('/info?')
+        ? { absPath: '/repo/small.js', isText: true, size: 12, language: 'javascript' }
+        : { content: 'const n = 1;', language: 'javascript' } }),
+    }) });
+    const highlight = vi.fn(() => ({ value: '<span class="hljs-keyword">const</span> n = 1;' }));
+    window.hljs = { getLanguage: () => true, highlight };
+    await preview.openFile('/repo/small.js');
+    window.document.querySelector('script[src*="highlight"]').dispatchEvent(new window.Event('load'));
+    window.document.querySelector('link[href*="highlight"]').dispatchEvent(new window.Event('load'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(highlight).toHaveBeenCalledWith('const n = 1;', { language: 'javascript', ignoreIllegals: true });
+    expect(window.document.querySelector('.fp-body code .hljs-keyword').textContent).toBe('const');
+    preview.close();
+    window.close();
+  });
+
   it('shows an image as the version it is given, with no modal', async () => {
     const { window, preview, fetch, box } = setup();
     const rawUrl = '/api/git/raw?rev=abc1234&file=logo.png&path=%2Frepo&token=t';

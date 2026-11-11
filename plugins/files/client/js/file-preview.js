@@ -485,7 +485,7 @@ var FilePreview = (function () {
     var state = [{ selector: null, top: body.scrollTop, left: body.scrollLeft }];
     selectors.forEach(function (selector) {
       var el = body.querySelector(selector);
-      if (el) state.push({ selector: selector, top: el.scrollTop, left: el.scrollLeft });
+      if (el) state.push({ selector: selector, top: el.scrollTop, left: el.scrollLeft, codeOffset: el.__fpCodeOffset });
     });
     return state;
   }
@@ -496,6 +496,7 @@ var FilePreview = (function () {
       state.forEach(function (item) {
         var el = item.selector ? body.querySelector(item.selector) : body;
         if (!el) return;
+        if (item.codeOffset != null && el.__fpRestoreCodeOffset) el.__fpRestoreCodeOffset(item.codeOffset);
         el.scrollTop = item.top;
         el.scrollLeft = item.left;
       });
@@ -2591,6 +2592,13 @@ var FilePreview = (function () {
     // Always clone: we strip interactive bits and inline images without
     // mutating what's on screen.
     var capture = rendered.cloneNode(true);
+    var pages = capture.querySelector('.fp-code-pages');
+    if (pages && _currentFile.rawContent != null) {
+      // Snapshots and rich copy need the whole file, not the visible segment.
+      pages.remove();
+      capture.querySelector('pre > code').textContent = _currentFile.rawContent;
+      capture.querySelector('.fp-line-numbers').remove();
+    }
     var surfaces = capture.querySelectorAll('[data-fp-surface]');
     rendered.querySelectorAll('[data-fp-surface]').forEach(function (surface, index) {
       surfaces[index].style.fillOpacity = window.getComputedStyle(surface).fillOpacity || '1';
@@ -3584,6 +3592,62 @@ var FilePreview = (function () {
     table.parentNode.insertBefore(bar, table);
   }
 
+  // Keep both text layout and syntax highlighting bounded for generated files.
+  function _renderPagedCode(wrap, pre, code, lineNums, content, targetLine) {
+    var pages = [], at = 0, line = 1, page = 0, targetOffset = 0;
+    for (var n = 1; n < targetLine; n++) {
+      var newline = content.indexOf('\n', targetOffset);
+      if (newline < 0) break;
+      targetOffset = newline + 1;
+    }
+    while (at < content.length) {
+      var chunk = content.slice(at, at + 4000);
+      // Prefer a line boundary; a long line still has a hard character limit.
+      var lastNewline = chunk.lastIndexOf('\n');
+      if (lastNewline >= 0 && at + chunk.length < content.length) chunk = chunk.slice(0, lastNewline + 1);
+      if (/[\uD800-\uDBFF]/.test(chunk.slice(-1)) && at + chunk.length < content.length) chunk = chunk.slice(0, -1);
+      pages.push({ offset: at, line: line });
+      if (at <= targetOffset) page = pages.length - 1;
+      at += chunk.length;
+      line += chunk.split('\n').length - 1;
+    }
+    var bar = document.createElement('div');
+    bar.className = 'fp-code-pages';
+    var label = document.createElement('span');
+    label.setAttribute('role', 'status');
+    function showPage() {
+      var start = pages[page].offset;
+      var end = page + 1 < pages.length ? pages[page + 1].offset : content.length;
+      var chunk = content.slice(start, end);
+      wrap.__fpCodeOffset = start;
+      code.textContent = chunk;
+      var count = chunk.split('\n').length - (end < content.length && chunk.endsWith('\n') ? 1 : 0);
+      lineNums.textContent = Array.from({ length: count }, function (_, i) { return pages[page].line + i; }).join('\n');
+      label.textContent = '分段纯文本 · 字符 ' + (start + 1) + '–' + end + ' / ' + content.length;
+      prev.disabled = page === 0;
+      next.disabled = page === pages.length - 1;
+      wrap.scrollTop = 0;
+      code.scrollLeft = 0;
+    }
+    function control(text, step) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = text;
+      b.setAttribute('aria-label', text);
+      b.addEventListener('click', function () { page += step; showPage(); });
+      return b;
+    }
+    var prev = control('上一段', -1), next = control('下一段', 1);
+    wrap.__fpRestoreCodeOffset = function (offset) {
+      page = 0;
+      while (page + 1 < pages.length && pages[page + 1].offset <= offset) page++;
+      showPage();
+    };
+    bar.append(label, prev, next);
+    wrap.insertBefore(bar, pre);
+    showPage();
+  }
+
   function _renderCode(body, content, language, targetLine) {
     body.innerHTML = '';
     var wrap = document.createElement('div');
@@ -3592,10 +3656,18 @@ var FilePreview = (function () {
     var lines = content.split('\n');
     var lineNums = document.createElement('div');
     lineNums.className = 'fp-line-numbers';
-    lineNums.textContent = lines.map(function (_, i) { return i + 1; }).join('\n');
 
     var pre = document.createElement('pre');
     var code = document.createElement('code');
+    pre.appendChild(lineNums);
+    pre.appendChild(code);
+    wrap.appendChild(pre);
+    body.appendChild(wrap);
+    if (content.length > 65536 || lines.length > 1000 || lines.some(function (line) { return line.length > 4000; })) {
+      _renderPagedCode(wrap, pre, code, lineNums, content, targetLine);
+      return;
+    }
+    lineNums.textContent = lines.map(function (_, i) { return i + 1; }).join('\n');
     code.textContent = content;
 
     Promise.all([_loadScript(CDN.hljs), _loadCSS(CDN.hljsCss)])
@@ -3613,11 +3685,6 @@ var FilePreview = (function () {
         }
       })
       .catch(function () { /* highlight failed — show plain text */ });
-
-    pre.appendChild(lineNums);
-    pre.appendChild(code);
-    wrap.appendChild(pre);
-    body.appendChild(wrap);
 
     // Best-effort jump to a target line (from path:line:col). Never let a
     // scroll/measure failure block the file from opening.
@@ -4671,7 +4738,7 @@ var FilePreview = (function () {
       } else {
         _renderCode(body, data.content, data.language, options.targetLine);
         // Git changes in the gutter, like an editor.
-        if (options.gitGutter && window.Blocks && window.Blocks.decorateGitGutter) window.Blocks.decorateGitGutter(body, info.absPath);
+        if (options.gitGutter && !body.querySelector('.fp-code-pages') && window.Blocks && window.Blocks.decorateGitGutter) window.Blocks.decorateGitGutter(body, info.absPath);
       }
       return true;
     });

@@ -28,6 +28,46 @@ const lines = (box) => box.querySelectorAll('.blk-line').length;
 const more = (box) => box.querySelector('.blk-diff-more');
 
 describe('drawing a large diff a part at a time', () => {
+  it('pages through long lines without truncating the patch or selecting a line through its controls', () => {
+    const { ui, box } = setup();
+    const old = 'a'.repeat(3999) + '😀' + 'b'.repeat(5000);
+    const text = 'diff --git a/data.json b/data.json\n--- a/data.json\n+++ b/data.json\n@@ -1 +1 @@\n-' + old + '\n+' + old + '!\n';
+    let patch;
+    const files = ui.renderDiffInto(box, text, { actions: (file, hunk, selection) => {
+      const button = box.ownerDocument.createElement('button');
+      button.className = 'pick';
+      button.onclick = () => { patch = ui.buildPatch(file, hunk, selection()); };
+      return [button];
+    } });
+    const row = box.querySelector('.blk-line');
+    const code = () => row.querySelector('.blk-code').textContent;
+    expect(code()).toBe('-' + old.slice(0, 3999));
+    const parts = [code().slice(1)];
+    while (!row.querySelector('[aria-label="下一段"]').disabled) {
+      row.querySelector('[aria-label="下一段"]').click();
+      parts.push(code().slice(1));
+      expect(code().length).toBeLessThanOrEqual(4001);
+      expect(code().charCodeAt(1)).not.toBeGreaterThanOrEqual(0xdc00);
+    }
+    expect(parts.join('')).toBe(old);
+    expect(row.classList.contains('is-selected')).toBe(false);
+    row.querySelector('[aria-label="上一段"]').click();
+    row.click();
+    box.querySelector('.pick').click();
+    expect(patch).toContain('\n-' + old + '\n');
+    expect(files[0].hunks[0].lines[1]).toBe('+' + old + '!');
+  });
+
+  it('limits characters as well as line count in a batch', () => {
+    const { ui, box } = setup();
+    const text = 'diff --git a/data b/data\n--- a/data\n+++ b/data\n@@ -0,0 +1,100 @@\n' + ('+' + 'x'.repeat(3000) + '\n').repeat(100);
+    ui.renderDiffInto(box, text);
+    expect(lines(box)).toBeLessThan(30);
+    expect(more(box)).not.toBeNull();
+    while (more(box)) more(box).click();
+    expect(lines(box)).toBe(100);
+  });
+
   it('draws only so many lines, and the rest when asked, from where it stopped', () => {
     const { ui, box } = setup();
     ui.renderDiffInto(box, fileDiff('a.js', [1200, 600]) + BINARY + fileDiff('b.js', [700]), { maxLines: 1000 });

@@ -509,6 +509,8 @@ var Blocks = (function () {
 
   /** Changed span between an old and a new line, or null when most of the line changed. */
   function wordSpan(a, b) {
+    // Minified/generated lines are paged, without scanning or highlighting the whole line.
+    if (a.length > DIFF_LINE_CHARS || b.length > DIFF_LINE_CHARS) return null;
     var p = 0;
     while (p < a.length && p < b.length && a.charAt(p) === b.charAt(p)) p++;
     var s = 0;
@@ -545,7 +547,8 @@ var Blocks = (function () {
   function codeWithSpan(text, span) {
     var code = el('span', 'blk-code');
     code.appendChild(document.createTextNode(text.charAt(0)));
-    var body = text.slice(1);
+    var body = text.slice(1, DIFF_LINE_CHARS + 1);
+    if (body.length < text.length - 1 && /[\uD800-\uDBFF]/.test(body.slice(-1))) body = body.slice(0, -1);
     if (!span) {
       code.appendChild(document.createTextNode(body));
       return code;
@@ -559,6 +562,8 @@ var Blocks = (function () {
   // Lines drawn at once. A diff of tens of thousands of lines would hold the page for
   // seconds; the rest is drawn when asked for, from where it stopped.
   var DIFF_RENDER_LINES = 1000;
+  var DIFF_LINE_CHARS = 4000;
+  var DIFF_RENDER_CHARS = 64000;
 
   /**
    * Renders a unified diff. `options.actions(file, hunk, selection)` returns
@@ -629,10 +634,6 @@ var Blocks = (function () {
       };
     }
 
-    function addRows(h, from, to) {
-      for (var i = from; i < to; i++) addRow(h, i);
-    }
-
     function addRow(h, i) {
       var line = h.hunk.lines[i];
       var kind = line.charAt(0);
@@ -641,7 +642,32 @@ var Blocks = (function () {
       var b = kind === '-' || kind === '\\' ? '' : h.newNo++;
       row.appendChild(el('span', 'blk-ln', String(a)));
       row.appendChild(el('span', 'blk-ln', String(b)));
-      row.appendChild(codeWithSpan(line, h.pairs[i]));
+      var code = codeWithSpan(line, h.pairs[i]);
+      row.appendChild(code);
+      if (line.length - 1 > DIFF_LINE_CHARS) {
+        var body = line.slice(1), offsets = [0], page = 0;
+        while (offsets[offsets.length - 1] < body.length) {
+          var end = Math.min(offsets[offsets.length - 1] + DIFF_LINE_CHARS, body.length);
+          if (end < body.length && /[\uD800-\uDBFF]/.test(body.charAt(end - 1))) end--;
+          offsets.push(end);
+        }
+        var controls = el('div', 'blk-line-pages');
+        var label = el('span');
+        function showPage() {
+          code.textContent = kind + body.slice(offsets[page], offsets[page + 1]);
+          label.textContent = '超长行 · 字符 ' + (offsets[page] + 1) + '–' + offsets[page + 1] + ' / ' + body.length;
+          prev.disabled = page === 0;
+          next.disabled = page === offsets.length - 2;
+        }
+        var prev = button('上一段', function () { page--; showPage(); }, { className: 'blk-btn-ghost blk-btn-small' });
+        var next = button('下一段', function () { page++; showPage(); }, { className: 'blk-btn-ghost blk-btn-small' });
+        prev.setAttribute('aria-label', '上一段');
+        next.setAttribute('aria-label', '下一段');
+        controls.addEventListener('click', function (e) { e.stopPropagation(); });
+        controls.append(label, prev, next);
+        row.appendChild(controls);
+        showPage();
+      }
       if (options.actions && (kind === '+' || kind === '-')) {
         row.classList.add('is-selectable');
         row.addEventListener('click', function () {
@@ -658,8 +684,8 @@ var Blocks = (function () {
     var fileBox = null, current = null, more = null;
     function draw(limit) {
       if (more) { more.remove(); more = null; }
-      var used = 0;
-      while (fileIndex < files.length && used < limit) {
+      var used = 0, chars = 0;
+      while (fileIndex < files.length && used < limit && chars < DIFF_RENDER_CHARS) {
         var file = files[fileIndex];
         if (!fileBox) fileBox = openFile(file);
         if (hunkIndex >= file.hunks.length) {
@@ -669,11 +695,12 @@ var Blocks = (function () {
           continue;
         }
         if (!current) current = openHunk(fileBox, file, file.hunks[hunkIndex]);
-        var end = Math.min(current.hunk.lines.length, lineIndex + limit - used);
-        addRows(current, lineIndex, end);
-        used += end - lineIndex;
-        drawn += end - lineIndex;
-        lineIndex = end;
+        var cost = Math.min(current.hunk.lines[lineIndex].length, DIFF_LINE_CHARS + 1);
+        if (used && chars + cost > DIFF_RENDER_CHARS) break;
+        addRow(current, lineIndex++);
+        used++;
+        drawn++;
+        chars += cost;
         if (lineIndex >= current.hunk.lines.length) {
           hunkIndex++;
           lineIndex = 0;

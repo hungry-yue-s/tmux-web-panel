@@ -226,6 +226,7 @@ body.blk-dragging iframe, body.blk-resizing iframe, body.fp-side-resizing iframe
 .blk-line { display: grid; grid-template-columns: 42px 42px max-content; width: max-content; min-width: 100%; white-space: pre; }
 .blk-ln { padding-right: 8px; text-align: right; color: var(--b-muted); opacity: .55; user-select: none; font-size: 11px; }
 .blk-code { padding: 0 16px 0 6px; }
+.blk-line-pages { grid-column: 1 / -1; grid-row: 1; position: sticky; left: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 4px 10px; max-width: 460px; white-space: normal; color: var(--b-muted); font: 12px/1.5 var(--b-font-ui); }
 .blk-line.is-add { background: color-mix(in srgb, var(--b-green) 13%, transparent); }
 .blk-line.is-add .blk-ln { background: color-mix(in srgb, var(--b-green) 10%, transparent); }
 .blk-line.is-del { background: color-mix(in srgb, var(--b-red) 13%, transparent); }
