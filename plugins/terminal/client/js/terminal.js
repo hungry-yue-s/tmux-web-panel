@@ -82,7 +82,7 @@ function _showToast(message, duration) {
 // === FAB Tool Panel ===
 
 function _sendTermData(data) {
-  if (terminalState.ws && terminalState.ws.readyState === WebSocket.OPEN) {
+  if (terminalState.ws && !terminalState.ws._ended && terminalState.ws.readyState === WebSocket.OPEN) {
     terminalState.ws.send(JSON.stringify({ type: 'input', data: data }));
   }
 }
@@ -285,7 +285,7 @@ function _syncTerminalSize(ws, term, immediate) {
 
   function flush() {
     ws._resizeTimer = null;
-    if (ws.readyState !== WebSocket.OPEN) return;
+    if (ws._ended || ws.readyState !== WebSocket.OPEN) return;
     if (!term.cols || !term.rows) return;
     if (term.cols === ws._sentCols && term.rows === ws._sentRows) return;
     ws._sentCols = term.cols;
@@ -326,6 +326,7 @@ function _terminalContainer() {
 
 function _cleanupTerminalResources(preserveMobileControls) {
   terminalState.renderVersion = (terminalState.renderVersion || 0) + 1;
+  if (terminalState.term && terminalState.term._statusNotice) terminalState.term._statusNotice.remove();
   terminalState.termContainer = null;
   if (!preserveMobileControls && terminalState._mobileControlsCleanup) {
     terminalState._mobileControlsCleanup();
@@ -378,11 +379,12 @@ function cleanupTerminal() {
 }
 
 /**
- * True while the terminal in view is attached or on its way there, so showing the
- * same target again need not start over.
+ * Reuse the current surface while attached, connecting, or deliberately paused.
+ * Showing the same target must not implicitly reclaim it from another client.
  */
 function isTerminalLive() {
   if (!terminalState.term || !terminalState.termContainer || !terminalState.termContainer.isConnected) return false;
+  if (terminalState.term._statusNotice && terminalState.term._statusNotice.isConnected) return true;
   var ws = terminalState.ws;
   if (!ws || terminalState.pendingWs || terminalState.reconnectTimer) return true;
   return ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING;
@@ -813,6 +815,7 @@ function connectTerminalWs(paneId, term, nozoom, onReady) {
 
   ws.onmessage = function (e) {
     if (terminalState.term !== term) { _closeTerminalWs(ws); return; }
+    if (ws._ended) return;
     clearTimeout(ws._connectTimer);
     try {
       var msg = JSON.parse(e.data);
@@ -823,6 +826,8 @@ function connectTerminalWs(paneId, term, nozoom, onReady) {
       } else if (msg.type === 'clipboard') {
         _copyToClipboard(msg.data);
       } else if (msg.type === 'ready') {
+        if (term.options) { term.options.disableStdin = false; term.options.cursorBlink = true; }
+        if (term._statusNotice) { term._statusNotice.remove(); term._statusNotice = null; }
         // `open` fires before the async pane check has installed the server's
         // message listener, so an early resize can be lost. At `ready` the PTY
         // is guaranteed to accept the final fitted dimensions.
@@ -831,6 +836,15 @@ function connectTerminalWs(paneId, term, nozoom, onReady) {
         ws._sentRows = null;
         _syncTerminalSize(ws, term, true);
         if (onReady) onReady();
+      } else if (msg.type === 'exit') {
+        // Mosh reports a local transport failure before closing with 1011.
+        // Keep its existing reconnect policy unless the client exited cleanly.
+        if (msg.reason === 'mosh_client_exit' && msg.code !== 0) return;
+        ws._exitReason = msg.reason;
+        ws._ended = true;
+        _showTerminalStatus(term, paneId, nozoom, msg.reason);
+      } else if (msg.type === 'error') {
+        ws._exitError = msg.message;
       }
     } catch (_err) {
       // Ignore parse errors
@@ -839,14 +853,18 @@ function connectTerminalWs(paneId, term, nozoom, onReady) {
 
   ws.onclose = function (event) {
     clearTimeout(ws._connectTimer);
+    if (terminalState.pendingWs === ws) terminalState.pendingWs = null;
     if (terminalState.term !== term) return;
+    if (ws._ended) return;
     // Clean close (1000) = tmux detached us: another client attached with `-d`
     // and took over, or the session ended. Reconnecting would just kick that
     // client back — an endless ping-pong between two web views. 1008/1013 are
     // permanent rejections (bad paneId / connection limit). Only auto-reconnect
     // on abnormal closures (1006 network drop / server crash / restart).
     if (event && (event.code === 1000 || event.code === 1008 || event.code === 1013)) {
-      if (event.code === 1000) _showToast('会话已被其它窗口接管');
+      ws._ended = true;
+      _showTerminalStatus(term, paneId, nozoom,
+        event.code === 1000 ? ws._exitReason : 'rejected', ws._exitError);
       return;
     }
     if (terminalState.term === term && state.currentTab === 'terminal') {
@@ -876,7 +894,7 @@ function connectTerminalWs(paneId, term, nozoom, onReady) {
     if (!_pendingMouse.length) return;
     var batch = _pendingMouse.join('');
     _pendingMouse = [];
-    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: batch }));
+    if (!ws._ended && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: batch }));
   }
   function _queueMouse(data) {
     data.match(/\x1b\[<\d+;\d+;\d+[Mm]/g).forEach(function (seq) {
@@ -892,7 +910,7 @@ function connectTerminalWs(paneId, term, nozoom, onReady) {
   }
 
   var dataListener = term.onData(function (data) {
-    if (ws.readyState !== WebSocket.OPEN) return;
+    if (ws._ended || ws.readyState !== WebSocket.OPEN) return;
     if (_suppressMouseMove && _sgrMoveRe.test(data)) return;
     if (_sgrMouseRe.test(data)) { _queueMouse(data); return; }
     _flushMouse();
@@ -2045,6 +2063,7 @@ function _mountTerminal(termContainer, nozoom) {
 function _showReconnectOverlay(term, paneId, nozoom) {
   var termContainer = terminalState.termContainer;
   if (!termContainer) return;
+  if (term._statusNotice) { term._statusNotice.remove(); term._statusNotice = null; }
 
   // Create overlay
   var overlay = document.createElement('div');
@@ -2091,10 +2110,8 @@ function _showReconnectOverlay(term, paneId, nozoom) {
       // Stop retrying on a clean close — we were detached/taken over, not
       // dropped. Retrying here would re-trigger the ping-pong. (See the main
       // onclose handler for the full rationale.)
-      if (event && (event.code === 1000 || event.code === 1008 || event.code === 1013)) {
-        if (textEl) textEl.textContent = '会话已被其它窗口接管';
-        var spinner = overlay.querySelector('.terminal-reconnect-spinner');
-        if (spinner) spinner.style.display = 'none';
+      if (ws._ended || (event && (event.code === 1000 || event.code === 1008 || event.code === 1013))) {
+        onDropped(event);
         return;
       }
       // Retry with exponential backoff
@@ -2110,4 +2127,44 @@ function _showReconnectOverlay(term, paneId, nozoom) {
   }
 
   terminalState.reconnectTimer = setTimeout(tryReconnect, baseDelay);
+}
+
+function _showTerminalStatus(term, paneId, nozoom, reason, errorMessage) {
+  var container = terminalState.termContainer;
+  if (!container || terminalState.term !== term) return;
+  clearTimeout(terminalState.reconnectTimer);
+  terminalState.reconnectTimer = null;
+  container.querySelectorAll('.terminal-reconnect-overlay,.terminal-status-notice').forEach(function (el) { el.remove(); });
+  if (term.options) { term.options.disableStdin = true; term.options.cursorBlink = false; }
+  // Release remote mouse tracking so the frozen screen supports local copying.
+  term.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25l');
+  var takenOver = reason === 'taken_over' || reason === 'detached';
+  var ended = reason === 'session_ended' || reason === 'remote_shell_exit';
+  var notice = document.createElement('div');
+  notice.className = 'terminal-status-notice';
+  notice.setAttribute('role', 'status');
+  var copy = document.createElement('div');
+  var title = document.createElement('strong');
+  title.textContent = takenOver ? '会话已被其他端接管' : ended ? '会话已结束' : reason === 'rejected' ? '无法连接此终端' : '终端连接已结束';
+  var detail = document.createElement('span');
+  detail.textContent = takenOver ? '画面已暂停更新，终端任务继续运行。' : ended ? '已保留最后画面，可查看和复制。' : errorMessage || '画面已暂停更新，可尝试重新连接。';
+  copy.append(title, detail); notice.appendChild(copy);
+  if (!ended && reason !== 'rejected') {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = takenOver ? '重新接管' : '重新连接';
+    button.addEventListener('click', function () {
+      if (button.disabled || terminalState.term !== term || !notice.isConnected) return;
+      button.disabled = true; button.textContent = '正在连接…';
+      var ws = connectTerminalWs(paneId, term, nozoom, function () {
+        if (terminalState.pendingWs === ws) terminalState.pendingWs = null;
+        terminalState.ws = ws;
+        term.focus();
+      });
+      terminalState.pendingWs = ws;
+    });
+    notice.appendChild(button);
+  }
+  term._statusNotice = notice;
+  container.appendChild(notice);
 }

@@ -29,6 +29,17 @@ function fixture({ copiedTab, locks } = {}) {
 }
 
 describe('native workbench UI', () => {
+  it('offers a guarded reconnect action in the persistent detached notice', async () => {
+    const f = fixture(); const view = await f.api.create({ serverId: 'dev', ...remote });
+    await f.api.render('dev', view.id, { container: f.host });
+    const session = f.sessions[0]; session.refresh = vi.fn(); session.status = 'detached';
+    session.options.onState({ status: 'detached', message: '会话已被其他端接管，画面已暂停更新。' });
+    const notice = f.host.querySelector('.wb-window-message');
+    expect(notice.hidden).toBe(false);
+    const action = notice.querySelector('button'); expect(action).not.toBeNull();
+    action.click(); expect(session.refresh).toHaveBeenCalledOnce();
+    f.api.unmount(); action.click(); expect(session.refresh).toHaveBeenCalledOnce(); f.close();
+  });
   it.each(['unavailable', 'rejected'])('keeps copied browser tabs on independent clients when Web Locks are %s', async mode => {
     const options = { copiedTab: 'copied-tab', ...(mode === 'rejected' ? { locks: { request: () => Promise.reject(new Error('unavailable')) } } : {}) };
     const first = fixture(options), second = fixture(options);

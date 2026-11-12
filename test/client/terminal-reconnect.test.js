@@ -20,7 +20,7 @@ function setup() {
   FakeSocket.prototype.close = function () { this.readyState = 3; };
   Object.assign(FakeSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
 
-  const term = { cols: 80, rows: 24, element: null, onData: vi.fn(), write: vi.fn() };
+  const term = { cols: 80, rows: 24, element: null, options: { cursorBlink: true }, onData: vi.fn(), write: vi.fn(), focus: vi.fn() };
   Object.assign(win, {
     WebSocket: FakeSocket,
     state: { currentTab: 'terminal' },
@@ -165,6 +165,99 @@ describe('reconnecting a terminal', () => {
     vi.advanceTimersByTime(60000);
     expect(sockets).toHaveLength(2);
     expect(overlays()).toHaveLength(0);
+  });
+
+  it('keeps a takeover notice until an explicit click restores the same terminal', () => {
+    const { win, term, sockets, open, ready, drop, connected } = setup();
+    const first = connected();
+    first.onmessage({ data: JSON.stringify({ type: 'exit', reason: 'taken_over' }) });
+    const sent = first.sent.length;
+    term.cols = 120;
+    win.eval('_syncTerminalSize(terminalState.ws, __term, true)');
+    expect(first.sent).toHaveLength(sent);
+    drop(first, 1000);
+    vi.advanceTimersByTime(60000);
+    expect(sockets).toHaveLength(1);
+    const notice = win.document.querySelector('.terminal-status-notice');
+    expect(notice.textContent).toContain('接管');
+    expect(notice.textContent).toContain('暂停更新');
+    expect(term.options.disableStdin).toBe(true);
+    expect(term.options.cursorBlink).toBe(false);
+    notice.querySelector('button').click();
+    notice.querySelector('button')?.click();
+    expect(sockets).toHaveLength(2);
+    open(sockets[1]); ready(sockets[1]);
+    expect(win.eval('terminalState.ws')).toBe(sockets[1]);
+    expect(term.options.disableStdin).toBe(false);
+    expect(win.document.querySelector('.terminal-status-notice')).toBeNull();
+    win.close();
+  });
+
+  it('does not call every clean close a takeover or offer to reclaim an ended session', () => {
+    const { win, sockets, drop, connected } = setup();
+    const ws = connected();
+    ws.onmessage({ data: JSON.stringify({ type: 'exit', reason: 'session_ended' }) });
+    drop(ws, 1000);
+    const notice = win.document.querySelector('.terminal-status-notice');
+    expect(notice.textContent).toContain('会话已结束');
+    expect(notice.querySelector('button')).toBeNull();
+    vi.advanceTimersByTime(60000);
+    expect(sockets).toHaveLength(1);
+    win.close();
+  });
+
+  it('cannot reclaim from an old notice after navigation', () => {
+    const { win, sockets, drop, connected } = setup();
+    drop(connected(), 1000);
+    const button = win.document.querySelector('.terminal-status-notice button');
+    win.eval('cleanupTerminal()');
+    button.click();
+    expect(sockets).toHaveLength(1);
+    win.close();
+  });
+
+  it('offers another manual attempt if a reclaim is cleanly closed before ready', () => {
+    const { win, sockets, open, drop, connected } = setup();
+    drop(connected(), 1000);
+    win.document.querySelector('.terminal-status-notice button').click();
+    open(sockets[1]); drop(sockets[1], 1000);
+    expect(win.eval('terminalState.pendingWs')).toBeNull();
+    const button = win.document.querySelector('.terminal-status-notice button');
+    expect(button.disabled).toBe(false);
+    button.click(); expect(sockets).toHaveLength(3);
+    win.close();
+  });
+
+  it('keeps the paused mount and never retries an abnormal close after a takeover frame', () => {
+    const { win, sockets, drop, connected } = setup();
+    const ws = connected();
+    ws.onmessage({ data: JSON.stringify({ type: 'exit', reason: 'taken_over' }) });
+    drop(ws, 1006);
+    expect(win.eval('isTerminalLive()')).toBe(true);
+    vi.advanceTimersByTime(60000);
+    expect(sockets).toHaveLength(1);
+    expect(win.document.querySelector('.terminal-status-notice')).not.toBeNull();
+    win.close();
+  });
+
+  it('does not retry a takeover received while an automatic reconnect is still pending', () => {
+    const { win, sockets, open, drop, connected } = setup();
+    drop(connected()); vi.advanceTimersByTime(1000); open(sockets[1]);
+    sockets[1].onmessage({ data: JSON.stringify({ type: 'exit', reason: 'taken_over' }) });
+    drop(sockets[1], 1006); vi.advanceTimersByTime(60000);
+    expect(sockets).toHaveLength(2);
+    expect(win.document.querySelector('.terminal-status-notice')).not.toBeNull();
+    win.close();
+  });
+
+  it('still retries an unsuccessful Mosh client exit as a transport failure', () => {
+    const { win, sockets, drop, connected } = setup();
+    const ws = connected();
+    ws.onmessage({ data: JSON.stringify({ type: 'exit', reason: 'mosh_client_exit', code: 1 }) });
+    drop(ws, 1011); vi.advanceTimersByTime(1000);
+    expect(sockets).toHaveLength(2);
+    expect(win.document.querySelector('.terminal-status-notice')).toBeNull();
+    win.close();
   });
 
   describe('leaving while a reconnect is under way', () => {

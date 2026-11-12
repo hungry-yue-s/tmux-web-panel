@@ -189,6 +189,10 @@ export function createWorkbench(global, options = {}) {
         if (mounted !== owner) return;
         owner.root.dataset.status = status; owner.message.hidden = status === 'live';
         owner.message.textContent = message || ({ connecting: '正在连接原生终端…', disconnected: '连接已断开，正在重连…', invalid: '无法连接此窗口', exited: '原生终端已结束' }[status] || '');
+        owner.message.classList.toggle('terminal-status-notice', status === 'detached');
+        if (status === 'detached') owner.message.append(button('重新连接', '在此窗口恢复终端连接', () => {
+          if (mounted === owner && owner.session?.status === 'detached') owner.session.refresh();
+        }));
         announceFocus();
       },
     });

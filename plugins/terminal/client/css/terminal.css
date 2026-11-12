@@ -191,6 +191,23 @@
 
 /* Terminal reconnect overlay */
 
+.terminal-status-notice {
+  position:absolute; top:12px; left:12px; right:12px; z-index:20;
+  display:flex; align-items:center; justify-content:space-between; gap:16px;
+  padding:10px 14px; border:1px solid var(--workspace-line-strong,var(--border)); border-radius:8px;
+  color:var(--workspace-text,var(--text-primary)); background:var(--workspace-panel,var(--bg-card));
+  font-size:13px; line-height:1.5; pointer-events:auto;
+}
+.terminal-status-notice strong, .terminal-status-notice span { display:block; }
+.terminal-status-notice span { color:var(--workspace-muted,var(--text-secondary)); font-size:12px; }
+.terminal-status-notice button {
+  flex:0 0 auto; min-height:44px; padding:8px 14px; border:1px solid var(--workspace-line-strong,var(--border));
+  border-radius:6px; color:inherit; background:var(--workspace-hover,var(--bg-hover)); font:inherit; cursor:pointer; touch-action:manipulation;
+}
+.terminal-status-notice button:focus-visible { outline:2px solid var(--workspace-accent,var(--accent-blue)); outline-offset:2px; }
+.terminal-status-notice button:disabled { opacity:.6; cursor:wait; }
+@media (max-width:480px) { .terminal-status-notice { top:8px; left:8px; right:8px; gap:8px; padding:8px 10px; flex-wrap:wrap; } }
+
 .terminal-reconnect-overlay {
   position: absolute;
   top: 0;

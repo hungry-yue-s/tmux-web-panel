@@ -1301,6 +1301,17 @@ describe('TerminalManager spawn', () => {
     expect(ws.close).toHaveBeenCalledWith(1000, expect.stringContaining('3'));
   });
 
+  it('retains ordinary terminal output and reports a detached client separately from task exit', () => {
+    const manager = new TerminalManager(), term = fakeTerm(), ws = fakeWs(), seen = [];
+    spawn.mockReturnValue(term);
+    manager.create(ws, '%1', 80, 24, false, { onPtyExit: info => seen.push(info) });
+    term.handlers.data('last screen\x1b[?1l\x1b>\x1b[H\x1b[2J\x1b[?1049l[detached (from session test)]\r\n');
+    term.handlers.exit({ exitCode: 0, signal: null });
+    const output = ws.send.mock.calls.map(([frame]) => JSON.parse(frame)).filter(frame => frame.type === 'output').map(frame => frame.data).join('');
+    expect(output).toBe('last screen');
+    expect(seen).toEqual([{ code: 0, signal: null, reason: 'detached' }]);
+  });
+
   it('keeps the legacy close-only behavior without an observer', () => {
     const manager = new TerminalManager();
     const term = fakeTerm();

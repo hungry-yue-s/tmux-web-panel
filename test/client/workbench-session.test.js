@@ -53,6 +53,38 @@ export function fixture() {
 afterEach(() => vi.useRealTimers());
 
 describe('persistent native window sessions', () => {
+  it('pauses a detached client and reconnects only on explicit refresh', async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const pane = new NativeWindowSession(f.win, { container: f.host, target });
+    await pane.ready;
+    const socket = f.sockets[0]; socket.readyState = 1; snapshots(socket);
+    const writes = pane.term.writes.length, resets = pane.term.resets;
+    socket.onmessage({ data: JSON.stringify({ type: 'exit', reason: 'detached' }) });
+    expect(pane.status).toBe('detached');
+    expect(pane.term.resets).toBe(resets);
+    expect(pane.term.writes.length).toBeGreaterThanOrEqual(writes);
+    expect(pane.send('must not type')).toBe(false);
+    pane.focus(); pane.fit(); pane.setVisible(false); pane.setVisible(true);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(f.sockets).toHaveLength(1);
+    pane.refresh();
+    expect(f.sockets).toHaveLength(2);
+    const next = f.sockets[1]; next.readyState = 1; snapshots(next);
+    expect(pane.status).toBe('live');
+    pane.dispose(); f.close();
+  });
+
+  it('keeps an unexplained clean close recoverable without calling it task completion', async () => {
+    const f = fixture();
+    const pane = new NativeWindowSession(f.win, { container: f.host, target }); await pane.ready;
+    const socket = f.sockets[0]; socket.readyState = 1; snapshots(socket);
+    socket.onclose({ code: 1000 });
+    expect(pane.status).toBe('detached');
+    expect(pane.message).not.toContain('任务已结束');
+    pane.refresh(); expect(f.sockets).toHaveLength(2);
+    pane.dispose(); f.close();
+  });
   it('uses the shipped Anymux font once its core is ready before opening the socket', async () => {
     const f = fixture();
     const pane = new NativeWindowSession(f.win, { container: f.host, target });

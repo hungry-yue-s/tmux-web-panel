@@ -31,6 +31,29 @@ function tracked(options) { const f = fixture(options); pools.push(f.pool); retu
 afterEach(() => { for (const pool of pools.splice(0)) pool.dispose(); vi.useRealTimers(); });
 
 describe('persistent native tmux window clients', () => {
+  it.each(['detached', 'session_ended'])('waits for the native %s reason when client disappearance is observed first', async reason => {
+    const f = tracked(), frames = [];
+    await f.pool.subscribe(target, frame => frames.push(frame)); await until(() => frames.some(frame => frame.type === 'snapshot'));
+    f.state.context = ''; f.controls[0].emit('notification', '%client-detached /dev/pts/9');
+    await tick(); await tick();
+    expect(f.natives[0].disposed).toBe(false);
+    expect(frames.some(frame => frame.type === 'exit')).toBe(false);
+    f.natives[0].emit('exit', { code: 0, signal: null, reason });
+    expect(frames.at(-1)).toMatchObject({ type: 'exit', reason });
+    expect(f.natives[0].disposed).toBe(true);
+  });
+
+  it('bounds the wait for a missing native client without inventing task completion', async () => {
+    const f = tracked({ timeoutMs: 40 }), frames = [];
+    await f.pool.subscribe(target, frame => frames.push(frame)); await until(() => frames.some(frame => frame.type === 'snapshot'));
+    vi.useFakeTimers();
+    f.state.context = ''; f.controls[0].emit('notification', '%client-detached /dev/pts/9');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.natives[0].disposed).toBe(false);
+    await vi.advanceTimersByTimeAsync(40);
+    expect(frames.at(-1)).toMatchObject({ type: 'exit', reason: 'tmux_client_exit' });
+    expect(f.natives[0].disposed).toBe(true);
+  });
   it('registers the atomic fence before refresh and sequences snapshot/live bytes once', async () => {
     const f = tracked(), frames = [];
     const lease = await f.pool.subscribe(target, frame => frames.push(frame));

@@ -13,6 +13,16 @@ function fixture() {
 }
 
 describe('native window framed PTY transport', () => {
+  it('withholds terminal cleanup and reports a detach without erasing the native screen', async () => {
+    const f = fixture(), outputs = [], exits = [];
+    f.process.on('output', data => outputs.push(data)); f.process.on('exit', info => exits.push(info));
+    f.send('H', JSON.stringify({ protocol: 1, pid: 42, tty: '/dev/pts/4' })); await f.process.ready;
+    f.send('O', 'last native screen\x1b[?1l\x1b>\x1b[H\x1b[2J\x1b[?1049l[detached (from session test)]\r\n');
+    f.send('E', JSON.stringify({ exitCode: 0, signal: null }));
+    expect(Buffer.concat(outputs).toString()).toBe('last native screen');
+    expect(exits).toEqual([{ code: 0, signal: null, reason: 'detached' }]);
+    f.process.dispose();
+  });
   it('parses byte-split frames and an atomic snapshot without losing output after its fence', async () => {
     const f = fixture(), outputs = [];
     f.process.on('output', data => outputs.push(data.toString()));

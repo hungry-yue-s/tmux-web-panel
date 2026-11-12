@@ -423,7 +423,7 @@ describe('isTerminalLive', () => {
     expect(t.win.isTerminalLive()).toBe(false);
   });
 
-  it('is false after another client took the pane over, so going back attaches again', async () => {
+  it('keeps a paused terminal mounted after takeover so returning to the same route does not reclaim it', async () => {
     const t = setup();
     t.render({ panes: [{ id: '%1' }] });
     await t.flush();
@@ -431,7 +431,8 @@ describe('isTerminalLive', () => {
     t.ready(ws);
     ws.readyState = 3;
     ws.onclose({ code: 1000 });
-    expect(t.win.isTerminalLive()).toBe(false);
+    expect(t.win.isTerminalLive()).toBe(true);
+    expect(t.win.document.querySelector('.terminal-status-notice')).not.toBeNull();
   });
 });
 

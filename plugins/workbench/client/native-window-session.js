@@ -126,6 +126,7 @@ export class NativeWindowSession {
     this.status = status;
     this.message = message;
     this.term.options.disableStdin = status !== 'live';
+    this.term.options.cursorBlink = status === 'live';
     if (!this.disposed) this.onState({ status, message, target: this.target });
   }
 
@@ -275,7 +276,7 @@ export class NativeWindowSession {
   }
 
   _connect() {
-    if (this.disposed || this.status === 'exited' || this.status === 'invalid') return;
+    if (this.disposed || this.status === 'exited' || this.status === 'invalid' || this.status === 'detached') return;
     if (!this.visible) { this._setStatus('disconnected', '窗格已暂停显示'); return; }
     const epoch = ++this.epoch;
     const current = () => !this.disposed && epoch === this.epoch;
@@ -327,13 +328,14 @@ export class NativeWindowSession {
             this._render({ data, snapshotVersion, cols: message.cols, rows: message.rows });
           } else this._render({ data });
         } else if (message.type === 'clipboard' && typeof message.data === 'string') this.copy(message.data);
-        else if (message.type === 'exit') { this._disconnect(); this._setStatus('exited', message.reason || '远端任务已结束'); }
+        else if (message.type === 'exit') this._pause(message.reason);
         else if (message.type === 'error') this._drop(message.retryable === true, message.message || '无法连接窗格');
       } catch (error) { this._drop(false, error.message || '终端协议无效'); }
     };
     ws.onclose = (event) => {
       if (!current()) return;
-      this._drop(![1000, 1008, 1013].includes(event.code), event.code === 1000 ? '终端订阅已结束' : '连接已断开');
+      if (event.code === 1000) this._pause();
+      else this._drop(![1008, 1013].includes(event.code), '连接已断开');
     };
     ws.onerror = () => {}; // close owns retry, so only one timer is ever live.
   }
@@ -492,10 +494,20 @@ export class NativeWindowSession {
     if (++this.attempt <= 10 && this.visible) this.retryTimer = this.global.setTimeout(() => { this.retryTimer = null; this._connect(); }, Math.min(1000 * 1.5 ** (this.attempt - 1), 15_000));
   }
 
+  _pause(reason) {
+    this._disconnect();
+    this.term.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25l');
+    const detached = !reason || ['detached', 'taken_over', 'tmux_client_exit'].includes(reason);
+    this._setStatus(detached ? 'detached' : 'exited', reason === 'detached' || reason === 'taken_over'
+      ? '会话已被其他端接管，画面已暂停更新，终端任务继续运行。'
+      : detached ? '终端连接已结束，画面已暂停更新，可手动重新连接。' : '会话已结束，已保留最后画面。');
+  }
+
   refresh() {
     if (this.disposed || this.status === 'exited' || this.status === 'invalid') return;
     this._disconnect();
     this.attempt = 0;
+    this._setStatus('connecting', '正在重新连接');
     this.fit();
     this._connect();
   }
