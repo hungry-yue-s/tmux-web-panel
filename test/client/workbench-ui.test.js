@@ -29,6 +29,19 @@ function fixture({ copiedTab, locks } = {}) {
 }
 
 describe('native workbench UI', () => {
+  it.each([false, true])('can collapse the prominent pause card without reconnecting (mobile=%s)', async mobile => {
+    const f = fixture(); f.win.MobileUI.isMobile = () => mobile;
+    const view = await f.api.create({ serverId: 'dev', ...remote }); await f.api.render('dev', view.id, { container: f.host });
+    const session = f.sessions[0]; session.refresh = vi.fn(); session.status = 'detached';
+    session.options.onState({ status: 'detached', message: '会话已被其他端接管，画面已暂停更新。' });
+    const notice = f.host.querySelector('.terminal-status-notice');
+    expect(notice.querySelector('.terminal-status-card')).not.toBeNull();
+    notice.querySelector('.terminal-status-secondary').click();
+    expect(notice.classList.contains('is-collapsed')).toBe(true);
+    expect(session.refresh).not.toHaveBeenCalled();
+    notice.querySelector('.terminal-status-primary').click();
+    expect(session.refresh).toHaveBeenCalledOnce(); f.close();
+  });
   it('offers a guarded reconnect action in the persistent detached notice', async () => {
     const f = fixture(); const view = await f.api.create({ serverId: 'dev', ...remote });
     await f.api.render('dev', view.id, { container: f.host });

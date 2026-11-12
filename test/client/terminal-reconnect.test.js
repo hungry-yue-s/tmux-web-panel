@@ -193,6 +193,21 @@ describe('reconnecting a terminal', () => {
     win.close();
   });
 
+  it.each([false, true])('lets the user inspect the frozen screen without reconnecting (mobile=%s)', mobile => {
+    const { win, sockets, connected } = setup();
+    win._isMobileTerminal = () => mobile;
+    connected().onmessage({ data: JSON.stringify({ type: 'exit', reason: 'taken_over' }) });
+    const notice = win.document.querySelector('.terminal-status-notice');
+    expect(notice.querySelector('.terminal-status-card')).not.toBeNull();
+    expect(notice.classList.contains('is-prominent')).toBe(true);
+    notice.querySelector('.terminal-status-secondary').click();
+    expect(notice.classList.contains('is-collapsed')).toBe(true);
+    expect(sockets).toHaveLength(1);
+    notice.querySelector('.terminal-status-primary').click();
+    expect(sockets).toHaveLength(2);
+    win.close();
+  });
+
   it('does not call every clean close a takeover or offer to reclaim an ended session', () => {
     const { win, sockets, drop, connected } = setup();
     const ws = connected();

@@ -190,9 +190,23 @@ export function createWorkbench(global, options = {}) {
         owner.root.dataset.status = status; owner.message.hidden = status === 'live';
         owner.message.textContent = message || ({ connecting: '正在连接原生终端…', disconnected: '连接已断开，正在重连…', invalid: '无法连接此窗口', exited: '原生终端已结束' }[status] || '');
         owner.message.classList.toggle('terminal-status-notice', status === 'detached');
-        if (status === 'detached') owner.message.append(button('重新连接', '在此窗口恢复终端连接', () => {
-          if (mounted === owner && owner.session?.status === 'detached') owner.session.refresh();
-        }));
+        owner.message.classList.toggle('is-prominent', status === 'detached');
+        owner.message.classList.remove('is-collapsed');
+        owner.message.setAttribute('role', status === 'detached' ? 'alert' : 'status');
+        if (status === 'detached') {
+          const card = element('div', 'terminal-status-card'), copy = element('div', 'terminal-status-copy');
+          copy.append(element('strong', '', '此窗口已暂停'), element('span', '', owner.message.textContent));
+          const actions = element('div', 'terminal-status-actions');
+          const resume = button('重新连接', '在此窗口恢复终端连接', () => {
+            if (mounted === owner && owner.session?.status === 'detached') owner.session.refresh();
+          }, 'terminal-status-primary');
+          actions.append(resume, button('查看最后画面', '查看保留的终端画面，不重新连接', () => {
+            if (mounted !== owner || owner.session?.status !== 'detached') return;
+            owner.message.classList.add('is-collapsed'); owner.message.setAttribute('role', 'status');
+            resume.focus({ preventScroll: true });
+          }, 'terminal-status-secondary'));
+          card.append(copy, actions); owner.message.replaceChildren(card);
+        }
         announceFocus();
       },
     });

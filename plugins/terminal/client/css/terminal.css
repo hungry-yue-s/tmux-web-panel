@@ -192,21 +192,58 @@
 /* Terminal reconnect overlay */
 
 .terminal-status-notice {
-  position:absolute; top:12px; left:12px; right:12px; z-index:20;
+  position:absolute; top:12px; left:12px; right:12px; z-index:20; pointer-events:none;
+  color:var(--workspace-text,var(--text-primary)); font-size:13px; line-height:1.5;
+}
+.terminal-status-card {
   display:flex; align-items:center; justify-content:space-between; gap:16px;
   padding:10px 14px; border:1px solid var(--workspace-line-strong,var(--border)); border-radius:8px;
-  color:var(--workspace-text,var(--text-primary)); background:var(--workspace-panel,var(--bg-card));
-  font-size:13px; line-height:1.5; pointer-events:auto;
+  background:var(--workspace-panel,var(--bg-card)); pointer-events:auto;
 }
+.terminal-status-copy { min-width:0; overflow-wrap:anywhere; }
 .terminal-status-notice strong, .terminal-status-notice span { display:block; }
-.terminal-status-notice span { color:var(--workspace-muted,var(--text-secondary)); font-size:12px; }
+.terminal-status-notice strong { font-size:14px; font-weight:600; }
+.terminal-status-notice span { margin-top:4px; color:var(--workspace-muted,var(--text-secondary)); font-size:12px; }
+.terminal-status-actions { display:flex; align-items:center; gap:8px; flex-shrink:0; }
 .terminal-status-notice button {
   flex:0 0 auto; min-height:44px; padding:8px 14px; border:1px solid var(--workspace-line-strong,var(--border));
   border-radius:6px; color:inherit; background:var(--workspace-hover,var(--bg-hover)); font:inherit; cursor:pointer; touch-action:manipulation;
 }
+.terminal-status-notice .terminal-status-primary {
+  border-color:transparent; color:var(--workspace-bg,var(--bg-primary));
+  background:var(--workspace-accent,var(--accent-blue)); font-weight:600;
+}
+.terminal-status-notice .terminal-status-primary:hover { background:var(--workspace-accent,var(--accent-blue)); filter:brightness(1.08); }
+.terminal-status-notice .terminal-status-secondary { border-color:transparent; color:var(--workspace-muted,var(--text-secondary)); background:transparent; }
 .terminal-status-notice button:focus-visible { outline:2px solid var(--workspace-accent,var(--accent-blue)); outline-offset:2px; }
 .terminal-status-notice button:disabled { opacity:.6; cursor:wait; }
-@media (max-width:480px) { .terminal-status-notice { top:8px; left:8px; right:8px; gap:8px; padding:8px 10px; flex-wrap:wrap; } }
+.terminal-status-notice.is-prominent:not(.is-collapsed) {
+  inset:0; display:grid; place-items:center; padding:24px; background:rgba(0,0,0,.52); pointer-events:auto;
+}
+.terminal-status-notice.is-prominent:not(.is-collapsed) .terminal-status-card {
+  flex-direction:column; align-items:stretch; gap:24px; width:100%; max-width:440px; max-height:100%;
+  padding:32px; overflow:auto; border-color:var(--workspace-accent,var(--accent-blue)); border-radius:12px; text-align:center;
+}
+.terminal-status-notice.is-prominent:not(.is-collapsed) strong { font-size:24px; line-height:1.3; }
+.terminal-status-notice.is-prominent:not(.is-collapsed) span { margin-top:12px; font-size:14px; line-height:1.6; }
+.terminal-status-notice.is-prominent:not(.is-collapsed) .terminal-status-actions { flex-direction:column; align-items:stretch; }
+.terminal-status-notice.is-prominent:not(.is-collapsed) .terminal-status-primary { min-height:48px; font-size:15px; }
+.terminal-status-notice.is-collapsed .terminal-status-secondary,
+.terminal-status-notice.is-collapsed .terminal-status-copy span { display:none; }
+@media (max-width:480px) {
+  .terminal-status-notice { top:8px; left:8px; right:8px; }
+  .terminal-status-card { gap:12px; padding:10px 12px; flex-wrap:wrap; }
+  .terminal-status-notice.is-prominent:not(.is-collapsed) { padding:16px; }
+  .terminal-status-notice.is-prominent:not(.is-collapsed) .terminal-status-card { padding:24px 20px; }
+}
+@media (max-height:480px) {
+  .terminal-status-notice.is-prominent:not(.is-collapsed) { padding:8px; }
+  .terminal-status-notice.is-prominent:not(.is-collapsed) .terminal-status-card { padding:16px; gap:12px; }
+  .terminal-status-notice.is-prominent:not(.is-collapsed) strong { font-size:20px; }
+  .terminal-status-notice.is-prominent:not(.is-collapsed) span { margin-top:8px; font-size:13px; }
+  .terminal-status-notice.is-prominent:not(.is-collapsed) .terminal-status-actions { flex-direction:row; }
+  .terminal-status-notice.is-prominent:not(.is-collapsed) button { flex:1 1 0; min-width:0; }
+}
 
 .terminal-reconnect-overlay {
   position: absolute;

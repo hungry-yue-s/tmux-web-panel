@@ -2141,19 +2141,26 @@ function _showTerminalStatus(term, paneId, nozoom, reason, errorMessage) {
   var takenOver = reason === 'taken_over' || reason === 'detached';
   var ended = reason === 'session_ended' || reason === 'remote_shell_exit';
   var notice = document.createElement('div');
-  notice.className = 'terminal-status-notice';
-  notice.setAttribute('role', 'status');
+  notice.className = 'terminal-status-notice' + (takenOver ? ' is-prominent' : '');
+  notice.setAttribute('role', takenOver ? 'alert' : 'status');
+  var card = document.createElement('div');
+  card.className = 'terminal-status-card';
   var copy = document.createElement('div');
+  copy.className = 'terminal-status-copy';
   var title = document.createElement('strong');
   title.textContent = takenOver ? '会话已被其他端接管' : ended ? '会话已结束' : reason === 'rejected' ? '无法连接此终端' : '终端连接已结束';
   var detail = document.createElement('span');
   detail.textContent = takenOver ? '画面已暂停更新，终端任务继续运行。' : ended ? '已保留最后画面，可查看和复制。' : errorMessage || '画面已暂停更新，可尝试重新连接。';
-  copy.append(title, detail); notice.appendChild(copy);
+  copy.append(title, detail); card.appendChild(copy);
   if (!ended && reason !== 'rejected') {
+    var actions = document.createElement('div');
+    actions.className = 'terminal-status-actions';
     var button = document.createElement('button');
     button.type = 'button';
+    button.className = 'terminal-status-primary';
     button.textContent = takenOver ? '重新接管' : '重新连接';
-    button.addEventListener('click', function () {
+    button.addEventListener('click', function (event) {
+      event.stopPropagation();
       if (button.disabled || terminalState.term !== term || !notice.isConnected) return;
       button.disabled = true; button.textContent = '正在连接…';
       var ws = connectTerminalWs(paneId, term, nozoom, function () {
@@ -2163,8 +2170,24 @@ function _showTerminalStatus(term, paneId, nozoom, reason, errorMessage) {
       });
       terminalState.pendingWs = ws;
     });
-    notice.appendChild(button);
+    actions.appendChild(button);
+    if (takenOver) {
+      var inspect = document.createElement('button');
+      inspect.type = 'button';
+      inspect.className = 'terminal-status-secondary';
+      inspect.textContent = '查看最后画面';
+      inspect.addEventListener('click', function (event) {
+        event.stopPropagation();
+        if (terminalState.term !== term || !notice.isConnected) return;
+        notice.classList.add('is-collapsed');
+        notice.setAttribute('role', 'status');
+        button.focus({ preventScroll: true });
+      });
+      actions.appendChild(inspect);
+    }
+    card.appendChild(actions);
   }
+  notice.appendChild(card);
   term._statusNotice = notice;
   container.appendChild(notice);
 }

@@ -17,8 +17,7 @@
 .wb-command-menu { position:absolute; top:calc(100% + 6px); right:0; z-index:70; display:flex; flex-direction:column; width:180px; padding:5px; border:1px solid var(--workspace-line-strong,var(--border)); border-radius:8px; color:var(--workspace-text,var(--text-primary)); background:var(--workspace-panel,var(--bg-card)); }
 .wb-menu-item { min-height:34px; text-align:left; }
 .wb-notice { flex:0 0 auto; margin:0; padding:8px 12px; background:color-mix(in srgb,var(--accent-yellow) 10%,transparent); font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
-.wb-window-message { position:absolute; top:45px; left:12px; right:12px; z-index:3; width:fit-content; max-width:calc(100% - 24px); padding:8px 10px; border:1px solid var(--workspace-line,var(--border)); border-radius:5px; color:var(--workspace-text,var(--text-primary)); background:var(--workspace-panel,var(--bg-card)); font-size:12px; pointer-events:none; }
-.wb-window-message.terminal-status-notice { top:12px; width:auto; pointer-events:auto; }
+.wb-window-message:not(.terminal-status-notice) { position:absolute; top:45px; left:12px; right:12px; z-index:3; width:fit-content; max-width:calc(100% - 24px); padding:8px 10px; border:1px solid var(--workspace-line,var(--border)); border-radius:5px; color:var(--workspace-text,var(--text-primary)); background:var(--workspace-panel,var(--bg-card)); font-size:12px; pointer-events:none; }
 .wb-view-state { margin-left:auto; padding-left:6px; color:var(--workspace-muted,var(--text-secondary)); font-size:10px; white-space:nowrap; }
 .wb-view-stale > .ms-icon { opacity:.5; }
 .wb-empty { padding:24px; color:var(--workspace-muted,var(--text-secondary)); font-size:13px; line-height:1.7; }
